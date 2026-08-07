@@ -1,0 +1,10 @@
+# data stays out of the public repo: raw sheets are colleagues' working files,
+# processed outputs live in the dev DB, the review site is published encrypted
+data/
+site_build/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.env
+site_encrypted/
