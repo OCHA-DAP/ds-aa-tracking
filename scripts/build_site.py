@@ -22,6 +22,8 @@ os.environ.setdefault("PGSSLMODE", "require")
 
 import ocha_stratus as stratus  # noqa: E402
 
+from ds_aa_tracking import schema as trk_schema  # noqa: E402
+
 OUT = Path(__file__).parents[1] / "site_build"
 OUT.mkdir(exist_ok=True)
 
@@ -68,6 +70,7 @@ NAV = """
   <span class="t">AA tracking — schema &amp; data review</span>
   <a href="index.html">Overview</a>
   <a href="tables.html">Tracking tables</a>
+  <a href="schema.html">DB schema</a>
   <a href="reconciliation.html">Reconciliation</a>
   <a href="cerf-mirror.html">CERF mirror</a>
   <a href="decisions.html">Source decisions</a>
@@ -256,6 +259,9 @@ def main():
     # ---------- decisions page
     page("decisions.html", "Source workbooks — sheet-by-sheet decisions", DECISIONS)
 
+    # ---------- schema page
+    build_schema_page(e)
+
     # ---------- index
     reg = pd.read_sql("SELECT * FROM aa.v_trk_framework_current ORDER BY country_name", e)
     n_active = (reg["status"] == "active").sum() + (
@@ -288,6 +294,148 @@ cerf_allocation_storm · cerf_supplement
 {tbl(reg)}
 """
     page("index.html", "AA tracking — schema & data review", idx)
+
+
+KB_TABLES = [
+    "framework_version_map", "window", "simulated_activation", "funding_breakdown",
+    "actual_activation", "activation_allocation",
+]
+MIRROR_TABLES = [
+    "cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country",
+    "cerf_allocation_storm", "cerf_supplement",
+]
+OWNER_BADGE = {
+    "ds-aa-tracking": "<span class='badge b-new'>ds-aa-tracking</span>",
+    "ds-knowledge-base": "<span class='badge b-kb'>ds-knowledge-base</span>",
+    "ds-cerf-supplement": "<span class='badge b-mirror'>ds-cerf-supplement</span>",
+    "other": "<span class='badge'>other</span>",
+}
+
+
+def build_schema_page(e):
+    """Column-level documentation of the whole `aa` schema, grouped by owning repo."""
+    cols = pd.read_sql(
+        """SELECT c.table_name, c.ordinal_position, c.column_name, c.data_type,
+                  c.is_nullable, c.column_default
+           FROM information_schema.columns c
+           JOIN information_schema.tables t
+             ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+           WHERE c.table_schema = 'aa' AND t.table_type = 'BASE TABLE'
+           ORDER BY c.table_name, c.ordinal_position""",
+        e,
+    )
+    cons = pd.read_sql(
+        """SELECT rel.relname AS table_name, con.conname,
+                  pg_get_constraintdef(con.oid) AS definition
+           FROM pg_constraint con
+           JOIN pg_class rel ON rel.oid = con.conrelid
+           JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+           WHERE ns.nspname = 'aa'
+           ORDER BY rel.relname, con.contype DESC""",
+        e,
+    )
+    idx = pd.read_sql(
+        """SELECT tablename AS table_name, indexname, indexdef
+           FROM pg_indexes WHERE schemaname = 'aa'
+           ORDER BY tablename, indexname""",
+        e,
+    )
+
+    def owner_of(t):
+        if t in trk_schema.TABLES:
+            return "ds-aa-tracking"
+        if t in KB_TABLES:
+            return "ds-knowledge-base"
+        if t in MIRROR_TABLES:
+            return "ds-cerf-supplement"
+        return "other"
+
+    sections = [
+        "<div class='card'>Live column-level schema, read from the dev DB "
+        "(<code>information_schema</code> + <code>pg_catalog</code>), grouped by the "
+        "repo that owns (i.e. is the single writer of) each table. Constraints and "
+        "indexes are shown as Postgres reports them; row counts are as of generation "
+        "time. The <code>v_trk_*</code> view SQL at the bottom is this repo's — the "
+        "other repos' view definitions aren't readable by the reader role but are "
+        "documented in the KB ERD.</div>"
+    ]
+    tables = sorted(cols["table_name"].unique(), key=lambda t: (owner_of(t) != "ds-aa-tracking", t))
+    for owner in ("ds-aa-tracking", "ds-knowledge-base", "ds-cerf-supplement", "other"):
+        group = [t for t in tables if owner_of(t) == owner]
+        if not group:
+            continue
+        sections.append(f"<h2 style='border-bottom:2px solid #cbd6e2;padding-bottom:6px'>"
+                        f"{OWNER_BADGE[owner]} {len(group)} tables</h2>")
+        for t in group:
+            n = pd.read_sql(f"SELECT count(*) AS n FROM aa.{t}", e)["n"].iloc[0]
+            tc = cols[cols["table_name"] == t][
+                ["column_name", "data_type", "is_nullable", "column_default"]
+            ].rename(columns={"is_nullable": "nullable", "column_default": "default"})
+            tc["default"] = tc["default"].fillna("").str.replace("::.*", "", regex=True)
+            note = NOTES.get(t)
+            keys = cons[cons["table_name"] == t]
+            uniq_idx = idx[
+                (idx["table_name"] == t)
+                & idx["indexdef"].str.contains("UNIQUE")
+                & ~idx["indexname"].str.endswith("_pkey")
+            ]
+            key_bits = [
+                f"<li><code>{html.escape(r['conname'])}</code>: "
+                f"<code>{html.escape(r['definition'])}</code></li>"
+                for _, r in keys.iterrows()
+            ] + [
+                f"<li><code>{html.escape(r['indexname'])}</code>: "
+                f"<code>{html.escape(r['indexdef'].split(' USING ')[-1])}</code> (unique index)</li>"
+                for _, r in uniq_idx.iterrows()
+            ]
+            keys_html = (
+                f"<ul class='tight'>{''.join(key_bits)}</ul>" if key_bits
+                else "<p class='meta'>no PK/unique constraint (append-only fact "
+                     "table; see notes)</p>"
+            )
+            link = (
+                f" · <a href='table-{t}.html'>data</a>"
+                if t in trk_schema.TABLES else ""
+            )
+            sections.append(
+                f"<div class='card'><h3 style='margin:2px 0'>aa.{t}"
+                f"<span class='meta' style='font-weight:400'> — {n:,} rows{link}</span></h3>"
+                + (f"<p class='meta'>{note}</p>" if note else "")
+                + keys_html
+                + tbl_plain(tc)
+                + "</div>"
+            )
+
+    sections.append("<h2>Views owned by ds-aa-tracking (SQL)</h2>")
+    for name, ddl in trk_schema.VIEWS.items():
+        sql = ddl.split("AS", 1)[1].strip() if "AS" in ddl else ddl
+        sections.append(
+            f"<div class='card'><h3 style='margin:2px 0'>aa.{name}</h3>"
+            f"<pre style='overflow-x:auto;font-size:12px;background:#f6f8fa;"
+            f"padding:10px;border-radius:4px'>{html.escape(sql)}</pre></div>"
+        )
+    other_views = pd.read_sql(
+        """SELECT table_name FROM information_schema.views
+           WHERE table_schema='aa' ORDER BY table_name""",
+        e,
+    )
+    others = [
+        v for v in other_views["table_name"] if v not in trk_schema.VIEWS
+    ]
+    if others:
+        sections.append(
+            "<p class='meta'>Other views in the schema (KB-owned, documented in the "
+            "KB ERD): " + ", ".join(f"<code>aa.{v}</code>" for v in others) + "</p>"
+        )
+    page("schema.html", "DB schema — the full aa schema by owner", "\n".join(sections))
+
+
+def tbl_plain(df):
+    return (
+        "<div class='scroll' style='max-height:none'>"
+        + df.to_html(index=False, classes="data", na_rep="", border=0)
+        + "</div>"
+    )
 
 
 DECISIONS = """
