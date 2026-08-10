@@ -36,5 +36,5 @@ Source workbooks are read from `AA_TRACKING_DIR` (not committed). DB access via
 
 ```sh
 uv run python scripts/ingest.py
-uv run python scripts/build_site.py
+uv run python scripts/build_site.py   # needs graphviz (`brew install graphviz`) for the ERD
 ```
