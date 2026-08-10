@@ -107,6 +107,7 @@ def tbl(df, max_rows=8000):
 # per-table reviewer notes
 NOTES = {
     "framework_registry": "One row per (country, hazard) — the framework identity used everywhere, incl. pipeline entries with no KB page yet. <code>kb_framework</code>/<code>in_kb</code> crosswalk to the KB. Attributes (region, language, focal-point context) come from Julia's 2026 planning sheet.",
+    "framework_version": "The unit that actually gets approved: one row per framework version, seeded from KB page frontmatter (incl. superseded/retired versions) plus sheet-reported revision dates with no KB page (<code>source='sheet-revision'</code> — a KB completeness gap). Version-specific facts (budgets, sector budgets, coverage, calendar, activations, status) carry a <code>version</code> attribution: direct from the KB for matched activations, otherwise inferred from the version in force at the fact's date (<code>version_match</code>; NULL = no version exists to attribute to). Caveat: figures reported mid-revision may belong to the upcoming version — interval inference can't see that; overrides are a curation pass.",
     "framework_status": "Operational lifecycle snapshots from every source sheet, kept side by side (PK includes <code>source</code>). Canonical <code>status</code> vocabulary; raw spelling preserved. This is deliberately distinct from the KB page-status vocabulary.",
     "framework_focal_point": "Focal points by role from the 2026 planning sheet.",
     "framework_calendar": "Monthly markers recovered from cell <em>colors</em> in the planning sheet: green = trigger window, orange = framework finalization, red = proposal development; 'F' = finalization deadline.",
@@ -212,6 +213,36 @@ def main():
         "= the sheets disagree (often timing: 2025 vs likely-2026 vs Jun-2026 figures).</p>"
         + tbl(piv)
     )
+    attr = pd.read_sql("SELECT * FROM aa.v_trk_version_attribution", e)
+    attr["version_match"] = attr["version_match"].fillna("(no version to attribute to)")
+    vsum = pd.read_sql("SELECT * FROM aa.v_trk_version_summary", e)
+    vgap = pd.read_sql(
+        "SELECT * FROM aa.framework_version WHERE source='sheet-revision'", e
+    )
+    sections.append(
+        "<h2>Framework versions: attribution &amp; completeness</h2>"
+        "<div class='card'>Version-specific facts (budgets, coverage, calendar, "
+        "activations, status) are attributed to the framework <em>version</em> in "
+        "force at the fact's date — sheets don't record versions, so this is inferred "
+        "(<code>auto-interval</code>), flagged when the fact falls after the version's "
+        "stated validity (<code>auto-post-validity</code>), or inherited from the KB "
+        "activation record (<code>kb-activation</code>). '(no version to attribute "
+        "to)' = pipeline/ad-hoc frameworks with no version anywhere — correct, not an "
+        "error. Mid-revision figures may belong to the upcoming version; that needs "
+        "manual override in a later pass.</div>"
+        + tbl(attr, 100)
+    )
+    sections.append(
+        "<h3>Sheet-reported revisions with no KB version page</h3>" + tbl(vgap, 100)
+    )
+    sections.append(
+        "<h3>Per-version rollup (doc budget vs tracked budget)</h3>"
+        "<p class='meta'>From <code>aa.v_trk_version_summary</code> — where "
+        "<code>prearranged_usd_doc</code> (KB frontmatter) and "
+        "<code>prearranged_usd_tracked</code> (sheets, attributed) disagree, either the "
+        "budget genuinely changed with the version or the attribution needs review.</p>"
+        + tbl(vsum, 200)
+    )
     cov = pd.read_sql("SELECT * FROM aa.people_covered", e)
     cpiv = cov.pivot_table(
         index=["country_iso3", "hazard"], columns="source", values="people_covered",
@@ -277,8 +308,9 @@ the DB becomes the single authoritative source and the sheets can be retired.
 </div>
 <div class='card'>
 <b>Ownership map</b> (single writer per table, schema <code>aa</code>):<br>
-<span class='badge b-new'>ds-aa-tracking (this repo, 19 tables + 5 views)</span>
-framework_registry · framework_status · framework_focal_point · framework_calendar ·
+<span class='badge b-new'>ds-aa-tracking (this repo, 20 tables + 7 views)</span>
+framework_registry · framework_version · framework_status · framework_focal_point ·
+framework_calendar ·
 prearranged_funding · prearranged_sector_budget · people_covered · activation_event ·
 report_channel_inclusion · plan_inclusion · start_network · cirv · cerf_subgrant ·
 cerf_application_people · cerf_application_report · cerf_allocation_extra ·
@@ -321,6 +353,7 @@ ERD_STYLE = {
 # (name, owner, key-line) — key columns only, to keep the diagram readable
 ERD_NODES = [
     ("framework_registry", "new", "country_iso3 · hazard"),
+    ("framework_version", "new", "+ version (the approved unit)"),
     ("framework_status", "new", "+ as_of · source"),
     ("framework_focal_point", "new", "+ role · person · as_of"),
     ("framework_calendar", "new", "+ month · phase"),
@@ -355,18 +388,19 @@ ERD_NODES = [
 
 # (from, to, label, dashed) — dashed = join by convention, no declared FK
 ERD_EDGES = [
-    ("framework_status", "framework_registry", "country+hazard", True),
+    ("framework_version", "framework_registry", "country+hazard", True),
+    ("framework_status", "framework_version", "+ version", True),
     ("framework_focal_point", "framework_registry", "", True),
-    ("framework_calendar", "framework_registry", "", True),
-    ("prearranged_funding", "framework_registry", "", True),
-    ("prearranged_sector_budget", "framework_registry", "", True),
-    ("people_covered", "framework_registry", "", True),
+    ("framework_calendar", "framework_version", "+ version", True),
+    ("prearranged_funding", "framework_version", "+ version", True),
+    ("prearranged_sector_budget", "framework_version", "+ version", True),
+    ("people_covered", "framework_version", "+ version", True),
     ("report_channel_inclusion", "framework_registry", "", True),
-    ("activation_event", "framework_registry", "country+hazard", True),
+    ("activation_event", "framework_version", "+ version", True),
     ("plan_inclusion", "framework_registry", "country_iso3", True),
     ("start_network", "framework_registry", "country_iso3", True),
     ("cirv", "framework_registry", "country_iso3", True),
-    ("framework_registry", "framework_version_map", "kb_framework", True),
+    ("framework_version", "framework_version_map", "kb_framework · kb_version", True),
     ("window", "framework_version_map", "", True),
     ("simulated_activation", "window", "", True),
     ("funding_breakdown", "framework_version_map", "", True),

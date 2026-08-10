@@ -21,6 +21,7 @@ import ocha_stratus as stratus  # noqa: E402
 
 from ds_aa_tracking import schema  # noqa: E402
 from ds_aa_tracking.parsers import parse_all  # noqa: E402
+from ds_aa_tracking.versions import attribute_versions, build_framework_version  # noqa: E402
 
 SLUG_HAZARD = [
     ("dry-corridor", "drought"),
@@ -90,7 +91,7 @@ def kb_crosswalk(engine, tables):
     reg["in_kb"] = reg["kb_framework"].notna()
 
     acts = pd.read_sql(
-        """SELECT a.kb_framework, a.event_date, a.country_iso3,
+        """SELECT a.kb_framework, a.event_date, a.country_iso3, a.kb_version,
                   a.released_usd, l.application_code
            FROM aa.actual_activation a
            LEFT JOIN aa.activation_allocation l
@@ -98,10 +99,10 @@ def kb_crosswalk(engine, tables):
         engine,
     )
     ev = tables["activation_event"]
-    kb_framework, kb_event_date, app_code, method = [], [], [], []
+    kb_framework, kb_event_date, app_code, method, act_version = [], [], [], [], []
     for _, e in ev.iterrows():
         slug = kb_map.get((e["country_iso3"], e["hazard"]))
-        matched = (None, None, None, None)
+        matched = (None, None, None, None, None)
         if slug is not None:
             cand = acts[
                 (acts["kb_framework"] == slug)
@@ -112,27 +113,36 @@ def kb_crosswalk(engine, tables):
                 exact = cand[cand["event_date"].str.startswith(ym)]
                 if len(exact) >= 1:
                     matched = (slug, exact.iloc[0]["event_date"],
-                               exact.iloc[0]["application_code"], "auto-year-month")
+                               exact.iloc[0]["application_code"], "auto-year-month",
+                               exact.iloc[0]["kb_version"])
                 elif len(cand) == 1:
                     matched = (slug, cand.iloc[0]["event_date"],
-                               cand.iloc[0]["application_code"], "auto-year")
+                               cand.iloc[0]["application_code"], "auto-year",
+                               cand.iloc[0]["kb_version"])
             elif len(cand) == 1:
                 matched = (slug, cand.iloc[0]["event_date"],
-                           cand.iloc[0]["application_code"], "auto-year")
+                           cand.iloc[0]["application_code"], "auto-year",
+                           cand.iloc[0]["kb_version"])
             elif len(cand) > 1:
-                matched = (None, None, None, "ambiguous")
+                matched = (None, None, None, "ambiguous", None)
         kb_framework.append(matched[0])
         kb_event_date.append(matched[1])
         app_code.append(matched[2])
         method.append(matched[3])
+        act_version.append(matched[4])
     ev["kb_framework"] = kb_framework
     ev["kb_event_date"] = kb_event_date
     ev["application_code"] = app_code
     ev["match_method"] = method
+    ev["kb_activation_version"] = act_version
 
 
 def load(engine, tables):
     with engine.begin() as conn:
+        for name in schema.TABLES:
+            # full-refresh incl. structure: our views are recreated below; nothing
+            # outside this repo depends on these tables
+            conn.execute(sa.text(f"DROP TABLE IF EXISTS aa.{name} CASCADE"))
         for name, ddl in schema.TABLES.items():
             conn.execute(sa.text(ddl))
         for idx in schema.INDEXES:
@@ -169,6 +179,10 @@ def main():
     engine = stratus.get_engine(stage="dev", write=True)
     print("Crosswalking to KB…")
     kb_crosswalk(engine, tables)
+    print("Building framework versions + attributing facts…")
+    fv = build_framework_version(tables)
+    tables["framework_version"] = fv
+    attribute_versions(tables, fv)
     print("Loading dev DB…")
     load(engine, tables)
     print("Done.")

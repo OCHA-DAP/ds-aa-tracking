@@ -150,6 +150,7 @@ HAZARD_MAP = {
     "cyclones": "storm",
     "tropical cyclone": "storm",
     "tropical cyclones": "storm",
+    "tropical-cyclone": "storm",  # KB frontmatter vocabulary
     "hurricane": "storm",
     "hurricanes": "storm",
     "cholera": "cholera",

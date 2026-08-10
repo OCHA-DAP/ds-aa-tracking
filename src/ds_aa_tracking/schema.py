@@ -29,6 +29,22 @@ TABLES = {
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard)
         )""",
+    "framework_version": """
+        CREATE TABLE IF NOT EXISTS aa.framework_version (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,         -- date label matching KB page (YYYY[-MM[-DD]])
+            kb_framework text,
+            kb_status text,                -- endorsed | superseded | retired | development
+            valid_from date,
+            valid_until date,
+            supersedes text,
+            prearranged_usd_doc numeric,   -- from KB frontmatter (cross-check)
+            source text NOT NULL,          -- kb-frontmatter | sheet-revision
+            note text,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (country_iso3, hazard, version)
+        )""",
     "framework_status": """
         CREATE TABLE IF NOT EXISTS aa.framework_status (
             country_iso3 text NOT NULL,
@@ -42,6 +58,8 @@ TABLES = {
             q1_ready boolean,
             expected_status text,
             comments text,
+            version text,                  -- attributed framework version (see framework_version)
+            version_match text,            -- kb-activation | auto-interval | auto-post-validity
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard, as_of, source)
         )""",
@@ -63,6 +81,8 @@ TABLES = {
             month smallint NOT NULL CHECK (month BETWEEN 1 AND 12),
             phase text NOT NULL,
             is_finalization_deadline boolean NOT NULL DEFAULT false,
+            version text,                  -- attributed framework version (see framework_version)
+            version_match text,            -- kb-activation | auto-interval | auto-post-validity
             as_of date NOT NULL,
             source text NOT NULL,
             updated_at timestamptz NOT NULL DEFAULT now(),
@@ -79,6 +99,8 @@ TABLES = {
             identified boolean,            -- cofinancing identified? (Y/N/TBC sheets)
             funding_change text,           -- new | extended | renewed
             remarks text,
+            version text,                  -- attributed framework version (see framework_version)
+            version_match text,            -- kb-activation | auto-interval | auto-post-validity
             source text NOT NULL,
             updated_at timestamptz NOT NULL DEFAULT now(),
             UNIQUE NULLS NOT DISTINCT
@@ -94,6 +116,8 @@ TABLES = {
             amount_usd numeric,
             year_label text,               -- 'Prearranged' | '2025' | '2026' (raw)
             status text,
+            version text,                  -- attributed framework version (see framework_version)
+            version_match text,            -- kb-activation | auto-interval | auto-post-validity
             source text NOT NULL,
             updated_at timestamptz NOT NULL DEFAULT now(),
             UNIQUE NULLS NOT DISTINCT
@@ -109,6 +133,8 @@ TABLES = {
             double_activation text,        -- maybe | no | not_clear
             additional_people_covered bigint,
             remarks text,
+            version text,                  -- attributed framework version (see framework_version)
+            version_match text,            -- kb-activation | auto-interval | auto-post-validity
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard, as_of, source)
         )""",
@@ -130,6 +156,8 @@ TABLES = {
             kb_event_date text,
             application_code text,         -- matched via aa.activation_allocation
             match_method text,
+            version text,                  -- attributed framework version (see framework_version)
+            version_match text,            -- kb-activation | auto-interval | auto-post-validity
             source text NOT NULL,
             updated_at timestamptz NOT NULL DEFAULT now(),
             UNIQUE NULLS NOT DISTINCT
@@ -335,16 +363,61 @@ VIEWS = {
             FROM aa.people_covered
             WHERE people_covered IS NOT NULL
             ORDER BY country_iso3, hazard, as_of DESC
+        ),
+        current_version AS (
+            SELECT DISTINCT ON (country_iso3, hazard)
+                country_iso3, hazard, version, kb_status AS version_status, valid_until
+            FROM aa.framework_version
+            WHERE valid_from IS NOT NULL
+              AND (kb_status IS NULL OR kb_status NOT IN ('development'))
+            ORDER BY country_iso3, hazard,
+                     (kb_status = 'endorsed') DESC, valid_from DESC
         )
         SELECT r.country_iso3, r.hazard, r.country_name, r.region, r.kb_framework,
                r.in_kb, r.language, r.us_prio,
+               v.version AS current_version, v.version_status, v.valid_until,
                s.status, s.status_raw, s.as_of AS status_as_of, s.source AS status_source,
                p.amount_usd AS cerf_prearranged_usd, p.year AS prearranged_year,
                c.people_covered
         FROM aa.framework_registry r
+        LEFT JOIN current_version v USING (country_iso3, hazard)
         LEFT JOIN latest_status s USING (country_iso3, hazard)
         LEFT JOIN latest_prearranged p USING (country_iso3, hazard)
         LEFT JOIN latest_covered c USING (country_iso3, hazard)
+    """,
+    # version-attribution health: how much of each version-level table is attributed
+    "v_trk_version_attribution": """
+        CREATE OR REPLACE VIEW aa.v_trk_version_attribution AS
+        SELECT t.table_name, t.version_match, count(*) AS n_rows
+        FROM (
+            SELECT 'framework_status' AS table_name, version_match FROM aa.framework_status
+            UNION ALL SELECT 'framework_calendar', version_match FROM aa.framework_calendar
+            UNION ALL SELECT 'prearranged_funding', version_match FROM aa.prearranged_funding
+            UNION ALL SELECT 'prearranged_sector_budget', version_match FROM aa.prearranged_sector_budget
+            UNION ALL SELECT 'people_covered', version_match FROM aa.people_covered
+            UNION ALL SELECT 'activation_event', version_match FROM aa.activation_event
+        ) t
+        GROUP BY t.table_name, t.version_match
+        ORDER BY t.table_name, t.version_match
+    """,
+    # version-level rollup: what each version's tracked budget/coverage looks like
+    "v_trk_version_summary": """
+        CREATE OR REPLACE VIEW aa.v_trk_version_summary AS
+        SELECT fv.country_iso3, fv.hazard, fv.version, fv.kb_framework, fv.kb_status,
+               fv.valid_from, fv.valid_until, fv.source,
+               fv.prearranged_usd_doc,
+               (SELECT max(pf.amount_usd) FROM aa.prearranged_funding pf
+                 WHERE pf.country_iso3 = fv.country_iso3 AND pf.hazard = fv.hazard
+                   AND pf.version = fv.version AND pf.kind = 'prearranged'
+                   AND pf.fund_source IN ('cerf', 'all')) AS prearranged_usd_tracked,
+               (SELECT max(pc.people_covered) FROM aa.people_covered pc
+                 WHERE pc.country_iso3 = fv.country_iso3 AND pc.hazard = fv.hazard
+                   AND pc.version = fv.version) AS people_covered,
+               (SELECT count(*) FROM aa.activation_event e
+                 WHERE e.country_iso3 = fv.country_iso3 AND e.hazard = fv.hazard
+                   AND e.version = fv.version) AS n_activation_events
+        FROM aa.framework_version fv
+        ORDER BY fv.country_iso3, fv.hazard, fv.valid_from
     """,
     # sheet activation events vs KB actual_activation: matches + conflicts
     "v_trk_activation_reconciliation": """
