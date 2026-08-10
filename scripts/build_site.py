@@ -312,6 +312,124 @@ OWNER_BADGE = {
 }
 
 
+ERD_STYLE = {
+    "new": ("#e3f1e6", "#1c6b31"),
+    "kb": ("#e8e8f8", "#3b3b8f"),
+    "mirror": ("#fdf1dc", "#8a5c0a"),
+}
+
+# (name, owner, key-line) — key columns only, to keep the diagram readable
+ERD_NODES = [
+    ("framework_registry", "new", "country_iso3 · hazard"),
+    ("framework_status", "new", "+ as_of · source"),
+    ("framework_focal_point", "new", "+ role · person · as_of"),
+    ("framework_calendar", "new", "+ month · phase"),
+    ("prearranged_funding", "new", "+ year · kind · fund_source · source"),
+    ("prearranged_sector_budget", "new", "+ subunit · agency · sector"),
+    ("people_covered", "new", "+ as_of · source"),
+    ("activation_event", "new", "+ year · month · fund_source"),
+    ("report_channel_inclusion", "new", "report_year · channel + …"),
+    ("plan_inclusion", "new", "country_iso3 · year · source"),
+    ("start_network", "new", "country_iso3 · as_of"),
+    ("cirv", "new", "country_iso3 · year"),
+    ("cerf_subgrant", "new", "project_code · partner_name"),
+    ("cerf_application_people", "new", "application_code · phase · grp"),
+    ("cerf_application_report", "new", "application_code"),
+    ("cerf_allocation_extra", "new", "application_code"),
+    ("cerf_project_supplement", "new", "project_code"),
+    ("cerf_cva_history", "new", "country · agency · type · year"),
+    ("emergency_type_override", "new", "application_code"),
+    ("framework_version_map", "kb", "kb_framework · kb_version · iso3"),
+    ("window", "kb", "+ window_name"),
+    ("simulated_activation", "kb", "+ window_name · event_year"),
+    ("funding_breakdown", "kb", "+ window · fund · agency · sector"),
+    ("actual_activation", "kb", "kb_framework · event_date"),
+    ("activation_allocation", "kb", "kb_framework+event_date ⇄ app_code"),
+    ("cerf_allocation", "mirror", "application_code"),
+    ("cerf_project", "mirror", "project_code"),
+    ("cerf_project_sector", "mirror", "project_code + sector"),
+    ("cerf_project_country", "mirror", "project_code · country_iso3"),
+    ("cerf_allocation_storm", "mirror", "application_code · sid"),
+    ("cerf_supplement", "mirror", "application_code"),
+]
+
+# (from, to, label, dashed) — dashed = join by convention, no declared FK
+ERD_EDGES = [
+    ("framework_status", "framework_registry", "country+hazard", True),
+    ("framework_focal_point", "framework_registry", "", True),
+    ("framework_calendar", "framework_registry", "", True),
+    ("prearranged_funding", "framework_registry", "", True),
+    ("prearranged_sector_budget", "framework_registry", "", True),
+    ("people_covered", "framework_registry", "", True),
+    ("report_channel_inclusion", "framework_registry", "", True),
+    ("activation_event", "framework_registry", "country+hazard", True),
+    ("plan_inclusion", "framework_registry", "country_iso3", True),
+    ("start_network", "framework_registry", "country_iso3", True),
+    ("cirv", "framework_registry", "country_iso3", True),
+    ("framework_registry", "framework_version_map", "kb_framework", True),
+    ("window", "framework_version_map", "", True),
+    ("simulated_activation", "window", "", True),
+    ("funding_breakdown", "framework_version_map", "", True),
+    ("actual_activation", "framework_version_map", "kb_framework", True),
+    ("activation_event", "actual_activation", "kb_framework+event_date", True),
+    ("activation_event", "cerf_allocation", "application_code", True),
+    ("activation_allocation", "actual_activation", "FK", False),
+    ("activation_allocation", "cerf_allocation", "FK", False),
+    ("cerf_project", "cerf_allocation", "application_code", True),
+    ("cerf_project_sector", "cerf_project", "project_code", True),
+    ("cerf_project_country", "cerf_project", "project_code", True),
+    ("cerf_allocation_storm", "cerf_allocation", "", True),
+    ("cerf_supplement", "cerf_allocation", "", True),
+    ("cerf_allocation_extra", "cerf_allocation", "application_code", True),
+    ("cerf_application_people", "cerf_allocation", "application_code", True),
+    ("cerf_application_report", "cerf_allocation", "application_code", True),
+    ("emergency_type_override", "cerf_allocation", "application_code", True),
+    ("cerf_project_supplement", "cerf_project", "project_code", True),
+    ("cerf_subgrant", "cerf_project", "project_code", True),
+    ("cerf_cva_history", "framework_registry", "country_iso3", True),
+]
+
+
+def build_erd():
+    """Render the ERD to SVG with graphviz (brew install graphviz)."""
+    import shutil
+    import subprocess
+
+    dot_bin = shutil.which("dot") or "/opt/homebrew/bin/dot"
+    lines = [
+        "digraph aa {",
+        '  rankdir=RL; splines=true; concentrate=true;',
+        '  graph [fontname="Helvetica", pad="0.3", nodesep=0.25, ranksep=1.1];',
+        '  node [shape=none, fontname="Helvetica", fontsize=11];',
+        '  edge [fontname="Helvetica", fontsize=8.5, color="#8a97a8",'
+        ' fontcolor="#5a6675", arrowsize=0.6];',
+    ]
+    for name, owner, keys in ERD_NODES:
+        bg, fg = ERD_STYLE[owner]
+        lines.append(
+            f'  {name} [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">'
+            f'<tr><td bgcolor="{bg}"><font color="{fg}"><b>{name}</b></font></td></tr>'
+            f'<tr><td bgcolor="white"><font point-size="9" color="#444">{keys}</font></td></tr>'
+            f"</table>>];"
+        )
+    for src, dst, label, dashed in ERD_EDGES:
+        attrs = [f'label="{label}"'] if label else []
+        if dashed:
+            attrs.append('style=dashed')
+        else:
+            attrs.append('style=solid color="#1c6b31" penwidth=1.6')
+        lines.append(f"  {src} -> {dst} [{' '.join(attrs)}];")
+    lines.append("}")
+    svg = subprocess.run(
+        [dot_bin, "-Tsvg"], input="\n".join(lines).encode(),
+        capture_output=True, check=True,
+    ).stdout.decode()
+    # strip XML prolog/doctype, make responsive
+    svg = svg[svg.index("<svg"):]
+    svg = svg.replace("<svg ", "<svg style='max-width:100%;height:auto' ", 1)
+    return svg
+
+
 def build_schema_page(e):
     """Column-level documentation of the whole `aa` schema, grouped by owning repo."""
     cols = pd.read_sql(
@@ -359,6 +477,17 @@ def build_schema_page(e):
         "other repos' view definitions aren't readable by the reader role but are "
         "documented in the KB ERD.</div>"
     ]
+    sections.append(
+        "<h2>ERD</h2>"
+        "<div class='card'><p class='meta'>"
+        "<span class='badge b-new'>ds-aa-tracking</span>"
+        "<span class='badge b-kb'>ds-knowledge-base</span>"
+        "<span class='badge b-mirror'>ds-cerf-supplement</span> · "
+        "solid green edges = declared foreign keys (the schema's only two, on "
+        "<code>activation_allocation</code>); dashed = joins by convention, checked at "
+        "load time. Key columns shown; full column lists below.</p>"
+        f"<div class='scroll' style='max-height:none'>{build_erd()}</div></div>"
+    )
     tables = sorted(cols["table_name"].unique(), key=lambda t: (owner_of(t) != "ds-aa-tracking", t))
     for owner in ("ds-aa-tracking", "ds-knowledge-base", "ds-cerf-supplement", "other"):
         group = [t for t in tables if owner_of(t) == owner]
