@@ -72,6 +72,8 @@ NAV = """
   <a href="tables.html">Tracking tables</a>
   <a href="schema.html">DB schema</a>
   <a href="reconciliation.html">Reconciliation</a>
+  <a href="review-julia.html">Julia</a>
+  <a href="review-yakubu.html">Yakubu</a>
   <a href="cerf-mirror.html">CERF mirror</a>
   <a href="decisions.html">Source decisions</a>
 </header>
@@ -293,6 +295,9 @@ def main():
     # ---------- schema page
     build_schema_page(e)
 
+    # ---------- per-person review pages
+    build_person_pages(e)
+
     # ---------- index
     reg = pd.read_sql("SELECT * FROM aa.v_trk_framework_current ORDER BY country_name", e)
     n_active = (reg["status"] == "active").sum() + (
@@ -326,6 +331,255 @@ cerf_allocation_storm · cerf_supplement
 {tbl(reg)}
 """
     page("index.html", "AA tracking — schema & data review", idx)
+
+
+def _latest_status_pivot(e, since="2025-12-01"):
+    """Latest status per (framework, source) for recent snapshots; conflict-flagged."""
+    st = pd.read_sql(
+        f"""SELECT DISTINCT ON (country_iso3, hazard, source)
+                   country_iso3, hazard, source, status, as_of
+            FROM aa.framework_status WHERE as_of >= '{since}'
+            ORDER BY country_iso3, hazard, source, as_of DESC""",
+        e,
+    )
+    st["cell"] = st["status"] + " (" + st["as_of"].astype(str) + ")"
+    piv = st.pivot_table(index=["country_iso3", "hazard"], columns="source",
+                         values="cell", aggfunc="first")
+    nuniq = st.groupby(["country_iso3", "hazard"])["status"].nunique()
+    piv["n_distinct_statuses"] = nuniq
+    return piv.reset_index()
+
+
+def _prearranged_pivot(e):
+    pre = pd.read_sql(
+        """SELECT country_iso3, hazard, year, source, amount_usd
+           FROM aa.prearranged_funding
+           WHERE kind = 'prearranged' AND fund_source = 'cerf'""",
+        e,
+    )
+    piv = pre.pivot_table(index=["country_iso3", "hazard", "year"], columns="source",
+                          values="amount_usd", aggfunc="first")
+    piv["n_distinct_amounts"] = piv.apply(lambda r: r.dropna().nunique(), axis=1)
+    return piv.reset_index()
+
+
+def _covered_pivot(e):
+    cov = pd.read_sql("SELECT * FROM aa.people_covered", e)
+    piv = cov.pivot_table(index=["country_iso3", "hazard"], columns="source",
+                          values="people_covered", aggfunc="first")
+    piv["n_distinct_values"] = piv.apply(lambda r: r.dropna().nunique(), axis=1)
+    return piv.reset_index()
+
+
+def _conflict_rows(piv, person, count_col):
+    """Rows where sources disagree and this person's sheets contributed a value."""
+    p_cols = [c for c in piv.columns if str(c).startswith(f"{person}-")]
+    if not p_cols:
+        return piv.iloc[0:0]
+    has_p = piv[p_cols].notna().any(axis=1)
+    return piv[(piv[count_col] > 1) & has_p]
+
+
+def _version_issues(e, person):
+    """Version-attribution uncertainties on this person's facts."""
+    fv = pd.read_sql(
+        "SELECT country_iso3, hazard, version, kb_status FROM aa.framework_version", e
+    )
+    fw_with_versions = set(zip(fv["country_iso3"], fv["hazard"]))
+    dev = fv[fv["kb_status"] == "development"]
+    dev_versions = set(zip(dev["country_iso3"], dev["hazard"], dev["version"]))
+    specs = {
+        "framework_status": ("as_of::text AS fact_date", "status AS detail"),
+        "framework_calendar": ("as_of::text AS fact_date",
+                               "phase || ' m' || month AS detail"),
+        "people_covered": ("as_of::text AS fact_date",
+                           "people_covered::text AS detail"),
+        "prearranged_funding": ("year::text AS fact_date",
+                                "kind || ' ' || fund_source || ' $' || COALESCE(amount_usd::text,'?') AS detail"),
+        "prearranged_sector_budget": ("year_label AS fact_date",
+                                      "agency || ' / ' || sector || ' $' || COALESCE(amount_usd::text,'?') AS detail"),
+        "activation_event": ("year::text || COALESCE('-' || month::text,'') AS fact_date",
+                             "aa_or_ea || ' ' || mechanism || ' $' || COALESCE(amount_usd::text,'?') AS detail"),
+    }
+    frames = []
+    for t, (datecol, detailcol) in specs.items():
+        df = pd.read_sql(
+            f"""SELECT '{t}' AS "table", country_iso3, hazard, {datecol}, {detailcol},
+                       source, version, version_match
+                FROM aa.{t} WHERE source LIKE '{person}-%%'""",
+            e,
+        )
+        frames.append(df)
+    facts = pd.concat(frames, ignore_index=True)
+    issues = []
+    for _, r in facts.iterrows():
+        key = (r["country_iso3"], r["hazard"])
+        if r["version_match"] == "auto-post-validity":
+            issue = ("dated after the attributed version's validity — belongs to a "
+                     "newer/upcoming version?")
+        elif pd.isna(r["version"]) and key in fw_with_versions:
+            issue = "no version covers this date (predates first known version?)"
+        elif (pd.notna(r["version"])
+              and (r["country_iso3"], r["hazard"], r["version"]) in dev_versions):
+            issue = "attributed to an in-development version — confirm"
+        else:
+            continue
+        issues.append({**r, "issue": issue})
+    return pd.DataFrame(issues)
+
+
+def build_person_pages(e):
+    people = {
+        "julia": "Julia — sheet reconciliation queue",
+        "yakubu": "Yakubu — sheet reconciliation queue",
+    }
+    status_piv = _latest_status_pivot(e)
+    pre_piv = _prearranged_pivot(e)
+    cov_piv = _covered_pivot(e)
+
+    for person, title in people.items():
+        sections = [
+            "<div class='card'>Everything on this page traces back to "
+            f"<b>{person.title()}'s</b> workbooks: places where they disagree with the "
+            "KB, the CERF mirror, the other tracking sheets, or where a fact can't be "
+            "confidently attributed to a framework version. Each table is a queue — "
+            "the answer is either 'the sheet is right' (we fix the KB/mirror), 'the "
+            "other source is right' (we correct at ingestion), or a version override."
+        ]
+        if person == "julia":
+            sections[0] += (
+                " Sources: 2026 planning, 2024/2025 AA reporting, 2026 GHO, "
+                "activations 2020–2026.</div>"
+            )
+        else:
+            sections[0] += (
+                " Sources: CERF AA Data (Jun 2026), subgrant data, displacement/GMS "
+                "exports, March 2026 allocation analysis.</div>"
+            )
+
+        st = _conflict_rows(status_piv, person, "n_distinct_statuses")
+        sections.append(
+            "<h2>Framework status: recent snapshots disagree</h2>"
+            "<p class='meta'>Latest status per source since Dec 2025. Some differences "
+            "are genuine evolution (a framework endorsed between two snapshot dates); "
+            "the rest need one answer.</p>" + tbl(st)
+        )
+        pre = _conflict_rows(pre_piv, person, "n_distinct_amounts")
+        sections.append(
+            "<h2>Pre-arranged CERF funding: sources disagree</h2>"
+            "<p class='meta'>Per framework and year, CERF-only amounts (fund-source "
+            "totals are compared separately on the Reconciliation page). Timing "
+            "explains some (a top-up between snapshots) — confirm which figure is "
+            "authoritative per year.</p>" + tbl(pre)
+        )
+        cov = _conflict_rows(cov_piv, person, "n_distinct_values")
+        sections.append(
+            "<h2>People covered: sources disagree</h2>"
+            "<p class='meta'>e.g. Afghanistan drought appears as 769,000 (2025 "
+            "reporting), 392,816 (Jun 2026 CERF sheet) and 257,996 (2025 baseline) — "
+            "which is the number to carry?</p>" + tbl(cov)
+        )
+        vi = _version_issues(e, person)
+        sections.append(
+            "<h2>Version attribution to confirm</h2>"
+            "<p class='meta'>Facts from these sheets whose framework-version "
+            "attribution is uncertain. Key cases: figures reported while a framework "
+            "was under revision may describe the <em>upcoming</em> version, not the "
+            "one in force.</p>" + tbl(vi)
+        )
+
+        if person == "julia":
+            rec = pd.read_sql(
+                """SELECT * FROM aa.v_trk_activation_reconciliation
+                   WHERE reconciliation <> 'OK'
+                   ORDER BY reconciliation, year DESC, month DESC""",
+                e,
+            )
+            sections.append(
+                "<h2>Activation list vs KB</h2>"
+                "<p class='meta'><code>MISSING_IN_KB</code> = framework CERF "
+                "activations in your list with no KB record — if real, the KB page "
+                "needs an <code>activations:</code> entry (we'll batch these once "
+                "confirmed). <code>AMOUNT_CONFLICT</code> = both match but amounts "
+                "differ (Nigeria 2025: your CERF/Country-Fund split vs the KB's "
+                "single $7M). <code>OUT_OF_KB_SCOPE</code> = ad-hoc/EA/non-CERF — "
+                "fine, they live only in the new table; just confirm they're "
+                "correct.</p>" + tbl(rec)
+            )
+            kb_only = pd.read_sql("SELECT * FROM aa.v_trk_activation_kb_only", e)
+            sections.append(
+                "<h2>KB activations missing from your list</h2>"
+                "<p class='meta'>Should any of these be added to the activations "
+                "sheet's successor (this DB)? Mostly pre-2020 pilots, partial-window "
+                "triggers, and multi-country events.</p>" + tbl(kb_only)
+            )
+            vgap = pd.read_sql(
+                "SELECT * FROM aa.framework_version WHERE source='sheet-revision'", e
+            )
+            sections.append(
+                "<h2>Revisions you reported with no KB version page</h2>"
+                "<p class='meta'>Your reporting sheet says these frameworks were "
+                "revised, but the KB has no version within 90 days — is there an "
+                "endorsed doc we should ingest?</p>" + tbl(vgap)
+            )
+        else:
+            flags = pd.read_sql("SELECT * FROM aa.v_trk_aa_flag_reconciliation", e)
+            sections.append(
+                "<h2>'Is AA' flag: your OneGMS export vs the mirror heuristic</h2>"
+                "<p class='meta'>The mirror flags AA allocations from title keywords; "
+                "your export carries OneGMS's structured flag. Which is right for "
+                "these?</p>" + tbl(flags)
+            )
+            retag = pd.read_sql(
+                """SELECT o.application_code, o.country_name, o.initial_type,
+                          o.actual_type, o.storm_name,
+                          c.emergency_type AS mirror_current_type,
+                          s.not_tc AS mirror_not_tc
+                   FROM aa.emergency_type_override o
+                   LEFT JOIN aa.cerf_allocation c USING (application_code)
+                   LEFT JOIN aa.cerf_supplement s USING (application_code)
+                   ORDER BY o.application_code""",
+                e,
+            )
+            sections.append(
+                "<h2>Retagged allocations vs the mirror</h2>"
+                "<p class='meta'>Your re-tags next to what the OneGMS mirror "
+                "currently says (and the storm-matcher's <code>not_tc</code> where "
+                "set). Rows where <code>mirror_current_type</code> still equals the "
+                "initial tag are uncorrected upstream; blank mirror columns = "
+                "application code not found in the mirror (code format worth "
+                "checking).</p>" + tbl(retag)
+            )
+            sect = pd.read_sql(
+                """SELECT * FROM aa.prearranged_sector_budget
+                   WHERE year_label IS NULL
+                      OR year_label NOT IN ('Prearranged', '2025', '2026')""",
+                e,
+            )
+            sections.append(
+                "<h2>Sector budgets with unclear year labels</h2>"
+                "<p class='meta'>The 'Year' column in Sector Data - Pre-arranged "
+                "includes notes like “Think these are the info from old info” — "
+                "which framework version do these rows describe?</p>" + tbl(sect)
+            )
+            grain = pd.read_sql(
+                """SELECT country_name, agency, emergency_type, year, n_source_rows,
+                          amount_approved_usd, cva_usd, people_receiving_cash
+                   FROM aa.cerf_cva_history WHERE n_source_rows > 1
+                   ORDER BY n_source_rows DESC""",
+                e,
+            )
+            sections.append(
+                "<h2>CVA data grain check</h2>"
+                "<p class='meta'>Your Disbursement+CVA sheet has no project codes, so "
+                "rows were aggregated to country × agency × emergency × year. "
+                "Rows below collapsed multiple sheet rows (n_source_rows) — confirm "
+                "summing was right (e.g. repeat activations in one year).</p>"
+                + (tbl(grain) if not grain.empty
+                   else "<p class='meta'>none — every combination was already "
+                        "unique ✓</p>")
+            )
+        page(f"review-{person}.html", title, "\n".join(sections))
 
 
 KB_TABLES = [

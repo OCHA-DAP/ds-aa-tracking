@@ -737,6 +737,7 @@ def parse_jun2026():
             people_receiving_cash=("People receiving cash", "sum"),
             cva_usd=("Total CVA", "sum"),
             cva_possible=("CVA Possible", "first"),
+            n_source_rows=("CVA Possible", "size"),
         )
         .reset_index()
     )
@@ -750,6 +751,7 @@ def parse_jun2026():
         "people_receiving_cash": grouped["people_receiving_cash"].astype("Int64"),
         "cva_usd": grouped["cva_usd"],
         "cva_possible": grouped["cva_possible"],
+        "n_source_rows": grouped["n_source_rows"].astype("Int64"),
         "source": "yakubu-cva-jun2026",
     })
 

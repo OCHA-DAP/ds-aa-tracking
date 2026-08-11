@@ -313,6 +313,7 @@ TABLES = {
             people_receiving_cash bigint,
             cva_usd numeric,
             cva_possible text,
+            n_source_rows integer,         -- sheet rows collapsed into this aggregate
             source text NOT NULL,
             updated_at timestamptz NOT NULL DEFAULT now(),
             UNIQUE NULLS NOT DISTINCT
