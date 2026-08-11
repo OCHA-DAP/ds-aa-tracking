@@ -95,6 +95,7 @@ def kb_versions():
                 ),
                 "supersedes": str(fm["supersedes"]) if fm.get("supersedes") else None,
                 "prearranged_usd_doc": fm.get("prearranged_funding_usd"),
+                "doc_url": fm.get("framework_doc"),
                 "source": "kb-frontmatter",
             })
     return pd.DataFrame(rows)
@@ -167,13 +168,20 @@ def historical_versions(fv):
         )
         near = fv[mask]
         if h["valid_from"] is not None and not near.empty:
-            deltas = near["valid_from"].map(lambda v: abs((v - h["valid_from"]).days))
+            # a bare-year version label ('2021') matches any date in that year;
+            # otherwise match within 60 days
+            def _delta(row):
+                if re.fullmatch(r"\d{4}", str(row["version"])):
+                    return 0 if row["valid_from"].year == h["valid_from"].year else 9999
+                return abs((row["valid_from"] - h["valid_from"]).days)
+
+            deltas = near.apply(_delta, axis=1)
             if deltas.min() <= 60:
                 i = deltas.idxmin()
-                for col in ("doc_title", "doc_url", "analysis_ref"):
-                    if pd.notna(h.get(col)) and (
-                        col not in fv.columns or pd.isna(fv.at[i, col])
-                    ):
+                # curated CSV values win over imported KB values (the CSV exists to
+                # carry corrections from the sweeps, e.g. a mis-pointed framework_doc)
+                for col in ("doc_title", "doc_url", "analysis_ref", "note"):
+                    if pd.notna(h.get(col)) and str(h.get(col)).strip():
                         fv.at[i, col] = h[col]
                 continue
         new_rows.append({

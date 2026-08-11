@@ -139,8 +139,9 @@ def iso3_from_application_code(code):
 HAZARD_MAP = {
     "drought": "drought",
     "droughts": "drought",
-    "dry spells": "dry_spell",
-    "dry spell": "dry_spell",
+    # KB identity rule: Malawi's dry-spells pilot is the mwi-drought framework
+    "dry spells": "drought",
+    "dry spell": "drought",
     "flood": "flood",
     "floods": "flood",
     "flooding": "flood",
