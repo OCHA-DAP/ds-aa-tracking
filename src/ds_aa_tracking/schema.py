@@ -428,7 +428,8 @@ VIEWS = {
         CREATE OR REPLACE VIEW aa.v_trk_activation_reconciliation AS
         SELECT e.country_iso3, e.hazard, e.year, e.month, e.fund_source,
                e.mechanism, e.aa_or_ea, e.amount_usd AS sheet_amount_usd,
-               e.people_targeted, e.kb_framework, e.kb_event_date, e.match_method,
+               e.people_targeted, e.source, e.kb_framework, e.kb_event_date,
+               e.match_method,
                a.released_usd AS kb_released_usd,
                a.full_activation, a.window_name,
                CASE

@@ -507,7 +507,11 @@ def build_person_pages(e):
                 "single $7M). <code>ADHOC_NO_FRAMEWORK</code> = allocation without a "
                 "framework (explicit category, lives only in the new table); "
                 "<code>NON_CERF_FUND</code> = CBPF/regional-fund events the KB can't "
-                "hold — just confirm they're correct.</p>" + tbl(rec)
+                "hold — just confirm they're correct. Rows with "
+                "<code>source='historical-…'</code> were recovered by the historical "
+                "sweep (OCHA page archives / pa-anticipatory-action), NOT from your "
+                "list — please confirm those actually happened (esp. PHL 2021/2022, "
+                "evidenced only by cash-intervention snapshots).</p>" + tbl(rec)
             )
             kb_only = pd.read_sql("SELECT * FROM aa.v_trk_activation_kb_only", e)
             sections.append(
