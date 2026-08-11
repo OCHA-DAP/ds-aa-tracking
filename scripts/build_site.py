@@ -108,16 +108,16 @@ def tbl(df, max_rows=8000):
 
 # per-table reviewer notes
 NOTES = {
-    "framework_registry": "One row per (country, hazard) — the framework identity used everywhere, incl. pipeline entries with no KB page yet. <code>kb_framework</code>/<code>in_kb</code> crosswalk to the KB. Attributes (region, language, focal-point context) come from Julia's 2026 planning sheet.",
+    "framework_registry": "Identity ONLY: one row per (country, hazard), incl. pipeline entries with no version anywhere yet, plus descriptive attributes that aren't approved per version (region, language, coordination group). Everything fact-like attaches to <code>framework_version</code> instead.",
     "framework_version": "The unit that actually gets approved: one row per framework version, seeded from KB page frontmatter (incl. superseded/retired versions), the historical sweep of the OCHA AA web page and the pa-anticipatory-action monorepo (<code>source='ocha-web'/'pa-monorepo'</code>, with <code>doc_url</code>/<code>analysis_ref</code>), plus sheet-reported revision dates with no KB page (<code>source='sheet-revision'</code> — a KB completeness gap). Version-specific facts (budgets, sector budgets, coverage, calendar, activations, status) carry a <code>version</code> attribution: direct from the KB for matched activations, otherwise inferred from the version in force at the fact's date (<code>version_match</code>; NULL = no version exists to attribute to). Caveat: figures reported mid-revision may belong to the upcoming version — interval inference can't see that; overrides are a curation pass.",
     "framework_status": "Operational lifecycle snapshots from every source sheet, kept side by side (PK includes <code>source</code>). Canonical <code>status</code> vocabulary; raw spelling preserved. This is deliberately distinct from the KB page-status vocabulary.",
-    "framework_focal_point": "Focal points by role from the 2026 planning sheet.",
+    "framework_focal_point": "Focal points by role from the 2026 planning sheet, attributed to the version in force at the snapshot date.",
     "framework_calendar": "Monthly markers recovered from cell <em>colors</em> in the planning sheet: green = trigger window, orange = framework finalization, red = proposal development; 'F' = finalization deadline.",
     "prearranged_funding": "Pre-arranged/co-financing amounts per (framework, year, fund source), one row per source sheet — conflicts intentionally preserved (see Reconciliation).",
     "prearranged_sector_budget": "Pre-arranged budgets per framework × agency × sector (Yakubu, Jun 2026). <code>subunit</code> captures sub-framework splits (Bangladesh Jamuna/Padma, DRC-1/2).",
     "people_covered": "People covered per framework, per source; includes double-activation assessment for cyclone frameworks.",
-    "activation_event": "The superset activation record 2020–2026 (Julia): framework + ad-hoc, AA + EA, CERF + country/regional funds. Crosswalked to KB <code>actual_activation</code> where possible (<code>match_method</code>).",
-    "report_channel_inclusion": "Which frameworks/countries count toward which external reports per year (A-Hub, UK BCs, SG, CERF/OCHA annual reports, SF KPI, CPC).",
+    "activation_event": "The superset activation record 2020–2026 (Julia + historical sweep): <code>event_type</code> distinguishes <code>framework_aa</code> / <code>adhoc_aa</code> (allocation without a framework) / <code>early_action</code>. Crosswalked to KB <code>actual_activation</code> where possible (<code>match_method</code>); only framework events get version attribution.",
+    "report_channel_inclusion": "Which frameworks/countries count toward which external reports per year (A-Hub, UK BCs, SG, CERF/OCHA annual reports, SF KPI, CPC), attributed to the version in force during the report year.",
     "plan_inclusion": "GHO/HNRP plan inclusion + AA feasibility flags per country-year, per source.",
     "start_network": "Start Fund anticipation alerts + Start READY membership per country (from the planning sheet).",
     "cirv": "CERF Index for Risk and Vulnerability, 2025 vintage (150 countries).",
@@ -621,19 +621,15 @@ ERD_NODES = [
     ("prearranged_funding", "new", "+ year · kind · fund_source · source"),
     ("prearranged_sector_budget", "new", "+ subunit · agency · sector"),
     ("people_covered", "new", "+ as_of · source"),
-    ("activation_event", "new", "+ year · month · fund_source"),
+    ("activation_event", "new", "+ year · month · fund_source · event_type"),
     ("report_channel_inclusion", "new", "report_year · channel + …"),
-    ("plan_inclusion", "new", "country_iso3 · year · source"),
-    ("start_network", "new", "country_iso3 · as_of"),
-    ("cirv", "new", "country_iso3 · year"),
     ("cerf_subgrant", "new", "project_code · partner_name"),
     ("cerf_application_people", "new", "application_code · phase · grp"),
     ("cerf_application_report", "new", "application_code"),
     ("cerf_allocation_extra", "new", "application_code"),
     ("cerf_project_supplement", "new", "project_code"),
-    ("cerf_cva_history", "new", "country · agency · type · year"),
     ("emergency_type_override", "new", "application_code"),
-    ("framework_version_map", "kb", "kb_framework · kb_version · iso3"),
+    ("framework_version_map", "kb", "kb_framework · kb_version · country_iso3"),
     ("window", "kb", "+ window_name"),
     ("simulated_activation", "kb", "+ window_name · event_year"),
     ("funding_breakdown", "kb", "+ window · fund · agency · sector"),
@@ -647,79 +643,105 @@ ERD_NODES = [
     ("cerf_supplement", "mirror", "application_code"),
 ]
 
-# (from, to, label, dashed) — dashed = join by convention, no declared FK
+# country-level context tables: keyed by country only, no framework relationship
+ERD_COUNTRY_NODES = [
+    ("plan_inclusion", "new", "country_iso3 · year · source"),
+    ("start_network", "new", "country_iso3 · as_of"),
+    ("cirv", "new", "country_iso3 · year"),
+    ("cerf_cva_history", "new", "country · agency · type · year"),
+]
+
+# crow's-foot cardinalities: child end (tail) / parent end (head)
+TAIL = {"many": "crowtee", "many0": "crowodot", "one0": "teeodot"}
+HEAD = {"one": "teetee", "one0": "teeodot"}
+
+# (child, parent, label, child_card, parent_card, declared_fk)
 ERD_EDGES = [
-    ("framework_version", "framework_registry", "country+hazard", True),
-    ("framework_status", "framework_version", "+ version", True),
-    ("framework_focal_point", "framework_registry", "", True),
-    ("framework_calendar", "framework_version", "+ version", True),
-    ("prearranged_funding", "framework_version", "+ version", True),
-    ("prearranged_sector_budget", "framework_version", "+ version", True),
-    ("people_covered", "framework_version", "+ version", True),
-    ("report_channel_inclusion", "framework_registry", "", True),
-    ("activation_event", "framework_version", "+ version", True),
-    ("plan_inclusion", "framework_registry", "country_iso3", True),
-    ("start_network", "framework_registry", "country_iso3", True),
-    ("cirv", "framework_registry", "country_iso3", True),
-    ("framework_version", "framework_version_map", "kb_framework · kb_version", True),
-    ("window", "framework_version_map", "", True),
-    ("simulated_activation", "window", "", True),
-    ("funding_breakdown", "framework_version_map", "", True),
-    ("actual_activation", "framework_version_map", "kb_framework", True),
-    ("activation_event", "actual_activation", "kb_framework+event_date", True),
-    ("activation_event", "cerf_allocation", "application_code", True),
-    ("activation_allocation", "actual_activation", "FK", False),
-    ("activation_allocation", "cerf_allocation", "FK", False),
-    ("cerf_project", "cerf_allocation", "application_code", True),
-    ("cerf_project_sector", "cerf_project", "project_code", True),
-    ("cerf_project_country", "cerf_project", "project_code", True),
-    ("cerf_allocation_storm", "cerf_allocation", "", True),
-    ("cerf_supplement", "cerf_allocation", "", True),
-    ("cerf_allocation_extra", "cerf_allocation", "application_code", True),
-    ("cerf_application_people", "cerf_allocation", "application_code", True),
-    ("cerf_application_report", "cerf_allocation", "application_code", True),
-    ("emergency_type_override", "cerf_allocation", "application_code", True),
-    ("cerf_project_supplement", "cerf_project", "project_code", True),
-    ("cerf_subgrant", "cerf_project", "project_code", True),
-    ("cerf_cva_history", "framework_registry", "country_iso3", True),
+    ("framework_version", "framework_registry", "country+hazard", "many", "one", False),
+    ("framework_status", "framework_version", "", "many0", "one0", False),
+    ("framework_focal_point", "framework_version", "", "many0", "one0", False),
+    ("framework_calendar", "framework_version", "", "many0", "one0", False),
+    ("prearranged_funding", "framework_version", "", "many0", "one0", False),
+    ("prearranged_sector_budget", "framework_version", "", "many0", "one0", False),
+    ("people_covered", "framework_version", "", "many0", "one0", False),
+    ("activation_event", "framework_version", "version (null for adhoc/EA)", "many0", "one0", False),
+    ("report_channel_inclusion", "framework_version", "", "many0", "one0", False),
+    ("framework_version", "framework_version_map", "kb_framework · kb_version", "one0", "one0", False),
+    ("window", "framework_version_map", "", "many", "one", False),
+    ("simulated_activation", "window", "", "many", "one", False),
+    ("funding_breakdown", "framework_version_map", "", "many", "one", False),
+    ("actual_activation", "framework_version_map", "kb_framework", "many0", "one0", False),
+    ("activation_event", "actual_activation", "kb_framework+event_date", "many0", "one0", False),
+    ("activation_event", "cerf_allocation", "application_code", "many0", "one0", False),
+    ("activation_allocation", "actual_activation", "FK", "many0", "one0", True),
+    ("activation_allocation", "cerf_allocation", "FK", "many0", "one0", True),
+    ("cerf_project", "cerf_allocation", "application_code", "many0", "one0", False),
+    ("cerf_project_sector", "cerf_project", "", "many", "one", False),
+    ("cerf_project_country", "cerf_project", "", "many", "one", False),
+    ("cerf_project_supplement", "cerf_project", "", "one0", "one", False),
+    ("cerf_subgrant", "cerf_project", "project_code", "many0", "one0", False),
+    ("cerf_allocation_storm", "cerf_allocation", "", "many", "one", False),
+    ("cerf_supplement", "cerf_allocation", "", "one0", "one", False),
+    ("cerf_allocation_extra", "cerf_allocation", "", "one0", "one0", False),
+    ("cerf_application_people", "cerf_allocation", "", "many", "one0", False),
+    ("cerf_application_report", "cerf_allocation", "", "one0", "one0", False),
+    ("emergency_type_override", "cerf_allocation", "", "one0", "one0", False),
 ]
 
 
+def _erd_node(name, owner, keys):
+    bg, fg = ERD_STYLE[owner]
+    return (
+        f'  {name} [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">'
+        f'<tr><td bgcolor="{bg}"><font color="{fg}"><b>{name}</b></font></td></tr>'
+        f'<tr><td bgcolor="white"><font point-size="9" color="#444">{keys}</font></td></tr>'
+        f"</table>>];"
+    )
+
+
 def build_erd():
-    """Render the ERD to SVG with graphviz (brew install graphviz)."""
+    """Crow's-foot ERD rendered to SVG with graphviz (brew install graphviz).
+
+    Cardinality glyphs: crow = many, double bar = exactly one, bar+circle =
+    zero-or-one; crow+circle = zero-or-many. Solid green = declared FK; dashed =
+    join by convention (checked at load time)."""
     import shutil
     import subprocess
 
     dot_bin = shutil.which("dot") or "/opt/homebrew/bin/dot"
     lines = [
         "digraph aa {",
-        '  rankdir=RL; splines=true; concentrate=true;',
-        '  graph [fontname="Helvetica", pad="0.3", nodesep=0.25, ranksep=1.1];',
+        '  rankdir=RL; splines=true;',
+        '  graph [fontname="Helvetica", pad="0.3", nodesep=0.3, ranksep=1.2];',
         '  node [shape=none, fontname="Helvetica", fontsize=11];',
         '  edge [fontname="Helvetica", fontsize=8.5, color="#8a97a8",'
-        ' fontcolor="#5a6675", arrowsize=0.6];',
+        ' fontcolor="#5a6675", dir=both, arrowsize=0.7];',
     ]
     for name, owner, keys in ERD_NODES:
-        bg, fg = ERD_STYLE[owner]
-        lines.append(
-            f'  {name} [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">'
-            f'<tr><td bgcolor="{bg}"><font color="{fg}"><b>{name}</b></font></td></tr>'
-            f'<tr><td bgcolor="white"><font point-size="9" color="#444">{keys}</font></td></tr>'
-            f"</table>>];"
-        )
-    for src, dst, label, dashed in ERD_EDGES:
-        attrs = [f'label="{label}"'] if label else []
-        if dashed:
-            attrs.append('style=dashed')
-        else:
+        lines.append(_erd_node(name, owner, keys))
+    lines.append('  subgraph cluster_country {')
+    lines.append('    label="country-level context (join on country_iso3 only)";')
+    lines.append('    fontname="Helvetica"; fontsize=10; color="#c8d2dc"; style=dashed;')
+    for name, owner, keys in ERD_COUNTRY_NODES:
+        lines.append("  " + _erd_node(name, owner, keys))
+    lines.append("  }")
+    for child, parent, label, ccard, pcard, fk in ERD_EDGES:
+        attrs = [
+            f'arrowtail="{TAIL[ccard]}"',
+            f'arrowhead="{HEAD[pcard]}"',
+        ]
+        if label:
+            attrs.append(f'label="{label}"')
+        if fk:
             attrs.append('style=solid color="#1c6b31" penwidth=1.6')
-        lines.append(f"  {src} -> {dst} [{' '.join(attrs)}];")
+        else:
+            attrs.append("style=dashed")
+        lines.append(f"  {child} -> {parent} [{' '.join(attrs)}];")
     lines.append("}")
     svg = subprocess.run(
         [dot_bin, "-Tsvg"], input="\n".join(lines).encode(),
         capture_output=True, check=True,
     ).stdout.decode()
-    # strip XML prolog/doctype, make responsive
     svg = svg[svg.index("<svg"):]
     svg = svg.replace("<svg ", "<svg style='max-width:100%;height:auto' ", 1)
     return svg
@@ -778,9 +800,21 @@ def build_schema_page(e):
         "<span class='badge b-new'>ds-aa-tracking</span>"
         "<span class='badge b-kb'>ds-knowledge-base</span>"
         "<span class='badge b-mirror'>ds-cerf-supplement</span> · "
-        "solid green edges = declared foreign keys (the schema's only two, on "
-        "<code>activation_allocation</code>); dashed = joins by convention, checked at "
-        "load time. Key columns shown; full column lists below.</p>"
+        "Crow's-foot notation: crow = many, double bar = exactly one, bar+circle = "
+        "zero-or-one, crow+circle = zero-or-many. Solid green edges = declared "
+        "foreign keys (the schema's only two, on <code>activation_allocation</code>); "
+        "dashed = joins by convention, checked at load time. "
+        "<b>Version-first:</b> every framework-level fact attaches to "
+        "<code>framework_version</code> (the approved unit) — the registry holds only "
+        "identity and descriptive attributes; country-level context tables (boxed) "
+        "join on country alone. "
+        "<b>framework_version vs framework_version_map:</b> conceptually the same "
+        "thing at different maturity — <code>framework_version</code> (this repo) is "
+        "the full historical version registry; <code>framework_version_map</code> "
+        "(KB-owned) covers only versions with trigger-performance data and exists to "
+        "crosswalk them to gsheet/Excel source codes. Long-term the map should "
+        "shrink to a pure source-code crosswalk referencing this registry — that "
+        "needs a coordinated change in ds-knowledge-base.</p>"
         f"<div class='scroll' style='max-height:none'>{build_erd()}</div></div>"
     )
     tables = sorted(cols["table_name"].unique(), key=lambda t: (owner_of(t) != "ds-aa-tracking", t))

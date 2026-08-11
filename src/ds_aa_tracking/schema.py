@@ -74,6 +74,8 @@ TABLES = {
             person text NOT NULL,
             as_of date NOT NULL,
             source text NOT NULL,
+            version text,                  -- attributed framework version (see framework_version)
+            version_match text,
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard, role, person, as_of)
         )""",
@@ -150,6 +152,8 @@ TABLES = {
             fund_source text NOT NULL,     -- cerf | country_fund | regional_fund
             mechanism text NOT NULL,       -- framework | adhoc
             aa_or_ea text NOT NULL,        -- AA | EA
+            event_type text NOT NULL DEFAULT 'framework_aa',
+                -- framework_aa | adhoc_aa (allocation without a framework) | early_action
             amount_usd numeric,
             people_targeted bigint,
             reported_to_ahub text,         -- yes | no | not yet
@@ -177,6 +181,9 @@ TABLES = {
             counted boolean NOT NULL,
             note text,
             source text NOT NULL,
+            version text,                  -- attributed framework version (see framework_version)
+            version_match text,
+
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (report_year, channel, country_iso3, hazard, unit)
         )""",
@@ -400,6 +407,8 @@ VIEWS = {
             UNION ALL SELECT 'prearranged_sector_budget', version_match FROM aa.prearranged_sector_budget
             UNION ALL SELECT 'people_covered', version_match FROM aa.people_covered
             UNION ALL SELECT 'activation_event', version_match FROM aa.activation_event
+            UNION ALL SELECT 'framework_focal_point', version_match FROM aa.framework_focal_point
+            UNION ALL SELECT 'report_channel_inclusion', version_match FROM aa.report_channel_inclusion
         ) t
         GROUP BY t.table_name, t.version_match
         ORDER BY t.table_name, t.version_match
@@ -427,14 +436,17 @@ VIEWS = {
     "v_trk_activation_reconciliation": """
         CREATE OR REPLACE VIEW aa.v_trk_activation_reconciliation AS
         SELECT e.country_iso3, e.hazard, e.year, e.month, e.fund_source,
-               e.mechanism, e.aa_or_ea, e.amount_usd AS sheet_amount_usd,
+               e.mechanism, e.aa_or_ea, e.event_type,
+               e.amount_usd AS sheet_amount_usd,
                e.people_targeted, e.source, e.kb_framework, e.kb_event_date,
                e.match_method,
                a.released_usd AS kb_released_usd,
                a.full_activation, a.window_name,
                CASE
-                   WHEN e.kb_framework IS NULL AND e.mechanism = 'adhoc'
-                       THEN 'ADHOC_NO_FRAMEWORK'
+                   WHEN e.kb_framework IS NULL AND e.event_type = 'early_action'
+                       THEN 'EARLY_ACTION'
+                   WHEN e.kb_framework IS NULL AND e.event_type = 'adhoc_aa'
+                       THEN 'ADHOC_AA'
                    WHEN e.kb_framework IS NULL AND e.fund_source <> 'cerf'
                        THEN 'NON_CERF_FUND'
                    WHEN e.kb_framework IS NULL THEN 'MISSING_IN_KB'

@@ -262,8 +262,12 @@ def _attribute_date(spans, d):
 
 
 def _fact_date(row, table):
-    if table in ("framework_status", "framework_calendar", "people_covered"):
+    if table in ("framework_status", "framework_calendar", "people_covered",
+                 "framework_focal_point"):
         return pd.to_datetime(row["as_of"]).date()
+    if table == "report_channel_inclusion":
+        # a framework counted in year N's report = the version in force during N
+        return date(int(row["report_year"]), 12, 31)
     if table == "activation_event":
         m = int(row["month"]) if pd.notna(row.get("month")) else 6
         return date(int(row["year"]), m, 15)
@@ -280,6 +284,7 @@ def _fact_date(row, table):
 VERSIONED_TABLES = [
     "framework_status", "framework_calendar", "people_covered",
     "prearranged_funding", "prearranged_sector_budget", "activation_event",
+    "framework_focal_point", "report_channel_inclusion",
 ]
 
 

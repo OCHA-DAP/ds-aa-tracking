@@ -185,6 +185,12 @@ def main():
         tables["activation_event"] = pd.concat(
             [tables["activation_event"], hist_ev], ignore_index=True
         )
+    ev = tables["activation_event"]
+    ev["event_type"] = [
+        "early_action" if str(r["aa_or_ea"]).upper() == "EA"
+        else ("adhoc_aa" if r["mechanism"] == "adhoc" else "framework_aa")
+        for _, r in ev.iterrows()
+    ]
     tables["framework_registry"] = complete_registry(tables)
     engine = stratus.get_engine(stage="dev", write=True)
     print("Crosswalking to KB…")
