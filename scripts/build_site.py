@@ -109,7 +109,7 @@ def tbl(df, max_rows=8000):
 # per-table reviewer notes
 NOTES = {
     "framework_registry": "One row per (country, hazard) — the framework identity used everywhere, incl. pipeline entries with no KB page yet. <code>kb_framework</code>/<code>in_kb</code> crosswalk to the KB. Attributes (region, language, focal-point context) come from Julia's 2026 planning sheet.",
-    "framework_version": "The unit that actually gets approved: one row per framework version, seeded from KB page frontmatter (incl. superseded/retired versions) plus sheet-reported revision dates with no KB page (<code>source='sheet-revision'</code> — a KB completeness gap). Version-specific facts (budgets, sector budgets, coverage, calendar, activations, status) carry a <code>version</code> attribution: direct from the KB for matched activations, otherwise inferred from the version in force at the fact's date (<code>version_match</code>; NULL = no version exists to attribute to). Caveat: figures reported mid-revision may belong to the upcoming version — interval inference can't see that; overrides are a curation pass.",
+    "framework_version": "The unit that actually gets approved: one row per framework version, seeded from KB page frontmatter (incl. superseded/retired versions), the historical sweep of the OCHA AA web page and the pa-anticipatory-action monorepo (<code>source='ocha-web'/'pa-monorepo'</code>, with <code>doc_url</code>/<code>analysis_ref</code>), plus sheet-reported revision dates with no KB page (<code>source='sheet-revision'</code> — a KB completeness gap). Version-specific facts (budgets, sector budgets, coverage, calendar, activations, status) carry a <code>version</code> attribution: direct from the KB for matched activations, otherwise inferred from the version in force at the fact's date (<code>version_match</code>; NULL = no version exists to attribute to). Caveat: figures reported mid-revision may belong to the upcoming version — interval inference can't see that; overrides are a curation pass.",
     "framework_status": "Operational lifecycle snapshots from every source sheet, kept side by side (PK includes <code>source</code>). Canonical <code>status</code> vocabulary; raw spelling preserved. This is deliberately distinct from the KB page-status vocabulary.",
     "framework_focal_point": "Focal points by role from the 2026 planning sheet.",
     "framework_calendar": "Monthly markers recovered from cell <em>colors</em> in the planning sheet: green = trigger window, orange = framework finalization, red = proposal development; 'F' = finalization deadline.",
@@ -175,8 +175,10 @@ def main():
         f"{counts.get('OK', 0)} matched · "
         f"<span class='badge b-warn'>{counts.get('AMOUNT_CONFLICT', 0)} amount conflicts</span>"
         f"<span class='badge b-warn'>{counts.get('MISSING_IN_KB', 0)} missing in KB</span>"
-        f"{counts.get('OUT_OF_KB_SCOPE', 0)} out of KB scope (ad-hoc / EA / non-CERF fund "
-        "— the KB structurally cannot hold these; the new table is their home). "
+        f"{counts.get('ADHOC_NO_FRAMEWORK', 0)} ad-hoc (allocation without a framework "
+        f"— an explicit category, never version-attributed) · "
+        f"{counts.get('NON_CERF_FUND', 0)} non-CERF fund (the KB structurally cannot "
+        "hold these; the new table is their home). "
         "Per your call, no KB pages have been edited — adjudicate here first.</div>"
     )
     sections.append("<h2>Sheet events vs KB</h2>" + tbl(rec))
@@ -502,9 +504,10 @@ def build_person_pages(e):
                 "needs an <code>activations:</code> entry (we'll batch these once "
                 "confirmed). <code>AMOUNT_CONFLICT</code> = both match but amounts "
                 "differ (Nigeria 2025: your CERF/Country-Fund split vs the KB's "
-                "single $7M). <code>OUT_OF_KB_SCOPE</code> = ad-hoc/EA/non-CERF — "
-                "fine, they live only in the new table; just confirm they're "
-                "correct.</p>" + tbl(rec)
+                "single $7M). <code>ADHOC_NO_FRAMEWORK</code> = allocation without a "
+                "framework (explicit category, lives only in the new table); "
+                "<code>NON_CERF_FUND</code> = CBPF/regional-fund events the KB can't "
+                "hold — just confirm they're correct.</p>" + tbl(rec)
             )
             kb_only = pd.read_sql("SELECT * FROM aa.v_trk_activation_kb_only", e)
             sections.append(

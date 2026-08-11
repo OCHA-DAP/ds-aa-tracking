@@ -21,7 +21,11 @@ import ocha_stratus as stratus  # noqa: E402
 
 from ds_aa_tracking import schema  # noqa: E402
 from ds_aa_tracking.parsers import parse_all  # noqa: E402
-from ds_aa_tracking.versions import attribute_versions, build_framework_version  # noqa: E402
+from ds_aa_tracking.versions import (  # noqa: E402
+    attribute_versions,
+    build_framework_version,
+    historical_activation_events,
+)
 
 SLUG_HAZARD = [
     ("dry-corridor", "drought"),
@@ -175,6 +179,12 @@ def _table_columns(conn, table):
 def main():
     print("Parsing workbooks…")
     tables = parse_all()
+    hist_ev = historical_activation_events(tables["activation_event"])
+    if not hist_ev.empty:
+        print(f"  + {len(hist_ev)} historical activation events (reference CSV)")
+        tables["activation_event"] = pd.concat(
+            [tables["activation_event"], hist_ev], ignore_index=True
+        )
     tables["framework_registry"] = complete_registry(tables)
     engine = stratus.get_engine(stage="dev", write=True)
     print("Crosswalking to KB…")

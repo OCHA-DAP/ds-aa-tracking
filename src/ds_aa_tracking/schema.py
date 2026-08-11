@@ -40,7 +40,10 @@ TABLES = {
             valid_until date,
             supersedes text,
             prearranged_usd_doc numeric,   -- from KB frontmatter (cross-check)
-            source text NOT NULL,          -- kb-frontmatter | sheet-revision
+            doc_title text,
+            doc_url text,                  -- endorsed framework document (PDF)
+            analysis_ref text,             -- trigger analysis, e.g. repo@branch:path
+            source text NOT NULL,          -- kb-frontmatter | sheet-revision | ocha-web | pa-monorepo
             note text,
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard, version)
@@ -429,10 +432,11 @@ VIEWS = {
                a.released_usd AS kb_released_usd,
                a.full_activation, a.window_name,
                CASE
-                   WHEN e.kb_framework IS NULL AND e.mechanism = 'framework'
-                        AND e.fund_source = 'cerf'
-                       THEN 'MISSING_IN_KB'
-                   WHEN e.kb_framework IS NULL THEN 'OUT_OF_KB_SCOPE'
+                   WHEN e.kb_framework IS NULL AND e.mechanism = 'adhoc'
+                       THEN 'ADHOC_NO_FRAMEWORK'
+                   WHEN e.kb_framework IS NULL AND e.fund_source <> 'cerf'
+                       THEN 'NON_CERF_FUND'
+                   WHEN e.kb_framework IS NULL THEN 'MISSING_IN_KB'
                    WHEN a.released_usd IS NOT NULL AND e.amount_usd IS NOT NULL
                         AND abs(a.released_usd - e.amount_usd) > 1000
                        THEN 'AMOUNT_CONFLICT'

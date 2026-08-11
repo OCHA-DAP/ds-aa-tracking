@@ -141,13 +141,88 @@ def sheet_revision_versions(status_df, kb_df):
     return pd.DataFrame(keep).reset_index(drop=True)
 
 
+REFERENCE_DIR = Path(__file__).parents[2] / "reference"
+
+
+def historical_versions(fv):
+    """Merge reference/historical_framework_versions.csv (curated from the OCHA AA
+    web-page sweep and the pa-anticipatory-action monorepo sweep) into the version set.
+
+    A historical row matching an existing version (same country+hazard, valid_from
+    within 60 days) ENRICHES it (doc_title/doc_url/analysis_ref, only where empty —
+    KB frontmatter stays authoritative); otherwise it's appended as a new version.
+    """
+    f = REFERENCE_DIR / "historical_framework_versions.csv"
+    if not f.exists():
+        return fv
+    hist = pd.read_csv(f, dtype=str)
+    hist["valid_from"] = hist["version"].map(_parse_version_date)
+    new_rows = []
+    for _, h in hist.iterrows():
+        mask = (
+            (fv["country_iso3"] == h["country_iso3"])
+            & (fv["hazard"] == h["hazard"])
+            & fv["valid_from"].notna()
+            & (h["valid_from"] is not None)
+        )
+        near = fv[mask]
+        if h["valid_from"] is not None and not near.empty:
+            deltas = near["valid_from"].map(lambda v: abs((v - h["valid_from"]).days))
+            if deltas.min() <= 60:
+                i = deltas.idxmin()
+                for col in ("doc_title", "doc_url", "analysis_ref"):
+                    if pd.notna(h.get(col)) and (
+                        col not in fv.columns or pd.isna(fv.at[i, col])
+                    ):
+                        fv.at[i, col] = h[col]
+                continue
+        new_rows.append({
+            "country_iso3": h["country_iso3"], "hazard": h["hazard"],
+            "version": h["version"], "valid_from": h["valid_from"],
+            "doc_title": h.get("doc_title"), "doc_url": h.get("doc_url"),
+            "analysis_ref": h.get("analysis_ref"),
+            "source": h.get("source", "historical"), "note": h.get("note"),
+        })
+    if new_rows:
+        fv = pd.concat([fv, pd.DataFrame(new_rows)], ignore_index=True)
+    return fv
+
+
 def build_framework_version(tables):
     kb = kb_versions()
-    sheet = sheet_revision_versions(tables.get("framework_status"), kb)
-    fv = pd.concat([kb, sheet], ignore_index=True)
-    # drop sheet rows that collide with a KB version label exactly
+    fv = historical_versions(kb)
+    sheet = sheet_revision_versions(tables.get("framework_status"), fv)
+    fv = pd.concat([fv, sheet], ignore_index=True)
+    # drop rows that collide with an earlier-priority version label exactly
     fv = fv.drop_duplicates(subset=["country_iso3", "hazard", "version"], keep="first")
     return fv.sort_values(["country_iso3", "hazard", "valid_from"]).reset_index(drop=True)
+
+
+def historical_activation_events(existing):
+    """reference/historical_activations.csv → extra activation_event rows.
+
+    Julia's and Yakubu's historical activation records are treated as correct: a
+    historical row matching an existing event (same country+hazard+year, and same
+    month when both known) is SKIPPED, never merged over.
+    """
+    f = REFERENCE_DIR / "historical_activations.csv"
+    if not f.exists():
+        return pd.DataFrame()
+    hist = pd.read_csv(f)
+    rows = []
+    for _, h in hist.iterrows():
+        m = existing[
+            (existing["country_iso3"] == h["country_iso3"])
+            & (existing["hazard"] == h["hazard"])
+            & (existing["year"] == h["year"])
+        ]
+        if not m.empty:
+            if pd.isna(h.get("month")) or m["month"].isna().any() or (
+                m["month"] == h["month"]
+            ).any():
+                continue
+        rows.append(h)
+    return pd.DataFrame(rows)
 
 
 def _intervals(fv):
@@ -209,6 +284,12 @@ def attribute_versions(tables, fv):
             continue
         versions, methods = [], []
         for _, row in df.iterrows():
+            # ad-hoc events are allocations WITHOUT a framework: an explicit
+            # category, never version-attributed
+            if t == "activation_event" and row.get("mechanism") == "adhoc":
+                versions.append(None)
+                methods.append("adhoc-no-framework")
+                continue
             # activation events matched to a KB activation inherit its version
             kb_v = row.get("kb_activation_version") if t == "activation_event" else None
             if kb_v is not None and pd.notna(kb_v) and str(kb_v).strip():
