@@ -75,6 +75,7 @@ NAV = """
   <a href="review-julia.html">Julia</a>
   <a href="review-yakubu.html">Yakubu</a>
   <a href="cerf-mirror.html">CERF mirror</a>
+  <a href="roadmap.html">Roadmap</a>
   <a href="decisions.html">Source decisions</a>
 </header>
 """
@@ -299,6 +300,9 @@ def main():
 
     # ---------- per-person review pages
     build_person_pages(e)
+
+    # ---------- roadmap
+    build_roadmap_page()
 
     # ---------- index
     reg = pd.read_sql("SELECT * FROM aa.v_trk_framework_current ORDER BY country_name", e)
@@ -587,6 +591,96 @@ def build_person_pages(e):
                         "unique ✓</p>")
             )
         page(f"review-{person}.html", title, "\n".join(sections))
+
+
+TARGET_STYLE = {
+    "new": ("#e3f1e6", "#1c6b31"),
+    "kb": ("#e8e8f8", "#3b3b8f"),
+    "mirror": ("#fdf1dc", "#8a5c0a"),
+    "future": ("#eeeeee", "#555555"),
+}
+
+TARGET_NODES = [
+    ("fund", "future", "fund_code (cerf | cbpf-* | rhpf-* | agency-*)"),
+    ("framework_registry", "new", "country_iso3 · hazard (identity only)"),
+    ("framework_version", "new", "+ version — THE unified registry"),
+    ("trigger_source_crosswalk", "future", "gsheet_tab · excel_fv · *_reported (KB)"),
+    ("window", "kb", "+ window_name"),
+    ("v_version_funding", "future", "window × fund_code × agency × sector"),
+    ("activation", "future", "+ year · month · event_label · event_type"),
+    ("activation_funding", "future", "+ fund_code · allocation_code · amount"),
+    ("cerf_allocation", "mirror", "application_code"),
+    ("cbpf_allocation", "future", "allocation_code (OneGMS CBPF mirror)"),
+    ("v_allocation", "future", "fund_code · allocation_code (union view)"),
+]
+
+TARGET_EDGES = [
+    ("framework_version", "framework_registry", "", "many", "one", False),
+    ("trigger_source_crosswalk", "framework_version", "", "one0", "one", False),
+    ("window", "framework_version", "", "many", "one", False),
+    ("v_version_funding", "framework_version", "", "many", "one", False),
+    ("v_version_funding", "fund", "fund_code", "many", "one", False),
+    ("activation", "framework_version", "version (null for adhoc/EA)", "many0", "one0", False),
+    ("activation_funding", "activation", "", "many", "one", False),
+    ("activation_funding", "fund", "fund_code", "many", "one", False),
+    ("activation_funding", "v_allocation", "allocation_code", "many0", "one0", False),
+    ("cerf_allocation", "v_allocation", "", "one0", "one", False),
+    ("cbpf_allocation", "v_allocation", "", "one0", "one", False),
+]
+
+
+def build_target_erd():
+    import shutil
+    import subprocess
+
+    dot_bin = shutil.which("dot") or "/opt/homebrew/bin/dot"
+    lines = [
+        "digraph target {",
+        '  rankdir=RL; splines=true;',
+        '  graph [fontname="Helvetica", pad="0.3", nodesep=0.35, ranksep=1.1];',
+        '  node [shape=none, fontname="Helvetica", fontsize=11];',
+        '  edge [fontname="Helvetica", fontsize=8.5, color="#8a97a8",'
+        ' fontcolor="#5a6675", dir=both, arrowsize=0.7];',
+    ]
+    for name, owner, keys in TARGET_NODES:
+        bg, fg = TARGET_STYLE[owner]
+        lines.append(
+            f'  {name} [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">'
+            f'<tr><td bgcolor="{bg}"><font color="{fg}"><b>{name}</b></font></td></tr>'
+            f'<tr><td bgcolor="white"><font point-size="9" color="#444">{keys}</font></td></tr>'
+            f"</table>>];"
+        )
+    for child, parent, label, ccard, pcard, fk in TARGET_EDGES:
+        tail = {"many": "crowtee", "many0": "crowodot", "one0": "teeodot"}
+        head = {"one": "teetee", "one0": "teeodot"}
+        attrs = [f'arrowtail="{tail[ccard]}"', f'arrowhead="{head[pcard]}"',
+                 "style=dashed"]
+        if label:
+            attrs.append(f'label="{label}"')
+        lines.append(f"  {child} -> {parent} [{' '.join(attrs)}];")
+    lines.append("}")
+    svg = subprocess.run([dot_bin, "-Tsvg"], input="\n".join(lines).encode(),
+                         capture_output=True, check=True).stdout.decode()
+    svg = svg[svg.index("<svg"):]
+    return svg.replace("<svg ", "<svg style='max-width:100%;height:auto' ", 1)
+
+
+def build_roadmap_page():
+    import markdown as md
+
+    design = (Path(__file__).parents[1] / "DESIGN.md").read_text()
+    body_html = md.markdown(design, extensions=["tables", "fenced_code"])
+    erd = build_target_erd()
+    body = (
+        "<div class='card'><b>Target state</b> — gray boxes are future objects; "
+        "<span class='badge b-new'>ds-aa-tracking</span>"
+        "<span class='badge b-kb'>ds-knowledge-base</span>"
+        "<span class='badge b-mirror'>mirror repo</span> as elsewhere. Full plan below "
+        "(also in the repo as <code>DESIGN.md</code>)."
+        f"<div class='scroll' style='max-height:none'>{erd}</div></div>"
+        f"<div class='card'>{body_html}</div>"
+    )
+    page("roadmap.html", "Roadmap — unified versions & multi-fund model", body)
 
 
 KB_TABLES = [
