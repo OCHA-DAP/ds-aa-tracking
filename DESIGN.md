@@ -135,7 +135,13 @@ names it) instead of funding hanging loosely off the version. `n_windows` and
 -- unified window registry (extends KB aa.window beyond performance-analyzed versions)
 aa.window(country_iso3, hazard, version, window_name,
           all_in boolean, basis text, synthetic boolean,  -- synthetic = created to
-          …)                                              -- make a single window explicit
+                                                          -- make a single window explicit
+          trigger_statement text,   -- the trigger condition in plain text, as stated
+                                    -- in the endorsed framework doc for this window
+                                    -- (e.g. "7-day GloFAS forecast ≥70% probability of
+                                    -- exceeding the 1-in-2-year level at Chatara");
+                                    -- sourced from the doc / KB page at ingestion
+          …)
 
 -- the consolidated funding surface attaches to the WINDOW, not the version:
 aa.v_version_funding(country_iso3, hazard, version, window_name NOT NULL, fund_code,
