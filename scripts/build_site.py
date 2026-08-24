@@ -672,7 +672,8 @@ def build_roadmap_page():
     body_html = md.markdown(design, extensions=["tables", "fenced_code"])
     erd = build_target_erd()
     body = (
-        "<div class='card'><b>Target state</b> — gray boxes are future objects; "
+        LEGEND_CARD.format(svg=build_erd_legend())
+        + "<div class='card'><b>Target state</b> — gray boxes are future objects; "
         "<span class='badge b-new'>ds-aa-tracking</span>"
         "<span class='badge b-kb'>ds-knowledge-base</span>"
         "<span class='badge b-mirror'>mirror repo</span> as elsewhere. Full plan below "
@@ -793,6 +794,56 @@ def _erd_node(name, owner, keys):
     )
 
 
+def build_erd_legend():
+    """Cheat-sheet SVG for the crow's-foot glyphs, rendered with the same graphviz
+    arrowheads the ERDs use so the symbols match exactly."""
+    import shutil
+    import subprocess
+
+    dot_bin = shutil.which("dot") or "/opt/homebrew/bin/dot"
+    rows = [
+        ("teetee", "exactly one", "solid", "#8a97a8"),
+        ("teeodot", "zero or one", "solid", "#8a97a8"),
+        ("crowtee", "one or many", "solid", "#8a97a8"),
+        ("crowodot", "zero or many", "solid", "#8a97a8"),
+        ("none", "join by convention (checked at load time)", "dashed", "#8a97a8"),
+        ("none", "declared foreign key", "solid", "#1c6b31"),
+    ]
+    lines = [
+        "digraph legend {",
+        '  rankdir=LR; ranksep=0.25; nodesep=0.12;',
+        '  graph [fontname="Helvetica", pad="0.15"];',
+        '  node [fontname="Helvetica", fontsize=10];',
+        '  edge [arrowsize=0.9];',
+    ]
+    for i, (glyph, label, style, color) in enumerate(rows):
+        lines.append(
+            f'  l{i} [shape=plaintext label="{label}"];'
+        )
+        lines.append(
+            f'  t{i} [shape=box label="" width=0.22 height=0.16 color="#9aa7b5"];'
+        )
+        pw = "1.6" if color != "#8a97a8" else "1.0"
+        lines.append(
+            f'  l{i} -> t{i} [arrowhead="{glyph}", style={style}, color="{color}",'
+            f' penwidth={pw}, minlen=2];'
+        )
+    lines.append("}")
+    svg = subprocess.run([dot_bin, "-Tsvg"], input="\n".join(lines).encode(),
+                         capture_output=True, check=True).stdout.decode()
+    svg = svg[svg.index("<svg"):]
+    return svg.replace("<svg ", "<svg style='max-width:100%;height:auto' ", 1)
+
+
+LEGEND_CARD = (
+    "<div class='card'><b>How to read the diagram</b> — edges point child → parent "
+    "(fact → the thing it belongs to). The symbol touching each box states the "
+    "cardinality at that end: the glyph at the <em>parent</em> end reads “each child "
+    "row relates to … parent row(s)”, the glyph at the <em>child</em> end reads "
+    "“each parent row has … child row(s)”.<br>{svg}</div>"
+)
+
+
 def build_erd():
     """Crow's-foot ERD rendered to SVG with graphviz (brew install graphviz).
 
@@ -888,8 +939,8 @@ def build_schema_page(e):
         "other repos' view definitions aren't readable by the reader role but are "
         "documented in the KB ERD.</div>"
     ]
+    sections.append("<h2>ERD</h2>" + LEGEND_CARD.format(svg=build_erd_legend()))
     sections.append(
-        "<h2>ERD</h2>"
         "<div class='card'><p class='meta'>"
         "<span class='badge b-new'>ds-aa-tracking</span>"
         "<span class='badge b-kb'>ds-knowledge-base</span>"
