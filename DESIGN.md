@@ -69,6 +69,9 @@ CREATE TABLE aa.activation (               -- one row per real-world activation 
     event_label text,                      -- disambiguates same-month events
     event_type text NOT NULL,              -- framework_aa | adhoc_aa | early_action
     version text,                          -- null for adhoc/EA
+    window_name text,                      -- the window that triggered (null for
+                                           -- adhoc/EA; inherited from KB
+                                           -- actual_activation.window_name)
     version_match text,
     kb_framework text, kb_event_date text, -- KB crosswalk (until unified)
     people_targeted bigint,
@@ -103,9 +106,11 @@ activation, two funding rows summing to the KB's $7M.
 - `aa.cerf_allocation` (exists, ds-cerf-supplement) — unchanged.
 - `aa.cbpf_allocation` (future, same OneGMS feed family) — same shape where possible:
   allocation_code PK, country, dates, amounts, type/status, AA flag.
-- `aa.v_allocation` — union view normalizing both to
-  `(fund_code, allocation_code, country_iso3, year, amount_usd, is_aa, dates…)` so
-  links and reconciliation never care which fund a code belongs to.
+- `aa.v_allocation` — a UNION view (nothing stored) stacking the per-fund mirrors
+  and normalizing them to `(fund_code, allocation_code, country_iso3, year,
+  amount_usd, is_aa, dates…)`, so links and reconciliation never care which fund a
+  code belongs to. Mirrors stay separate tables because they have separate feeds and
+  writers.
 
 ### Pre-arranged funding, multi-source per version
 
@@ -119,23 +124,35 @@ fund_source, source)`; changes:
 - fund-source *totals* ('all') remain flagged as totals and are never summed with
   component rows (already the case).
 
-### Per-window, per-fund breakdowns
+### Windows are universal; funding and activations attach to windows
 
-KB's `funding_breakdown` already has the right axes `(window_name, fund_source,
-agency, sector)` per version — the plan standardizes its `fund_source` values onto
-`fund_code` and folds our sheet-sourced `prearranged_sector_budget` into a single
-consolidated fact surface:
+Every framework version materializes **at least one explicit window row** — a
+single-window framework gets one real window (`window_name = 'single'` unless the doc
+names it) instead of funding hanging loosely off the version. `n_windows` and
+`all_in` become properties you can read off the window set rather than metadata.
 
 ```sql
--- long-term single surface (view first, table later if KB loader migrates):
-aa.v_version_funding(country_iso3, hazard, version, window_name, fund_code,
+-- unified window registry (extends KB aa.window beyond performance-analyzed versions)
+aa.window(country_iso3, hazard, version, window_name,
+          all_in boolean, basis text, synthetic boolean,  -- synthetic = created to
+          …)                                              -- make a single window explicit
+
+-- the consolidated funding surface attaches to the WINDOW, not the version:
+aa.v_version_funding(country_iso3, hazard, version, window_name NOT NULL, fund_code,
                      agency, sector, amount_usd, provenance, source)
--- provenance: doc-stated | imputed-5-95 | sheet
+-- provenance: doc-stated | imputed-5-95 | sheet | window-unattributed
 ```
 
-Windows whose budget differs by fund are naturally represented: one row per
-(window × fund). `window.allocation_usd` (single total) eventually derives from this
-instead of being stored.
+- Single-window versions: all funding lands on the one explicit window — exact, no
+  information loss.
+- Multi-window versions where a source states only version-level totals: rows carry
+  `provenance = 'window-unattributed'` (a review queue) rather than silently
+  attaching to the version.
+- Budgets that differ per fund per window are one row per (window × fund).
+- `aa.activation.window_name` references the same window registry — which window
+  actually triggered (the KB's `actual_activation.window_name` seeds this).
+- `window.allocation_usd` (single stored total) eventually derives from
+  `v_version_funding` instead of being stored.
 
 ## Migration phases
 
