@@ -629,6 +629,128 @@ TARGET_EDGES = [
 ]
 
 
+TARGET_FULL_NODES = [
+    ("fund", "future", "fund_code (cerf | cbpf-* | rhpf-* | agency-*)"),
+    ("framework_registry", "new", "country_iso3 · hazard (identity only)"),
+    ("framework_version", "new", "+ version — unified registry"),
+    ("trigger_source_crosswalk", "future", "gsheet_tab · excel_fv · *_reported (KB)"),
+    ("window", "kb", "+ window_name · min 1 per version"),
+    ("window_month", "future", "+ month (monitoring period)"),
+    ("version_milestone", "future", "+ milestone · month (process)"),
+    ("version_funding", "future", "window × fund × agency × sector · provenance"),
+    ("prearranged_commitment", "future", "version × fund × year × kind"),
+    ("people_covered", "new", "window-attached · as_of · source"),
+    ("simulated_activation", "kb", "+ window_name · event_year"),
+    ("framework_status", "new", "observed snapshots (vs v_expected_status)"),
+    ("framework_focal_point", "new", "+ role · person · as_of"),
+    ("report_channel_inclusion", "new", "report_year · channel"),
+    ("activation", "future", "ONE table (KB sync + sheets) · event_label"),
+    ("activation_funding", "future", "+ fund_code · allocation_code · amount"),
+    ("cerf_allocation", "mirror", "application_code"),
+    ("cbpf_allocation", "future", "allocation_code (OneGMS CBPF)"),
+    ("v_allocation", "future", "union view: fund_code · allocation_code"),
+    ("cerf_supplement", "mirror", "corrections incl. absorbed retags"),
+    ("cerf_allocation_extra", "new", "application_code"),
+    ("cerf_application_people", "new", "application_code · phase · grp"),
+    ("cerf_application_report", "new", "application_code"),
+    ("cerf_project", "mirror", "project_code"),
+    ("cerf_project_sector", "mirror", "project_code + sector"),
+    ("cerf_project_country", "mirror", "project_code · country_iso3"),
+    ("cerf_project_supplement", "new", "project_code"),
+    ("cerf_subgrant", "new", "project_code · partner_name"),
+    ("cerf_allocation_storm", "mirror", "application_code · sid"),
+]
+
+TARGET_FULL_EDGES = [
+    ("framework_version", "framework_registry", "", "many", "one", False),
+    ("trigger_source_crosswalk", "framework_version", "", "one0", "one", False),
+    ("window", "framework_version", "", "many", "one", False),
+    ("window_month", "window", "", "many", "one", False),
+    ("version_milestone", "framework_version", "", "many", "one", False),
+    ("version_funding", "window", "", "many", "one", False),
+    ("version_funding", "fund", "", "many", "one", False),
+    ("prearranged_commitment", "framework_version", "", "many", "one", False),
+    ("prearranged_commitment", "fund", "", "many", "one", False),
+    ("people_covered", "window", "", "many0", "one0", False),
+    ("simulated_activation", "window", "", "many", "one", False),
+    ("framework_status", "framework_version", "", "many0", "one0", False),
+    ("framework_focal_point", "framework_version", "", "many0", "one0", False),
+    ("report_channel_inclusion", "framework_version", "", "many0", "one0", False),
+    ("activation", "window", "null for adhoc/EA", "many0", "one0", False),
+    ("activation_funding", "activation", "", "many", "one", False),
+    ("activation_funding", "fund", "", "many", "one", False),
+    ("activation_funding", "v_allocation", "", "many0", "one0", False),
+    ("cerf_allocation", "v_allocation", "", "one0", "one", False),
+    ("cbpf_allocation", "v_allocation", "", "one0", "one", False),
+    ("cerf_supplement", "cerf_allocation", "", "one0", "one", False),
+    ("cerf_allocation_extra", "cerf_allocation", "", "one0", "one0", False),
+    ("cerf_application_people", "cerf_allocation", "", "many", "one0", False),
+    ("cerf_application_report", "cerf_allocation", "", "one0", "one0", False),
+    ("cerf_allocation_storm", "cerf_allocation", "", "many", "one", False),
+    ("cerf_project", "cerf_allocation", "", "many0", "one0", False),
+    ("cerf_project_sector", "cerf_project", "", "many", "one", False),
+    ("cerf_project_country", "cerf_project", "", "many", "one", False),
+    ("cerf_project_supplement", "cerf_project", "", "one0", "one", False),
+    ("cerf_subgrant", "cerf_project", "", "many0", "one0", False),
+]
+
+TARGET_COUNTRY_NODES = [
+    ("plan_inclusion", "new", "country_iso3 · year · source"),
+    ("start_network", "new", "country_iso3 · as_of"),
+    ("cirv", "new", "country_iso3 · year"),
+    ("cerf_cva_history", "new", "country · agency · type · year"),
+]
+
+
+def _target_erd(nodes, edges, country_nodes=None, name="target"):
+    import shutil
+    import subprocess
+
+    dot_bin = shutil.which("dot") or "/opt/homebrew/bin/dot"
+    tail = {"many": "crowtee", "many0": "crowodot", "one0": "teeodot"}
+    head = {"one": "teetee", "one0": "teeodot"}
+    lines = [
+        f"digraph {name} {{",
+        '  rankdir=RL; splines=true;',
+        '  graph [fontname="Helvetica", pad="0.3", nodesep=0.3, ranksep=1.15];',
+        '  node [shape=none, fontname="Helvetica", fontsize=11];',
+        '  edge [fontname="Helvetica", fontsize=8.5, color="#8a97a8",'
+        ' fontcolor="#5a6675", dir=both, arrowsize=0.7];',
+    ]
+    for n, owner, keys in nodes:
+        bg, fg = TARGET_STYLE[owner]
+        lines.append(
+            f'  {n} [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">'
+            f'<tr><td bgcolor="{bg}"><font color="{fg}"><b>{n}</b></font></td></tr>'
+            f'<tr><td bgcolor="white"><font point-size="9" color="#444">{keys}</font></td></tr>'
+            f"</table>>];"
+        )
+    if country_nodes:
+        lines.append('  subgraph cluster_country {')
+        lines.append('    label="country-level context (join on country_iso3 only)";')
+        lines.append('    fontname="Helvetica"; fontsize=10; color="#c8d2dc"; style=dashed;')
+        for n, owner, keys in country_nodes:
+            bg, fg = TARGET_STYLE[owner]
+            lines.append(
+                f'    {n} [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">'
+                f'<tr><td bgcolor="{bg}"><font color="{fg}"><b>{n}</b></font></td></tr>'
+                f'<tr><td bgcolor="white"><font point-size="9" color="#444">{keys}</font></td></tr>'
+                f"</table>>];"
+            )
+        lines.append("  }")
+    for child, parent, label, ccard, pcard, fk in edges:
+        attrs = [f'arrowtail="{tail[ccard]}"', f'arrowhead="{head[pcard]}"',
+                 "style=dashed"]
+        if label:
+            attrs.append(f'label="{label}"')
+        lines.append(f"  {child} -> {parent} [{' '.join(attrs)}];")
+    lines.append("}")
+    svg = subprocess.run([dot_bin, "-Tsvg"], input="\n".join(lines).encode(),
+                         capture_output=True, check=True).stdout.decode()
+    svg = svg[svg.index("<svg"):]
+    return svg.replace("<svg ", "<svg style='max-width:100%;height:auto' ", 1)
+
+
 def build_target_erd():
     import shutil
     import subprocess
@@ -673,7 +795,13 @@ def build_roadmap_page():
     erd = build_target_erd()
     body = (
         LEGEND_CARD.format(svg=build_erd_legend())
-        + "<div class='card'><b>Target state</b> — gray boxes are future objects; "
+        + "<div class='card'><b>Complete target schema</b> — every table in the "
+          "end state with all simplifications applied (one activation table, calendar "
+          "split into window months + version milestones, window-attached coverage, "
+          "retags absorbed into cerf_supplement). Gray = future objects."
+        + f"<div class='scroll' style='max-height:none'>"
+          f"{_target_erd(TARGET_FULL_NODES, TARGET_FULL_EDGES, TARGET_COUNTRY_NODES, 'full')}</div></div>"
+        + "<div class='card'><b>What changes (focused view)</b> — gray boxes are future objects; "
         "<span class='badge b-new'>ds-aa-tracking</span>"
         "<span class='badge b-kb'>ds-knowledge-base</span>"
         "<span class='badge b-mirror'>mirror repo</span> as elsewhere. Full plan below "

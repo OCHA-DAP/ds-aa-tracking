@@ -154,6 +154,52 @@ aa.v_version_funding(country_iso3, hazard, version, window_name NOT NULL, fund_c
 - `window.allocation_usd` (single stored total) eventually derives from
   `v_version_funding` instead of being stored.
 
+## Further simplifications (same spirit as window-first)
+
+**One activation table, not two.** Today real activations live twice: KB
+`actual_activation` (synced from framework-page frontmatter) and our
+`activation`(+`activation_funding`), crosswalked by matching. Target: a single
+`aa.activation` registry; the KB page sync writes into it (framework events), the
+sheets/history seed the rest, and `activation_allocation` dissolves into
+`activation_funding` (which already carries fund_code + allocation_code). One event,
+one row, N funding rows — no more match_method between two tables that mean the same
+thing.
+
+**Split the calendar by what it describes.** `framework_calendar` currently mixes two
+different things recovered from sheet colors: trigger-window months (a property of the
+*window* — green cells) and process milestones (proposal development, framework
+finalization deadline — properties of the *version*). Target: `aa.window_month`
+(window monitoring months, seeded from calendar greens + KB `monitoring_period`
+frontmatter) and `aa.version_milestone` (process dates). The calendar table retires.
+
+**`people_covered` attaches to the window** like funding does (partial activations
+cover a window's population, e.g. Chad's $4M partial covering 244k of 400k); rows a
+source states only at version level get `window-unattributed` provenance on
+multi-window frameworks — same rule as funding, one pattern everywhere.
+
+**Derive expected status; keep only observed status.** Much of `framework_status` is
+derivable from the version registry itself (endorsed version in validity = active;
+successor in development = under revision; `valid_until` passed with no successor =
+expired/dormant). Target: `v_expected_status` computed from `framework_version`, with
+`framework_status` retained strictly as *observed* snapshots (what colleagues
+reported) and a diff view — status conflicts become "reported vs derived" instead of
+"sheet vs sheet".
+
+**Names and regions live in exactly one place.** Fact tables drop denormalized
+`country_name`/`region` columns; the registry (and ISO3) is the single source —
+display names are a rendering concern.
+
+**One allocation-correction surface.** Our `emergency_type_override` (retags) and the
+mirror's `cerf_supplement` (not_tc / not_drought / valid periods) are the same kind of
+thing: human corrections to allocation metadata. Target: fold retags into the mirror's
+supplement via its existing issue-confirm flow, retiring our table.
+
+**Deliberately NOT merged:** `prearranged_funding` (a commitment per version × fund ×
+calendar year — the annual renewal/extension record) stays separate from
+`v_version_funding` (the structural split of a version's budget). They answer
+different questions; the invariant `sum(structural split per fund) = committed amount
+per fund` becomes a load-time check, not a merge.
+
 ## Migration phases
 
 | # | What | Where | Breaks anything? |
@@ -164,6 +210,7 @@ aa.v_version_funding(country_iso3, hazard, version, window_name NOT NULL, fund_c
 | 3 | Drop the compatibility view once `gen_trigger_performance.py`, ERD docs and the CERF exposure app stop referencing it | ds-knowledge-base | Coordinated |
 | 4 | `aa.cbpf_allocation` mirror + `v_allocation`; `activation_allocation.fund_code`; extend kb-aa-links confirm flow to CBPF codes | ds-cerf-supplement (or a new onegms mirror repo) + ds-knowledge-base | No |
 | 5 | `v_version_funding` consolidated view; optionally migrate KB `funding_breakdown` loader to write `fund_code`; optionally re-key KB fact tables to `(country_iso3, hazard, version)` | ds-knowledge-base | Optional cleanups |
+| 6 | Simplifications above: unify activation tables, calendar split (`window_month`/`version_milestone`), window-attached `people_covered`, `v_expected_status`, denormalized-column cleanup, retags into `cerf_supplement` | ds-aa-tracking + ds-knowledge-base + mirror repo | Coordinated, after 0–4 settle |
 
 Ordering notes: 0 and 1 are independent and immediate; 2–3 need a KB PR cycle;
 4 waits on the CBPF feed being available; 5 is opportunistic.
