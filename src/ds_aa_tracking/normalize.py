@@ -53,8 +53,6 @@ COUNTRY_TO_ISO3 = {
     "occupied palestinian territory": "PSE",
     "palestinian territory, occupied": "PSE",
     "opt": "PSE",
-    "lac dry corridor": "LAC-DC",
-    "dry corridor": "LAC-DC",
     "lebanon": "LBN",
     "libya": "LBY",
     "madagascar": "MDG",

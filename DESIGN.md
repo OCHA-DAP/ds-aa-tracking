@@ -20,17 +20,43 @@ Requirements this plan satisfies:
 ```sql
 CREATE TABLE aa.fund (
     fund_code text PRIMARY KEY,       -- 'cerf', 'cbpf-nga' (NHF), 'cbpf-ssd' (SSHF),
-                                      -- 'rhpf-wca', 'agency-wfp', 'agency-unicef', …
-    fund_type text NOT NULL,          -- cerf | cbpf | regional_fund | agency_cofinancing
+                                      -- 'rhpf-wca', …
+    fund_type text NOT NULL,          -- cerf | cbpf | regional_fund
     name text NOT NULL,
     country_iso3 text                  -- for country-based pooled funds
 );
 ```
 
-Every `fund_source` column in the schema becomes a `fund_code` reference. Sheets that
-only say "Country Fund" map to a placeholder (`cbpf-unspecified`) until curated.
+`aa.fund` holds **OCHA pooled funds only** (CERF, CBPFs, regional funds — things that
+can have allocation mirrors). **Agency co-financing is NOT a fund**: it is not OCHA
+money, amounts are soft, and no mirror will ever exist for it. Co-financing rows in
+`prearranged_commitment` carry a free-text `financier` instead of a `fund_code`
+(`CHECK ((fund_code IS NULL) = (kind = 'cofinancing'))`). Every other `fund_source`
+column becomes a `fund_code` reference; sheets that only say "Country Fund" map to a
+placeholder (`cbpf-unspecified`) until curated.
 
 ### Unified version registry
+
+**A version IS an endorsed document.** Analytical revalidations or draft reports
+without an endorsed doc are not versions (their analysis attaches to the nearest
+endorsed version's notes). Endorsement comes from one of two authorities, recorded in
+`endorsed_by`:
+
+- `erc` — major revisions: recommits funds, starts a new validity period;
+- `cerf_secretariat` — minor revisions: same validity period and budget as the
+  predecessor (so `valid_until`/budget are *inherited*, recorded as such).
+
+**Versions are ENTERED, never inferred**, once data entry happens in this system —
+the interval-inference used to backfill the sheets is a migration-era crutch and must
+not survive into the entry workflow. `valid_until_source` distinguishes `doc-stated`
+validity from `convention` (maintainer rules like "+2 years for pilots") and
+`inherited` (secretariat revisions) — post-validity review flags weigh doc-stated
+dates more heavily than convention ones.
+
+**Regional frameworks do not exist** — they are groupings of national frameworks that
+may happen to share a regional document. The Dry Corridor is three national framework
+rows (SLV/GTM/HND) whose versions share one `doc_url`; no framework-group entity, no
+regional pseudo-country codes.
 
 `aa.framework_version` (this repo) is THE registry — identity `(country_iso3, hazard,
 version)`, already carrying `kb_framework` for KB-page joins, `valid_from/valid_until`,
@@ -136,6 +162,7 @@ names it) instead of funding hanging loosely off the version. `n_windows` and
 aa.window(country_iso3, hazard, version, window_name,
           all_in boolean, basis text, synthetic boolean,  -- synthetic = created to
                                                           -- make a single window explicit
+          basis text NOT NULL,      -- observational | forecast | mixed
           trigger_statement text,   -- the trigger condition in plain text, as stated
                                     -- in the endorsed framework doc for this window
                                     -- (e.g. "7-day GloFAS forecast ≥70% probability of
@@ -157,6 +184,9 @@ aa.v_version_funding(country_iso3, hazard, version, window_name NOT NULL, fund_c
 - Budgets that differ per fund per window are one row per (window × fund).
 - `aa.activation.window_name` references the same window registry — which window
   actually triggered (the KB's `actual_activation.window_name` seeds this).
+- Window identity is **per version** — no continuity is enforced across versions
+  (windows often change meaningfully between revisions; cross-version comparisons are
+  an analysis concern, not a schema constraint).
 - `window.allocation_usd` (single stored total) eventually derives from
   `v_version_funding` instead of being stored.
 
@@ -200,6 +230,26 @@ display names are a rendering concern.
 mirror's `cerf_supplement` (not_tc / not_drought / valid periods) are the same kind of
 thing: human corrections to allocation metadata. Target: fold retags into the mirror's
 supplement via its existing issue-confirm flow, retiring our table.
+
+**Sheet 'subunits' are windows.** `prearranged_sector_budget.subunit`
+(Bangladesh Jamuna/Padma) is renamed `window_name` now and folds into
+`v_version_funding`'s window axis at consolidation — no separate concept.
+
+**Application-level sheet tables are transitional.** `cerf_application_people`,
+`cerf_application_report` and `cerf_allocation_extra` exist because the sheets carried
+them; as mirror feed coverage is verified (per-project demographics summing to
+application level, narratives, the structured AA flag) each retires into the mirror.
+
+**`cerf_cva_history` is parked, not designed-in.** Country×agency×year grain with no
+allocation codes can never link to anything; it stays as 2020-2023 context and may be
+revived if a CVA workstream needs it — target-state CVA is project-level.
+
+**Registry slims to identity + pipeline.** Its irreplaceable job is holding
+(country, hazard) identities — including pipeline frameworks with no version yet.
+`region`/`language` are derivable conveniences, nothing more.
+
+**EA tagging is CERF's.** Early-action rows are whatever CERF tags as EA; the
+EA/rapid-response boundary is not recomputed here.
 
 **Deliberately NOT merged:** `prearranged_funding` (a commitment per version × fund ×
 calendar year — the annual renewal/extension record) stays separate from

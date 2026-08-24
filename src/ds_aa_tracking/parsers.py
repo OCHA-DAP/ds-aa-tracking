@@ -911,7 +911,7 @@ def parse_jun2026():
         if c is None or h is None:
             continue
         rows.append({
-            "country_iso3": c, "hazard": h, "subunit": subunit_of(country),
+            "country_iso3": c, "hazard": h, "window_name": subunit_of(country),
             "agency": agency, "sector": sector,
             "amount_usd": _num(r.get("Amount")),
             "year_label": _s(r.get("Year")),
@@ -922,7 +922,7 @@ def parse_jun2026():
     if not sect.empty:
         sect = (
             sect.groupby(
-                ["country_iso3", "hazard", "subunit", "agency", "sector", "year_label"],
+                ["country_iso3", "hazard", "window_name", "agency", "sector", "year_label"],
                 dropna=False, as_index=False,
             )
             .agg(amount_usd=("amount_usd", "sum"), status=("status", "first"),

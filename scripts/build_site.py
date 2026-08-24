@@ -115,7 +115,7 @@ NOTES = {
     "framework_focal_point": "Focal points by role from the 2026 planning sheet, attributed to the version in force at the snapshot date.",
     "framework_calendar": "Monthly markers recovered from cell <em>colors</em> in the planning sheet: green = trigger window, orange = framework finalization, red = proposal development; 'F' = finalization deadline.",
     "prearranged_funding": "Pre-arranged/co-financing amounts per (framework, year, fund source), one row per source sheet — conflicts intentionally preserved (see Reconciliation).",
-    "prearranged_sector_budget": "Pre-arranged budgets per framework × agency × sector (Yakubu, Jun 2026). <code>subunit</code> captures sub-framework splits (Bangladesh Jamuna/Padma, DRC-1/2).",
+    "prearranged_sector_budget": "Pre-arranged budgets per framework × agency × sector (Yakubu, Jun 2026). <code>window_name</code> captures what the sheet calls sub-frameworks (Bangladesh Jamuna/Padma) — those are windows.",
     "people_covered": "People covered per framework, per source; includes double-activation assessment for cyclone frameworks.",
     "activation_event": "The superset activation record 2020–2026 (Julia + historical sweep): <code>event_type</code> distinguishes <code>framework_aa</code> / <code>adhoc_aa</code> (allocation without a framework) / <code>early_action</code>. Crosswalked to KB <code>actual_activation</code> where possible (<code>match_method</code>); only framework events get version attribution.",
     "report_channel_inclusion": "Which frameworks/countries count toward which external reports per year (A-Hub, UK BCs, SG, CERF/OCHA annual reports, SF KPI, CPC), attributed to the version in force during the report year.",
@@ -127,7 +127,7 @@ NOTES = {
     "cerf_application_report": "RC/HC report metadata + the seven narrative sections per application (GMS 2020–2024 export).",
     "cerf_allocation_extra": "OneGMS fields the mirror lacks: the structured <code>Is AA Allocation</code> flag, onset type, response funding requirements, people affected.",
     "cerf_project_supplement": "Project-level markers + CVA from the Agency HQ Report export: gender/GBV/disability/cash markers, people receiving cash, CVA amount, displacement-category targeting.",
-    "cerf_cva_history": "CVA by country × agency × emergency × year, 2020–2026 (aggregated to the sheet's grain).",
+    "cerf_cva_history": "CVA by country × agency × emergency × year, 2020–2026 (aggregated to the sheet's grain). Parked: no allocation codes, so it can never link to anything — kept as context, may be revived for a CVA workstream; target-state CVA is project-level.",
     "emergency_type_override": "Yakubu's re-tagged allocations: GMS emergency type vs actual shock (mostly Flood→Storm, with storm name).",
 }
 
@@ -602,11 +602,11 @@ TARGET_STYLE = {
 }
 
 TARGET_NODES = [
-    ("fund", "future", "fund_code (cerf | cbpf-* | rhpf-* | agency-*)"),
+    ("fund", "future", "fund_code — OCHA pooled funds only"),
     ("framework_registry", "new", "country_iso3 · hazard (identity only)"),
     ("framework_version", "new", "+ version — THE unified registry"),
     ("trigger_source_crosswalk", "future", "gsheet_tab · excel_fv · *_reported (KB)"),
-    ("window", "kb", "+ window_name · min 1 per version · trigger_statement"),
+    ("window", "kb", "+ window_name · basis · trigger_statement"),
     ("v_version_funding", "future", "window × fund_code × agency × sector"),
     ("activation", "future", "+ year · month · event_label · event_type"),
     ("activation_funding", "future", "+ fund_code · allocation_code · amount"),
@@ -631,14 +631,14 @@ TARGET_EDGES = [
 
 
 TARGET_FULL_NODES = [
-    ("fund", "future", "fund_code (cerf | cbpf-* | rhpf-* | agency-*)"),
+    ("fund", "future", "fund_code — OCHA pooled funds only"),
     ("framework_registry", "new", "country_iso3 · hazard (identity only)"),
-    ("framework_version", "new", "+ version — unified registry"),
+    ("framework_version", "new", "+ version = an ENDORSED doc · endorsed_by"),
     ("trigger_source_crosswalk", "future", "gsheet_tab · excel_fv · *_reported (KB)"),
-    ("window", "kb", "+ window_name · min 1 per version · trigger_statement"),
+    ("window", "kb", "+ window_name · basis · trigger_statement"),
     ("window_month", "future", "+ month (monitoring period)"),
     ("version_funding", "future", "window × fund × agency × sector · provenance"),
-    ("prearranged_commitment", "future", "version × fund × year × kind"),
+    ("prearranged_commitment", "future", "version × fund/financier × year × kind"),
     ("people_covered", "new", "window-attached · as_of · source"),
     ("simulated_activation", "kb", "+ window_name · event_year"),
     ("framework_status", "new", "observed snapshots (vs v_expected_status)"),
@@ -670,7 +670,7 @@ TARGET_FULL_EDGES = [
     ("version_funding", "window", "", "many", "one", False),
     ("version_funding", "fund", "", "many", "one", False),
     ("prearranged_commitment", "framework_version", "", "many", "one", False),
-    ("prearranged_commitment", "fund", "", "many", "one", False),
+    ("prearranged_commitment", "fund", "null for cofinancing (financier text)", "many0", "one0", False),
     ("people_covered", "window", "", "many0", "one0", False),
     ("simulated_activation", "window", "", "many", "one", False),
     ("framework_status", "framework_version", "", "many0", "one0", False),
@@ -844,7 +844,7 @@ ERD_NODES = [
     ("framework_focal_point", "new", "+ role · person · as_of"),
     ("framework_calendar", "new", "+ month · phase"),
     ("prearranged_funding", "new", "+ year · kind · fund_source · source"),
-    ("prearranged_sector_budget", "new", "+ subunit · agency · sector"),
+    ("prearranged_sector_budget", "new", "+ window_name · agency · sector"),
     ("people_covered", "new", "+ as_of · source"),
     ("activation_event", "new", "+ year · month · fund_source · event_type"),
     ("report_channel_inclusion", "new", "report_year · channel + …"),

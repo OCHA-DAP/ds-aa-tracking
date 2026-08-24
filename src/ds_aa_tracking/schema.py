@@ -38,6 +38,10 @@ TABLES = {
             kb_status text,                -- endorsed | superseded | retired | development
             valid_from date,
             valid_until date,
+            valid_until_source text,       -- doc-stated | convention | inherited
+            endorsed_by text,              -- erc (major revision, recommitted funds,
+                                           -- new validity) | cerf_secretariat (minor
+                                           -- revision, same validity + budget)
             supersedes text,
             prearranged_usd_doc numeric,   -- from KB frontmatter (cross-check)
             doc_title text,
@@ -115,7 +119,8 @@ TABLES = {
         CREATE TABLE IF NOT EXISTS aa.prearranged_sector_budget (
             country_iso3 text NOT NULL,
             hazard text NOT NULL,
-            subunit text,                  -- e.g. Jamuna / Padma sub-frameworks
+            window_name text,              -- e.g. Jamuna / Padma — sheet 'subunits'
+                                           -- are windows of the framework
             agency text NOT NULL,
             sector text NOT NULL,
             amount_usd numeric,
@@ -126,7 +131,7 @@ TABLES = {
             source text NOT NULL,
             updated_at timestamptz NOT NULL DEFAULT now(),
             UNIQUE NULLS NOT DISTINCT
-                (country_iso3, hazard, subunit, agency, sector, year_label)
+                (country_iso3, hazard, window_name, agency, sector, year_label)
         )""",
     "people_covered": """
         CREATE TABLE IF NOT EXISTS aa.people_covered (
