@@ -605,7 +605,7 @@ TARGET_NODES = [
     ("framework_registry", "new", "country_iso3 · hazard (identity only)"),
     ("framework_version", "new", "+ version — THE unified registry"),
     ("trigger_source_crosswalk", "future", "gsheet_tab · excel_fv · *_reported (KB)"),
-    ("window", "kb", "+ window_name — >=1 per version, all_in/synthetic flags"),
+    ("window", "kb", "+ window_name · min 1 per version · all_in/synthetic"),
     ("v_version_funding", "future", "window × fund_code × agency × sector"),
     ("activation", "future", "+ year · month · event_label · event_type"),
     ("activation_funding", "future", "+ fund_code · allocation_code · amount"),
@@ -617,7 +617,7 @@ TARGET_NODES = [
 TARGET_EDGES = [
     ("framework_version", "framework_registry", "", "many", "one", False),
     ("trigger_source_crosswalk", "framework_version", "", "one0", "one", False),
-    ("window", "framework_version", ">=1 per version (single-window explicit)", "many", "one", False),
+    ("window", "framework_version", "min 1 per version (single-window explicit)", "many", "one", False),
     ("v_version_funding", "window", "window x fund x agency x sector", "many", "one", False),
     ("v_version_funding", "fund", "fund_code", "many", "one", False),
     ("activation", "window", "window that triggered (null for adhoc/EA)", "many0", "one0", False),
