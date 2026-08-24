@@ -637,7 +637,6 @@ TARGET_FULL_NODES = [
     ("trigger_source_crosswalk", "future", "gsheet_tab · excel_fv · *_reported (KB)"),
     ("window", "kb", "+ window_name · min 1 per version"),
     ("window_month", "future", "+ month (monitoring period)"),
-    ("version_milestone", "future", "+ milestone · month (process)"),
     ("version_funding", "future", "window × fund × agency × sector · provenance"),
     ("prearranged_commitment", "future", "version × fund × year × kind"),
     ("people_covered", "new", "window-attached · as_of · source"),
@@ -668,7 +667,6 @@ TARGET_FULL_EDGES = [
     ("trigger_source_crosswalk", "framework_version", "", "one0", "one", False),
     ("window", "framework_version", "", "many", "one", False),
     ("window_month", "window", "", "many", "one", False),
-    ("version_milestone", "framework_version", "", "many", "one", False),
     ("version_funding", "window", "", "many", "one", False),
     ("version_funding", "fund", "", "many", "one", False),
     ("prearranged_commitment", "framework_version", "", "many", "one", False),
@@ -800,7 +798,7 @@ def build_roadmap_page():
         LEGEND_CARD.format(svg=build_erd_legend())
         + "<div class='card'><b>Complete target schema</b> — every table in the "
           "end state with all simplifications applied (one activation table, calendar "
-          "split into window months + version milestones, window-attached coverage, "
+          "reduced to window months, window-attached coverage, "
           "retags absorbed into cerf_supplement). Gray = future objects."
         + f"<div class='scroll' style='max-height:none'>"
           f"{_target_erd(TARGET_FULL_NODES, TARGET_FULL_EDGES, TARGET_COUNTRY_NODES, 'full')}</div></div>"

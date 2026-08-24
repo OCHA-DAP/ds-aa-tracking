@@ -165,12 +165,13 @@ sheets/history seed the rest, and `activation_allocation` dissolves into
 one row, N funding rows — no more match_method between two tables that mean the same
 thing.
 
-**Split the calendar by what it describes.** `framework_calendar` currently mixes two
-different things recovered from sheet colors: trigger-window months (a property of the
-*window* — green cells) and process milestones (proposal development, framework
-finalization deadline — properties of the *version*). Target: `aa.window_month`
-(window monitoring months, seeded from calendar greens + KB `monitoring_period`
-frontmatter) and `aa.version_milestone` (process dates). The calendar table retires.
+**Calendar becomes window months.** `framework_calendar` mixes trigger-window months
+(a property of the *window* — green cells) with process milestones (proposal
+development, finalization deadlines — planning/PM info, out of scope for a tracking
+schema). Target: `aa.window_month` (window monitoring months, seeded from calendar
+greens + KB `monitoring_period` frontmatter); the process-phase cells are simply not
+carried forward (recoverable from the raw sheet if ever needed). The calendar table
+retires.
 
 **`people_covered` attaches to the window** like funding does (partial activations
 cover a window's population, e.g. Chad's $4M partial covering 244k of 400k); rows a
@@ -210,7 +211,7 @@ per fund` becomes a load-time check, not a merge.
 | 3 | Drop the compatibility view once `gen_trigger_performance.py`, ERD docs and the CERF exposure app stop referencing it | ds-knowledge-base | Coordinated |
 | 4 | `aa.cbpf_allocation` mirror + `v_allocation`; `activation_allocation.fund_code`; extend kb-aa-links confirm flow to CBPF codes | ds-cerf-supplement (or a new onegms mirror repo) + ds-knowledge-base | No |
 | 5 | `v_version_funding` consolidated view; optionally migrate KB `funding_breakdown` loader to write `fund_code`; optionally re-key KB fact tables to `(country_iso3, hazard, version)` | ds-knowledge-base | Optional cleanups |
-| 6 | Simplifications above: unify activation tables, calendar split (`window_month`/`version_milestone`), window-attached `people_covered`, `v_expected_status`, denormalized-column cleanup, retags into `cerf_supplement` | ds-aa-tracking + ds-knowledge-base + mirror repo | Coordinated, after 0–4 settle |
+| 6 | Simplifications above: unify activation tables, calendar → `window_month`, window-attached `people_covered`, `v_expected_status`, denormalized-column cleanup, retags into `cerf_supplement` | ds-aa-tracking + ds-knowledge-base + mirror repo | Coordinated, after 0–4 settle |
 
 Ordering notes: 0 and 1 are independent and immediate; 2–3 need a KB PR cycle;
 4 waits on the CBPF feed being available; 5 is opportunistic.
