@@ -598,6 +598,7 @@ TARGET_STYLE = {
     "kb": ("#e8e8f8", "#3b3b8f"),
     "mirror": ("#fdf1dc", "#8a5c0a"),
     "future": ("#eeeeee", "#555555"),
+    "ext": ("#e8f4f8", "#0b6079"),
 }
 
 TARGET_NODES = [
@@ -659,6 +660,7 @@ TARGET_FULL_NODES = [
     ("cerf_project_supplement", "new", "project_code"),
     ("cerf_subgrant", "new", "project_code · partner_name"),
     ("cerf_allocation_storm", "mirror", "application_code · sid"),
+    ("ibtracs_storms", "ext", "sid — storms schema"),
 ]
 
 TARGET_FULL_EDGES = [
@@ -687,6 +689,7 @@ TARGET_FULL_EDGES = [
     ("cerf_application_people", "cerf_allocation", "", "many", "one0", False),
     ("cerf_application_report", "cerf_allocation", "", "one0", "one0", False),
     ("cerf_allocation_storm", "cerf_allocation", "", "many", "one", False),
+    ("cerf_allocation_storm", "ibtracs_storms", "sid (m:n via link table)", "many", "one", False),
     ("cerf_project", "cerf_allocation", "", "many0", "one0", False),
     ("cerf_project_sector", "cerf_project", "", "many", "one", False),
     ("cerf_project_country", "cerf_project", "", "many", "one", False),
@@ -832,6 +835,7 @@ ERD_STYLE = {
     "new": ("#e3f1e6", "#1c6b31"),
     "kb": ("#e8e8f8", "#3b3b8f"),
     "mirror": ("#fdf1dc", "#8a5c0a"),
+    "ext": ("#e8f4f8", "#0b6079"),
 }
 
 # (name, owner, key-line) — key columns only, to keep the diagram readable
@@ -864,6 +868,7 @@ ERD_NODES = [
     ("cerf_project_country", "mirror", "project_code · country_iso3"),
     ("cerf_allocation_storm", "mirror", "application_code · sid"),
     ("cerf_supplement", "mirror", "application_code"),
+    ("ibtracs_storms", "ext", "sid — storms schema"),
 ]
 
 # country-level context tables: keyed by country only, no framework relationship
@@ -904,6 +909,7 @@ ERD_EDGES = [
     ("cerf_project_supplement", "cerf_project", "", "one0", "one", False),
     ("cerf_subgrant", "cerf_project", "project_code", "many0", "one0", False),
     ("cerf_allocation_storm", "cerf_allocation", "", "many", "one", False),
+    ("cerf_allocation_storm", "ibtracs_storms", "sid (m:n via link table)", "many", "one", False),
     ("cerf_supplement", "cerf_allocation", "", "one0", "one", False),
     ("cerf_allocation_extra", "cerf_allocation", "", "one0", "one0", False),
     ("cerf_application_people", "cerf_allocation", "", "many", "one0", False),
