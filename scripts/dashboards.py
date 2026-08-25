@@ -104,6 +104,7 @@ def _fetch(e):
     d["current"] = pd.read_sql(
         """SELECT c.*, r.region FROM aa.v_trk_framework_current c
            LEFT JOIN aa.framework_registry r USING (country_iso3, hazard)""", e)
+    d["current"] = d["current"].loc[:, ~d["current"].columns.duplicated()]
     pre = pd.read_sql(
         """SELECT country_iso3, hazard, year, kind, fund_code, financier,
                   amount_usd, source FROM aa.prearranged_funding
@@ -659,6 +660,211 @@ built to the CERF key-data-points list (<a href='questions.html'>coverage map</a
     page("dashboards.html", "Dashboards", body)
 
 
+
+
+# ------------------------------------------------------------------ hierarchy
+HIER_CSS = """
+.tree details { margin:4px 0; }
+.tree > details { background:#fff; border:1px solid #dfe4ea; border-radius:8px;
+  padding:8px 14px; margin:10px 0; }
+.tree details details { border-left:3px solid #e3e8ef; padding-left:14px; margin-left:6px; }
+.tree summary { cursor:pointer; padding:4px 2px; list-style:none; display:flex;
+  flex-wrap:wrap; gap:7px; align-items:center; }
+.tree summary::before { content:'▸'; color:#8a97a8; font-size:12px; transition:transform .12s; }
+.tree details[open] > summary::before { transform:rotate(90deg); }
+.tree summary:hover { background:#f4f7fa; border-radius:5px; }
+.nm { font-weight:700; font-size:14px; } .nm.v { font-size:13px; }
+.nm.w { font-size:12.5px; font-weight:600; } .nm.a { font-size:12.5px; font-weight:600; }
+.chip { display:inline-block; padding:1px 8px; border-radius:9px; font-size:10.5px;
+  font-weight:600; white-space:nowrap; }
+.c-status { background:#e3f1e6; color:#1c6b31; } .c-dormant { background:#eee; color:#666; }
+.c-dev { background:#fdf1dc; color:#8a5c0a; } .c-endorsed { background:#e3f1e6; color:#1c6b31; }
+.c-superseded { background:#eee; color:#777; } .c-retired { background:#eee; color:#777; }
+.c-money { background:#e8f0fb; color:#1d5aa8; } .c-rp { background:#e8e8f8; color:#3b3b8f; }
+.c-fund { background:#fdf1dc; color:#8a5c0a; } .c-type { background:#fde8f0; color:#a1336b; }
+.c-basis { background:#e8f4f8; color:#0b6079; } .c-warn { background:#fde3e3; color:#a11; }
+.kv { font-size:11.5px; color:#555; margin:3px 0 3px 20px; }
+.kv a { color:#1d5aa8; }
+.hier-tools { display:flex; gap:10px; margin:12px 0; align-items:center; }
+.hier-tools button { padding:5px 12px; border:1px solid #bbb; border-radius:5px;
+  background:#fff; cursor:pointer; font-size:12.5px; }
+"""
+
+
+def _chip(cls, txt):
+    return f"<span class='chip {cls}'>{txt}</span>"
+
+
+def _fmt_usd(v):
+    if v is None or pd.isna(v):
+        return None
+    v = float(v)
+    return f"${v/1e6:.1f}M" if v >= 1e6 else f"${v/1e3:.0f}k" if v >= 1e3 else f"${v:.0f}"
+
+
+def build_hierarchy(page, d, e):
+    cur = d["current"]
+    ver = pd.read_sql(
+        """SELECT * FROM aa.framework_version
+           ORDER BY country_iso3, hazard, valid_from NULLS LAST""", e)
+    win = pd.read_sql(
+        """SELECT w.kb_framework, w.kb_version, w.country_iso3, w.window_name,
+                  w.all_in, w.basis, w.allocation_usd,
+                  p.n_activations AS sim_activations, p.analysis_years,
+                  p.return_period, p.activation_prob
+           FROM aa.window w
+           LEFT JOIN aa.v_window_performance p
+             USING (kb_framework, kb_version, country_iso3, window_name)""", e)
+    act = d["activation"]
+    fund_rows = pd.read_sql(
+        """SELECT country_iso3, hazard, year, fund_code, amount_usd
+           FROM aa.prearranged_funding WHERE kind='prearranged'
+             AND fund_code NOT IN ('all')""", e)
+    focal = d["focal"]
+
+    def act_html(a):
+        funding = " · ".join(
+            f"{r.fund_code}: {_fmt_usd(r.amount_usd) or '?'}"
+            + (f" ({r.allocation_code})" if pd.notna(r.allocation_code) else "")
+            for r in a.itertuples())
+        first = a.iloc[0]
+        total = a["amount_usd"].sum()
+        bits = [f"<span class='nm a'>⚡ {first['event_date']}</span>",
+                _chip("c-type", first["event_type"].replace("_", " "))]
+        if pd.notna(total) and total:
+            bits.append(_chip("c-money", _fmt_usd(total)))
+        if pd.notna(first.get("people_targeted")) and first["people_targeted"]:
+            bits.append(_chip("c-status", f"{int(first['people_targeted']):,} targeted"))
+        kv = f"<div class='kv'>{funding}</div>" if funding else ""
+        return f"<details><summary>{''.join(bits)}</summary>{kv}</details>"
+
+    def win_html(w, acts_w):
+        bits = [f"<span class='nm w'>◧ {w.window_name}</span>"]
+        if pd.notna(w.basis):
+            bits.append(_chip("c-basis", w.basis))
+        if w.all_in is True:
+            bits.append(_chip("c-basis", "all-in"))
+        if pd.notna(w.allocation_usd):
+            bits.append(_chip("c-money", _fmt_usd(w.allocation_usd)))
+        if pd.notna(w.return_period):
+            bits.append(_chip("c-rp", f"RP {w.return_period:.1f}y"))
+        if pd.notna(w.activation_prob):
+            bits.append(_chip("c-rp", f"p {w.activation_prob:.0%}"))
+        if len(acts_w):
+            bits.append(_chip("c-type", f"{len(acts_w)} activation(s)"))
+        kv = ""
+        if pd.notna(w.sim_activations) and pd.notna(w.analysis_years):
+            kv = (f"<div class='kv'>backtest: {int(w.sim_activations)} simulated "
+                  f"activations over {int(w.analysis_years)} years</div>")
+        inner = "".join(act_html(g) for _, g in
+                        acts_w.groupby("event_date", sort=True)) if len(acts_w) else ""
+        return f"<details><summary>{''.join(bits)}</summary>{kv}{inner}</details>"
+
+    def ver_html(v, wins_v, acts_v, iso3, hz):
+        st = v.kb_status if pd.notna(v.kb_status) else "no KB status"
+        stcls = {"endorsed": "c-endorsed", "superseded": "c-superseded",
+                 "retired": "c-retired", "development": "c-dev"}.get(st, "c-dormant")
+        bits = [f"<span class='nm v'>◆ {v.version}</span>", _chip(stcls, st)]
+        if pd.notna(v.endorsed_by):
+            bits.append(_chip("c-basis", f"endorsed by {v.endorsed_by}"))
+        if pd.notna(v.prearranged_usd_doc):
+            bits.append(_chip("c-money", f"doc: {_fmt_usd(v.prearranged_usd_doc)}"))
+        n_act = acts_v["event_date"].nunique() if len(acts_v) else 0
+        if n_act:
+            bits.append(_chip("c-type", f"{n_act} activation(s)"))
+        if len(wins_v):
+            bits.append(_chip("c-basis", f"{len(wins_v)} window(s)"))
+        kvs = []
+        rng = " → ".join(x for x in [str(v.valid_from or ""), str(v.valid_until or "")] if x and x != "None")
+        if rng:
+            kvs.append(f"valid {rng}")
+        if pd.notna(v.doc_url):
+            kvs.append(f"<a href='{v.doc_url}'>framework document</a>")
+        if pd.notna(v.analysis_ref):
+            kvs.append(f"analysis: <code>{v.analysis_ref}</code>")
+        kvs.append(f"source: {v.source}")
+        kv = f"<div class='kv'>{' · '.join(kvs)}</div>"
+        # windows with their activations; unattributed activations after
+        win_names = set(wins_v["window_name"]) if len(wins_v) else set()
+        inner = "".join(
+            win_html(w, acts_v[acts_v["window_name"] == w.window_name])
+            for w in wins_v.itertuples())
+        stray = acts_v[~acts_v["window_name"].isin(win_names)] if len(acts_v) else acts_v
+        if len(stray):
+            if len(win_names):
+                inner += "<div class='kv'>activations without a matched window:</div>"
+            inner += "".join(act_html(g) for _, g in stray.groupby("event_date"))
+        return f"<details><summary>{''.join(bits)}</summary>{kv}{inner}</details>"
+
+    blocks = []
+    for _, fw in cur.sort_values("country_name").iterrows():
+        c, h = fw["country_iso3"], fw["hazard"]
+        vs = ver[(ver["country_iso3"] == c) & (ver["hazard"] == h)]
+        acts_f = act[(act["country_iso3"] == c) & (act["hazard"] == h)]
+        st = fw["status"] if (fw["status"] is not None
+                              and pd.notna(fw["status"])) else "no status"
+        stcls = ("c-status" if st in ("active", "activated_implementing")
+                 else "c-dev" if "development" in st or "conversation" in st
+                 else "c-dormant")
+        bits = [f"<span class='nm'>{fw['country_name']} — {h}</span>", _chip(stcls, st)]
+        pre = _fmt_usd(fw.get("cerf_prearranged_usd"))
+        if pre:
+            bits.append(_chip("c-money", f"CERF {pre}"))
+        if pd.notna(fw.get("people_covered")) and fw["people_covered"]:
+            bits.append(_chip("c-status", f"{int(fw['people_covered']):,} covered"))
+        n_act = acts_f["event_date"].nunique()
+        if n_act:
+            bits.append(_chip("c-type", f"{n_act} activation(s)"))
+        if not len(vs):
+            bits.append(_chip("c-warn", "no version anywhere — pipeline"))
+        kvs = []
+        if pd.notna(fw.get("kb_framework")):
+            kvs.append(f"KB: <code>{fw['kb_framework']}</code>")
+        if pd.notna(fw.get("region")):
+            kvs.append(fw["region"])
+        fps = focal[(focal["country_iso3"] == c) & (focal["hazard"] == h)]
+        if len(fps):
+            kvs.append("focal points: " + ", ".join(
+                f"{r.person} ({r.role})" for r in fps.itertuples()))
+        kvs.append(f"<a href='fw-{c.lower()}-{h}.html'>framework page</a>")
+        kv = f"<div class='kv'>{' · '.join(kvs)}</div>"
+        inner = ""
+        for v in vs.itertuples():
+            wins_v = win[(win["country_iso3"] == c)
+                         & (win["kb_framework"] == (fw.get("kb_framework") or ""))
+                         & (win["kb_version"] == v.version)]
+            acts_v = acts_f[acts_f["version"] == v.version]
+            inner += ver_html(v, wins_v, acts_v, c, h)
+        stray_f = acts_f[~acts_f["version"].isin(set(vs["version"]))]
+        if len(stray_f):
+            inner += "<div class='kv'>activations not attributed to a version:</div>"
+            inner += "".join(act_html(g) for _, g in stray_f.groupby("event_date"))
+        blocks.append(
+            f"<details class='fw' data-name='{fw['country_name'].lower()} {h}'>"
+            f"<summary>{''.join(bits)}</summary>{kv}{inner}</details>")
+
+    body = f"""
+<div class='card'>The portfolio as a tree: <b>framework → version → window →
+activation</b>, with everything the DB knows at each level — status, funding, doc
+and analysis links, per-window budgets and backtest return periods (from the KB
+trigger-performance tables), and each activation's fund-by-fund allocations. Click
+any row to expand.</div>
+<div class='hier-tools'>
+ <input class='filter' placeholder='filter frameworks…' oninput='hfilter(this.value)'>
+ <button onclick='setAll(true)'>expand all</button>
+ <button onclick='setAll(false)'>collapse all</button>
+</div>
+<div class='tree'>{''.join(blocks)}</div>
+<script>
+function setAll(open){{ document.querySelectorAll('.tree details').forEach(d=>d.open=open); }}
+function hfilter(q){{ q=q.toLowerCase();
+  document.querySelectorAll('.tree > details').forEach(d=>{{
+    d.style.display = d.dataset.name.includes(q) ? '' : 'none'; }}); }}
+</script>
+<style>{DASH_CSS}{HIER_CSS}</style>"""
+    page("hierarchy.html", "Portfolio explorer — framework › version › window › activation", body)
+
+
 def build_all(e, page, tbl):
     d = _fetch(e)
     build_funding(page, d)
@@ -667,3 +873,4 @@ def build_all(e, page, tbl):
     build_questions(page)
     links = build_framework_pages(page, tbl, d)
     build_hub(page, d, links)
+    build_hierarchy(page, d, e)

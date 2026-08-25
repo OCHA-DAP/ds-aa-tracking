@@ -70,6 +70,7 @@ NAV = """
   <span class="t">AA tracking — schema &amp; data review</span>
   <a href="index.html">Overview</a>
   <a href="dashboards.html">Dashboards</a>
+  <a href="hierarchy.html">Explorer</a>
   <a href="tables.html">Tracking tables</a>
   <a href="schema.html">DB schema</a>
   <a href="reconciliation.html">Reconciliation</a>
@@ -514,36 +515,25 @@ def build_person_pages(e):
                 e,
             )
             sections.append(
-                "<h2>Activation list vs KB</h2>"
-                "<p class='meta'><code>MISSING_IN_KB</code> = framework CERF "
-                "activations in your list with no KB record — if real, the KB page "
-                "needs an <code>activations:</code> entry (we'll batch these once "
-                "confirmed). <code>AMOUNT_CONFLICT</code> = both match but amounts "
-                "differ — note Nigeria 2025 now reconciles: your CERF+NHF rows sum "
-                "to the KB's $7M under one activation. <code>ADHOC_AA</code> / "
-                "<code>EARLY_ACTION</code> = allocations without a framework "
-                "(explicit categories) — just confirm they're correct. Rows with "
-                "<code>source='historical-…'</code> were recovered by the historical "
-                "sweep (OCHA page archives / pa-anticipatory-action), NOT from your "
-                "list — please confirm those actually happened (esp. PHL 2021/2022, "
-                "evidenced only by cash-intervention snapshots).</p>" + tbl(rec)
+                "<h2>Activations: remaining conflicts</h2>"
+                "<p class='meta'>Your list is treated as correct wherever the KB was "
+                "silent (all such records are now IN the KB). What remains is "
+                "genuine value disagreement — currently one: the 2020 Bangladesh "
+                "activation, your $5.2M vs CERF's itemized $5,339,084 "
+                "(FAO 500k + WFP 4.25M + UNFPA 589,084; the 5.2M appears to be the "
+                "rounded public figure).</p>" + tbl(rec)
             )
             kb_only = pd.read_sql("SELECT * FROM aa.v_trk_activation_kb_only", e)
-            sections.append(
-                "<h2>KB activations missing from your list</h2>"
-                "<p class='meta'>Should any of these be added to the activations "
-                "sheet's successor (this DB)? Mostly pre-2020 pilots, partial-window "
-                "triggers, and multi-country events.</p>" + tbl(kb_only)
-            )
+            if not kb_only.empty:
+                sections.append(
+                    "<h2>KB activations missing from your list</h2>" + tbl(kb_only))
             vgap = pd.read_sql(
                 "SELECT * FROM aa.framework_version WHERE source='sheet-revision'", e
             )
-            sections.append(
-                "<h2>Revisions you reported with no KB version page</h2>"
-                "<p class='meta'>Your reporting sheet says these frameworks were "
-                "revised, but the KB has no version within 90 days — is there an "
-                "endorsed doc we should ingest?</p>" + tbl(vgap)
-            )
+            if not vgap.empty:
+                sections.append(
+                    "<h2>Revisions you reported with no KB version page</h2>"
+                    + tbl(vgap))
         else:
             flags = pd.read_sql("SELECT * FROM aa.v_trk_aa_flag_reconciliation", e)
             sections.append(
@@ -1235,7 +1225,7 @@ prearranged_funding (2025+2026), people_covered, plan_inclusion.</li>
 </ul>
 <h2>julia/OCHA_AA_activations_2020-2026.xlsb</h2>
 <ul class='tight'>
-<li><b>Overall activations</b> → activation_event (the superset record).</li>
+<li><b>Overall activations</b> → the activation record (now split into <code>activation</code> + <code>activation_funding</code>: one event, N fund allocations).</li>
 <li><b>Activations by region</b> — skipped (pivot).</li>
 </ul>
 <h2>yakubu/26 March 2026 CERF Allocation Analysis for AA.xlsx</h2>
@@ -1285,8 +1275,8 @@ Regular Data additionally has visible column corruption (dates in numeric column
 <li>Sheets that disagree are loaded side by side (source in the key) — reconciliation
 is a view, not a silent merge; where a single value is needed the newest sheet wins.</li>
 <li>EA (early action) events are in scope, flagged <code>aa_or_ea='EA'</code>.</li>
-<li>Sub-frameworks (Bangladesh Jamuna/Padma) live in <code>subunit</code>, matching the
-KB's window concept rather than creating duplicate frameworks (KB rule D62).</li>
+<li>Sub-frameworks (Bangladesh Jamuna/Padma) are windows — the sector-budget table
+carries them as <code>window_name</code> rather than duplicate frameworks (KB rule D62).</li>
 </ul>
 """
 
