@@ -74,7 +74,7 @@ NAV = """
   <a href="reconciliation.html">Reconciliation</a>
   <a href="review-julia.html">Julia</a>
   <a href="review-yakubu.html">Yakubu</a>
-  <a href="cerf-mirror.html">CERF mirror</a>
+  <a href="cerf-mirror.html">OneGMS mirrors</a>
   <a href="roadmap.html">Roadmap</a>
   <a href="decisions.html">Source decisions</a>
 </header>
@@ -267,11 +267,19 @@ def main():
         "tables in Aug 2026 — <code>aa.cerf_project</code>, "
         "<code>aa.cerf_project_sector</code>, <code>aa.cerf_project_country</code> — "
         "which the KB only partially documents (the ERD shows ~7 of 48 project columns; "
-        "sector taxonomy columns and lifecycle dates are undocumented). Summary below; "
+        "sector taxonomy columns and lifecycle dates are undocumented). NEW (Aug 2026): "
+        "the <b>CBPF/regional-fund mirror</b> — <code>aa.cbpf_allocation</code> (one row "
+        "per Standard/Reserve allocation envelope; a set of approved projects), "
+        "<code>aa.cbpf_fund</code>, and the fund-agnostic union view "
+        "<code>aa.v_allocation</code> — refreshed daily by the same workflow. Summary below; "
         "the new tracking tables link to these via "
         "<code>application_code</code>/<code>project_code</code>.</div>"
     )
     for t, q in [
+        ("cbpf_allocation", "SELECT year, count(*) n_allocations, sum(CASE WHEN aa_keyword THEN 1 ELSE 0 END) n_aa_keyword, sum(approved_budget) approved_budget FROM aa.cbpf_allocation GROUP BY year ORDER BY year"),
+        ("cbpf_allocation (AA-keyword rows)", "SELECT a.year, f.name AS fund, a.allocation_source, a.title, a.approved_budget, a.planned_usd FROM aa.cbpf_allocation a LEFT JOIN aa.cbpf_fund f ON f.pf_id=a.pooled_fund_id WHERE a.aa_keyword ORDER BY a.year DESC"),
+        ("cbpf_fund", "SELECT pf_id, name, abbrv, country_code_iso2, parent_pf_id FROM aa.cbpf_fund ORDER BY name"),
+        ("v_allocation", "SELECT fund_type, count(*) n, sum(CASE WHEN is_aa THEN 1 ELSE 0 END) n_aa, sum(amount_usd) amount_usd FROM aa.v_allocation GROUP BY fund_type"),
         ("cerf_allocation", "SELECT year, count(*) n_allocations, sum(CASE WHEN aa_keyword THEN 1 ELSE 0 END) n_aa_keyword, sum(amount_approved) amount_approved FROM aa.cerf_allocation GROUP BY year ORDER BY year"),
         ("cerf_project", "SELECT year, count(*) n_projects, count(DISTINCT application_code) n_applications, sum(amount_approved) amount_approved FROM aa.cerf_project GROUP BY year ORDER BY year"),
         ("cerf_project_sector", "SELECT cerf_sector_name, count(*) n, sum(sector_amount) amount FROM aa.cerf_project_sector GROUP BY 1 ORDER BY amount DESC NULLS LAST"),
@@ -611,7 +619,7 @@ TARGET_NODES = [
     ("activation", "future", "+ year · month · event_label · event_type"),
     ("activation_funding", "future", "+ fund_code · allocation_code · amount"),
     ("cerf_allocation", "mirror", "application_code"),
-    ("cbpf_allocation", "future", "allocation_code (OneGMS CBPF mirror)"),
+    ("cbpf_allocation", "mirror", "pooled_fund_id · allocation_type_id"),
     ("v_allocation", "future", "fund_code · allocation_code (union view)"),
 ]
 
@@ -647,8 +655,8 @@ TARGET_FULL_NODES = [
     ("activation", "future", "ONE table (KB sync + sheets) · event_label"),
     ("activation_funding", "future", "+ fund_code · allocation_code · amount"),
     ("cerf_allocation", "mirror", "application_code"),
-    ("cbpf_allocation", "future", "allocation_code (OneGMS CBPF)"),
-    ("v_allocation", "future", "union view: fund_code · allocation_code"),
+    ("cbpf_allocation", "mirror", "pooled_fund_id · allocation_type_id"),
+    ("v_allocation", "mirror", "union view: fund_code · allocation_code"),
     ("cerf_supplement", "mirror", "corrections incl. absorbed retags"),
     ("cerf_allocation_extra", "new", "application_code"),
     ("cerf_application_people", "new", "application_code · phase · grp"),
@@ -660,6 +668,9 @@ TARGET_FULL_NODES = [
     ("cerf_subgrant", "new", "project_code · partner_name"),
     ("cerf_allocation_storm", "mirror", "application_code · sid"),
     ("ibtracs_storms", "ext", "sid — storms schema"),
+    ("cbpf_allocation", "mirror", "pooled_fund_id · allocation_type_id"),
+    ("cbpf_fund", "mirror", "pf_id (pooled funds incl. RhPF)"),
+    ("v_allocation", "mirror", "union view: fund · allocation_code"),
 ]
 
 TARGET_FULL_EDGES = [
@@ -688,6 +699,10 @@ TARGET_FULL_EDGES = [
     ("cerf_application_report", "cerf_allocation", "", "one0", "one0", False),
     ("cerf_allocation_storm", "cerf_allocation", "", "many", "one", False),
     ("cerf_allocation_storm", "ibtracs_storms", "sid (m:n via link table)", "many", "one", False),
+    ("cbpf_allocation", "cbpf_fund", "pooled_fund_id", "many", "one", False),
+    ("cerf_allocation", "v_allocation", "", "one0", "one", False),
+    ("cbpf_allocation", "v_allocation", "", "one0", "one", False),
+    ("activation_event", "cbpf_allocation", "cbpf_allocation_code", "many0", "one0", False),
     ("cerf_project", "cerf_allocation", "", "many0", "one0", False),
     ("cerf_project_sector", "cerf_project", "", "many", "one", False),
     ("cerf_project_country", "cerf_project", "", "many", "one", False),
@@ -867,6 +882,9 @@ ERD_NODES = [
     ("cerf_allocation_storm", "mirror", "application_code · sid"),
     ("cerf_supplement", "mirror", "application_code"),
     ("ibtracs_storms", "ext", "sid — storms schema"),
+    ("cbpf_allocation", "mirror", "pooled_fund_id · allocation_type_id"),
+    ("cbpf_fund", "mirror", "pf_id (pooled funds incl. RhPF)"),
+    ("v_allocation", "mirror", "union view: fund · allocation_code"),
 ]
 
 # country-level context tables: keyed by country only, no framework relationship
@@ -908,6 +926,10 @@ ERD_EDGES = [
     ("cerf_subgrant", "cerf_project", "project_code", "many0", "one0", False),
     ("cerf_allocation_storm", "cerf_allocation", "", "many", "one", False),
     ("cerf_allocation_storm", "ibtracs_storms", "sid (m:n via link table)", "many", "one", False),
+    ("cbpf_allocation", "cbpf_fund", "pooled_fund_id", "many", "one", False),
+    ("cerf_allocation", "v_allocation", "", "one0", "one", False),
+    ("cbpf_allocation", "v_allocation", "", "one0", "one", False),
+    ("activation_event", "cbpf_allocation", "cbpf_allocation_code", "many0", "one0", False),
     ("cerf_supplement", "cerf_allocation", "", "one0", "one", False),
     ("cerf_allocation_extra", "cerf_allocation", "", "one0", "one0", False),
     ("cerf_application_people", "cerf_allocation", "", "many", "one0", False),

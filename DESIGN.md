@@ -130,8 +130,11 @@ activation, two funding rows summing to the KB's $7M.
 ### Allocation mirrors, fund-agnostic downstream
 
 - `aa.cerf_allocation` (exists, ds-cerf-supplement) — unchanged.
-- `aa.cbpf_allocation` (future, same OneGMS feed family) — same shape where possible:
-  allocation_code PK, country, dates, amounts, type/status, AA flag.
+- `aa.cbpf_allocation` (**built, Aug 2026** — ds-cerf-supplement, from the public CBPF
+  OData API): one row per Standard/Reserve allocation envelope (a set of approved
+  projects), keyed `(pooled_fund_id, allocation_type_id)` — AllocationTypeId alone
+  collides across funds. Plus `aa.cbpf_fund` (46 pooled funds incl. RhPF envelopes).
+  ds-cerf-supplement is the home of ALL OneGMS mirrors going forward.
 - `aa.v_allocation` — a UNION view (nothing stored) stacking the per-fund mirrors
   and normalizing them to `(fund_code, allocation_code, country_iso3, year,
   amount_usd, is_aa, dates…)`, so links and reconciliation never care which fund a
@@ -265,7 +268,7 @@ per fund` becomes a load-time check, not a merge.
 | 1 | CI check: every `framework_version_map` row must exist in `framework_version` (catches drift both ways); agree naming (`version`, `country_iso3`) | ds-knowledge-base PR | No |
 | 2 | Extract `trigger_source_crosswalk`; `framework_version_map` becomes a compatibility VIEW over crosswalk + `framework_version`; `load_aa_performance.py` re-pointed | ds-knowledge-base | Consumers keep working via the view |
 | 3 | Drop the compatibility view once `gen_trigger_performance.py`, ERD docs and the CERF exposure app stop referencing it | ds-knowledge-base | Coordinated |
-| 4 | `aa.cbpf_allocation` mirror + `v_allocation`; `activation_allocation.fund_code`; extend kb-aa-links confirm flow to CBPF codes | ds-cerf-supplement (or a new onegms mirror repo) + ds-knowledge-base | No |
+| 4 | ~~`aa.cbpf_allocation` mirror + `v_allocation`~~ **done (Aug 2026)**; remaining: `activation_allocation.fund_code`, extend kb-aa-links confirm flow to CBPF codes, CBPF project-level mirror | ds-cerf-supplement + ds-knowledge-base | No |
 | 5 | `v_version_funding` consolidated view; optionally migrate KB `funding_breakdown` loader to write `fund_code`; optionally re-key KB fact tables to `(country_iso3, hazard, version)` | ds-knowledge-base | Optional cleanups |
 | 6 | Simplifications above: unify activation tables, calendar → `window_month`, window-attached `people_covered`, `v_expected_status`, denormalized-column cleanup, retags into `cerf_supplement` | ds-aa-tracking + ds-knowledge-base + mirror repo | Coordinated, after 0–4 settle |
 
@@ -274,9 +277,6 @@ Ordering notes: 0 and 1 are independent and immediate; 2–3 need a KB PR cycle;
 
 ## Open questions
 
-1. **CBPF feed**: is the OneGMS CBPF allocation extract available with the same access
-   as the CERF feed, and should the mirror live in ds-cerf-supplement (renamed scope)
-   or a new repo?
 2. **Writer of the unified registry**: this plan keeps `framework_version` written by
    ds-aa-tracking (sourced from KB frontmatter + sweeps + sheets). The KB repo then
    *reads* it — acceptable, or should the registry loader move into the KB repo?

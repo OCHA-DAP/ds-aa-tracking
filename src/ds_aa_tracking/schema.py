@@ -166,7 +166,9 @@ TABLES = {
             comments text,
             kb_framework text,             -- matched to aa.actual_activation
             kb_event_date text,
-            application_code text,         -- matched via aa.activation_allocation
+            application_code text,         -- CERF, matched via aa.activation_allocation
+            cbpf_allocation_code text,     -- CBPF/RhPF, matched vs aa.cbpf_allocation
+                                           -- ('cbpf-<fund>-<id>', see aa.v_allocation)
             match_method text,
             version text,                  -- attributed framework version (see framework_version)
             version_match text,            -- kb-activation | auto-interval | auto-post-validity
@@ -444,7 +446,7 @@ VIEWS = {
                e.mechanism, e.aa_or_ea, e.event_type,
                e.amount_usd AS sheet_amount_usd,
                e.people_targeted, e.source, e.kb_framework, e.kb_event_date,
-               e.match_method,
+               e.cbpf_allocation_code, e.match_method,
                a.released_usd AS kb_released_usd,
                a.full_activation, a.window_name,
                CASE

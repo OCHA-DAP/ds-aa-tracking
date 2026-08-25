@@ -141,6 +141,49 @@ def kb_crosswalk(engine, tables):
     ev["kb_activation_version"] = act_version
 
 
+def cbpf_match(engine, tables):
+    """Match country/regional-fund activation events to CBPF allocations.
+
+    Auto-links only when exactly one AA-keyword allocation exists for the event's
+    country and year in the mirror; everything else stays null for review."""
+    import pycountry
+
+    cbpf = pd.read_sql(
+        """SELECT a.pooled_fund_id, a.allocation_type_id, a.year, a.aa_keyword,
+                  f.country_code_iso2
+           FROM aa.cbpf_allocation a
+           LEFT JOIN aa.cbpf_fund f ON f.pf_id = a.pooled_fund_id
+           WHERE a.aa_keyword""",
+        engine,
+    )
+
+    def iso3_of(iso2):
+        try:
+            return pycountry.countries.get(alpha_2=iso2).alpha_3
+        except AttributeError:
+            return None
+
+    cbpf["country_iso3"] = cbpf["country_code_iso2"].map(iso3_of)
+    ev = tables["activation_event"]
+    codes = []
+    for _, e in ev.iterrows():
+        code = None
+        if e["fund_source"] in ("country_fund", "regional_fund"):
+            cand = cbpf[
+                (cbpf["country_iso3"] == e["country_iso3"])
+                & (cbpf["year"] == e["year"])
+            ]
+            if len(cand) == 1:
+                r = cand.iloc[0]
+                code = f"cbpf-{r['pooled_fund_id']}-{r['allocation_type_id']}"
+        codes.append(code)
+    ev["cbpf_allocation_code"] = codes
+    n = sum(c is not None for c in codes)
+    print(f"  CBPF matches: {n} of "
+          f"{(ev['fund_source'].isin(('country_fund', 'regional_fund'))).sum()} "
+          "country/regional-fund events")
+
+
 def load(engine, tables):
     with engine.begin() as conn:
         for name in schema.TABLES:
@@ -195,6 +238,7 @@ def main():
     engine = stratus.get_engine(stage="dev", write=True)
     print("Crosswalking to KB…")
     kb_crosswalk(engine, tables)
+    cbpf_match(engine, tables)
     print("Building framework versions + attributing facts…")
     fv = build_framework_version(tables)
     tables["framework_version"] = fv
