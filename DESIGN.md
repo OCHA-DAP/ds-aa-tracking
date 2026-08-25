@@ -90,35 +90,48 @@ row per activation × fund). Split:
 CREATE TABLE aa.activation (               -- one row per real-world activation event
     country_iso3 text NOT NULL,
     hazard text NOT NULL,
-    year smallint NOT NULL,
-    month smallint,
-    event_label text,                      -- disambiguates same-month events
     event_type text NOT NULL,              -- framework_aa | adhoc_aa | early_action
     version text,                          -- null for adhoc/EA
-    window_name text,                      -- the window that triggered (null for
-                                           -- adhoc/EA; inherited from KB
-                                           -- actual_activation.window_name)
-    version_match text,
+    window_name text,                      -- EVERY framework activation activates a
+                                           -- window: NOT NULL when event_type =
+                                           -- 'framework_aa' (adhoc/EA have none)
+    event_date text NOT NULL,              -- partial ISO, AS SPECIFIC AS KNOWN:
+                                           -- 'YYYY' | 'YYYY-MM' | 'YYYY-MM-DD' |
+                                           -- 'YYYY-MM-DDTHH:MM' — datetime matters
+                                           -- for cyclones; sheet-era rows stay at
+                                           -- month grain until curated. Extends the
+                                           -- KB's event_date convention; ISO text
+                                           -- sorts correctly at any precision.
+    event_label text NOT NULL DEFAULT '',  -- last-resort tie-breaker only: same
+                                           -- window triggering more than once at the
+                                           -- same recorded time (very unlikely —
+                                           -- uncharted territory). Convention: storm
+                                           -- name first, else admin area, else
+                                           -- 'phase-N'; set at curation, never
+                                           -- invented by a loader
     kb_framework text, kb_event_date text, -- KB crosswalk (until unified)
     people_targeted bigint,
     reported_to_ahub text,
     comments text,
-    UNIQUE NULLS NOT DISTINCT (country_iso3, hazard, year, month, event_label)
+    CHECK ((event_type = 'framework_aa') = (window_name IS NOT NULL)),
+    UNIQUE (country_iso3, hazard, event_date, window_name, event_label)
+        NULLS NOT DISTINCT
 );
 
 CREATE TABLE aa.activation_funding (       -- one row per activation × fund allocation
     country_iso3 text NOT NULL,
     hazard text NOT NULL,
-    year smallint NOT NULL,
-    month smallint,
-    event_label text,                      -- FK-by-convention to aa.activation
+    event_date text NOT NULL,
+    window_name text,
+    event_label text NOT NULL DEFAULT '',  -- FK-by-convention to aa.activation
     fund_code text NOT NULL,               -- references aa.fund
-    allocation_code text,                  -- CERF application_code / CBPF allocation
-                                           -- code once the mirror exists
+    allocation_code text,                  -- CERF application_code / CBPF
+                                           -- 'cbpf-<fund>-<id>' via aa.v_allocation
     amount_usd numeric,
     match_method text,
     UNIQUE NULLS NOT DISTINCT
-        (country_iso3, hazard, year, month, event_label, fund_code, allocation_code)
+        (country_iso3, hazard, event_date, window_name, event_label,
+         fund_code, allocation_code)
 );
 ```
 
