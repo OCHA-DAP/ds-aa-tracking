@@ -200,16 +200,16 @@ def main():
         "Disagreements below.</p>" + tbl(flags)
     )
     pre = pd.read_sql(
-        """SELECT country_iso3, hazard, year, fund_source, source, amount_usd
+        """SELECT country_iso3, hazard, year, fund_code, source, amount_usd
            FROM aa.prearranged_funding WHERE kind='prearranged'""",
         e,
     )
     piv = pre.pivot_table(
-        index=["country_iso3", "hazard", "year", "fund_source"],
+        index=["country_iso3", "hazard", "year", "fund_code"],
         columns="source", values="amount_usd", aggfunc="first",
     ).reset_index()
     src_cols = [c for c in piv.columns if c not in
-                ("country_iso3", "hazard", "year", "fund_source")]
+                ("country_iso3", "hazard", "year", "fund_code")]
     piv["n_distinct_amounts"] = piv[src_cols].apply(
         lambda r: r.dropna().nunique(), axis=1
     )
@@ -411,7 +411,7 @@ def _version_issues(e, person):
         "people_covered": ("as_of::text AS fact_date",
                            "people_covered::text AS detail"),
         "prearranged_funding": ("year::text AS fact_date",
-                                "kind || ' ' || fund_source || ' $' || COALESCE(amount_usd::text,'?') AS detail"),
+                                "kind || ' ' || COALESCE(fund_code, financier, 'cofinancing') || ' $' || COALESCE(amount_usd::text,'?') AS detail"),
         "prearranged_sector_budget": ("year_label AS fact_date",
                                       "agency || ' / ' || sector || ' $' || COALESCE(amount_usd::text,'?') AS detail"),
         "activation": ("event_date AS fact_date",
@@ -859,7 +859,7 @@ ERD_NODES = [
     ("framework_status", "new", "+ as_of · source"),
     ("framework_focal_point", "new", "+ role · person · as_of"),
     ("framework_calendar", "new", "+ month · phase"),
-    ("prearranged_funding", "new", "+ year · kind · fund_source · source"),
+    ("prearranged_funding", "new", "+ year · kind · fund_code/financier · source"),
     ("prearranged_sector_budget", "new", "+ window_name · agency · sector"),
     ("people_covered", "new", "+ as_of · source"),
     ("fund", "new", "fund_code — OCHA pooled funds only"),
