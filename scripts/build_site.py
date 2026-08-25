@@ -190,7 +190,10 @@ def main():
         "level (multi-fund events sum their funding rows). "
         "Per your call, no KB pages have been edited — adjudicate here first.</div>"
     )
-    sections.append("<h2>Sheet events vs KB</h2>" + tbl(rec))
+    sections.append(
+        "<h2>Actual conflicts & unverified items</h2>"
+        + tbl(rec[rec["reconciliation"].isin(["AMOUNT_CONFLICT", "UNVERIFIED_EVIDENCE"])])
+    )
     backfill = pd.read_sql(
         """SELECT country_iso3, hazard, event_date, event_type, window_name,
                   people_targeted, source FROM aa.v_trk_activation_reconciliation
@@ -237,65 +240,10 @@ def main():
         "now reports a structured flag (in <code>aa.cerf_allocation_extra</code>). "
         "Disagreements below.</p>" + tbl(flags)
     )
-    pre = pd.read_sql(
-        """SELECT country_iso3, hazard, year, fund_code, source, amount_usd
-           FROM aa.prearranged_funding WHERE kind='prearranged'""",
-        e,
-    )
-    piv = pre.pivot_table(
-        index=["country_iso3", "hazard", "year", "fund_code"],
-        columns="source", values="amount_usd", aggfunc="first",
-    ).reset_index()
-    src_cols = [c for c in piv.columns if c not in
-                ("country_iso3", "hazard", "year", "fund_code")]
-    piv["n_distinct_amounts"] = piv[src_cols].apply(
-        lambda r: r.dropna().nunique(), axis=1
-    )
-    piv = piv.sort_values(["n_distinct_amounts", "country_iso3"], ascending=[False, True])
     sections.append(
-        "<h2>Pre-arranged funding across sources</h2>"
-        "<p class='meta'>One column per source sheet; <code>n_distinct_amounts</code> &gt; 1 "
-        "= the sheets disagree (often timing: 2025 vs likely-2026 vs Jun-2026 figures).</p>"
-        + tbl(piv)
-    )
-    attr = pd.read_sql("SELECT * FROM aa.v_trk_version_attribution", e)
-    attr["version_match"] = attr["version_match"].fillna("(no version to attribute to)")
-    vsum = pd.read_sql("SELECT * FROM aa.v_trk_version_summary", e)
-    vgap = pd.read_sql(
-        "SELECT * FROM aa.framework_version WHERE source='sheet-revision'", e
-    )
-    sections.append(
-        "<h2>Framework versions: attribution &amp; completeness</h2>"
-        "<div class='card'>Version-specific facts (budgets, coverage, calendar, "
-        "activations, status) are attributed to the framework <em>version</em> in "
-        "force at the fact's date — sheets don't record versions, so this is inferred "
-        "(<code>auto-interval</code>), flagged when the fact falls after the version's "
-        "stated validity (<code>auto-post-validity</code>), or inherited from the KB "
-        "activation record (<code>kb-activation</code>). '(no version to attribute "
-        "to)' = pipeline/ad-hoc frameworks with no version anywhere — correct, not an "
-        "error. Mid-revision figures may belong to the upcoming version; that needs "
-        "manual override in a later pass.</div>"
-        + tbl(attr, 100)
-    )
-    sections.append(
-        "<h3>Sheet-reported revisions with no KB version page</h3>" + tbl(vgap, 100)
-    )
-    sections.append(
-        "<h3>Per-version rollup (doc budget vs tracked budget)</h3>"
-        "<p class='meta'>From <code>aa.v_trk_version_summary</code> — where "
-        "<code>prearranged_usd_doc</code> (KB frontmatter) and "
-        "<code>prearranged_usd_tracked</code> (sheets, attributed) disagree, either the "
-        "budget genuinely changed with the version or the attribution needs review.</p>"
-        + tbl(vsum, 200)
-    )
-    cov = pd.read_sql("SELECT * FROM aa.people_covered", e)
-    cpiv = cov.pivot_table(
-        index=["country_iso3", "hazard"], columns="source", values="people_covered",
-        aggfunc="first",
-    ).reset_index()
-    sections.append(
-        "<h2>People covered across sources</h2>" + tbl(cpiv)
-    )
+        "<p class='meta'>Pre-arranged funding and people-covered source pivots live "
+        "on the per-person pages (<a href='review-julia.html'>Julia</a> / "
+        "<a href='review-yakubu.html'>Yakubu</a>) — not duplicated here.</p>")
     page("reconciliation.html", "Reconciliation — sheets vs KB vs mirror",
          "\n".join(sections))
 

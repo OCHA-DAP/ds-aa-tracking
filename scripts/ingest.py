@@ -78,14 +78,17 @@ def complete_registry(tables):
 
 
 def kb_crosswalk(engine, tables):
-    """Fill registry.kb_framework/in_kb and match activation events to the KB."""
-    kb = pd.read_sql(
-        "SELECT DISTINCT kb_framework, country_iso3 FROM aa.framework_version_map",
-        engine,
-    )
-    kb["hazard"] = kb["kb_framework"].map(slug_hazard)
+    """Fill registry.kb_framework/in_kb and match activation events to the KB.
+
+    The slug map comes from KB page frontmatter (via versions.kb_versions) — the
+    performance crosswalk (framework_version_map) only carries current versions and
+    misses whole frameworks (eth, som, npl, ssd…)."""
+    from ds_aa_tracking.versions import kb_versions
+
+    kb = kb_versions()
     kb_map = {
-        (r["country_iso3"], r["hazard"]): r["kb_framework"] for _, r in kb.iterrows()
+        (r["country_iso3"], r["hazard"]): r["kb_framework"]
+        for _, r in kb[kb["kb_framework"].notna()].iterrows()
     }
 
     reg = tables["framework_registry"]
@@ -223,8 +226,9 @@ def split_activations(tables, pf_to_fund, engine):
         if key not in acts:
             wname = None
             if r["event_type"] == "framework_aa":
-                wname = win_map.get((r.get("kb_framework"), r.get("kb_event_date"))) \
-                        or "unspecified"
+                wname = win_map.get((r.get("kb_framework"), r.get("kb_event_date")))
+                if wname is None or pd.isna(wname):
+                    wname = "unspecified"
             acts[key] = {
                 "country_iso3": r["country_iso3"], "hazard": r["hazard"],
                 "event_type": r["event_type"], "event_date": ed,
