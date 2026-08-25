@@ -103,7 +103,10 @@ TABLES = {
             hazard text NOT NULL,
             year smallint NOT NULL,
             kind text NOT NULL,            -- prearranged | cofinancing | non_aa_mobilised
-            fund_source text NOT NULL,     -- cerf | country_regional | all | other
+            fund_code text,                -- references aa.fund ('all' = source stated
+                                           -- only a total; cbpf-unspecified until curated);
+                                           -- NULL exactly for non-OCHA money (see CHECK)
+            financier text,                -- who co-finances (agency etc.) — free text
             amount_usd numeric,
             identified boolean,            -- cofinancing identified? (Y/N/TBC sheets)
             funding_change text,           -- new | extended | renewed
@@ -112,8 +115,9 @@ TABLES = {
             version_match text,            -- kb-activation | auto-interval | auto-post-validity
             source text NOT NULL,
             updated_at timestamptz NOT NULL DEFAULT now(),
+            CHECK ((fund_code IS NULL) = (kind IN ('cofinancing', 'non_aa_mobilised'))),
             UNIQUE NULLS NOT DISTINCT
-                (country_iso3, hazard, year, kind, fund_source, source)
+                (country_iso3, hazard, year, kind, fund_code, financier, source)
         )""",
     "prearranged_sector_budget": """
         CREATE TABLE IF NOT EXISTS aa.prearranged_sector_budget (
@@ -148,34 +152,62 @@ TABLES = {
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard, as_of, source)
         )""",
-    "activation_event": """
-        CREATE TABLE IF NOT EXISTS aa.activation_event (
+    "fund": """
+        CREATE TABLE IF NOT EXISTS aa.fund (
+            fund_code text PRIMARY KEY,    -- cerf | cbpf-<iso3> | rhpf-<env>[-<iso3>]
+            fund_type text NOT NULL,       -- cerf | cbpf | regional_fund
+            name text NOT NULL,
+            country_iso3 text,
+            pf_id integer,                 -- source id in aa.cbpf_fund / OneGMS
+            updated_at timestamptz NOT NULL DEFAULT now()
+        )""",
+    "activation": """
+        CREATE TABLE IF NOT EXISTS aa.activation (
             country_iso3 text NOT NULL,
             hazard text NOT NULL,
-            year smallint NOT NULL,
-            month smallint,
-            fund_source text NOT NULL,     -- cerf | country_fund | regional_fund
-            mechanism text NOT NULL,       -- framework | adhoc
-            aa_or_ea text NOT NULL,        -- AA | EA
-            event_type text NOT NULL DEFAULT 'framework_aa',
-                -- framework_aa | adhoc_aa (allocation without a framework) | early_action
-            amount_usd numeric,
-            people_targeted bigint,
-            reported_to_ahub text,         -- yes | no | not yet
-            region text,
-            comments text,
-            kb_framework text,             -- matched to aa.actual_activation
+            event_type text NOT NULL,      -- framework_aa | adhoc_aa | early_action
+            event_date text NOT NULL,      -- partial ISO, as specific as known:
+                                           -- YYYY | YYYY-MM | YYYY-MM-DD | YYYY-MM-DDTHH:MM
+            window_name text,              -- NOT NULL for framework activations
+                                           -- ('unspecified' until curated); NULL for adhoc/EA
+            event_label text NOT NULL DEFAULT '',  -- last-resort tie-breaker
+                                           -- (storm name | admin area | phase-N)
+            version text,
+            version_match text,
+            kb_framework text,
             kb_event_date text,
-            application_code text,         -- CERF, matched via aa.activation_allocation
-            cbpf_allocation_code text,     -- CBPF/RhPF, matched vs aa.cbpf_allocation
-                                           -- ('cbpf-<fund>-<id>', see aa.v_allocation)
+            people_targeted bigint,
+            reported_to_ahub text,
+            comments text,
+            source text NOT NULL,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            CHECK ((event_type = 'framework_aa') = (window_name IS NOT NULL)),
+            -- event_type included beyond the design key: an adhoc-AA and an EA can
+            -- legitimately share a month at sheet-era date precision
+            UNIQUE NULLS NOT DISTINCT
+                (country_iso3, hazard, event_date, window_name, event_label, event_type)
+        )""",
+    "activation_funding": """
+        CREATE TABLE IF NOT EXISTS aa.activation_funding (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            event_date text NOT NULL,
+            window_name text,
+            event_label text NOT NULL DEFAULT '',
+            event_type text NOT NULL,      -- FK-by-convention to aa.activation
+            fund_code text NOT NULL,       -- references aa.fund; *-unspecified
+                                           -- placeholders until curated
+            allocation_code text,          -- via aa.v_allocation (CERF application_code
+                                           -- or cbpf-<fund>-<id>)
+            amount_usd numeric,
+            people_targeted bigint,        -- as reported per allocation
+            reported_to_ahub text,
             match_method text,
-            version text,                  -- attributed framework version (see framework_version)
-            version_match text,            -- kb-activation | auto-interval | auto-post-validity
             source text NOT NULL,
             updated_at timestamptz NOT NULL DEFAULT now(),
             UNIQUE NULLS NOT DISTINCT
-                (country_iso3, hazard, year, month, fund_source, aa_or_ea)
+                (country_iso3, hazard, event_date, window_name, event_label,
+                 event_type, fund_code, allocation_code)
         )""",
     # ------------------------------------------------ reporting & context
     "report_channel_inclusion": """
@@ -371,7 +403,7 @@ VIEWS = {
             SELECT DISTINCT ON (country_iso3, hazard)
                 country_iso3, hazard, amount_usd, year, source
             FROM aa.prearranged_funding
-            WHERE kind = 'prearranged' AND fund_source = 'cerf'
+            WHERE kind = 'prearranged' AND fund_code = 'cerf'
             ORDER BY country_iso3, hazard, year DESC,
                      (source = 'yakubu-prearranged-jun2026') DESC
         ),
@@ -413,7 +445,7 @@ VIEWS = {
             UNION ALL SELECT 'prearranged_funding', version_match FROM aa.prearranged_funding
             UNION ALL SELECT 'prearranged_sector_budget', version_match FROM aa.prearranged_sector_budget
             UNION ALL SELECT 'people_covered', version_match FROM aa.people_covered
-            UNION ALL SELECT 'activation_event', version_match FROM aa.activation_event
+            UNION ALL SELECT 'activation', version_match FROM aa.activation
             UNION ALL SELECT 'framework_focal_point', version_match FROM aa.framework_focal_point
             UNION ALL SELECT 'report_channel_inclusion', version_match FROM aa.report_channel_inclusion
         ) t
@@ -429,43 +461,50 @@ VIEWS = {
                (SELECT max(pf.amount_usd) FROM aa.prearranged_funding pf
                  WHERE pf.country_iso3 = fv.country_iso3 AND pf.hazard = fv.hazard
                    AND pf.version = fv.version AND pf.kind = 'prearranged'
-                   AND pf.fund_source IN ('cerf', 'all')) AS prearranged_usd_tracked,
+                   AND pf.fund_code IN ('cerf', 'all')) AS prearranged_usd_tracked,
                (SELECT max(pc.people_covered) FROM aa.people_covered pc
                  WHERE pc.country_iso3 = fv.country_iso3 AND pc.hazard = fv.hazard
                    AND pc.version = fv.version) AS people_covered,
-               (SELECT count(*) FROM aa.activation_event e
+               (SELECT count(*) FROM aa.activation e
                  WHERE e.country_iso3 = fv.country_iso3 AND e.hazard = fv.hazard
-                   AND e.version = fv.version) AS n_activation_events
+                   AND e.version = fv.version) AS n_activations
         FROM aa.framework_version fv
         ORDER BY fv.country_iso3, fv.hazard, fv.valid_from
     """,
     # sheet activation events vs KB actual_activation: matches + conflicts
     "v_trk_activation_reconciliation": """
         CREATE OR REPLACE VIEW aa.v_trk_activation_reconciliation AS
-        SELECT e.country_iso3, e.hazard, e.year, e.month, e.fund_source,
-               e.mechanism, e.aa_or_ea, e.event_type,
-               e.amount_usd AS sheet_amount_usd,
-               e.people_targeted, e.source, e.kb_framework, e.kb_event_date,
-               e.cbpf_allocation_code, e.match_method,
-               a.released_usd AS kb_released_usd,
-               a.full_activation, a.window_name,
+        WITH funding AS (
+            SELECT country_iso3, hazard, event_date, window_name, event_label,
+                   event_type,
+                   sum(amount_usd) AS total_usd,
+                   string_agg(fund_code || ': ' || coalesce(allocation_code, '?'),
+                              ' + ' ORDER BY fund_code) AS funds,
+                   count(*) AS n_funding_rows
+            FROM aa.activation_funding
+            GROUP BY 1, 2, 3, 4, 5, 6
+        )
+        SELECT act.country_iso3, act.hazard, act.event_date, act.window_name,
+               act.event_label, act.event_type, act.version, act.version_match,
+               act.people_targeted, act.source,
+               f.total_usd AS sheet_total_usd, f.funds, f.n_funding_rows,
+               act.kb_framework, act.kb_event_date,
+               a.released_usd AS kb_released_usd, a.full_activation,
                CASE
-                   WHEN e.kb_framework IS NULL AND e.event_type = 'early_action'
-                       THEN 'EARLY_ACTION'
-                   WHEN e.kb_framework IS NULL AND e.event_type = 'adhoc_aa'
-                       THEN 'ADHOC_AA'
-                   WHEN e.kb_framework IS NULL AND e.fund_source <> 'cerf'
-                       THEN 'NON_CERF_FUND'
-                   WHEN e.kb_framework IS NULL THEN 'MISSING_IN_KB'
-                   WHEN a.released_usd IS NOT NULL AND e.amount_usd IS NOT NULL
-                        AND abs(a.released_usd - e.amount_usd) > 1000
+                   WHEN act.event_type = 'early_action' THEN 'EARLY_ACTION'
+                   WHEN act.event_type = 'adhoc_aa' THEN 'ADHOC_AA'
+                   WHEN act.kb_framework IS NULL THEN 'MISSING_IN_KB'
+                   WHEN a.released_usd IS NOT NULL AND f.total_usd IS NOT NULL
+                        AND abs(a.released_usd - f.total_usd) > 1000
                        THEN 'AMOUNT_CONFLICT'
                    ELSE 'OK'
                END AS reconciliation
-        FROM aa.activation_event e
+        FROM aa.activation act
+        LEFT JOIN funding f USING (country_iso3, hazard, event_date, window_name,
+                                   event_label, event_type)
         LEFT JOIN aa.actual_activation a
-               ON a.kb_framework = e.kb_framework
-              AND a.event_date = e.kb_event_date
+               ON a.kb_framework = act.kb_framework
+              AND a.event_date = act.kb_event_date
     """,
     # KB activations with no counterpart in the sheet list
     "v_trk_activation_kb_only": """
@@ -474,7 +513,7 @@ VIEWS = {
                a.full_activation, a.released_usd, a.note
         FROM aa.actual_activation a
         WHERE NOT EXISTS (
-            SELECT 1 FROM aa.activation_event e
+            SELECT 1 FROM aa.activation e
             WHERE e.kb_framework = a.kb_framework
               AND e.kb_event_date = a.event_date
         )

@@ -114,10 +114,12 @@ NOTES = {
     "framework_status": "Operational lifecycle snapshots from every source sheet, kept side by side (PK includes <code>source</code>). Canonical <code>status</code> vocabulary; raw spelling preserved. This is deliberately distinct from the KB page-status vocabulary.",
     "framework_focal_point": "Focal points by role from the 2026 planning sheet, attributed to the version in force at the snapshot date.",
     "framework_calendar": "Monthly markers recovered from cell <em>colors</em> in the planning sheet: green = trigger window, orange = framework finalization, red = proposal development; 'F' = finalization deadline.",
-    "prearranged_funding": "Pre-arranged/co-financing amounts per (framework, year, fund source), one row per source sheet — conflicts intentionally preserved (see Reconciliation).",
+    "prearranged_funding": "Pre-arranged/co-financing amounts per (framework, year, fund), one row per source sheet — conflicts intentionally preserved (see Reconciliation). <code>fund_code</code> references <code>aa.fund</code> ('all' = source stated only a total; *-unspecified until curated); co-financing rows have NULL fund_code + free-text financier — not OCHA money.",
     "prearranged_sector_budget": "Pre-arranged budgets per framework × agency × sector (Yakubu, Jun 2026). <code>window_name</code> captures what the sheet calls sub-frameworks (Bangladesh Jamuna/Padma) — those are windows.",
     "people_covered": "People covered per framework, per source; includes double-activation assessment for cyclone frameworks.",
-    "activation_event": "The superset activation record 2020–2026 (Julia + historical sweep): <code>event_type</code> distinguishes <code>framework_aa</code> / <code>adhoc_aa</code> (allocation without a framework) / <code>early_action</code>. Crosswalked to KB <code>actual_activation</code> where possible (<code>match_method</code>); only framework events get version attribution.",
+    "fund": "OCHA pooled funds only (CERF, CBPFs, regional funds) — the fund dimension every funding row references. Agency co-financing is deliberately NOT here (free-text financier on commitments instead). Seeded from the CBPF mirror's fund registry.",
+    "activation": "One row per real-world activation event (Julia + historical sweep, allocation rows grouped). <code>event_date</code> is partial ISO at the source's precision (month for sheet-era rows; date/datetime for future entries). Every framework activation has a window ('unspecified' until curated); adhoc/EA have none. <code>event_type</code>: framework_aa | adhoc_aa | early_action.",
+    "activation_funding": "One row per activation × fund allocation — the multi-fund reality (e.g. Nigeria floods Sep 2025 = CERF $5.0M + NHF $2.0M under one activation). <code>allocation_code</code> resolves through <code>aa.v_allocation</code> (CERF application codes and CBPF codes alike).",
     "report_channel_inclusion": "Which frameworks/countries count toward which external reports per year (A-Hub, UK BCs, SG, CERF/OCHA annual reports, SF KPI, CPC), attributed to the version in force during the report year.",
     "plan_inclusion": "GHO/HNRP plan inclusion + AA feasibility flags per country-year, per source.",
     "start_network": "Start Fund anticipation alerts + Start READY membership per country (from the planning sheet).",
@@ -167,7 +169,7 @@ def main():
     # ---------- reconciliation page
     sections = []
     rec = pd.read_sql(
-        "SELECT * FROM aa.v_trk_activation_reconciliation ORDER BY year DESC, month DESC",
+        "SELECT * FROM aa.v_trk_activation_reconciliation ORDER BY event_date DESC",
         e,
     )
     counts = rec["reconciliation"].value_counts().to_dict()
@@ -176,10 +178,10 @@ def main():
         f"{counts.get('OK', 0)} matched · "
         f"<span class='badge b-warn'>{counts.get('AMOUNT_CONFLICT', 0)} amount conflicts</span>"
         f"<span class='badge b-warn'>{counts.get('MISSING_IN_KB', 0)} missing in KB</span>"
-        f"{counts.get('ADHOC_NO_FRAMEWORK', 0)} ad-hoc (allocation without a framework "
-        f"— an explicit category, never version-attributed) · "
-        f"{counts.get('NON_CERF_FUND', 0)} non-CERF fund (the KB structurally cannot "
-        "hold these; the new table is their home). "
+        f"{counts.get('ADHOC_AA', 0)} ad-hoc AA · {counts.get('EARLY_ACTION', 0)} early "
+        "action (allocations without a framework — explicit categories, never "
+        "version-attributed). Amounts now compare at ACTIVATION level: multi-fund "
+        "events sum their funding rows before comparing to the KB. "
         "Per your call, no KB pages have been edited — adjudicate here first.</div>"
     )
     sections.append("<h2>Sheet events vs KB</h2>" + tbl(rec))
@@ -327,11 +329,11 @@ the DB becomes the single authoritative source and the sheets can be retired.
 </div>
 <div class='card'>
 <b>Ownership map</b> (single writer per table, schema <code>aa</code>):<br>
-<span class='badge b-new'>ds-aa-tracking (this repo, 20 tables + 7 views)</span>
+<span class='badge b-new'>ds-aa-tracking (this repo, 22 tables + 7 views)</span>
 framework_registry · framework_version · framework_status · framework_focal_point ·
-framework_calendar ·
-prearranged_funding · prearranged_sector_budget · people_covered · activation_event ·
-report_channel_inclusion · plan_inclusion · start_network · cirv · cerf_subgrant ·
+framework_calendar · fund ·
+prearranged_funding · prearranged_sector_budget · people_covered · activation ·
+activation_funding · report_channel_inclusion · plan_inclusion · start_network · cirv · cerf_subgrant ·
 cerf_application_people · cerf_application_report · cerf_allocation_extra ·
 cerf_project_supplement · cerf_cva_history · emergency_type_override<br>
 <span class='badge b-kb'>ds-knowledge-base</span>
@@ -368,7 +370,7 @@ def _prearranged_pivot(e):
     pre = pd.read_sql(
         """SELECT country_iso3, hazard, year, source, amount_usd
            FROM aa.prearranged_funding
-           WHERE kind = 'prearranged' AND fund_source = 'cerf'""",
+           WHERE kind = 'prearranged' AND fund_code = 'cerf'""",
         e,
     )
     piv = pre.pivot_table(index=["country_iso3", "hazard", "year"], columns="source",
@@ -412,8 +414,8 @@ def _version_issues(e, person):
                                 "kind || ' ' || fund_source || ' $' || COALESCE(amount_usd::text,'?') AS detail"),
         "prearranged_sector_budget": ("year_label AS fact_date",
                                       "agency || ' / ' || sector || ' $' || COALESCE(amount_usd::text,'?') AS detail"),
-        "activation_event": ("year::text || COALESCE('-' || month::text,'') AS fact_date",
-                             "aa_or_ea || ' ' || mechanism || ' $' || COALESCE(amount_usd::text,'?') AS detail"),
+        "activation": ("event_date AS fact_date",
+                       "event_type || ' / window ' || COALESCE(window_name,'-') AS detail"),
     }
     frames = []
     for t, (datecol, detailcol) in specs.items():
@@ -506,7 +508,7 @@ def build_person_pages(e):
             rec = pd.read_sql(
                 """SELECT * FROM aa.v_trk_activation_reconciliation
                    WHERE reconciliation <> 'OK'
-                   ORDER BY reconciliation, year DESC, month DESC""",
+                   ORDER BY reconciliation, event_date DESC""",
                 e,
             )
             sections.append(
@@ -515,11 +517,10 @@ def build_person_pages(e):
                 "activations in your list with no KB record — if real, the KB page "
                 "needs an <code>activations:</code> entry (we'll batch these once "
                 "confirmed). <code>AMOUNT_CONFLICT</code> = both match but amounts "
-                "differ (Nigeria 2025: your CERF/Country-Fund split vs the KB's "
-                "single $7M). <code>ADHOC_NO_FRAMEWORK</code> = allocation without a "
-                "framework (explicit category, lives only in the new table); "
-                "<code>NON_CERF_FUND</code> = CBPF/regional-fund events the KB can't "
-                "hold — just confirm they're correct. Rows with "
+                "differ — note Nigeria 2025 now reconciles: your CERF+NHF rows sum "
+                "to the KB's $7M under one activation. <code>ADHOC_AA</code> / "
+                "<code>EARLY_ACTION</code> = allocations without a framework "
+                "(explicit categories) — just confirm they're correct. Rows with "
                 "<code>source='historical-…'</code> were recovered by the historical "
                 "sweep (OCHA page archives / pa-anticipatory-action), NOT from your "
                 "list — please confirm those actually happened (esp. PHL 2021/2022, "
@@ -610,14 +611,14 @@ TARGET_STYLE = {
 }
 
 TARGET_NODES = [
-    ("fund", "future", "fund_code — OCHA pooled funds only"),
+    ("fund", "new", "fund_code — OCHA pooled funds only"),
     ("framework_registry", "new", "country_iso3 · hazard (identity only)"),
     ("framework_version", "new", "+ version — THE unified registry"),
     ("trigger_source_crosswalk", "future", "gsheet_tab · excel_fv · *_reported (KB)"),
     ("window", "kb", "+ window_name · basis · trigger_statement"),
     ("v_version_funding", "future", "window × fund_code × agency × sector"),
-    ("activation", "future", "+ event_date (partial ISO → datetime) · event_label"),
-    ("activation_funding", "future", "+ fund_code · allocation_code · amount"),
+    ("activation", "new", "+ event_date (partial ISO → datetime) · event_label"),
+    ("activation_funding", "new", "+ fund_code · allocation_code · amount"),
     ("cerf_allocation", "mirror", "application_code"),
     ("cbpf_allocation", "mirror", "pooled_fund_id · allocation_type_id"),
     ("v_allocation", "future", "fund_code · allocation_code (union view)"),
@@ -639,21 +640,21 @@ TARGET_EDGES = [
 
 
 TARGET_FULL_NODES = [
-    ("fund", "future", "fund_code — OCHA pooled funds only"),
+    ("fund", "new", "fund_code — OCHA pooled funds only"),
     ("framework_registry", "new", "country_iso3 · hazard (identity only)"),
     ("framework_version", "new", "+ version = an ENDORSED doc · endorsed_by"),
     ("trigger_source_crosswalk", "future", "gsheet_tab · excel_fv · *_reported (KB)"),
     ("window", "kb", "+ window_name · basis · trigger_statement"),
     ("window_month", "future", "+ month (monitoring period)"),
     ("version_funding", "future", "window × fund × agency × sector · provenance"),
-    ("prearranged_commitment", "future", "version × fund/financier × year × kind"),
+    ("prearranged_commitment", "new", "= prearranged_funding (fund_code/financier built)"),
     ("people_covered", "new", "window-attached · as_of · source"),
     ("simulated_activation", "kb", "+ window_name · event_year"),
     ("framework_status", "new", "observed snapshots (vs v_expected_status)"),
     ("framework_focal_point", "new", "+ role · person · as_of"),
     ("report_channel_inclusion", "new", "report_year · channel"),
-    ("activation", "future", "ONE table · event_date as precise as known"),
-    ("activation_funding", "future", "+ fund_code · allocation_code · amount"),
+    ("activation", "new", "built — KB-table unification pending (phase 6)"),
+    ("activation_funding", "new", "+ fund_code · allocation_code · amount"),
     ("cerf_allocation", "mirror", "application_code"),
     ("cbpf_allocation", "mirror", "pooled_fund_id · allocation_type_id"),
     ("v_allocation", "mirror", "union view: fund_code · allocation_code"),
@@ -702,7 +703,7 @@ TARGET_FULL_EDGES = [
     ("cbpf_allocation", "cbpf_fund", "pooled_fund_id", "many", "one", False),
     ("cerf_allocation", "v_allocation", "", "one0", "one", False),
     ("cbpf_allocation", "v_allocation", "", "one0", "one", False),
-    ("activation_event", "cbpf_allocation", "cbpf_allocation_code", "many0", "one0", False),
+
     ("cerf_project", "cerf_allocation", "", "many0", "one0", False),
     ("cerf_project_sector", "cerf_project", "", "many", "one", False),
     ("cerf_project_country", "cerf_project", "", "many", "one", False),
@@ -861,7 +862,9 @@ ERD_NODES = [
     ("prearranged_funding", "new", "+ year · kind · fund_source · source"),
     ("prearranged_sector_budget", "new", "+ window_name · agency · sector"),
     ("people_covered", "new", "+ as_of · source"),
-    ("activation_event", "new", "+ year · month · fund_source · event_type"),
+    ("fund", "new", "fund_code — OCHA pooled funds only"),
+    ("activation", "new", "+ event_type · event_date · window"),
+    ("activation_funding", "new", "+ fund_code · allocation_code"),
     ("report_channel_inclusion", "new", "report_year · channel + …"),
     ("cerf_subgrant", "new", "project_code · partner_name"),
     ("cerf_application_people", "new", "application_code · phase · grp"),
@@ -908,15 +911,17 @@ ERD_EDGES = [
     ("prearranged_funding", "framework_version", "", "many0", "one0", False),
     ("prearranged_sector_budget", "framework_version", "", "many0", "one0", False),
     ("people_covered", "framework_version", "", "many0", "one0", False),
-    ("activation_event", "framework_version", "version (null for adhoc/EA)", "many0", "one0", False),
+    ("activation", "framework_version", "version (null for adhoc/EA)", "many0", "one0", False),
+    ("activation_funding", "activation", "", "many", "one", False),
+    ("activation_funding", "fund", "fund_code", "many", "one", False),
     ("report_channel_inclusion", "framework_version", "", "many0", "one0", False),
     ("framework_version", "framework_version_map", "kb_framework · kb_version", "one0", "one0", False),
     ("window", "framework_version_map", "", "many", "one", False),
     ("simulated_activation", "window", "", "many", "one", False),
     ("funding_breakdown", "framework_version_map", "", "many", "one", False),
     ("actual_activation", "framework_version_map", "kb_framework", "many0", "one0", False),
-    ("activation_event", "actual_activation", "kb_framework+event_date", "many0", "one0", False),
-    ("activation_event", "cerf_allocation", "application_code", "many0", "one0", False),
+    ("activation", "actual_activation", "kb_framework+event_date", "many0", "one0", False),
+    ("activation_funding", "v_allocation", "allocation_code", "many0", "one0", False),
     ("activation_allocation", "actual_activation", "FK", "many0", "one0", True),
     ("activation_allocation", "cerf_allocation", "FK", "many0", "one0", True),
     ("cerf_project", "cerf_allocation", "application_code", "many0", "one0", False),
@@ -929,7 +934,7 @@ ERD_EDGES = [
     ("cbpf_allocation", "cbpf_fund", "pooled_fund_id", "many", "one", False),
     ("cerf_allocation", "v_allocation", "", "one0", "one", False),
     ("cbpf_allocation", "v_allocation", "", "one0", "one", False),
-    ("activation_event", "cbpf_allocation", "cbpf_allocation_code", "many0", "one0", False),
+
     ("cerf_supplement", "cerf_allocation", "", "one0", "one", False),
     ("cerf_allocation_extra", "cerf_allocation", "", "one0", "one0", False),
     ("cerf_application_people", "cerf_allocation", "", "many", "one0", False),

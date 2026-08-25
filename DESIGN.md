@@ -277,7 +277,7 @@ per fund` becomes a load-time check, not a merge.
 
 | # | What | Where | Breaks anything? |
 |---|---|---|---|
-| 0 | `aa.fund` seed; split `activation_event` → `activation` + `activation_funding`; `fund_code` vocabulary in `prearranged_funding`; reconciliation views updated | ds-aa-tracking (all owned here) | No — full-refresh tables, site adapts same day |
+| 0 | ~~`aa.fund` seed; split `activation_event` → `activation` + `activation_funding`; `fund_code` vocabulary in `prearranged_funding`; reconciliation views updated~~ **done (Aug 2026)** | ds-aa-tracking | Done |
 | 1 | CI check: every `framework_version_map` row must exist in `framework_version` (catches drift both ways); agree naming (`version`, `country_iso3`) | ds-knowledge-base PR | No |
 | 2 | Extract `trigger_source_crosswalk`; `framework_version_map` becomes a compatibility VIEW over crosswalk + `framework_version`; `load_aa_performance.py` re-pointed | ds-knowledge-base | Consumers keep working via the view |
 | 3 | Drop the compatibility view once `gen_trigger_performance.py`, ERD docs and the CERF exposure app stop referencing it | ds-knowledge-base | Coordinated |

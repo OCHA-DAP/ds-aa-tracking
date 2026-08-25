@@ -141,6 +141,134 @@ def kb_crosswalk(engine, tables):
     ev["kb_activation_version"] = act_version
 
 
+ENVELOPE_RE = __import__("re").compile(r"\((?:AP-)?(?:RHPF|RhPF)-?(\w+)\)|Regional Envelope \((?:RHPF|RhPF)-(\w+)\)", 2)
+
+
+def seed_fund(engine, tables):
+    """aa.fund: CERF + every pooled fund in the CBPF mirror (OCHA pooled funds only —
+    agency co-financing is deliberately NOT a fund)."""
+    import re
+
+    import pycountry
+
+    funds = pd.read_sql(
+        "SELECT pf_id, name, country_code_iso2, parent_pf_id FROM aa.cbpf_fund", engine
+    )
+
+    def iso3_of(iso2):
+        try:
+            return pycountry.countries.get(alpha_2=iso2).alpha_3
+        except AttributeError:
+            return None
+
+    rows = [{"fund_code": "cerf", "fund_type": "cerf",
+             "name": "Central Emergency Response Fund", "country_iso3": None,
+             "pf_id": None}]
+    for _, f in funds.iterrows():
+        iso3 = iso3_of(f["country_code_iso2"])
+        m = re.search(r"R[Hh]PF-?(\w+)", str(f["name"]))
+        if m:  # regional envelope or a per-country child of one
+            env = m.group(1).lower()
+            is_envelope = "envelope" in str(f["name"]).lower()
+            code = f"rhpf-{env}" if is_envelope else f"rhpf-{env}-{(iso3 or f['pf_id'])}".lower()
+            ftype = "regional_fund"
+        else:
+            code = f"cbpf-{(iso3 or f['pf_id'])}".lower()
+            ftype = "cbpf"
+        rows.append({"fund_code": code, "fund_type": ftype, "name": f["name"],
+                     "country_iso3": iso3, "pf_id": int(f["pf_id"])})
+    df = pd.DataFrame(rows).drop_duplicates(subset=["fund_code"])
+    tables["fund"] = df
+    return dict(zip(df["pf_id"], df["fund_code"]))
+
+
+def split_activations(tables, pf_to_fund, engine):
+    """Allocation-grain sheet rows -> aa.activation + aa.activation_funding.
+
+    One activation per (country, hazard, year, month, event_type); its fund rows
+    become activation_funding. event_date is partial ISO at the sheet's precision.
+    Framework activations get window_name from the matched KB activation, else
+    'unspecified' (curation queue) — every framework activation has a window."""
+    ev = tables.pop("activation_event")
+    win = pd.read_sql(
+        "SELECT kb_framework, event_date, window_name FROM aa.actual_activation", engine
+    )
+    win_map = {(r["kb_framework"], r["event_date"]): r["window_name"]
+               for _, r in win.iterrows()}
+    cbpf = pd.read_sql(
+        "SELECT pooled_fund_id, allocation_type_id FROM aa.cbpf_allocation", engine
+    )
+    cbpf_fund_of = {f"cbpf-{r['pooled_fund_id']}-{r['allocation_type_id']}":
+                    pf_to_fund.get(r["pooled_fund_id"])
+                    for _, r in cbpf.iterrows()}
+
+    def event_date(r):
+        if pd.notna(r.get("month")):
+            return f"{int(r['year'])}-{int(r['month']):02d}"
+        return str(int(r["year"]))
+
+    def fund_code(r):
+        if r["fund_source"] == "cerf":
+            return "cerf"
+        code = r.get("cbpf_allocation_code")
+        if code is not None and pd.notna(code) and cbpf_fund_of.get(code):
+            return cbpf_fund_of[code]
+        return ("rhpf-unspecified" if r["fund_source"] == "regional_fund"
+                else "cbpf-unspecified")
+
+    acts, funding = {}, []
+    for _, r in ev.iterrows():
+        ed = event_date(r)
+        key = (r["country_iso3"], r["hazard"], ed, r["event_type"])
+        if key not in acts:
+            wname = None
+            if r["event_type"] == "framework_aa":
+                wname = win_map.get((r.get("kb_framework"), r.get("kb_event_date"))) \
+                        or "unspecified"
+            acts[key] = {
+                "country_iso3": r["country_iso3"], "hazard": r["hazard"],
+                "event_type": r["event_type"], "event_date": ed,
+                "window_name": wname, "event_label": "",
+                "kb_framework": r.get("kb_framework"),
+                "kb_event_date": r.get("kb_event_date"),
+                "kb_activation_version": r.get("kb_activation_version"),
+                "people_targeted": r.get("people_targeted"),
+                "reported_to_ahub": r.get("reported_to_ahub"),
+                "comments": r.get("comments"), "source": r["source"],
+            }
+        else:
+            a = acts[key]
+            for col in ("kb_framework", "kb_event_date", "kb_activation_version"):
+                if a.get(col) is None and pd.notna(r.get(col)):
+                    a[col] = r[col]
+            pt = r.get("people_targeted")
+            if pd.notna(pt) and (pd.isna(a["people_targeted"]) or
+                                 a["people_targeted"] is None or pt > a["people_targeted"]):
+                a["people_targeted"] = pt
+        a = acts[key]
+        # allocation code must match the funding row's fund: CERF codes only on
+        # CERF rows (a merged multi-fund event matches one KB activation whose
+        # CERF application_code must not leak onto the CBPF row)
+        if r["fund_source"] == "cerf":
+            alloc = r.get("application_code")
+        else:
+            alloc = r.get("cbpf_allocation_code")
+        funding.append({
+            "country_iso3": r["country_iso3"], "hazard": r["hazard"],
+            "event_date": ed, "window_name": a["window_name"], "event_label": "",
+            "event_type": r["event_type"], "fund_code": fund_code(r),
+            "allocation_code": alloc if pd.notna(alloc) else None,
+            "amount_usd": r.get("amount_usd"),
+            "people_targeted": r.get("people_targeted"),
+            "reported_to_ahub": r.get("reported_to_ahub"),
+            "match_method": r.get("match_method"), "source": r["source"],
+        })
+    tables["activation"] = pd.DataFrame(acts.values())
+    tables["activation_funding"] = pd.DataFrame(funding)
+    print(f"  split: {len(ev)} allocation-grain rows -> "
+          f"{len(acts)} activations + {len(funding)} funding rows")
+
+
 def cbpf_match(engine, tables):
     """Match country/regional-fund activation events to CBPF allocations.
 
@@ -184,8 +312,17 @@ def cbpf_match(engine, tables):
           "country/regional-fund events")
 
 
+LEGACY_OBJECTS = [
+    "TABLE aa.activation_event",   # split into aa.activation + aa.activation_funding
+]
+
+
 def load(engine, tables):
     with engine.begin() as conn:
+        for name, ddl in schema.VIEWS.items():
+            conn.execute(sa.text(f"DROP VIEW IF EXISTS aa.{name} CASCADE"))
+        for obj in LEGACY_OBJECTS:
+            conn.execute(sa.text(f"DROP {obj} CASCADE".replace("DROP TABLE", "DROP TABLE IF EXISTS")))
         for name in schema.TABLES:
             # full-refresh incl. structure: our views are recreated below; nothing
             # outside this repo depends on these tables
@@ -239,6 +376,8 @@ def main():
     print("Crosswalking to KB…")
     kb_crosswalk(engine, tables)
     cbpf_match(engine, tables)
+    pf_to_fund = seed_fund(engine, tables)
+    split_activations(tables, pf_to_fund, engine)
     print("Building framework versions + attributing facts…")
     fv = build_framework_version(tables)
     tables["framework_version"] = fv

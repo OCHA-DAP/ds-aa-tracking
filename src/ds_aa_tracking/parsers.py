@@ -160,12 +160,12 @@ def parse_planning():
                     "phase": fill or "framework_finalization",
                     "is_finalization_deadline": is_f, "as_of": as_of, "source": src,
                 })
-        for col, fund in ((6, "cerf"), (7, "country_regional")):
+        for col, fund in ((6, "cerf"), (7, "cbpf-unspecified")):
             amt = _num(ws.cell(r, col).value)
             if amt is not None:
                 funding.append({
                     "country_iso3": c, "hazard": h, "year": 2026,
-                    "kind": "prearranged", "fund_source": fund, "amount_usd": amt,
+                    "kind": "prearranged", "fund_code": fund, "amount_usd": amt,
                     "source": src,
                 })
         pc = _num(ws.cell(r, 8).value)
@@ -273,12 +273,12 @@ def parse_reporting():
                 "funding_change": _s(df.iat[i, 3]), "revised_on": _date(df.iat[i, 4]),
             })
         for year, cols in ((2025, (7, 8)), (2026, (10, 11))):
-            for col, fund in zip(cols, ("cerf", "country_regional")):
+            for col, fund in zip(cols, ("cerf", "cbpf-unspecified")):
                 amt = _num(df.iat[i, col])
                 if amt is not None:
                     funding.append({
                         "country_iso3": c, "hazard": h, "year": year,
-                        "kind": "prearranged", "fund_source": fund,
+                        "kind": "prearranged", "fund_code": fund,
                         "amount_usd": amt, "source": src,
                     })
         cof_flag = _bool(df.iat[i, 12])
@@ -286,7 +286,7 @@ def parse_reporting():
         if cof_flag is not None or cof_amt is not None:
             funding.append({
                 "country_iso3": c, "hazard": h, "year": 2025, "kind": "cofinancing",
-                "fund_source": "other", "amount_usd": cof_amt,
+                "fund_code": None, "amount_usd": cof_amt,
                 "identified": cof_flag, "source": src,
             })
         pc = _num(df.iat[i, 14])
@@ -324,7 +324,7 @@ def parse_reporting():
             if amt is not None:
                 funding.append({
                     "country_iso3": c, "hazard": h, "year": year, "kind": "prearranged",
-                    "fund_source": "all", "amount_usd": amt, "source": src,
+                    "fund_code": "all", "amount_usd": amt, "source": src,
                 })
         hnrp = _s(row.get("2026 GHO - HNRP"))
         if hnrp in {"Y", "N"}:
@@ -808,16 +808,16 @@ def parse_jun2026():
             })
         for col, kind, fund in (
             ("Pre-arranged (CERF)", "prearranged", "cerf"),
-            ("Pre-arranged (Country Fund)", "prearranged", "country_regional"),
-            ("Additional co-funding", "cofinancing", "other"),
+            ("Pre-arranged (Country Fund)", "prearranged", "cbpf-unspecified"),
+            ("Additional co-funding", "cofinancing", None),
             ("Non-AA Emergency Funds Mobilised based on forecast",
-             "non_aa_mobilised", "other"),
+             "non_aa_mobilised", None),
         ):
             amt = _num(r.get(col))
             if amt is not None:
                 funding.append({
                     "country_iso3": c, "hazard": h, "year": 2026, "kind": kind,
-                    "fund_source": fund, "amount_usd": amt,
+                    "fund_code": fund, "amount_usd": amt,
                     "remarks": _s(r.get("Remarks")) if kind != "prearranged" else None,
                     "source": src,
                 })
@@ -843,7 +843,7 @@ def parse_jun2026():
         if amt is not None:
             funding.append({
                 "country_iso3": c, "hazard": h, "year": 2026, "kind": "prearranged",
-                "fund_source": "cerf", "amount_usd": amt, "source": src,
+                "fund_code": "cerf", "amount_usd": amt, "source": src,
             })
 
     # ---- New/Extended frameworks 2025 -> prearranged_funding
@@ -857,7 +857,7 @@ def parse_jun2026():
         if amt is not None:
             funding.append({
                 "country_iso3": c, "hazard": h, "year": 2025, "kind": "prearranged",
-                "fund_source": "cerf", "amount_usd": amt,
+                "fund_code": "cerf", "amount_usd": amt,
                 "funding_change": (_s(df.iat[i, 14]) or "").lower() or None,
                 "source": "yakubu-new-extended-2025",
             })
@@ -887,11 +887,11 @@ def parse_jun2026():
         if amt is not None:
             funding.append({
                 "country_iso3": c, "hazard": h, "year": 2026, "kind": "prearranged",
-                "fund_source": "cerf", "amount_usd": amt, "source": src,
+                "fund_code": "cerf", "amount_usd": amt, "source": src,
             })
 
     out["prearranged_funding"] = pd.DataFrame(funding).drop_duplicates(
-        subset=["country_iso3", "hazard", "year", "kind", "fund_source", "source"]
+        subset=["country_iso3", "hazard", "year", "kind", "fund_code", "source"]
     )
     out["framework_status"] = pd.DataFrame(status).drop_duplicates(
         subset=["country_iso3", "hazard", "as_of", "source"]

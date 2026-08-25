@@ -268,9 +268,13 @@ def _fact_date(row, table):
     if table == "report_channel_inclusion":
         # a framework counted in year N's report = the version in force during N
         return date(int(row["report_year"]), 12, 31)
-    if table == "activation_event":
-        m = int(row["month"]) if pd.notna(row.get("month")) else 6
-        return date(int(row["year"]), m, 15)
+    if table == "activation":
+        ed = str(row["event_date"])
+        if len(ed) >= 10:
+            return pd.to_datetime(ed[:10]).date()
+        if len(ed) == 7:
+            return date(int(ed[:4]), int(ed[5:7]), 15)
+        return date(int(ed[:4]), 6, 15)
     if table in ("prearranged_funding",):
         snap = SOURCE_AS_OF.get(row["source"])
         y = int(row["year"])
@@ -283,7 +287,7 @@ def _fact_date(row, table):
 
 VERSIONED_TABLES = [
     "framework_status", "framework_calendar", "people_covered",
-    "prearranged_funding", "prearranged_sector_budget", "activation_event",
+    "prearranged_funding", "prearranged_sector_budget", "activation",
     "framework_focal_point", "report_channel_inclusion",
 ]
 
@@ -297,14 +301,14 @@ def attribute_versions(tables, fv):
             continue
         versions, methods = [], []
         for _, row in df.iterrows():
-            # ad-hoc events are allocations WITHOUT a framework: an explicit
+            # ad-hoc/EA events are allocations WITHOUT a framework: an explicit
             # category, never version-attributed
-            if t == "activation_event" and row.get("mechanism") == "adhoc":
+            if t == "activation" and row.get("event_type") != "framework_aa":
                 versions.append(None)
                 methods.append("adhoc-no-framework")
                 continue
             # activation events matched to a KB activation inherit its version
-            kb_v = row.get("kb_activation_version") if t == "activation_event" else None
+            kb_v = row.get("kb_activation_version") if t == "activation" else None
             if kb_v is not None and pd.notna(kb_v) and str(kb_v).strip():
                 versions.append(str(kb_v))
                 methods.append("kb-activation")
@@ -318,5 +322,5 @@ def attribute_versions(tables, fv):
             versions.append(v), methods.append(m)
         df["version"] = versions
         df["version_match"] = methods
-        if t == "activation_event" and "kb_activation_version" in df.columns:
+        if t == "activation" and "kb_activation_version" in df.columns:
             df.drop(columns=["kb_activation_version"], inplace=True)
