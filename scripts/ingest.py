@@ -278,10 +278,9 @@ def cbpf_match(engine, tables):
 
     cbpf = pd.read_sql(
         """SELECT a.pooled_fund_id, a.allocation_type_id, a.year, a.aa_keyword,
-                  f.country_code_iso2
+                  a.approved_budget, f.country_code_iso2
            FROM aa.cbpf_allocation a
-           LEFT JOIN aa.cbpf_fund f ON f.pf_id = a.pooled_fund_id
-           WHERE a.aa_keyword""",
+           LEFT JOIN aa.cbpf_fund f ON f.pf_id = a.pooled_fund_id""",
         engine,
     )
 
@@ -301,9 +300,20 @@ def cbpf_match(engine, tables):
                 (cbpf["country_iso3"] == e["country_iso3"])
                 & (cbpf["year"] == e["year"])
             ]
-            if len(cand) == 1:
-                r = cand.iloc[0]
-                code = f"cbpf-{r['pooled_fund_id']}-{r['allocation_type_id']}"
+            # amount is the strongest evidence (allocations often have generic
+            # titles); fall back to a unique AA-keyword candidate
+            amt = e.get("amount_usd")
+            if pd.notna(amt):
+                hit = cand[(cand["approved_budget"] - float(amt)).abs()
+                           <= max(1000, 0.01 * float(amt))]
+                if len(hit) == 1:
+                    r = hit.iloc[0]
+                    code = f"cbpf-{r['pooled_fund_id']}-{r['allocation_type_id']}"
+            if code is None:
+                kw = cand[cand["aa_keyword"]]
+                if len(kw) == 1:
+                    r = kw.iloc[0]
+                    code = f"cbpf-{r['pooled_fund_id']}-{r['allocation_type_id']}"
         codes.append(code)
     ev["cbpf_allocation_code"] = codes
     n = sum(c is not None for c in codes)
@@ -381,6 +391,17 @@ def main():
     print("Building framework versions + attributing facts…")
     fv = build_framework_version(tables)
     tables["framework_version"] = fv
+    # registry KB link: the performance crosswalk only carries current versions —
+    # any framework with a KB version page counts as in_kb
+    reg = tables["framework_registry"]
+    fv_kb = fv[fv["kb_framework"].notna()].drop_duplicates(
+        subset=["country_iso3", "hazard"])
+    kb_by_fw = {(r["country_iso3"], r["hazard"]): r["kb_framework"]
+                for _, r in fv_kb.iterrows()}
+    reg["kb_framework"] = [
+        kb if (kb is not None and pd.notna(kb)) else kb_by_fw.get((c, h))
+        for kb, c, h in zip(reg["kb_framework"], reg["country_iso3"], reg["hazard"])]
+    reg["in_kb"] = reg["kb_framework"].notna()
     attribute_versions(tables, fv)
     print("Loading dev DB…")
     load(engine, tables)

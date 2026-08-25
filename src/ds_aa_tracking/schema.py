@@ -491,9 +491,13 @@ VIEWS = {
                act.kb_framework, act.kb_event_date,
                a.released_usd AS kb_released_usd, a.full_activation,
                CASE
+                   WHEN act.source LIKE 'historical-ocha-web%%'
+                       THEN 'UNVERIFIED_EVIDENCE'
                    WHEN act.event_type = 'early_action' THEN 'EARLY_ACTION'
                    WHEN act.event_type = 'adhoc_aa' THEN 'ADHOC_AA'
-                   WHEN act.kb_framework IS NULL THEN 'MISSING_IN_KB'
+                   -- sheets are assumed correct where the KB is silent: not a
+                   -- conflict, a KB-backfill queue
+                   WHEN act.kb_framework IS NULL THEN 'KB_BACKFILL'
                    WHEN a.released_usd IS NOT NULL AND f.total_usd IS NOT NULL
                         AND abs(a.released_usd - f.total_usd) > 1000
                        THEN 'AMOUNT_CONFLICT'

@@ -69,6 +69,7 @@ NAV = """
 <header>
   <span class="t">AA tracking — schema &amp; data review</span>
   <a href="index.html">Overview</a>
+  <a href="dashboards.html">Dashboards</a>
   <a href="tables.html">Tracking tables</a>
   <a href="schema.html">DB schema</a>
   <a href="reconciliation.html">Reconciliation</a>
@@ -177,14 +178,51 @@ def main():
         "<div class='card'><b>Activation events: sheets vs KB.</b> "
         f"{counts.get('OK', 0)} matched · "
         f"<span class='badge b-warn'>{counts.get('AMOUNT_CONFLICT', 0)} amount conflicts</span>"
-        f"<span class='badge b-warn'>{counts.get('MISSING_IN_KB', 0)} missing in KB</span>"
+        f"<span class='badge b-kb'>{counts.get('KB_BACKFILL', 0)} accepted, pending KB "
+        "backfill</span>"
+        f"<span class='badge b-warn'>{counts.get('UNVERIFIED_EVIDENCE', 0)} unverified "
+        "evidence</span>"
         f"{counts.get('ADHOC_AA', 0)} ad-hoc AA · {counts.get('EARLY_ACTION', 0)} early "
-        "action (allocations without a framework — explicit categories, never "
-        "version-attributed). Amounts now compare at ACTIVATION level: multi-fund "
-        "events sum their funding rows before comparing to the KB. "
+        "action. ADJUDICATION POLICY: the sheets are assumed correct wherever the KB "
+        "is simply silent — those rows are a KB-backfill queue, not conflicts. Only "
+        "actual value conflicts (AMOUNT_CONFLICT) and weakly-evidenced sweep items "
+        "(UNVERIFIED_EVIDENCE) need a human call. Amounts compare at activation "
+        "level (multi-fund events sum their funding rows). "
         "Per your call, no KB pages have been edited — adjudicate here first.</div>"
     )
     sections.append("<h2>Sheet events vs KB</h2>" + tbl(rec))
+    backfill = pd.read_sql(
+        """SELECT country_iso3, hazard, event_date, event_type, window_name,
+                  people_targeted, source FROM aa.v_trk_activation_reconciliation
+           WHERE reconciliation = 'KB_BACKFILL' ORDER BY event_date DESC""", e)
+    vgap2 = pd.read_sql(
+        """SELECT country_iso3, hazard, version, doc_url, source
+           FROM aa.framework_version WHERE source IN ('ocha-web','pa-monorepo')
+           ORDER BY country_iso3""", e)
+    sections.append(
+        "<h2>KB backfill queue (accepted — the KB just doesn't have it yet)</h2>"
+        "<p class='meta'>Per the adjudication policy these are treated as correct in "
+        "this DB; they become KB PRs (framework-page activations + version pages) "
+        "when convenient.</p>"
+        + tbl(backfill)
+        + "<h3>Historical framework versions with no KB page</h3>" + tbl(vgap2)
+    )
+    backfill = pd.read_sql(
+        """SELECT country_iso3, hazard, event_date, event_type, window_name,
+                  people_targeted, source FROM aa.v_trk_activation_reconciliation
+           WHERE reconciliation = 'KB_BACKFILL' ORDER BY event_date DESC""", e)
+    vgap2 = pd.read_sql(
+        """SELECT country_iso3, hazard, version, doc_url, source
+           FROM aa.framework_version WHERE source IN ('ocha-web','pa-monorepo')
+           ORDER BY country_iso3""", e)
+    sections.append(
+        "<h2>KB backfill queue (accepted — the KB just doesn't have it yet)</h2>"
+        "<p class='meta'>Per the adjudication policy these are treated as correct in "
+        "this DB; they become KB PRs (framework-page activations + version pages) "
+        "when convenient.</p>"
+        + tbl(backfill)
+        + "<h3>Historical framework versions with no KB page</h3>" + tbl(vgap2)
+    )
     kb_only = pd.read_sql("SELECT * FROM aa.v_trk_activation_kb_only", e)
     sections.append(
         "<h2>KB activations with no sheet counterpart</h2>"
@@ -321,6 +359,14 @@ def main():
 
     # ---------- roadmap
     build_roadmap_page()
+
+    # ---------- dashboards + per-framework pages
+    import shutil
+
+    import dashboards
+    dashboards.build_all(e, page, tbl)
+    shutil.copy(Path(__file__).parents[1] / "site_src" / "chart.umd.js",
+                OUT / "chart.umd.js")
 
     # ---------- index
     reg = pd.read_sql("SELECT * FROM aa.v_trk_framework_current ORDER BY country_name", e)
@@ -515,7 +561,7 @@ def build_person_pages(e):
         if person == "julia":
             rec = pd.read_sql(
                 """SELECT * FROM aa.v_trk_activation_reconciliation
-                   WHERE reconciliation <> 'OK'
+                   WHERE reconciliation IN ('AMOUNT_CONFLICT', 'UNVERIFIED_EVIDENCE')
                    ORDER BY reconciliation, event_date DESC""",
                 e,
             )
