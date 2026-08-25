@@ -1,2 +1,3 @@
 country_iso3,hazard,year,month,fund_source,mechanism,aa_or_ea,amount_usd,people_targeted,reported_to_ahub,comments,source
 NPL,flood,2021,8,cerf,framework,AA,,,,readiness trigger activated Aug 2021 (pa-anticipatory-action npl README; framework endorsed Jul 2021),historical-pa-monorepo
+TCD,drought,2026,5,cerf,framework,AA,,,,"Window 2 activation 9 May 2026 (KB record; ~$1.33M of the $4.4M released on shared application CERF-TCD-26-RR-1537 - Julia's single April row carries the two-window total)",historical-kb
