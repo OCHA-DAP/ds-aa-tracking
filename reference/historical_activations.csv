@@ -1,4 +1,2 @@
 country_iso3,hazard,year,month,fund_source,mechanism,aa_or_ea,amount_usd,people_targeted,reported_to_ahub,comments,source
 NPL,flood,2021,8,cerf,framework,AA,,,,readiness trigger activated Aug 2021 (pa-anticipatory-action npl README; framework endorsed Jul 2021),historical-pa-monorepo
-PHL,storm,2021,,cerf,framework,AA,,,,"evidenced by CERF PHL AA cash-based intervention snapshot (Sep 2021, wayback of OCHA AA page); amount unknown - confirm",historical-ocha-web
-PHL,storm,2022,,cerf,framework,AA,,,,"evidenced by CERF PHL AA cash-based intervention snapshot (Sep 2022, wayback of OCHA AA page); amount unknown - confirm",historical-ocha-web
