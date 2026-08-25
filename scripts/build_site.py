@@ -272,8 +272,13 @@ def main():
         "sector taxonomy columns and lifecycle dates are undocumented). NEW (Aug 2026): "
         "the <b>CBPF/regional-fund mirror</b> — <code>aa.cbpf_allocation</code> (one row "
         "per Standard/Reserve allocation envelope; a set of approved projects), "
-        "<code>aa.cbpf_fund</code>, and the fund-agnostic union view "
-        "<code>aa.v_allocation</code> — refreshed daily by the same workflow. Summary below; "
+        "<code>aa.cbpf_fund</code>, the fund-agnostic union view "
+        "<code>aa.v_allocation</code>, and project-level tables: "
+        "<code>aa.cbpf_project</code> (one row per project = a grant to ONE "
+        "implementing partner — unlike CERF, NGOs incl. NNGOs receive CBPF projects "
+        "directly), <code>aa.cbpf_project_cluster</code> (sector splits) and "
+        "<code>aa.cbpf_project_subip</code> (sub-implementing partners) — all "
+        "refreshed daily by the same workflow. Summary below; "
         "the new tracking tables link to these via "
         "<code>application_code</code>/<code>project_code</code>.</div>"
     )
@@ -281,6 +286,9 @@ def main():
         ("cbpf_allocation", "SELECT year, count(*) n_allocations, sum(CASE WHEN aa_keyword THEN 1 ELSE 0 END) n_aa_keyword, sum(approved_budget) approved_budget FROM aa.cbpf_allocation GROUP BY year ORDER BY year"),
         ("cbpf_allocation (AA-keyword rows)", "SELECT a.year, f.name AS fund, a.allocation_source, a.title, a.approved_budget, a.planned_usd FROM aa.cbpf_allocation a LEFT JOIN aa.cbpf_fund f ON f.pf_id=a.pooled_fund_id WHERE a.aa_keyword ORDER BY a.year DESC"),
         ("cbpf_fund", "SELECT pf_id, name, abbrv, country_code_iso2, parent_pf_id FROM aa.cbpf_fund ORDER BY name"),
+        ("cbpf_project", "SELECT allocation_year, count(*) n_projects, count(DISTINCT org_name) n_orgs, sum(budget) budget, sum(CASE WHEN org_type='National NGO' THEN budget ELSE 0 END) budget_nngo FROM aa.cbpf_project GROUP BY 1 ORDER BY 1"),
+        ("cbpf_project (org types)", "SELECT org_type, count(*) n_projects, sum(budget) budget FROM aa.cbpf_project GROUP BY 1 ORDER BY budget DESC NULLS LAST"),
+        ("cbpf_project_subip", "SELECT count(*) n_rows, count(DISTINCT subip_name) n_partners, count(DISTINCT chf_project_code) n_projects, sum(subip_amount) known_amounts FROM aa.cbpf_project_subip"),
         ("v_allocation", "SELECT fund_type, count(*) n, sum(CASE WHEN is_aa THEN 1 ELSE 0 END) n_aa, sum(amount_usd) amount_usd FROM aa.v_allocation GROUP BY fund_type"),
         ("cerf_allocation", "SELECT year, count(*) n_allocations, sum(CASE WHEN aa_keyword THEN 1 ELSE 0 END) n_aa_keyword, sum(amount_approved) amount_approved FROM aa.cerf_allocation GROUP BY year ORDER BY year"),
         ("cerf_project", "SELECT year, count(*) n_projects, count(DISTINCT application_code) n_applications, sum(amount_approved) amount_approved FROM aa.cerf_project GROUP BY year ORDER BY year"),
@@ -671,6 +679,9 @@ TARGET_FULL_NODES = [
     ("ibtracs_storms", "ext", "sid — storms schema"),
     ("cbpf_allocation", "mirror", "pooled_fund_id · allocation_type_id"),
     ("cbpf_fund", "mirror", "pf_id (pooled funds incl. RhPF)"),
+    ("cbpf_project", "mirror", "chf_project_code — one implementing partner"),
+    ("cbpf_project_cluster", "mirror", "+ cluster"),
+    ("cbpf_project_subip", "mirror", "+ subip_name (sub-grants)"),
     ("v_allocation", "mirror", "union view: fund · allocation_code"),
 ]
 
@@ -701,6 +712,9 @@ TARGET_FULL_EDGES = [
     ("cerf_allocation_storm", "cerf_allocation", "", "many", "one", False),
     ("cerf_allocation_storm", "ibtracs_storms", "sid (m:n via link table)", "many", "one", False),
     ("cbpf_allocation", "cbpf_fund", "pooled_fund_id", "many", "one", False),
+    ("cbpf_project", "cbpf_allocation", "pooled_fund_id + allocation_type_id", "many0", "one0", False),
+    ("cbpf_project_cluster", "cbpf_project", "", "many", "one", False),
+    ("cbpf_project_subip", "cbpf_project", "", "many", "one", False),
     ("cerf_allocation", "v_allocation", "", "one0", "one", False),
     ("cbpf_allocation", "v_allocation", "", "one0", "one", False),
 
@@ -887,6 +901,9 @@ ERD_NODES = [
     ("ibtracs_storms", "ext", "sid — storms schema"),
     ("cbpf_allocation", "mirror", "pooled_fund_id · allocation_type_id"),
     ("cbpf_fund", "mirror", "pf_id (pooled funds incl. RhPF)"),
+    ("cbpf_project", "mirror", "chf_project_code — one implementing partner"),
+    ("cbpf_project_cluster", "mirror", "+ cluster"),
+    ("cbpf_project_subip", "mirror", "+ subip_name (sub-grants)"),
     ("v_allocation", "mirror", "union view: fund · allocation_code"),
 ]
 
@@ -932,6 +949,9 @@ ERD_EDGES = [
     ("cerf_allocation_storm", "cerf_allocation", "", "many", "one", False),
     ("cerf_allocation_storm", "ibtracs_storms", "sid (m:n via link table)", "many", "one", False),
     ("cbpf_allocation", "cbpf_fund", "pooled_fund_id", "many", "one", False),
+    ("cbpf_project", "cbpf_allocation", "pooled_fund_id + allocation_type_id", "many0", "one0", False),
+    ("cbpf_project_cluster", "cbpf_project", "", "many", "one", False),
+    ("cbpf_project_subip", "cbpf_project", "", "many", "one", False),
     ("cerf_allocation", "v_allocation", "", "one0", "one", False),
     ("cbpf_allocation", "v_allocation", "", "one0", "one", False),
 
