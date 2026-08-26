@@ -120,7 +120,7 @@ def _fetch(e):
     d["prearranged"] = pre
     d["activation"] = pd.read_sql(
         """SELECT a.country_iso3, a.hazard, a.event_type, a.event_date,
-                  a.window_name, a.version, a.people_targeted,
+                  a.window_name, a.version, a.people_targeted, a.kb_event_date,
                   f.fund_code, f.allocation_code, f.amount_usd,
                   r.region
            FROM aa.activation_funding f
@@ -664,42 +664,88 @@ built to the CERF key-data-points list (<a href='questions.html'>coverage map</a
 
 # ------------------------------------------------------------------ hierarchy
 HIER_CSS = """
-.tree details { margin:4px 0; }
-.tree > details { background:#fff; border:1px solid #dfe4ea; border-radius:8px;
-  padding:8px 14px; margin:10px 0; }
-.tree details details { border-left:3px solid #e3e8ef; padding-left:14px; margin-left:6px; }
-.tree summary { cursor:pointer; padding:4px 2px; list-style:none; display:flex;
-  flex-wrap:wrap; gap:7px; align-items:center; }
-.tree summary::before { content:'▸'; color:#8a97a8; font-size:12px; transition:transform .12s; }
+.tree details.fw { background:#fff; border:1px solid #dfe4ea; border-radius:8px;
+  padding:6px 16px 10px; margin:10px 0; }
+.tree details.ver { border-left:3px solid #e3e8ef; padding-left:14px; margin:8px 0 8px 8px; }
+.tree summary { cursor:pointer; padding:6px 2px; list-style:none; }
+.tree summary::before { content:'▸'; color:#8a97a8; font-size:12px; margin-right:8px;
+  display:inline-block; transition:transform .12s; }
 .tree details[open] > summary::before { transform:rotate(90deg); }
 .tree summary:hover { background:#f4f7fa; border-radius:5px; }
-.nm { font-weight:700; font-size:14px; } .nm.v { font-size:13px; }
-.nm.w { font-size:12.5px; font-weight:600; } .nm.a { font-size:12.5px; font-weight:600; }
-.chip { display:inline-block; padding:1px 8px; border-radius:9px; font-size:10.5px;
-  font-weight:600; white-space:nowrap; }
-.c-status { background:#e3f1e6; color:#1c6b31; } .c-dormant { background:#eee; color:#666; }
-.c-dev { background:#fdf1dc; color:#8a5c0a; } .c-endorsed { background:#e3f1e6; color:#1c6b31; }
-.c-superseded { background:#eee; color:#777; } .c-retired { background:#eee; color:#777; }
-.c-money { background:#e8f0fb; color:#1d5aa8; } .c-rp { background:#e8e8f8; color:#3b3b8f; }
-.c-fund { background:#fdf1dc; color:#8a5c0a; } .c-type { background:#fde8f0; color:#a1336b; }
-.c-basis { background:#e8f4f8; color:#0b6079; } .c-warn { background:#fde3e3; color:#a11; }
-.kv { font-size:11.5px; color:#555; margin:3px 0 3px 20px; }
-.kv a { color:#1d5aa8; }
+.fw-line { display:inline-grid; grid-template-columns:300px 150px 110px 130px 110px;
+  gap:8px; align-items:baseline; width:calc(100% - 30px); }
+.fw-line .nm { font-weight:700; font-size:14px; }
+.ver-line { display:inline-grid; grid-template-columns:150px 110px 130px auto;
+  gap:8px; align-items:baseline; width:calc(100% - 30px); }
+.ver-line .nm { font-weight:650; font-size:13px; font-family:ui-monospace,monospace; }
+.muted { color:#667; font-size:12px; } .num { font-size:12.5px; color:#334; }
+.st { display:inline-block; padding:0 8px; border-radius:9px; font-size:11px;
+  font-weight:600; }
+.st-on { background:#e3f1e6; color:#1c6b31; } .st-off { background:#ededed; color:#777; }
+.st-dev { background:#fdf1dc; color:#8a5c0a; }
+table.mini { border-collapse:collapse; font-size:12px; margin:6px 0 10px; background:#fff; }
+table.mini th { text-align:left; font-weight:600; color:#556; background:#f4f6f9;
+  padding:3px 10px; border:1px solid #e6eaef; white-space:nowrap; }
+table.mini td { padding:3px 10px; border:1px solid #e6eaef; vertical-align:top; }
+table.mini td.lbl { color:#667; white-space:nowrap; width:110px; background:#fafbfc; }
+table.mini a { color:#1d5aa8; }
 .hier-tools { display:flex; gap:10px; margin:12px 0; align-items:center; }
 .hier-tools button { padding:5px 12px; border:1px solid #bbb; border-radius:5px;
   background:#fff; cursor:pointer; font-size:12.5px; }
+h4.sect { font-size:11.5px; text-transform:uppercase; letter-spacing:.04em;
+  color:#778; margin:10px 0 2px; }
 """
-
-
-def _chip(cls, txt):
-    return f"<span class='chip {cls}'>{txt}</span>"
 
 
 def _fmt_usd(v):
     if v is None or pd.isna(v):
-        return None
+        return ""
     v = float(v)
     return f"${v/1e6:.1f}M" if v >= 1e6 else f"${v/1e3:.0f}k" if v >= 1e3 else f"${v:.0f}"
+
+
+def _st(status, kind="fw"):
+    if status is None or pd.isna(status):
+        return ""
+    cls = ("st-on" if status in ("active", "activated_implementing", "endorsed")
+           else "st-dev" if ("development" in status or "conversation" in status
+                            or status == "under_revision")
+           else "st-off")
+    return f"<span class='st {cls}'>{status.replace('_', ' ')}</span>"
+
+
+def _kb_trigger_info():
+    """Structured trigger info per (kb_framework, version) from KB page frontmatter."""
+    import re
+
+    import yaml
+
+    from ds_aa_tracking.versions import KB_DIR
+
+    out = {}
+    for pg in KB_DIR.glob("frameworks/*/[0-9]*.md"):
+        m = re.match(r"^---\n(.*?)\n---", pg.read_text(), re.DOTALL)
+        if not m:
+            continue
+        try:
+            fm = yaml.safe_load(m.group(1))
+        except yaml.YAMLError:
+            continue
+        tf = fm.get("trigger_facets") or {}
+        mp = fm.get("monitoring_period") or {}
+        bits = []
+        if tf.get("basis"):
+            bits.append(str(tf["basis"]))
+        if tf.get("indicators"):
+            bits.append(", ".join(map(str, tf["indicators"])))
+        months = mp.get("months") or []
+        if months:
+            names = "JFMAMJJASOND"
+            bits.append("monitored " + "".join(names[m - 1] for m in months
+                                               if isinstance(m, int) and 1 <= m <= 12))
+        if bits:
+            out[(fm.get("framework"), str(fm.get("version")))] = " · ".join(bits)
+    return out
 
 
 def build_hierarchy(page, d, e):
@@ -716,139 +762,141 @@ def build_hierarchy(page, d, e):
            LEFT JOIN aa.v_window_performance p
              USING (kb_framework, kb_version, country_iso3, window_name)""", e)
     act = d["activation"]
-    fund_rows = pd.read_sql(
-        """SELECT country_iso3, hazard, year, fund_code, amount_usd
-           FROM aa.prearranged_funding WHERE kind='prearranged'
-             AND fund_code NOT IN ('all')""", e)
+    urls = pd.read_sql(
+        "SELECT kb_framework, event_date, url FROM aa.actual_activation "
+        "WHERE url IS NOT NULL", e)
+    url_map = {(r["kb_framework"], r["event_date"]): r["url"]
+               for _, r in urls.iterrows()}
+    trig = _kb_trigger_info()
     focal = d["focal"]
 
-    def act_html(a):
-        funding = " · ".join(
-            f"{r.fund_code}: {_fmt_usd(r.amount_usd) or '?'}"
-            + (f" ({r.allocation_code})" if pd.notna(r.allocation_code) else "")
-            for r in a.itertuples())
-        first = a.iloc[0]
-        total = a["amount_usd"].sum()
-        bits = [f"<span class='nm a'>⚡ {first['event_date']}</span>",
-                _chip("c-type", first["event_type"].replace("_", " "))]
-        if pd.notna(total) and total:
-            bits.append(_chip("c-money", _fmt_usd(total)))
-        if pd.notna(first.get("people_targeted")) and first["people_targeted"]:
-            bits.append(_chip("c-status", f"{int(first['people_targeted']):,} targeted"))
-        kv = f"<div class='kv'>{funding}</div>" if funding else ""
-        return f"<details><summary>{''.join(bits)}</summary>{kv}</details>"
-
-    def win_html(w, acts_w):
-        bits = [f"<span class='nm w'>◧ {w.window_name}</span>"]
-        if pd.notna(w.basis):
-            bits.append(_chip("c-basis", w.basis))
-        if w.all_in is True:
-            bits.append(_chip("c-basis", "all-in"))
-        if pd.notna(w.allocation_usd):
-            bits.append(_chip("c-money", _fmt_usd(w.allocation_usd)))
-        if pd.notna(w.return_period):
-            bits.append(_chip("c-rp", f"RP {w.return_period:.1f}y"))
-        if pd.notna(w.activation_prob):
-            bits.append(_chip("c-rp", f"p {w.activation_prob:.0%}"))
-        if len(acts_w):
-            bits.append(_chip("c-type", f"{len(acts_w)} activation(s)"))
-        kv = ""
-        if pd.notna(w.sim_activations) and pd.notna(w.analysis_years):
-            kv = (f"<div class='kv'>backtest: {int(w.sim_activations)} simulated "
-                  f"activations over {int(w.analysis_years)} years</div>")
-        inner = "".join(act_html(g) for _, g in
-                        acts_w.groupby("event_date", sort=True)) if len(acts_w) else ""
-        return f"<details><summary>{''.join(bits)}</summary>{kv}{inner}</details>"
-
-    def ver_html(v, wins_v, acts_v, iso3, hz):
-        st = v.kb_status if pd.notna(v.kb_status) else "no KB status"
-        stcls = {"endorsed": "c-endorsed", "superseded": "c-superseded",
-                 "retired": "c-retired", "development": "c-dev"}.get(st, "c-dormant")
-        bits = [f"<span class='nm v'>◆ {v.version}</span>", _chip(stcls, st)]
-        if pd.notna(v.endorsed_by):
-            bits.append(_chip("c-basis", f"endorsed by {v.endorsed_by}"))
-        if pd.notna(v.prearranged_usd_doc):
-            bits.append(_chip("c-money", f"doc: {_fmt_usd(v.prearranged_usd_doc)}"))
-        n_act = acts_v["event_date"].nunique() if len(acts_v) else 0
-        if n_act:
-            bits.append(_chip("c-type", f"{n_act} activation(s)"))
-        if len(wins_v):
-            bits.append(_chip("c-basis", f"{len(wins_v)} window(s)"))
-        kvs = []
-        rng = " → ".join(x for x in [str(v.valid_from or ""), str(v.valid_until or "")] if x and x != "None")
-        if rng:
-            kvs.append(f"valid {rng}")
-        if pd.notna(v.doc_url):
-            kvs.append(f"<a href='{v.doc_url}'>framework document</a>")
-        if pd.notna(v.analysis_ref):
-            kvs.append(f"analysis: <code>{v.analysis_ref}</code>")
-        kvs.append(f"source: {v.source}")
-        kv = f"<div class='kv'>{' · '.join(kvs)}</div>"
-        # windows with their activations; unattributed activations after
-        win_names = set(wins_v["window_name"]) if len(wins_v) else set()
-        inner = "".join(
-            win_html(w, acts_v[acts_v["window_name"] == w.window_name])
+    def windows_table(wins_v):
+        if not len(wins_v):
+            return ""
+        rows = "".join(
+            f"<tr><td>{w.window_name}</td>"
+            f"<td>{w.basis if pd.notna(w.basis) else ''}"
+            f"{' · all-in' if w.all_in is True else ''}</td>"
+            f"<td>{_fmt_usd(w.allocation_usd)}</td>"
+            f"<td>{f'{w.return_period:.1f} yr' if pd.notna(w.return_period) else ''}</td>"
+            f"<td>{f'{w.activation_prob:.0%}' if pd.notna(w.activation_prob) else ''}</td>"
+            f"<td>{f'{int(w.sim_activations)} in {int(w.analysis_years)} yrs' if pd.notna(w.sim_activations) else ''}</td></tr>"
             for w in wins_v.itertuples())
-        stray = acts_v[~acts_v["window_name"].isin(win_names)] if len(acts_v) else acts_v
-        if len(stray):
-            if len(win_names):
-                inner += "<div class='kv'>activations without a matched window:</div>"
-            inner += "".join(act_html(g) for _, g in stray.groupby("event_date"))
-        return f"<details><summary>{''.join(bits)}</summary>{kv}{inner}</details>"
+        return ("<h4 class='sect'>Windows</h4>"
+                "<table class='mini'><thead><tr><th>window</th><th>basis</th>"
+                "<th>budget</th><th>return period</th><th>annual prob</th>"
+                "<th>backtest</th></tr></thead><tbody>" + rows + "</tbody></table>")
+
+    def activations_table(acts_v, kb_fw):
+        if not len(acts_v):
+            return ""
+        rows = []
+        for ed, g in acts_v.groupby("event_date", sort=True):
+            first = g.iloc[0]
+            funding = "<br>".join(
+                f"{r.fund_code}: {_fmt_usd(r.amount_usd) or '?'}"
+                + (f" <span class='muted'>({r.allocation_code})</span>"
+                   if pd.notna(r.allocation_code) else "")
+                for r in g.itertuples())
+            url = url_map.get((kb_fw, first.get("kb_event_date")))
+            link = f"<a href='{url}'>announcement</a>" if url else ""
+            targeted = (f"{int(first['people_targeted']):,}"
+                        if pd.notna(first.get("people_targeted")) else "")
+            wname = first.get("window_name")
+            rows.append(
+                f"<tr><td>{ed}</td><td>{first['event_type'].replace('_', ' ')}</td>"
+                f"<td>{wname if pd.notna(wname) and wname != 'unspecified' else ''}</td>"
+                f"<td>{funding}</td><td>{targeted}</td><td>{link}</td></tr>")
+        return ("<h4 class='sect'>Activations</h4>"
+                "<table class='mini'><thead><tr><th>date</th><th>type</th>"
+                "<th>window</th><th>funding</th><th>people targeted</th><th>link</th>"
+                "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
+
+    def ver_block(v, wins_v, acts_v, kb_fw):
+        n_act = acts_v["event_date"].nunique() if len(acts_v) else 0
+        head = (f"<span class='ver-line'><span class='nm'>{v.version}</span>"
+                f"<span>{_st(v.kb_status)}</span>"
+                f"<span class='num'>{_fmt_usd(v.prearranged_usd_doc)}</span>"
+                f"<span class='muted'>"
+                f"{f'{len(wins_v)} windows · ' if len(wins_v) else ''}"
+                f"{f'{n_act} activation(s)' if n_act else ''}</span></span>")
+        meta = []
+        rng = " → ".join(str(x) for x in [v.valid_from, v.valid_until]
+                         if x is not None and str(x) != "None")
+        if rng:
+            meta.append(("Valid", rng))
+        if pd.notna(v.doc_url):
+            meta.append(("Document", f"<a href='{v.doc_url}'>"
+                         f"{v.doc_title if pd.notna(v.doc_title) else 'framework document'}</a>"))
+        t = trig.get((kb_fw, v.version))
+        if t:
+            meta.append(("Trigger", t))
+        if pd.notna(v.analysis_ref):
+            meta.append(("Analysis", f"<code>{v.analysis_ref}</code>"))
+        if pd.notna(v.endorsed_by):
+            meta.append(("Endorsed by", v.endorsed_by))
+        if pd.notna(v.supersedes) and str(v.supersedes) not in ("None", "null"):
+            meta.append(("Supersedes", str(v.supersedes)))
+        meta.append(("Source", v.source))
+        meta_tbl = ("<table class='mini'>" + "".join(
+            f"<tr><td class='lbl'>{k}</td><td>{val}</td></tr>" for k, val in meta)
+            + "</table>")
+        return (f"<details class='ver'><summary>{head}</summary>"
+                f"{meta_tbl}{windows_table(wins_v)}{activations_table(acts_v, kb_fw)}"
+                "</details>")
 
     blocks = []
     for _, fw in cur.sort_values("country_name").iterrows():
         c, h = fw["country_iso3"], fw["hazard"]
+        kb_fw = fw.get("kb_framework") if pd.notna(fw.get("kb_framework")) else None
         vs = ver[(ver["country_iso3"] == c) & (ver["hazard"] == h)]
         acts_f = act[(act["country_iso3"] == c) & (act["hazard"] == h)]
-        st = fw["status"] if (fw["status"] is not None
-                              and pd.notna(fw["status"])) else "no status"
-        stcls = ("c-status" if st in ("active", "activated_implementing")
-                 else "c-dev" if "development" in st or "conversation" in st
-                 else "c-dormant")
-        bits = [f"<span class='nm'>{fw['country_name']} — {h}</span>", _chip(stcls, st)]
-        pre = _fmt_usd(fw.get("cerf_prearranged_usd"))
-        if pre:
-            bits.append(_chip("c-money", f"CERF {pre}"))
-        if pd.notna(fw.get("people_covered")) and fw["people_covered"]:
-            bits.append(_chip("c-status", f"{int(fw['people_covered']):,} covered"))
         n_act = acts_f["event_date"].nunique()
-        if n_act:
-            bits.append(_chip("c-type", f"{n_act} activation(s)"))
-        if not len(vs):
-            bits.append(_chip("c-warn", "no version anywhere — pipeline"))
-        kvs = []
-        if pd.notna(fw.get("kb_framework")):
-            kvs.append(f"KB: <code>{fw['kb_framework']}</code>")
+        head = (f"<span class='fw-line'><span class='nm'>{fw['country_name']} — {h}</span>"
+                f"<span>{_st(fw['status'])}</span>"
+                f"<span class='num'>{_fmt_usd(fw.get('cerf_prearranged_usd'))}</span>"
+                f"<span class='muted'>"
+                f"{f'{int(fw.people_covered):,} covered' if pd.notna(fw.get('people_covered')) else ''}</span>"
+                f"<span class='muted'>{f'{n_act} activation(s)' if n_act else ''}</span>"
+                "</span>")
+        meta = []
+        if kb_fw:
+            meta.append(("KB", f"<code>{kb_fw}</code>"))
         if pd.notna(fw.get("region")):
-            kvs.append(fw["region"])
+            meta.append(("Region", fw["region"]))
         fps = focal[(focal["country_iso3"] == c) & (focal["hazard"] == h)]
         if len(fps):
-            kvs.append("focal points: " + ", ".join(
-                f"{r.person} ({r.role})" for r in fps.itertuples()))
-        kvs.append(f"<a href='fw-{c.lower()}-{h}.html'>framework page</a>")
-        kv = f"<div class='kv'>{' · '.join(kvs)}</div>"
+            meta.append(("Focal points", ", ".join(
+                f"{r.person} <span class='muted'>({r.role.replace('_', ' ')})</span>"
+                for r in fps.itertuples())))
+        meta.append(("More", f"<a href='fw-{c.lower()}-{h}.html'>framework page</a>"))
+        meta_tbl = ("<table class='mini'>" + "".join(
+            f"<tr><td class='lbl'>{k}</td><td>{val}</td></tr>" for k, val in meta)
+            + "</table>")
         inner = ""
         for v in vs.itertuples():
             wins_v = win[(win["country_iso3"] == c)
-                         & (win["kb_framework"] == (fw.get("kb_framework") or ""))
+                         & (win["kb_framework"] == (kb_fw or "—"))
                          & (win["kb_version"] == v.version)]
             acts_v = acts_f[acts_f["version"] == v.version]
-            inner += ver_html(v, wins_v, acts_v, c, h)
+            inner += ver_block(v, wins_v, acts_v, kb_fw)
         stray_f = acts_f[~acts_f["version"].isin(set(vs["version"]))]
         if len(stray_f):
-            inner += "<div class='kv'>activations not attributed to a version:</div>"
-            inner += "".join(act_html(g) for _, g in stray_f.groupby("event_date"))
+            inner += ("<h4 class='sect'>Activations not attributed to a version</h4>"
+                      + activations_table(stray_f, kb_fw))
+        if not len(vs):
+            inner += "<p class='muted'>No endorsed version anywhere yet — pipeline framework.</p>"
         blocks.append(
             f"<details class='fw' data-name='{fw['country_name'].lower()} {h}'>"
-            f"<summary>{''.join(bits)}</summary>{kv}{inner}</details>")
+            f"<summary>{head}</summary>{meta_tbl}{inner}</details>")
 
     body = f"""
-<div class='card'>The portfolio as a tree: <b>framework → version → window →
-activation</b>, with everything the DB knows at each level — status, funding, doc
-and analysis links, per-window budgets and backtest return periods (from the KB
-trigger-performance tables), and each activation's fund-by-fund allocations. Click
-any row to expand.</div>
+<div class='card'>The portfolio as a collapsible tree — <b>framework → version →
+window → activation</b> — with everything the DB knows at each level: status and
+funding, framework documents per version, structured trigger info (basis, indicators,
+monitored months — from the KB pages; plain-text trigger statements land with the
+window registry), per-window budgets and backtested return periods, and each
+activation's fund-by-fund allocations with announcement links.</div>
 <div class='hier-tools'>
  <input class='filter' placeholder='filter frameworks…' oninput='hfilter(this.value)'>
  <button onclick='setAll(true)'>expand all</button>
