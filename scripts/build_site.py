@@ -71,6 +71,7 @@ NAV = """
   <a href="index.html">Overview</a>
   <a href="dashboards.html">Dashboards</a>
   <a href="hierarchy.html">Explorer</a>
+  <a href="form.html">Entry form</a>
   <a href="tables.html">Tracking tables</a>
   <a href="schema.html">DB schema</a>
   <a href="reconciliation.html">Reconciliation</a>

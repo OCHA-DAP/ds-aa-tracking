@@ -913,6 +913,251 @@ function hfilter(q){{ q=q.toLowerCase();
     page("hierarchy.html", "Portfolio explorer — framework › version › window › activation", body)
 
 
+
+
+# ------------------------------------------------------------------ entry form
+FORM_CSS = """
+.form-card { background:#fff; border:1px solid #dfe4ea; border-radius:8px;
+  padding:16px 20px; margin:14px 0; }
+.form-card h3 { margin:0 0 4px; font-size:14.5px; }
+.form-card .hint { color:#667; font-size:11.5px; margin:0 0 10px; }
+.frow { display:flex; gap:12px; flex-wrap:wrap; margin:8px 0; }
+.frow label { display:flex; flex-direction:column; gap:3px; font-size:11.5px;
+  color:#556; font-weight:600; }
+.frow input, .frow select, .frow textarea { padding:6px 9px; border:1px solid #bbb;
+  border-radius:5px; font-size:13px; font-family:inherit; min-width:160px; }
+.frow textarea { min-width:420px; min-height:52px; }
+.months { display:flex; gap:4px; }
+.months span { width:26px; height:26px; display:grid; place-items:center;
+  border:1px solid #ccc; border-radius:5px; font-size:11px; cursor:pointer;
+  user-select:none; }
+.months span.on { background:#1baf7a; color:#fff; border-color:#1baf7a; }
+.rep { border-left:3px solid #e3e8ef; padding:2px 0 2px 12px; margin:8px 0; }
+button.small { padding:4px 10px; border:1px solid #bbb; border-radius:5px;
+  background:#fff; cursor:pointer; font-size:12px; }
+button.primary { padding:8px 18px; border:0; border-radius:6px; background:#1f2a44;
+  color:#fff; font-size:14px; cursor:pointer; }
+#payload { background:#0f1520; color:#c7e3d4; padding:14px; border-radius:8px;
+  font-size:11.5px; overflow-x:auto; display:none; }
+.dummy-banner { background:#fdf1dc; border:1px solid #eeddb0; color:#6b4b06;
+  border-radius:6px; padding:9px 14px; font-size:12.5px; margin:10px 0; }
+"""
+
+
+def build_entry_form(page, d, e):
+    cur = d["current"].sort_values("country_name")
+    ver = d["versions"]
+    funds = pd.read_sql(
+        "SELECT fund_code, name FROM aa.fund ORDER BY fund_type, name", e)
+    fw_options = [
+        {"key": f"{r.country_iso3}|{r.hazard}",
+         "label": f"{r.country_name} — {r.hazard}",
+         "iso3": r.country_iso3, "hazard": r.hazard,
+         "kb": r.kb_framework if pd.notna(r.kb_framework) else None,
+         "status": r.status if pd.notna(r.status) else None,
+         "versions": sorted(
+             ver.loc[(ver.country_iso3 == r.country_iso3)
+                     & (ver.hazard == r.hazard), "version"].tolist())}
+        for r in cur.itertuples()]
+    hazards = ["drought", "flood", "storm", "cholera", "plague", "locusts",
+               "food_insecurity", "other"]
+    data = {"frameworks": fw_options,
+            "funds": funds.to_dict("records"),
+            "hazards": hazards}
+    body = f"""
+<div class='card'><b>Framework entry form (demo)</b> — what data entry looks like once
+the sheets retire: one form writes the registry, version, windows and funding tables.
+<div class='dummy-banner'>Dummy form — nothing is saved. “Submit” previews the exact
+rows that would be written to the <code>aa</code> schema, so the entry model itself
+can be reviewed (a version is an <b>endorsed document</b>; every framework version has
+at least one <b>window</b>; version and dates are <b>entered, never inferred</b>).</div></div>
+
+<div class='form-card'>
+ <h3>1 · Framework</h3>
+ <p class='hint'>Identity is (country, hazard). Updating an existing framework adds a
+ new version to it; the previous endorsed version becomes superseded.</p>
+ <div class='frow'>
+  <label>Mode
+   <select id='mode' onchange='modeChange()'>
+    <option value='update'>Update existing framework (new version)</option>
+    <option value='new'>Register new framework</option>
+   </select></label>
+  <label id='l-existing'>Framework
+   <select id='existing' onchange='fwChange()'></select></label>
+  <label id='l-ctry' style='display:none'>Country ISO3
+   <input id='ctry' maxlength='3' placeholder='e.g. KEN' style='min-width:90px'></label>
+  <label id='l-hz' style='display:none'>Hazard
+   <select id='hz'></select></label>
+ </div>
+ <div class='frow' id='fw-info'></div>
+</div>
+
+<div class='form-card'>
+ <h3>2 · Version — the endorsed document</h3>
+ <p class='hint'>Every version is a document endorsement. ERC endorsement = major
+ revision (recommits funds, new validity period); CERF-secretariat = minor revision
+ (validity and budget inherited from the predecessor).</p>
+ <div class='frow'>
+  <label>Endorsement date <input type='date' id='vdate'></label>
+  <label>Endorsed by
+   <select id='endorsed_by'>
+    <option value='erc'>ERC (major — new validity + funds)</option>
+    <option value='cerf_secretariat'>CERF secretariat (minor — inherits)</option>
+   </select></label>
+  <label>Valid until <input type='date' id='vuntil'></label>
+  <label>Validity source
+   <select id='vuntil_src'><option>doc-stated</option><option>convention</option>
+    <option>inherited</option></select></label>
+ </div>
+ <div class='frow'>
+  <label>Document title <input id='dtitle' style='min-width:340px'
+    placeholder='e.g. Kenya: AA Framework for Drought — 2026'></label>
+  <label>Document URL <input id='durl' style='min-width:340px'
+    placeholder='https://reliefweb.int/…'></label>
+  <label>Supersedes <select id='supersedes'><option value=''>— none (first version)</option></select></label>
+ </div>
+</div>
+
+<div class='form-card'>
+ <h3>3 · Windows</h3>
+ <p class='hint'>At least one window per version — single-window frameworks get one
+ explicit window. The trigger statement is the condition in plain language, verbatim
+ from the endorsed document.</p>
+ <div id='windows'></div>
+ <button class='small' onclick='addWindow()'>+ add window</button>
+</div>
+
+<div class='form-card'>
+ <h3>4 · Funding & coverage</h3>
+ <p class='hint'>Pre-arranged amounts per OCHA pooled fund; co-financing is not a fund
+ — it takes a free-text financier.</p>
+ <div id='fundrows'></div>
+ <button class='small' onclick='addFund()'>+ add fund</button>
+ <div class='frow' style='margin-top:10px'>
+  <label>Co-financing financier <input id='cofin_who' placeholder='e.g. WFP internal'></label>
+  <label>Co-financing USD <input type='number' id='cofin_usd' style='min-width:120px'></label>
+  <label>People covered <input type='number' id='covered' style='min-width:120px'></label>
+ </div>
+</div>
+
+<div style='display:flex; gap:12px; align-items:center; margin:16px 0'>
+ <button class='primary' onclick='preview()'>Submit (preview rows)</button>
+ <span class='muted' style='font-size:12px'>writes nothing — shows the aa-schema rows this entry produces</span>
+</div>
+<pre id='payload'></pre>
+
+<script>window.F = {json.dumps(data)};</script>
+<script>
+const MON = ['J','F','M','A','M','J','J','A','S','O','N','D'];
+function el(html){{ const t=document.createElement('template'); t.innerHTML=html.trim(); return t.content.firstChild; }}
+function monthPicker(){{ return '<div class="months">' + MON.map((m,i)=>
+  `<span data-m="${{i+1}}" onclick="this.classList.toggle('on')">${{m}}</span>`).join('') + '</div>'; }}
+function addWindow(pref={{}}){{
+  document.getElementById('windows').appendChild(el(`
+   <div class='rep win'>
+    <div class='frow'>
+     <label>Window name <input class='wname' value='${{pref.name||''}}' placeholder='e.g. Gu season / single'></label>
+     <label>Basis <select class='wbasis'><option>forecast</option><option>observational</option><option>mixed</option></select></label>
+     <label>Budget USD <input type='number' class='wbudget' style='min-width:120px'></label>
+     <label>Monitoring months ${{monthPicker()}}</label>
+     <button class='small' onclick='this.closest(".rep").remove()'>remove</button>
+    </div>
+    <div class='frow'><label>Trigger statement (plain text, verbatim from the doc)
+     <textarea class='wtrig' placeholder='e.g. 7-day GloFAS forecast ≥70% probability of exceeding the 1-in-2-year level at Chatara'></textarea></label></div>
+   </div>`));
+}}
+function addFund(){{
+  const opts = F.funds.map(f=>`<option value='${{f.fund_code}}'>${{f.fund_code}} — ${{f.name}}</option>`).join('');
+  document.getElementById('fundrows').appendChild(el(`
+   <div class='rep fund'><div class='frow'>
+    <label>Fund <select class='fcode'>${{opts}}</select></label>
+    <label>Pre-arranged USD <input type='number' class='famt' style='min-width:130px'></label>
+    <button class='small' onclick='this.closest(".rep").remove()'>remove</button>
+   </div></div>`));
+}}
+function fwChange(){{
+  const fw = F.frameworks.find(f=>f.key===document.getElementById('existing').value);
+  const info = document.getElementById('fw-info');
+  info.innerHTML = fw ? `<span class='muted'>current status: ${{fw.status||'—'}} · KB: ${{fw.kb||'not in KB'}} · ${{fw.versions.length}} known version(s)</span>` : '';
+  const sup = document.getElementById('supersedes');
+  sup.innerHTML = "<option value=''>— none (first version)</option>" +
+    (fw ? fw.versions.map(v=>`<option ${{v===fw.versions[fw.versions.length-1]?'selected':''}}>${{v}}</option>`).join('') : '');
+}}
+function modeChange(){{
+  const upd = document.getElementById('mode').value==='update';
+  document.getElementById('l-existing').style.display = upd?'':'none';
+  document.getElementById('l-ctry').style.display = upd?'none':'';
+  document.getElementById('l-hz').style.display = upd?'none':'';
+  if(!upd) document.getElementById('supersedes').innerHTML = "<option value=''>— none (first version)</option>";
+  else fwChange();
+}}
+function preview(){{
+  const upd = document.getElementById('mode').value==='update';
+  const fw = upd ? F.frameworks.find(f=>f.key===document.getElementById('existing').value) : null;
+  const iso3 = upd ? fw.iso3 : document.getElementById('ctry').value.toUpperCase();
+  const hz = upd ? fw.hazard : document.getElementById('hz').value;
+  const vdate = document.getElementById('vdate').value;
+  const problems = [];
+  if(!iso3 || iso3.length!==3) problems.push('country ISO3 required');
+  if(!vdate) problems.push('endorsement date required (a version IS an endorsed document)');
+  const wins = [...document.querySelectorAll('.win')].map(w=>({{
+    country_iso3: iso3, hazard: hz, version: vdate,
+    window_name: w.querySelector('.wname').value || 'single',
+    basis: w.querySelector('.wbasis').value,
+    allocation_usd: +w.querySelector('.wbudget').value || null,
+    trigger_statement: w.querySelector('.wtrig').value || null,
+    monitoring_months: [...w.querySelectorAll('.months .on')].map(x=>+x.dataset.m),
+  }}));
+  if(!wins.length) problems.push('at least one window required (single-window frameworks get one explicit window)');
+  const fundsR = [...document.querySelectorAll('.fund')].map(f=>({{
+    country_iso3: iso3, hazard: hz, version: vdate, year: +(vdate||'0').slice(0,4),
+    kind:'prearranged', fund_code: f.querySelector('.fcode').value,
+    amount_usd: +f.querySelector('.famt').value || null }}));
+  const cofin = +document.getElementById('cofin_usd').value || null;
+  if(cofin) fundsR.push({{country_iso3: iso3, hazard: hz, version: vdate,
+    year:+(vdate||'0').slice(0,4), kind:'cofinancing', fund_code: null,
+    financier: document.getElementById('cofin_who').value || 'unspecified',
+    amount_usd: cofin}});
+  const payload = {{
+    _dummy: 'no data written — this is the row preview',
+    _problems: problems,
+    'aa.framework_registry (upsert)': {{country_iso3: iso3, hazard: hz,
+      kb_framework: fw ? fw.kb : null, new_framework: !upd}},
+    'aa.framework_version (insert)': {{country_iso3: iso3, hazard: hz, version: vdate,
+      endorsed_by: document.getElementById('endorsed_by').value,
+      valid_from: vdate, valid_until: document.getElementById('vuntil').value || null,
+      valid_until_source: document.getElementById('vuntil_src').value,
+      doc_title: document.getElementById('dtitle').value || null,
+      doc_url: document.getElementById('durl').value || null,
+      supersedes: document.getElementById('supersedes').value || null,
+      source: 'entry-form'}},
+    'aa.window (insert, one per window)': wins,
+    'aa.prearranged_funding (insert)': fundsR,
+    'aa.people_covered (insert)': (+document.getElementById('covered').value || null) && {{
+      country_iso3: iso3, hazard: hz, version: vdate,
+      people_covered: +document.getElementById('covered').value, source: 'entry-form'}},
+    _side_effects: [
+      upd && document.getElementById('supersedes').value ?
+        `previous version ${{document.getElementById('supersedes').value}} flips to superseded` : null,
+      'KB framework page generated/updated from these rows (future: DB is the source)',
+    ].filter(Boolean),
+  }};
+  const p = document.getElementById('payload');
+  p.style.display='block';
+  p.textContent = JSON.stringify(payload, null, 2);
+  p.scrollIntoView({{behavior:'smooth'}});
+}}
+F.frameworks.forEach(f=>document.getElementById('existing')
+  .appendChild(new Option(f.label, f.key)));
+F.hazards.forEach(h=>document.getElementById('hz').appendChild(new Option(h,h)));
+fwChange(); addWindow(); addFund();
+</script>
+<style>{{DASH_CSS}}{{FORM_CSS}}</style>"""
+    body = body.replace("{DASH_CSS}", DASH_CSS).replace("{FORM_CSS}", FORM_CSS)
+    page("form.html", "Framework entry form (demo)", body)
+
+
+
 def build_all(e, page, tbl):
     d = _fetch(e)
     build_funding(page, d)
@@ -922,3 +1167,4 @@ def build_all(e, page, tbl):
     links = build_framework_pages(page, tbl, d)
     build_hub(page, d, links)
     build_hierarchy(page, d, e)
+    build_entry_form(page, d, e)
