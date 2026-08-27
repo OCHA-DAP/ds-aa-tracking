@@ -296,3 +296,40 @@ Ordering notes: 0 and 1 are independent and immediate; 2–3 need a KB PR cycle;
 3. **Event labels**: for same-month multi-event cases the `event_label` needs a
    convention (e.g. storm name, 'phase-2') — propose curating during the activation
    adjudication pass.
+
+## Parking lot — next-stage notes (2026-08, pre-CERF discussions)
+
+Unscoped items captured from working discussions; none are commitments yet.
+
+**Data administration & pipeline**
+
+- General data-administration pipeline with named responsibilities and update
+  frequencies per table/source (who updates what, how often, from where).
+- CERF to share their taxonomy definition — align our vocabularies (hazards,
+  statuses, windows, funds) to it and record the mapping.
+- Verify terminology against CERF and CBPF usage — particularly around
+  **sub-granting** (CERF subgrants vs CBPF sub-implementing partners are different
+  mechanisms; make sure our column names and site copy use each fund's own terms).
+- Pilot the data-update forms (the demo entry form → real backend), with a defined
+  spectrum per data type: **automated / semi-automatic / manual** entry.
+- Framework ingestion policy: **LLM-drafted with human confirmation** as the only
+  ingestion path (no pure-manual page writing), while keeping a separate, explicit
+  record of **official endorsement confirmation** (who confirmed the endorsement,
+  when — distinct from who confirmed the data entry).
+
+**Content & scope**
+
+- Include the **indicator reporting** agencies must do for their projects
+  (project-level indicators from CERF/CBPF reporting — a new fact layer below
+  sectors).
+- Include the **evidence base** from the (CERF) compendium — link frameworks/
+  activations to their evidence entries.
+- Define **public vs private** per table/field (what can go on a public site vs
+  what stays behind the password — focal points and planning are the obvious
+  private candidates; activations and funding are largely public already).
+
+**Site**
+
+- Download buttons (CSV/XLSX) on tables and dashboards.
+- A visually appealing **landing page** (the current Overview is a working index,
+  not a front door).
