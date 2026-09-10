@@ -19,9 +19,11 @@ npx -y staticrypt site_build/*.html -d site_encrypted -p "$PW" --short --remembe
 
 git checkout -B gh-pages origin/gh-pages
 cp site_encrypted/*.html .
-git show main:site_src/chart.umd.js > chart.umd.js
+for a in chart.umd.js pdf.min.js pdf.worker.min.js; do
+  git show "main:site_src/$a" > "$a"
+done
 touch .nojekyll
-for f in *.html chart.umd.js .nojekyll; do git add -f "./$f"; done
+for f in *.html chart.umd.js pdf.min.js pdf.worker.min.js .nojekyll; do git add -f "./$f"; done
 
 if git diff --cached --name-only | grep -q "/"; then
   echo "FATAL: staged a nested path — aborting" >&2

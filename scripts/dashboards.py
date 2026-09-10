@@ -354,7 +354,9 @@ def build_allocations(page, d):
    <div class='note'>From the CERF mirror; activation→endorsement lag needs curated activation datetimes (sheet-era dates are month-grain).</div></div>
 </div>
 <h2>Allocation table</h2>
-<section><input class='filter' placeholder='filter rows…' oninput='filt(this)'>
+<section><div style='display:flex;gap:10px;align-items:center'>
+<input class='filter' placeholder='filter rows…' oninput='filt(this)'>
+<button class='dl' onclick='dlFiltered()'>⬇ CSV (current filter)</button></div>
 <div class='scroll'><table class='data' id='tbl'><thead><tr>
 <th>fund</th><th>code</th><th>country</th><th>year</th><th>USD</th><th>AA</th><th>title</th>
 </tr></thead><tbody></tbody></table></div></section>"""
@@ -409,6 +411,13 @@ function draw(){ const R = rows();
     <td>${r.country_iso3??r.fund_name??''}</td><td>${r.year??''}</td><td>${money(r.amount_usd)}</td>
     <td>${r.is_aa?'✓':''}</td><td>${r.title??''}</td></tr>`).join('');
 }
+function dlFiltered(){ const R = rows();
+  const cols = ['fund_type','fund_name','allocation_code','country_iso3','year','amount_usd','is_aa','title'];
+  const esc = v => v==null ? '' : /[",\\n]/.test(String(v)) ? '"'+String(v).replace(/"/g,'""')+'"' : String(v);
+  const csv = [cols.join(',')].concat(R.map(r=>cols.map(c=>esc(r[c])).join(','))).join('\\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download = 'allocations_filtered.csv'; a.click(); URL.revokeObjectURL(a.href); }
 [fFund,fC,fY1,fY2,fAA].forEach(el=>el.addEventListener('change',draw));
 fQ.addEventListener('input',draw);
 draw();"""
@@ -1158,6 +1167,478 @@ fwChange(); addWindow(); addFund();
 
 
 
+
+
+# ------------------------------------------------------------------ doc ingest
+def build_ingest_doc(page, d):
+    """Upload-a-document ingestion demo: detects identical / new-version /
+    new-framework against the live registry, entirely client-side (pdf.js)."""
+    cur = d["current"].sort_values("country_name")
+    ver = d["versions"]
+    fw = [{"iso3": r.country_iso3, "hazard": r.hazard,
+           "label": f"{r.country_name} — {r.hazard}",
+           "names": [r.country_name],
+           "kb": r.kb_framework if pd.notna(r.kb_framework) else None,
+           "versions": sorted(ver.loc[(ver.country_iso3 == r.country_iso3)
+                                      & (ver.hazard == r.hazard), "version"].tolist())}
+          for r in cur.itertuples()]
+    data = {"frameworks": fw}
+    body = f"""
+<div class='card'><b>Framework document ingestion (demo)</b> — drop an endorsed
+framework PDF; the page reads it in your browser (nothing is uploaded anywhere) and
+decides which of three cases it is:
+<b>already ingested</b> (flags which version) · <b>new version of an existing
+framework</b> · <b>a brand-new framework</b> — then proposes the exact registry rows.
+This replaces field-by-field entry as the intended ingestion path
+(LLM/automation-assisted with human confirmation); the
+<a href='form.html'>manual form</a> and <a href='status.html'>status update</a>
+remain for corrections.</div>
+
+<div class='form-card' id='drop' style='border:2px dashed #9db2c9; text-align:center;
+     padding:40px; cursor:pointer'>
+ <div style='font-size:15px; font-weight:600'>Drop a framework PDF here, or click to choose</div>
+ <div class='hint' style='margin-top:6px'>read locally with pdf.js — the file never leaves your machine</div>
+ <input type='file' id='file' accept='application/pdf' style='display:none'>
+</div>
+<div id='progress' class='muted' style='margin:8px 0'></div>
+
+<div class='form-card' id='detected' style='display:none'>
+ <h3>Detected (edit if wrong)</h3>
+ <div class='frow'>
+  <label>Country <select id='dc'></select></label>
+  <label>Hazard <select id='dh'></select></label>
+  <label>Version / endorsement date <input type='date' id='dd'></label>
+  <label>Title <input id='dt' style='min-width:380px'></label>
+ </div>
+ <div class='frow'><button class='primary' onclick='classify()'>Classify & propose</button></div>
+</div>
+<div id='verdict'></div>
+<pre id='payload' style='display:none'></pre>
+
+<script src="pdf.min.js"></script>
+<script>window.G = {json.dumps(data)};</script>
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
+const HAZ = {{
+  drought: ['drought','sécheresse','secheresse','sequia','sequía','dry spell'],
+  flood: ['flood','inondation','monsoon','riverine','crue'],
+  storm: ['cyclone','typhoon','hurricane','tropical storm','tempête','ouragan'],
+  cholera: ['cholera','choléra'],
+}};
+const MONTHS = {{january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,
+  september:9,october:10,november:11,december:12,janvier:1,février:2,fevrier:2,mars:3,
+  avril:4,mai:5,juin:6,juillet:7,août:8,aout:8,septembre:9,octobre:10,novembre:11,
+  décembre:12,decembre:12}};
+let fileHashHits = JSON.parse(localStorage.getItem('ingestHashes')||'{{}}');
+let curHash = null, curText = '';
+
+const drop = document.getElementById('drop'), fileEl = document.getElementById('file');
+drop.onclick = () => fileEl.click();
+drop.ondragover = e => {{ e.preventDefault(); drop.style.background='#eef4fc'; }};
+drop.ondragleave = () => drop.style.background='';
+drop.ondrop = e => {{ e.preventDefault(); drop.style.background='';
+  if(e.dataTransfer.files[0]) handle(e.dataTransfer.files[0]); }};
+fileEl.onchange = () => fileEl.files[0] && handle(fileEl.files[0]);
+
+async function handle(f){{
+  const prog = document.getElementById('progress');
+  prog.textContent = `reading ${{f.name}}…`;
+  const buf = await f.arrayBuffer();
+  curHash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buf))]
+    .map(b=>b.toString(16).padStart(2,'0')).join('');
+  let text = '';
+  try {{
+    const pdf = await pdfjsLib.getDocument({{data: buf}}).promise;
+    const n = Math.min(pdf.numPages, 8);
+    for(let i=1;i<=n;i++){{
+      const pg = await pdf.getPage(i);
+      const tc = await pg.getTextContent();
+      text += tc.items.map(x=>x.str).join(' ') + '\\n';
+    }}
+    prog.textContent = `read ${{n}} page(s) of ${{pdf.numPages}} · sha256 ${{curHash.slice(0,12)}}…`;
+  }} catch(err) {{
+    prog.textContent = `could not parse as PDF (${{err.message}}) — fill the fields manually`;
+  }}
+  curText = text;
+  detect(text, f.name);
+}}
+
+function detect(text, fname){{
+  const t = (text + ' ' + fname).toLowerCase();
+  // country: score registry names by occurrence
+  let best = null, bestN = 0;
+  const seen = new Set();
+  G.frameworks.forEach(f => f.names.forEach(nm => {{
+    if(seen.has(f.iso3)) return;
+    const n = t.split(nm.toLowerCase()).length - 1;
+    if(n > bestN) {{ best = f.iso3; bestN = n; seen.add(f.iso3); }}
+  }}));
+  // hazard: keyword scoring
+  let bh = null, bhN = 0;
+  for(const [h, kws] of Object.entries(HAZ)){{
+    const n = kws.reduce((a,k)=>a + (t.split(k).length - 1), 0);
+    if(n > bhN) {{ bh = h; bhN = n; }}
+  }}
+  // dates: 'DD Month YYYY' / 'Month YYYY' / ISO, prefer near endorse/approv/version/final
+  const dates = [];
+  const re = /(\d{{1,2}})?\s*(january|february|march|april|may|june|july|august|september|october|november|december|janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)\s+(20\d\d)|((20\d\d)-(\d\d)-(\d\d))/gi;
+  let m;
+  while((m = re.exec(t)) !== null){{
+    let iso;
+    if(m[4]) iso = m[4];
+    else iso = `${{m[3]}}-${{String(MONTHS[m[2]]).padStart(2,'0')}}-${{String(+(m[1]||15)).padStart(2,'0')}}`;
+    const ctx = t.slice(Math.max(0, m.index-80), m.index+80);
+    const w = /endors|approv|approuv|version|final|valid/.test(ctx) ? 3 : 1;
+    dates.push({{iso, w, pos: m.index}});
+  }}
+  dates.sort((a,b)=> b.w - a.w || a.pos - b.pos);
+  const dsel = document.getElementById('dc'), hsel = document.getElementById('dh');
+  dsel.innerHTML = ''; hsel.innerHTML = '';
+  [...new Map(G.frameworks.map(f=>[f.iso3, f.names[0]])).entries()]
+    .sort((a,b)=>a[1].localeCompare(b[1]))
+    .forEach(([iso,nm])=>dsel.appendChild(new Option(`${{nm}} (${{iso}})`, iso)));
+  dsel.appendChild(new Option('— other / new country —', 'NEW'));
+  ['drought','flood','storm','cholera','plague','locusts','other']
+    .forEach(h=>hsel.appendChild(new Option(h,h)));
+  if(best) dsel.value = best;
+  if(bh) hsel.value = bh;
+  if(dates.length) document.getElementById('dd').value = dates[0].iso;
+  const titleLine = (curText.split('\\n')[0]||'').trim().slice(0,120);
+  document.getElementById('dt').value = titleLine || fname.replace(/\.pdf$/i,'');
+  document.getElementById('detected').style.display = '';
+  document.getElementById('verdict').innerHTML = '';
+}}
+
+function classify(){{
+  const iso = document.getElementById('dc').value,
+        hz = document.getElementById('dh').value,
+        date = document.getElementById('dd').value,
+        title = document.getElementById('dt').value;
+  const v = document.getElementById('verdict');
+  const fw = G.frameworks.find(f=>f.iso3===iso && f.hazard===hz);
+  let verdict, cls, payload = {{_dummy:'no data written — proposal preview'}};
+  if(curHash && fileHashHits[curHash]) {{
+    const known = fileHashHits[curHash];
+    verdict = `<b>Already ingested — identical file.</b> This exact document was
+      previously processed as <code>${{known}}</code>. Nothing to do.`;
+    cls = 'dummy-banner';
+  }} else if(fw && date && fw.versions.some(x => Math.abs(new Date(x) - new Date(date)) < 45*864e5)) {{
+    const hit = fw.versions.find(x => Math.abs(new Date(x) - new Date(date)) < 45*864e5);
+    verdict = `<b>Already in the registry.</b> This looks like
+      <code>${{fw.label}}</code> version <code>${{hit}}</code> (endorsement date within
+      45 days). If this document differs (a secretariat revision), adjust the date and
+      re-classify.`;
+    cls = 'dummy-banner';
+  }} else if(fw) {{
+    const latest = fw.versions[fw.versions.length-1] || null;
+    verdict = `<b>New version of an existing framework:</b> <code>${{fw.label}}</code>
+      — this becomes version <code>${{date}}</code>, superseding
+      <code>${{latest||'—'}}</code>. Review the proposed rows, then confirm (in the
+      real pipeline: LLM extracts windows/triggers/funding from the doc for human
+      confirmation; official endorsement confirmation is recorded separately).`;
+    cls = 'card';
+    payload['aa.framework_version (insert)'] = {{country_iso3: iso, hazard: hz,
+      version: date, doc_title: title, supersedes: latest, source: 'doc-ingest',
+      endorsed_by: 'TO CONFIRM (erc | cerf_secretariat)'}};
+    payload['aa.window (LLM-extracted, human-confirmed)'] = '≥1 window with trigger statements — extracted from the doc';
+    payload['side_effect'] = latest ? `${{latest}} flips to superseded` : null;
+  }} else {{
+    verdict = `<b>Brand-new framework:</b> no ${{hz}} framework exists for
+      ${{iso === 'NEW' ? 'this country' : iso}} — this registers the framework AND its
+      first version <code>${{date}}</code>.`;
+    cls = 'card';
+    payload['aa.framework_registry (insert)'] = {{country_iso3: iso, hazard: hz}};
+    payload['aa.framework_version (insert)'] = {{country_iso3: iso, hazard: hz,
+      version: date, doc_title: title, supersedes: null, source: 'doc-ingest'}};
+  }}
+  if(curHash) {{
+    fileHashHits[curHash] = `${{iso}}/${{hz}}/${{date}}`;
+    localStorage.setItem('ingestHashes', JSON.stringify(fileHashHits));
+  }}
+  v.innerHTML = `<div class='${{cls}}' style='margin:10px 0'>${{verdict}}</div>`;
+  const p = document.getElementById('payload');
+  if(Object.keys(payload).length > 1) {{
+    p.style.display='block'; p.textContent = JSON.stringify(payload, null, 2);
+  }} else p.style.display='none';
+}}
+</script>
+<style>{{DASH_CSS}}{{FORM_CSS}}</style>"""
+    body = body.replace("{DASH_CSS}", DASH_CSS).replace("{FORM_CSS}", FORM_CSS)
+    page("ingest-doc.html", "Document ingestion (demo)", body)
+
+
+# ------------------------------------------------------------------ status entry
+STATUS_CARDS = [
+    ("endorsed_live", "Endorsed — live & monitoring",
+     "The framework document is endorsed, funds pre-arranged, triggers monitored. Not currently activated.", "active"),
+    ("triggered", "Triggered — activation underway",
+     "A trigger has been reached; the activation/allocation process is in motion.", "activated_implementing"),
+    ("implementing", "Activated — implementing",
+     "Funds released; agencies implementing anticipatory activities.", "activated_implementing"),
+    ("post_activation", "Previously activated — back to monitoring",
+     "Implementation finished; the framework returns to live monitoring (or awaits revision/refill).", "active"),
+    ("under_revision", "Under revision",
+     "An endorsed framework being revised/renewed; monitoring may pause.", "under_revision"),
+    ("dormant", "Dormant / expired",
+     "No current activity or validity lapsed with no successor.", "dormant"),
+]
+
+
+def build_status_form(page, d):
+    cur = d["current"].sort_values("country_name")
+    fw = [{"key": f"{r.country_iso3}|{r.hazard}",
+           "label": f"{r.country_name} — {r.hazard}",
+           "status": r.status if pd.notna(r.status) else None,
+           "version": r.current_version if pd.notna(r.current_version) else None}
+          for r in cur.itertuples()]
+    cards = "".join(
+        f"""<label class='scard'><input type='radio' name='st' value='{val}' data-key='{key}'>
+        <div><b>{title}</b><div class='hint'>{desc}</div></div></label>"""
+        for key, title, desc, val in STATUS_CARDS)
+    body = f"""
+<div class='card'><b>Framework status update (demo)</b> — the quick way to record
+where a framework is in its lifecycle. One click per state; “Save” previews the
+<code>aa.framework_status</code> row (nothing is written). Activation events
+themselves are entered via <a href='ingest-doc.html'>document ingestion</a> /
+the <a href='form.html'>form</a> — this page only moves the status.</div>
+<div class='form-card'>
+ <div class='frow'>
+  <label>Framework <select id='fw' onchange='fwSel()'></select></label>
+  <label>As of <input type='date' id='asof'></label>
+ </div>
+ <div id='cur' class='hint'></div>
+ <div class='scards'>{cards}</div>
+ <div class='frow'><label>Note <input id='note' style='min-width:420px'
+   placeholder='e.g. Window 1 trigger reached 30 Apr; CERF letter pending'></label></div>
+ <div class='frow'><button class='primary' onclick='save()'>Save (preview row)</button></div>
+</div>
+<pre id='payload' style='display:none'></pre>
+<script>window.S = {json.dumps(fw)};</script>
+<script>
+S.forEach(f=>document.getElementById('fw').appendChild(new Option(f.label, f.key)));
+document.getElementById('asof').valueAsDate = new Date();
+function fwSel(){{
+  const f = S.find(x=>x.key===document.getElementById('fw').value);
+  document.getElementById('cur').innerHTML =
+    `current status: <b>${{f.status||'—'}}</b> · current version: <code>${{f.version||'—'}}</code>`;
+}}
+function save(){{
+  const f = S.find(x=>x.key===document.getElementById('fw').value);
+  const sel = document.querySelector('input[name=st]:checked');
+  const p = document.getElementById('payload');
+  if(!sel){{ p.style.display='block'; p.textContent='pick a state first'; return; }}
+  const [iso, hz] = f.key.split('|');
+  p.style.display = 'block';
+  p.textContent = JSON.stringify({{
+    _dummy: 'no data written — row preview',
+    'aa.framework_status (insert)': {{
+      country_iso3: iso, hazard: hz,
+      as_of: document.getElementById('asof').value,
+      status: sel.value, status_raw: sel.closest('.scard').querySelector('b').textContent,
+      version: f.version, version_match: 'entered',
+      comments: document.getElementById('note').value || null,
+      source: 'status-form' }},
+    _previous_status: f.status,
+  }}, null, 2);
+}}
+fwSel();
+</script>
+<style>{{DASH_CSS}}{{FORM_CSS}}
+.scards {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:10px; margin:12px 0; }}
+.scard {{ display:flex; gap:10px; align-items:flex-start; border:1.5px solid #d8dee6;
+  border-radius:8px; padding:12px 14px; cursor:pointer; }}
+.scard:hover {{ border-color:#2a78d6; background:#f4f8fd; }}
+.scard:has(input:checked) {{ border-color:#1c6b31; background:#eef7f0; }}
+.scard input {{ margin-top:3px; }}
+</style>"""
+    body = body.replace("{DASH_CSS}", DASH_CSS).replace("{FORM_CSS}", FORM_CSS)
+    page("status.html", "Framework status update (demo)", body)
+
+
+
+
+
+# ------------------------------------------------------------------ landing
+STATUS_RANK = {"activated_implementing": 5, "active": 4, "under_revision": 3,
+               "under_development": 2, "advanced_conversations": 1,
+               "early_conversations": 1, "monitoring": 4, "project_finalization": 3}
+STATUS_FILL = {5: "#0e7a52", 4: "#1baf7a", 3: "#eda100", 2: "#f2c14e", 1: "#9db2c9"}
+
+
+def _svg_world(status_by_iso):
+    """Equirectangular SVG world map with countries colored by best framework status."""
+    import json as _json
+    from pathlib import Path as _P
+
+    gj = _json.loads((_P(__file__).parents[1] / "site_src" /
+                      "countries.geo.json").read_text())
+    W, H = 980, 460
+    lat_top, lat_bot = 75.0, -58.0
+
+    def pt(lon, lat):
+        x = (lon + 180.0) / 360.0 * W
+        y = (lat_top - lat) / (lat_top - lat_bot) * H
+        return f"{x:.1f},{y:.1f}"
+
+    def ring(r):
+        return "M" + "L".join(pt(x, y) for x, y in r[::2] or r) + "Z"
+
+    paths = []
+    for f in gj["features"]:
+        iso = f.get("id")
+        if iso == "ATA":
+            continue
+        geom = f["geometry"]
+        polys = geom["coordinates"] if geom["type"] == "MultiPolygon" else [geom["coordinates"]]
+        dstr = "".join(ring(r) for poly in polys for r in poly)
+        rank = status_by_iso.get(iso)
+        fill = STATUS_FILL.get(rank, "#e8ecf0")
+        cls = "cty on" if rank else "cty"
+        paths.append(f"<path class='{cls}' data-iso='{iso}' d='{dstr}' fill='{fill}'/>")
+    return (f"<svg id='map' viewBox='0 0 {W} {H}' "
+            f"preserveAspectRatio='xMidYMid meet'>{''.join(paths)}</svg>")
+
+
+def build_landing(page, d, e):
+    cur = d["current"].sort_values("country_name")
+    act = d["activation"]
+    ver = d["versions"]
+    cal = d["calendar"]
+
+    status_by_iso = {}
+    for _, r in cur.iterrows():
+        rank = STATUS_RANK.get(r["status"] or "", 0)
+        if rank and rank > status_by_iso.get(r["country_iso3"], 0):
+            status_by_iso[r["country_iso3"]] = rank
+    svg = _svg_world(status_by_iso)
+
+    fw_data = {}
+    for _, r in cur.iterrows():
+        c, h = r["country_iso3"], r["hazard"]
+        a = act[(act["country_iso3"] == c) & (act["hazard"] == h)]
+        months = sorted(cal.loc[(cal["country_iso3"] == c)
+                                & (cal["hazard"] == h), "month"].unique().tolist())
+        fw_data.setdefault(c, {"name": r["country_name"], "fws": []})
+        fw_data[c]["fws"].append({
+            "hazard": h, "status": r["status"],
+            "prearranged": None if pd.isna(r.get("cerf_prearranged_usd"))
+                           else float(r["cerf_prearranged_usd"]),
+            "covered": None if pd.isna(r.get("people_covered"))
+                       else int(r["people_covered"]),
+            "version": r["current_version"] if pd.notna(r.get("current_version")) else None,
+            "n_versions": int(((ver["country_iso3"] == c)
+                               & (ver["hazard"] == h)).sum()),
+            "n_act": int(a["event_date"].nunique()),
+            "months": [int(m) for m in months],
+            "page": f"fw-{c.lower()}-{h}.html",
+        })
+
+    n_active = int(cur["status"].isin(["active", "activated_implementing"]).sum())
+    total_pre = d["prearranged"]
+    total_pre = total_pre.loc[(total_pre["kind"] == "prearranged")
+                              & (total_pre["year"] == 2026)
+                              & (total_pre["fund_code"] != "all"), "amount_usd"].sum()
+    n_act_all = act["event_date"].nunique()
+    covered = d["covered"]["people_covered"].sum()
+
+    body = f"""
+<div class='hero'>
+ <p>The single source for the AA portfolio: every framework, endorsed version,
+ trigger window, activation and dollar — across CERF, country-based and regional
+ pooled funds. Click a country.</p>
+ <div class='tiles'>
+  <div class='tile'><div class='v'>{n_active}</div><div class='l'>active frameworks (of {len(cur)} tracked)</div></div>
+  <div class='tile'><div class='v'>${total_pre/1e6:,.0f}M</div><div class='l'>pre-arranged (2026)</div></div>
+  <div class='tile'><div class='v'>{n_act_all}</div><div class='l'>activations since 2020</div></div>
+  <div class='tile'><div class='v'>{covered/1e6:,.1f}M</div><div class='l'>people covered</div></div>
+ </div>
+</div>
+<div class='maprow'>
+ <div class='mapbox'>{svg}
+  <div class='legend'>
+   <span><i style='background:#0e7a52'></i>activated &amp; implementing</span>
+   <span><i style='background:#1baf7a'></i>active</span>
+   <span><i style='background:#eda100'></i>revision / development</span>
+   <span><i style='background:#9db2c9'></i>early conversations</span>
+  </div>
+ </div>
+ <div class='side' id='side'>
+  <div class='muted' style='padding:20px 6px'>Select a country on the map to see its
+  frameworks — status, funding, monitoring window, versions and activations — with
+  links into the full explorer.</div>
+ </div>
+</div>
+<div class='tiles' style='margin-top:18px'>
+ <div class='tile'><a href='dashboards.html'><b>Dashboards</b></a><div class='l'>funding · allocations · delivery</div></div>
+ <div class='tile'><a href='hierarchy.html'><b>Portfolio explorer</b></a><div class='l'>framework › version › window › activation</div></div>
+ <div class='tile'><a href='ingest-doc.html'><b>Ingest a document</b></a><div class='l'>upload an endorsed framework PDF</div></div>
+ <div class='tile'><a href='overview.html'><b>Data &amp; schema review</b></a><div class='l'>tables · reconciliation · roadmap</div></div>
+</div>
+<script>window.L = {json.dumps(fw_data)};</script>
+<script>
+const MONL = 'JFMAMJJASOND';
+function money(v){{ return v==null ? '—' : v>=1e6 ? '$'+(v/1e6).toFixed(1)+'M' : '$'+Math.round(v/1e3)+'k'; }}
+function stTxt(s){{ return s ? s.replace(/_/g,' ') : 'no status'; }}
+document.querySelectorAll('.cty.on').forEach(pth => {{
+  pth.addEventListener('click', () => select(pth.dataset.iso));
+  pth.addEventListener('mouseenter', () => pth.style.opacity = .75);
+  pth.addEventListener('mouseleave', () => pth.style.opacity = 1);
+}});
+function select(iso){{
+  document.querySelectorAll('.cty.sel').forEach(x=>x.classList.remove('sel'));
+  const el = document.querySelector(`.cty[data-iso='${{iso}}']`);
+  if(el) el.classList.add('sel');
+  const c = L[iso];
+  if(!c) return;
+  document.getElementById('side').innerHTML = `<h3>${{c.name}}</h3>` +
+    c.fws.map(f => `
+    <div class='fcardx'>
+     <div class='fhead'><b>${{f.hazard}}</b><span class='st ${{['active','activated_implementing'].includes(f.status)?'st-on':(f.status||'').includes('dev')||(f.status||'').includes('revision')||(f.status||'').includes('conversation')?'st-dev':'st-off'}}'>${{stTxt(f.status)}}</span></div>
+     <table class='mini' style='width:100%'>
+      <tr><td class='lbl'>Pre-arranged</td><td>${{money(f.prearranged)}}</td></tr>
+      <tr><td class='lbl'>People covered</td><td>${{f.covered ? f.covered.toLocaleString() : '—'}}</td></tr>
+      <tr><td class='lbl'>Current version</td><td>${{f.version||'—'}} <span class='muted'>(${{f.n_versions}} total)</span></td></tr>
+      <tr><td class='lbl'>Activations</td><td>${{f.n_act||'—'}}</td></tr>
+      <tr><td class='lbl'>Monitoring</td><td>${{[...MONL].map((m,i)=>`<span class='mm ${{f.months.includes(i+1)?'on':''}}'>${{m}}</span>`).join('')}}</td></tr>
+     </table>
+     <a href='${{f.page}}'>framework page →</a>
+    </div>`).join('');
+}}
+</script>
+<style>{{DASH_CSS}}
+.hero {{ text-align:left; padding:6px 0 2px; }}
+.hero h2 {{ font-size:26px; margin:6px 0; }}
+.hero p {{ color:#556; max-width:760px; }}
+.maprow {{ display:grid; grid-template-columns: 1fr 330px; gap:16px; align-items:start; }}
+@media (max-width: 980px) {{ .maprow {{ grid-template-columns: 1fr; }} }}
+.mapbox {{ background:#fff; border:1px solid #dfe4ea; border-radius:10px; padding:10px; }}
+#map {{ width:100%; height:auto; }}
+.cty {{ stroke:#fff; stroke-width:.4; }}
+.cty.on {{ cursor:pointer; }}
+.cty.sel {{ stroke:#1f2a44; stroke-width:1.4; }}
+.legend {{ display:flex; gap:16px; flex-wrap:wrap; padding:8px 6px 2px; font-size:12px; color:#556; }}
+.legend i {{ display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:5px; vertical-align:-1px; }}
+.side {{ background:#fff; border:1px solid #dfe4ea; border-radius:10px; padding:12px 16px;
+  max-height:560px; overflow-y:auto; }}
+.side h3 {{ margin:4px 0 10px; }}
+.fcardx {{ border:1px solid #e6eaef; border-radius:8px; padding:10px 12px; margin:10px 0; }}
+.fhead {{ display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }}
+.st {{ display:inline-block; padding:0 8px; border-radius:9px; font-size:11px; font-weight:600; }}
+.st-on {{ background:#e3f1e6; color:#1c6b31; }} .st-off {{ background:#ededed; color:#777; }}
+.st-dev {{ background:#fdf1dc; color:#8a5c0a; }}
+table.mini {{ border-collapse:collapse; font-size:12px; }}
+table.mini td {{ padding:2px 8px 2px 0; border:0; }}
+table.mini td.lbl {{ color:#667; width:110px; }}
+.mm {{ display:inline-grid; place-items:center; width:16px; height:16px; font-size:9px;
+  border-radius:3px; background:#f0f2f5; color:#99a; margin-right:1px; }}
+.mm.on {{ background:#1baf7a; color:#fff; }}
+.muted {{ color:#667; font-size:12.5px; }}
+</style>"""
+    body = body.replace("{DASH_CSS}", DASH_CSS)
+    page("index.html", "OCHA Anticipatory Action — portfolio", body)
+
+
+
 def build_all(e, page, tbl):
     d = _fetch(e)
     build_funding(page, d)
@@ -1168,3 +1649,6 @@ def build_all(e, page, tbl):
     build_hub(page, d, links)
     build_hierarchy(page, d, e)
     build_entry_form(page, d, e)
+    build_ingest_doc(page, d)
+    build_status_form(page, d)
+    build_landing(page, d, e)

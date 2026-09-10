@@ -47,6 +47,9 @@ table.data tr:hover td { background:#f2f7fc; }
 .scroll { overflow-x:auto; max-height:75vh; overflow-y:auto; border:1px solid #ddd; }
 input.filter { padding:6px 10px; width:340px; margin:10px 0; border:1px solid #bbb;
                border-radius:4px; font-size:13px; }
+button.dl { padding:6px 12px; border:1px solid #2a78d6; color:#1d5aa8; background:#fff;
+            border-radius:4px; font-size:12.5px; cursor:pointer; white-space:nowrap; }
+button.dl:hover { background:#eef4fc; }
 .card { background:#fff; border:1px solid #e0e0e0; border-radius:6px; padding:16px 20px;
         margin:14px 0; }
 .badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11.5px;
@@ -63,15 +66,24 @@ function filt(inp) {
   const rows = inp.closest('section').querySelectorAll('table.data tbody tr');
   rows.forEach(r => { r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none'; });
 }
+window.CSVS = window.CSVS || {};
+function dlcsv(id, name) {
+  const blob = new Blob([window.CSVS[id]], {type: 'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name + '.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
 """
 
 NAV = """
 <header>
-  <span class="t">AA tracking — schema &amp; data review</span>
-  <a href="index.html">Overview</a>
+  <span class="t"><a href="index.html" style="color:#fff;text-decoration:none">AA tracking</a></span>
+  <a href="overview.html">Overview</a>
   <a href="dashboards.html">Dashboards</a>
   <a href="hierarchy.html">Explorer</a>
-  <a href="form.html">Entry form</a>
+  <a href="ingest-doc.html">Data entry</a>
   <a href="tables.html">Tracking tables</a>
   <a href="schema.html">DB schema</a>
   <a href="reconciliation.html">Reconciliation</a>
@@ -97,16 +109,33 @@ def page(name, title, body):
     print(f"  {name}")
 
 
-def tbl(df, max_rows=8000):
+_CSV_SEQ = [0]
+
+
+def tbl(df, max_rows=8000, name="data"):
+    """Render a table view with filter box and a full-data CSV download button.
+
+    The download always carries ALL rows (the view may be capped at max_rows);
+    the CSV lives inside the encrypted page — no unencrypted asset is created."""
+    import json as _json
+
     n = len(df)
     shown = df.head(max_rows)
     t = shown.to_html(index=False, classes="data", na_rep="", border=0)
     note = f"<p class='meta'>{n:,} rows" + (
-        f" (showing first {max_rows:,})" if n > max_rows else ""
+        f" (showing first {max_rows:,}; the download has all)" if n > max_rows else ""
     ) + "</p>"
+    _CSV_SEQ[0] += 1
+    cid = f"c{_CSV_SEQ[0]}"
+    csv_js = (f"<script>window.CSVS=window.CSVS||{{}};"
+              f"window.CSVS[{_json.dumps(cid)}]={_json.dumps(df.to_csv(index=False))};"
+              f"</script>")
+    btn = (f"<button class='dl' onclick='dlcsv({_json.dumps(cid)}, "
+           f"{_json.dumps(name)})'>⬇ CSV ({n:,} rows)</button>")
     return (
-        f"<section>{note}<input class='filter' placeholder='filter rows…' "
-        f"oninput='filt(this)'>\n<div class='scroll'>{t}</div></section>"
+        f"<section>{note}<div style='display:flex;gap:10px;align-items:center'>"
+        f"<input class='filter' placeholder='filter rows…' oninput='filt(this)'>{btn}"
+        f"</div>\n<div class='scroll'>{t}</div>{csv_js}</section>"
     )
 
 
@@ -147,6 +176,7 @@ def main():
     for t in TABLE_ORDER:
         df = pd.read_sql(f"SELECT * FROM aa.{t}", e)
         df = df.drop(columns=[c for c in ("updated_at",) if c in df.columns])
+        _tblname = t
         if t == "cerf_application_people":
             wide = df.pivot_table(
                 index=["application_code", "source", "phase"],
@@ -157,10 +187,10 @@ def main():
             body = (
                 f"<div class='card'>{NOTES[t]}</div>"
                 + "<h2>Pivoted (one row per application × phase)</h2>"
-                + tbl(wide)
+                + tbl(wide, name=f"aa_{_tblname}_pivot")
             )
         else:
-            body = f"<div class='card'>{NOTES[t]}</div>" + tbl(df)
+            body = f"<div class='card'>{NOTES[t]}</div>" + tbl(df, name=f"aa_{_tblname}")
         page(f"table-{t}.html", f"aa.{t}", body)
         cards.append(
             f"<div class='card'><span class='badge b-new'>new</span>"
@@ -315,8 +345,8 @@ def main():
 
     import dashboards
     dashboards.build_all(e, page, tbl)
-    shutil.copy(Path(__file__).parents[1] / "site_src" / "chart.umd.js",
-                OUT / "chart.umd.js")
+    for asset in ("chart.umd.js", "pdf.min.js", "pdf.worker.min.js"):
+        shutil.copy(Path(__file__).parents[1] / "site_src" / asset, OUT / asset)
 
     # ---------- index
     reg = pd.read_sql("SELECT * FROM aa.v_trk_framework_current ORDER BY country_name", e)
@@ -341,7 +371,7 @@ activation_funding · report_channel_inclusion · plan_inclusion · start_networ
 cerf_application_people · cerf_application_report · cerf_allocation_extra ·
 cerf_project_supplement · cerf_cva_history · emergency_type_override<br>
 <span class='badge b-kb'>ds-knowledge-base</span>
-framework_version_map · window · simulated_activation · funding_breakdown ·
+trigger_source_crosswalk (framework_version_map = compat view) · window · simulated_activation · funding_breakdown ·
 actual_activation · activation_allocation<br>
 <span class='badge b-mirror'>ds-cerf-supplement</span>
 cerf_allocation · cerf_project · cerf_project_sector · cerf_project_country ·
@@ -350,7 +380,7 @@ cerf_allocation_storm · cerf_supplement
 <h2>Portfolio at a glance ({n_active} active of {len(reg)} tracked frameworks)</h2>
 {tbl(reg)}
 """
-    page("index.html", "AA tracking — schema & data review", idx)
+    page("overview.html", "AA tracking — schema & data review", idx)
 
 
 def _latest_status_pivot(e, since="2025-12-01"):
@@ -607,7 +637,7 @@ TARGET_NODES = [
     ("fund", "new", "fund_code — OCHA pooled funds only"),
     ("framework_registry", "new", "country_iso3 · hazard (identity only)"),
     ("framework_version", "new", "+ version — THE unified registry"),
-    ("trigger_source_crosswalk", "future", "gsheet_tab · excel_fv · *_reported (KB)"),
+    ("trigger_source_crosswalk", "kb", "gsheet_tab · excel_fv · *_reported"),
     ("window", "kb", "+ window_name · basis · trigger_statement"),
     ("v_version_funding", "future", "window × fund_code × agency × sector"),
     ("activation", "new", "+ event_date (partial ISO → datetime) · event_label"),
@@ -636,7 +666,7 @@ TARGET_FULL_NODES = [
     ("fund", "new", "fund_code — OCHA pooled funds only"),
     ("framework_registry", "new", "country_iso3 · hazard (identity only)"),
     ("framework_version", "new", "+ version = an ENDORSED doc · endorsed_by"),
-    ("trigger_source_crosswalk", "future", "gsheet_tab · excel_fv · *_reported (KB)"),
+    ("trigger_source_crosswalk", "kb", "gsheet_tab · excel_fv · *_reported"),
     ("window", "kb", "+ window_name · basis · trigger_statement"),
     ("window_month", "future", "+ month (monitoring period)"),
     ("version_funding", "future", "window × fund × agency × sector · provenance"),
@@ -829,7 +859,7 @@ def build_roadmap_page():
 
 
 KB_TABLES = [
-    "framework_version_map", "window", "simulated_activation", "funding_breakdown",
+    "trigger_source_crosswalk", "window", "simulated_activation", "funding_breakdown",
     "actual_activation", "activation_allocation",
 ]
 MIRROR_TABLES = [
@@ -871,7 +901,7 @@ ERD_NODES = [
     ("cerf_allocation_extra", "new", "application_code"),
     ("cerf_project_supplement", "new", "project_code"),
     ("emergency_type_override", "new", "application_code"),
-    ("framework_version_map", "kb", "kb_framework · kb_version · country_iso3"),
+    ("trigger_source_crosswalk", "kb", "kb_framework · kb_version · country_iso3 (source codes)"),
     ("window", "kb", "+ window_name"),
     ("simulated_activation", "kb", "+ window_name · event_year"),
     ("funding_breakdown", "kb", "+ window · fund · agency · sector"),
@@ -917,11 +947,11 @@ ERD_EDGES = [
     ("activation_funding", "activation", "", "many", "one", False),
     ("activation_funding", "fund", "fund_code", "many", "one", False),
     ("report_channel_inclusion", "framework_version", "", "many0", "one0", False),
-    ("framework_version", "framework_version_map", "kb_framework · kb_version", "one0", "one0", False),
-    ("window", "framework_version_map", "", "many", "one", False),
+    ("framework_version", "trigger_source_crosswalk", "kb_framework · kb_version", "one0", "one0", False),
+    ("window", "trigger_source_crosswalk", "", "many", "one", False),
     ("simulated_activation", "window", "", "many", "one", False),
-    ("funding_breakdown", "framework_version_map", "", "many", "one", False),
-    ("actual_activation", "framework_version_map", "kb_framework", "many0", "one0", False),
+    ("funding_breakdown", "trigger_source_crosswalk", "", "many", "one", False),
+    ("actual_activation", "trigger_source_crosswalk", "kb_framework", "many0", "one0", False),
     ("activation", "actual_activation", "kb_framework+event_date", "many0", "one0", False),
     ("activation_funding", "v_allocation", "allocation_code", "many0", "one0", False),
     ("activation_allocation", "actual_activation", "FK", "many0", "one0", True),
@@ -1117,13 +1147,12 @@ def build_schema_page(e):
         "<code>framework_version</code> (the approved unit) — the registry holds only "
         "identity and descriptive attributes; country-level context tables (boxed) "
         "join on country alone. "
-        "<b>framework_version vs framework_version_map:</b> conceptually the same "
-        "thing at different maturity — <code>framework_version</code> (this repo) is "
-        "the full historical version registry; <code>framework_version_map</code> "
-        "(KB-owned) covers only versions with trigger-performance data and exists to "
-        "crosswalk them to gsheet/Excel source codes. Long-term the map should "
-        "shrink to a pure source-code crosswalk referencing this registry — that "
-        "needs a coordinated change in ds-knowledge-base.</p>"
+        "<b>Version unification (done 2026-09):</b> <code>framework_version</code> is "
+        "THE version registry. The KB's old <code>framework_version_map</code> table "
+        "is now <code>trigger_source_crosswalk</code> — only the gsheet/Excel source "
+        "codes and reported cross-checks for trigger performance — with "
+        "<code>framework_version_map</code> kept as a compatibility view until "
+        "remaining readers repoint (phase 3).</p>"
         f"<div class='scroll' style='max-height:none'>{build_erd()}</div></div>"
     )
     tables = sorted(cols["table_name"].unique(), key=lambda t: (owner_of(t) != "ds-aa-tracking", t))
