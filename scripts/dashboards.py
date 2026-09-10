@@ -1235,9 +1235,9 @@ and <a href='status.html'>status update</a> remain for corrections.</div>
 </div>
 <div class='frow' style='margin:6px 0'>
  <label>Extraction model <select id='model'>
-   <option value='claude-sonnet-5' selected>Sonnet 5 — fast, default</option>
+   <option value='claude-opus-5' selected>Opus 5 — most thorough, default</option>
+   <option value='claude-sonnet-5'>Sonnet 5 — faster</option>
    <option value='claude-haiku-4-5-20251001'>Haiku 4.5 — fastest</option>
-   <option value='claude-opus-5'>Opus 5 — most thorough</option>
  </select></label>
 </div>
 <div id='progress' class='muted' style='margin:8px 0'></div>
@@ -1676,184 +1676,8 @@ fwSel();
 
 
 # ------------------------------------------------------------------ landing
-STATUS_RANK = {"activated_implementing": 5, "active": 4, "under_revision": 3,
-               "under_development": 2, "advanced_conversations": 1,
-               "early_conversations": 1, "monitoring": 4, "project_finalization": 3}
-STATUS_FILL = {5: "#0e7a52", 4: "#1baf7a", 3: "#eda100", 2: "#f2c14e", 1: "#9db2c9"}
-
-
-def _svg_world(status_by_iso):
-    """Equirectangular SVG world map with countries colored by best framework status."""
-    import json as _json
-    from pathlib import Path as _P
-
-    gj = _json.loads((_P(__file__).parents[1] / "site_src" /
-                      "countries.geo.json").read_text())
-    W, H = 980, 460
-    lat_top, lat_bot = 75.0, -58.0
-
-    def pt(lon, lat):
-        x = (lon + 180.0) / 360.0 * W
-        y = (lat_top - lat) / (lat_top - lat_bot) * H
-        return f"{x:.1f},{y:.1f}"
-
-    def ring(r):
-        return "M" + "L".join(pt(x, y) for x, y in r[::2] or r) + "Z"
-
-    paths = []
-    for f in gj["features"]:
-        iso = f.get("id")
-        if iso == "ATA":
-            continue
-        geom = f["geometry"]
-        polys = geom["coordinates"] if geom["type"] == "MultiPolygon" else [geom["coordinates"]]
-        dstr = "".join(ring(r) for poly in polys for r in poly)
-        rank = status_by_iso.get(iso)
-        fill = STATUS_FILL.get(rank, "#e8ecf0")
-        cls = "cty on" if rank else "cty"
-        paths.append(f"<path class='{cls}' data-iso='{iso}' d='{dstr}' fill='{fill}'/>")
-    return (f"<svg id='map' viewBox='0 0 {W} {H}' "
-            f"preserveAspectRatio='xMidYMid meet'>{''.join(paths)}</svg>")
-
-
-def build_landing(page, d, e):
-    cur = d["current"].sort_values("country_name")
-    act = d["activation"]
-    ver = d["versions"]
-    cal = d["calendar"]
-
-    status_by_iso = {}
-    for _, r in cur.iterrows():
-        rank = STATUS_RANK.get(r["status"] or "", 0)
-        if rank and rank > status_by_iso.get(r["country_iso3"], 0):
-            status_by_iso[r["country_iso3"]] = rank
-    svg = _svg_world(status_by_iso)
-
-    fw_data = {}
-    for _, r in cur.iterrows():
-        c, h = r["country_iso3"], r["hazard"]
-        a = act[(act["country_iso3"] == c) & (act["hazard"] == h)]
-        months = sorted(cal.loc[(cal["country_iso3"] == c)
-                                & (cal["hazard"] == h), "month"].unique().tolist())
-        fw_data.setdefault(c, {"name": r["country_name"], "fws": []})
-        fw_data[c]["fws"].append({
-            "hazard": h, "status": r["status"],
-            "prearranged": None if pd.isna(r.get("cerf_prearranged_usd"))
-                           else float(r["cerf_prearranged_usd"]),
-            "covered": None if pd.isna(r.get("people_covered"))
-                       else int(r["people_covered"]),
-            "version": r["current_version"] if pd.notna(r.get("current_version")) else None,
-            "n_versions": int(((ver["country_iso3"] == c)
-                               & (ver["hazard"] == h)).sum()),
-            "n_act": int(a["event_date"].nunique()),
-            "months": [int(m) for m in months],
-            "page": f"fw-{c.lower()}-{h}.html",
-        })
-
-    n_active = int(cur["status"].isin(["active", "activated_implementing"]).sum())
-    total_pre = d["prearranged"]
-    total_pre = total_pre.loc[(total_pre["kind"] == "prearranged")
-                              & (total_pre["year"] == 2026)
-                              & (total_pre["fund_code"] != "all"), "amount_usd"].sum()
-    n_act_all = act["event_date"].nunique()
-    covered = d["covered"]["people_covered"].sum()
-
-    body = f"""
-<div class='hero'>
- <p>The single source for the AA portfolio: every framework, endorsed version,
- trigger window, activation and dollar — across CERF, country-based and regional
- pooled funds. Click a country.</p>
- <div class='tiles'>
-  <div class='tile'><div class='v'>{n_active}</div><div class='l'>active frameworks (of {len(cur)} tracked)</div></div>
-  <div class='tile'><div class='v'>${total_pre/1e6:,.0f}M</div><div class='l'>pre-arranged (2026)</div></div>
-  <div class='tile'><div class='v'>{n_act_all}</div><div class='l'>activations since 2020</div></div>
-  <div class='tile'><div class='v'>{covered/1e6:,.1f}M</div><div class='l'>people covered</div></div>
- </div>
-</div>
-<div class='maprow'>
- <div class='mapbox'>{svg}
-  <div class='legend'>
-   <span><i style='background:#0e7a52'></i>activated &amp; implementing</span>
-   <span><i style='background:#1baf7a'></i>active</span>
-   <span><i style='background:#eda100'></i>revision / development</span>
-   <span><i style='background:#9db2c9'></i>early conversations</span>
-  </div>
- </div>
- <div class='side' id='side'>
-  <div class='muted' style='padding:20px 6px'>Select a country on the map to see its
-  frameworks — status, funding, monitoring window, versions and activations — with
-  links into the full explorer.</div>
- </div>
-</div>
-<div class='tiles' style='margin-top:18px'>
- <div class='tile'><a href='dashboards.html'><b>Dashboards</b></a><div class='l'>funding · allocations · delivery</div></div>
- <div class='tile'><a href='hierarchy.html'><b>Portfolio explorer</b></a><div class='l'>framework › version › window › activation</div></div>
- <div class='tile'><a href='ingest-doc.html'><b>Ingest a document</b></a><div class='l'>upload an endorsed framework PDF</div></div>
- <div class='tile'><a href='overview.html'><b>Data &amp; schema review</b></a><div class='l'>tables · reconciliation · roadmap</div></div>
-</div>
-<script>window.L = {json.dumps(fw_data)};</script>
-<script>
-const MONL = 'JFMAMJJASOND';
-function money(v){{ return v==null ? '—' : v>=1e6 ? '$'+(v/1e6).toFixed(1)+'M' : '$'+Math.round(v/1e3)+'k'; }}
-function stTxt(s){{ return s ? s.replace(/_/g,' ') : 'no status'; }}
-document.querySelectorAll('.cty.on').forEach(pth => {{
-  pth.addEventListener('click', () => select(pth.dataset.iso));
-  pth.addEventListener('mouseenter', () => pth.style.opacity = .75);
-  pth.addEventListener('mouseleave', () => pth.style.opacity = 1);
-}});
-function select(iso){{
-  document.querySelectorAll('.cty.sel').forEach(x=>x.classList.remove('sel'));
-  const el = document.querySelector(`.cty[data-iso='${{iso}}']`);
-  if(el) el.classList.add('sel');
-  const c = L[iso];
-  if(!c) return;
-  document.getElementById('side').innerHTML = `<h3>${{c.name}}</h3>` +
-    c.fws.map(f => `
-    <div class='fcardx'>
-     <div class='fhead'><b>${{f.hazard}}</b><span class='st ${{['active','activated_implementing'].includes(f.status)?'st-on':(f.status||'').includes('dev')||(f.status||'').includes('revision')||(f.status||'').includes('conversation')?'st-dev':'st-off'}}'>${{stTxt(f.status)}}</span></div>
-     <table class='mini' style='width:100%'>
-      <tr><td class='lbl'>Pre-arranged</td><td>${{money(f.prearranged)}}</td></tr>
-      <tr><td class='lbl'>People covered</td><td>${{f.covered ? f.covered.toLocaleString() : '—'}}</td></tr>
-      <tr><td class='lbl'>Current version</td><td>${{f.version||'—'}} <span class='muted'>(${{f.n_versions}} total)</span></td></tr>
-      <tr><td class='lbl'>Activations</td><td>${{f.n_act||'—'}}</td></tr>
-      <tr><td class='lbl'>Monitoring</td><td>${{[...MONL].map((m,i)=>`<span class='mm ${{f.months.includes(i+1)?'on':''}}'>${{m}}</span>`).join('')}}</td></tr>
-     </table>
-     <a href='${{f.page}}'>framework page →</a>
-    </div>`).join('');
-}}
-</script>
-<style>{{DASH_CSS}}
-.hero {{ text-align:left; padding:6px 0 2px; }}
-.hero h2 {{ font-size:26px; margin:6px 0; }}
-.hero p {{ color:#556; max-width:760px; }}
-.maprow {{ display:grid; grid-template-columns: 1fr 330px; gap:16px; align-items:start; }}
-@media (max-width: 980px) {{ .maprow {{ grid-template-columns: 1fr; }} }}
-.mapbox {{ background:#fff; border:1px solid #dfe4ea; border-radius:10px; padding:10px; }}
-#map {{ width:100%; height:auto; }}
-.cty {{ stroke:#fff; stroke-width:.4; }}
-.cty.on {{ cursor:pointer; }}
-.cty.sel {{ stroke:#1f2a44; stroke-width:1.4; }}
-.legend {{ display:flex; gap:16px; flex-wrap:wrap; padding:8px 6px 2px; font-size:12px; color:#556; }}
-.legend i {{ display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:5px; vertical-align:-1px; }}
-.side {{ background:#fff; border:1px solid #dfe4ea; border-radius:10px; padding:12px 16px;
-  max-height:560px; overflow-y:auto; }}
-.side h3 {{ margin:4px 0 10px; }}
-.fcardx {{ border:1px solid #e6eaef; border-radius:8px; padding:10px 12px; margin:10px 0; }}
-.fhead {{ display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }}
-.st {{ display:inline-block; padding:0 8px; border-radius:9px; font-size:11px; font-weight:600; }}
-.st-on {{ background:#e3f1e6; color:#1c6b31; }} .st-off {{ background:#ededed; color:#777; }}
-.st-dev {{ background:#fdf1dc; color:#8a5c0a; }}
-table.mini {{ border-collapse:collapse; font-size:12px; }}
-table.mini td {{ padding:2px 8px 2px 0; border:0; }}
-table.mini td.lbl {{ color:#667; width:110px; }}
-.mm {{ display:inline-grid; place-items:center; width:16px; height:16px; font-size:9px;
-  border-radius:3px; background:#f0f2f5; color:#99a; margin-right:1px; }}
-.mm.on {{ background:#1baf7a; color:#fff; }}
-.muted {{ color:#667; font-size:12.5px; }}
-</style>"""
-    body = body.replace("{DASH_CSS}", DASH_CSS)
-    page("index.html", "OCHA Anticipatory Action — portfolio", body)
-
+# The landing page (zoomable map -> country -> framework -> version) lives in
+# scripts/landing.py; it reuses the frames fetched here.
 
 
 def build_all(e, page, tbl):
@@ -1868,4 +1692,5 @@ def build_all(e, page, tbl):
     build_entry_form(page, d, e)
     build_ingest_doc(page, d)
     build_status_form(page, d)
-    build_landing(page, d, e)
+    import landing
+    landing.build_landing(page, d, e)

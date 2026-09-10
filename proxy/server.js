@@ -121,7 +121,7 @@ const server = http.createServer((req, res) => {
     let payload;
     try { payload = JSON.parse(Buffer.concat(chunks).toString()); }
     catch { return send(res, 400, { error: "bad JSON" }); }
-    const model = MODELS.has(payload.model) ? payload.model : "claude-sonnet-5";
+    const model = MODELS.has(payload.model) ? payload.model : "claude-opus-5";
     if (!payload.pdf_base64) return send(res, 400, { error: "pdf_base64 required" });
     // Claude Code OAuth tokens (sk-ant-oat…) authenticate via Bearer + the
     // oauth beta header, and are only authorized for Claude Code requests —
