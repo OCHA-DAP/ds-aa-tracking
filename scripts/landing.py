@@ -418,6 +418,10 @@ def assemble(d, e):
             scope_raw = fm.get("geographic_scope") or []
             if isinstance(scope_raw, str):
                 scope_raw = [scope_raw]
+            regional = isinstance(fm.get("country_iso3"), list) and len(fm["country_iso3"]) > 1
+            if regional:   # 'GTM: a, b' entries belong to one country each
+                scope_raw = [x for x in scope_raw
+                             if not re.match(r"^[A-Z]{3}[:/]", str(x)) or str(x).startswith(c)]
             versions.append({
                 "v": v.version, "status": _s(v.kb_status), "valid_from": _s(v.valid_from),
                 "valid_until": _s(v.valid_until), "valid_until_source": _s(v.valid_until_source),
@@ -426,6 +430,7 @@ def assemble(d, e):
                 "doc_date": _s(fm.get("framework_doc_date")),
                 "prearranged_doc": _num(v.prearranged_usd_doc)
                                    or _num(fm.get("prearranged_funding_usd")),
+                "regional": regional,
                 "cofin": _num(fm.get("cofinancing_usd")),
                 "cofin_sources": fm.get("cofinancing_sources") or [],
                 "agencies": fm.get("implementing_agencies") or [],
@@ -602,10 +607,10 @@ LANDING_CSS = r"""
 .cty { stroke:#fff; stroke-width:.5; vector-effect:non-scaling-stroke; transition: opacity .5s, fill .5s; }
 .cty.on { cursor:pointer; }
 .cty.on:hover { filter:brightness(.9); }
-#map.zoomed .cty { opacity:.28; } #map.zoomed .cty.sel { opacity:0; }
-.a0 { fill:#fff; stroke:#3b4a66; stroke-width:1.1; vector-effect:non-scaling-stroke; }
-.a1 { fill:#f3f5f8; stroke:#c9d1dc; stroke-width:.6; vector-effect:non-scaling-stroke; }
-.a1:hover { fill:#e9edf3; }
+#map.zoomed .cty { opacity:.14; } #map.zoomed .cty.sel { opacity:0; }
+.a0 { fill:#fff; stroke:#2f3d59; stroke-width:1.5; vector-effect:non-scaling-stroke; }
+.a1 { fill:#eef1f5; stroke:#aab5c4; stroke-width:.8; vector-effect:non-scaling-stroke; }
+.a1:hover { fill:#e2e7ee; }
 .sc { stroke:#fff; stroke-width:.8; vector-effect:non-scaling-stroke; fill-opacity:.78; cursor:pointer; transition: fill-opacity .3s; }
 .sc:hover { fill-opacity:1; }
 .sc.dim { fill-opacity:.25; }
@@ -682,10 +687,13 @@ function ringsD(rings){ return rings.map(r=>'M'+r.map(([x,y])=>{const p=pt(x,y);
 
 // ---------- map: zoom (SVG transform attribute animated in user units — CSS px transforms
 // on <g> do not map to the viewBox reliably)
-let T = {tx:0, ty:0, sx:1, sy:1}, animId = null;
+let T = {tx:0, ty:0, sx:1, sy:1}, animId = null, animSeq = 0;
 function applyT(t){ world.setAttribute('transform', `translate(${t.tx} ${t.ty}) scale(${t.sx} ${t.sy})`); }
 function animateTo(target, ms=800){
   if(animId) cancelAnimationFrame(animId);
+  if(document.hidden){ T = {...target}; applyT(T); return; }   // rAF is paused in hidden tabs
+  const seq = ++animSeq;                                        // guarantee the final state
+  setTimeout(()=>{ if(seq===animSeq){ T = {...target}; applyT(T); animId=null; } }, ms+80);
   const from = {...T}, t0 = performance.now();
   const ease = x => 1 - Math.pow(1 - x, 3);
   function step(now){
@@ -715,8 +723,8 @@ async function loadGeo(iso){
   catch(e){ GEO[iso] = null; }
   return GEO[iso];
 }
-function drawAdmin(iso){
-  const g = GEO[iso]; adm.innerHTML=''; adm.classList.remove('show');
+function drawAdmin(iso, fade){
+  const g = GEO[iso]; adm.innerHTML=''; if(fade) adm.classList.remove('show');
   if(!g) return;
   const c = L[iso];
   let html = '';
@@ -738,7 +746,8 @@ function drawAdmin(iso){
     html += `<path class='sc' fill='${hzColor(hzs[0])}' data-n='${esc(a.n)}' data-hz='${esc(hzs.join(', '))}' d='${ringsD(a.r)}'/>`;
   });
   adm.innerHTML = html;
-  requestAnimationFrame(()=>adm.classList.add('show'));
+  if(fade) void adm.getBoundingClientRect();   // force a style flush so the opacity transition runs
+  adm.classList.add('show');
   // legend: hazards in view
   const hzs = [...new Set(targets.map(f=>f.hazard))];
   legend.innerHTML = hzs.map(h=>`<span><i style='background:${hzColor(h)}'></i>${h} framework scope</span>`).join('')
@@ -787,11 +796,11 @@ async function selectCountry(iso, hz, ver){
   if(changed){ adm.innerHTML=''; adm.classList.remove('show'); if(c.bbox) zoomTo(c.bbox); }
   renderSide();
   await loadGeo(iso);
-  if(state.iso === iso) drawAdmin(iso);
+  if(state.iso === iso) drawAdmin(iso, changed);
   location.hash = [iso, state.hz, state.ver].filter(Boolean).join('/');
 }
 function selectFramework(hz){ selectCountry(state.iso, hz, null); }
-function selectVersion(v){ state.ver = v; renderSide(); drawAdmin(state.iso);
+function selectVersion(v){ state.ver = v; renderSide(); drawAdmin(state.iso, false);
   location.hash = [state.iso, state.hz, v].join('/'); }
 
 // ---------- sidebar
@@ -834,7 +843,7 @@ function fwHeader(c, f){
    <div><span class='st ${stCls(f.status)}'>${stTxt(f.status)}</span> <span class='muted'>${f.kb?`· KB <code>${f.kb}</code>`:''}</span></div>`;
 }
 function versionBar(f, v, isCur){
-  const opts = [...f.versions].reverse().map(x=>`<option value='${x.v}' ${x.v===v.v?'selected':''}>${x.v}${x.v===f.current?' (current)':''} — ${stTxt(x.status)}</option>`).join('');
+  const opts = [...f.versions].reverse().map(x=>`<option value='${x.v}' ${x.v===v.v?'selected':''}>${x.v}${x.v===f.current?' (in force)':''} — ${stTxt(x.status)}</option>`).join('');
   return `<div class='verbar'><label class='small'>Version</label><select onchange='selectVersion(this.value)'>${opts}</select>
     ${v.doc_url ? `<a class='docbtn' href='${esc(v.doc_url)}' target='_blank' rel='noopener' title='${esc(v.doc_title||'')}'>Framework document ↗</a>` : `<span class='st st-off'>no document link</span>`}</div>`;
 }
@@ -844,7 +853,7 @@ function factsBlock(f, v){
   rows.push(['Status', `<span class='st ${stCls(v.status)}'>${stTxt(v.status)}</span>${v.endorsed_by?` <span class='muted'>endorsed by ${esc(v.endorsed_by)}</span>`:''}`]);
   rows.push(['Valid', `${v.valid_from||'?'} → ${v.valid_until||'<span class="muted">open</span>'}${v.valid_until_source?` <span class='muted'>(${esc(v.valid_until_source)})</span>`:''}`]);
   if(v.doc_title) rows.push(['Document', `${esc(v.doc_title)}${v.doc_date?` <span class='muted'>(${v.doc_date})</span>`:''}`]);
-  rows.push(['Pre-arranged', `${money(v.prearranged_doc)}${v.all_in===false?` <span class='muted'>· split budget per window</span>`:v.all_in===true?` <span class='muted'>· all-in</span>`:''}`]);
+  rows.push(['Pre-arranged', `${money(v.prearranged_doc)}${v.regional?` <span class='muted'>· regional document total (all countries)</span>`:''}${v.all_in===false?` <span class='muted'>· split budget per window</span>`:v.all_in===true?` <span class='muted'>· all-in</span>`:''}`]);
   if(v.cofin) rows.push(['Co-financing', `${money(v.cofin)}${v.cofin_sources.length?` <span class='muted'>${esc(v.cofin_sources.join(', '))}</span>`:''}`]);
   if(v.target_people) rows.push(['People targeted', num(v.target_people)]);
   if(f.covered && f.current===v.v) rows.push(['People covered', `${num(f.covered)} <span class='muted'>(tracking sheet)</span>`]);
