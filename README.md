@@ -28,6 +28,12 @@ CERF OneGMS mirror (`ds-cerf-supplement`). It adds:
 - `src/ds_aa_tracking/schema.py` — DDL (tables + views), all in schema `aa`
 - `scripts/ingest.py` — parse → crosswalk to KB → full-refresh load (dev DB)
 - `scripts/build_site.py` — render the password-protected GH Pages review site
+- `scripts/admin_page.py` — `admin.html`: Django-admin-style CRUD over every `aa` table,
+  populated live from the proxy's `/schema`; viewer = site password, editor = separate
+  token prompted for in the browser (never embedded). Supersedes the tracking-tables tab.
+- `proxy/server.js` — the one server: PDF extraction, framework entry, and generic
+  `/schema` `/rows` `/distinct` `/save` `/delete` for the admin page; every field change is
+  audited to `aa.entry_audit`; KB-loader and OneGMS-mirror tables are read-only
 - `scripts/dashboards.py` — dashboards, per-framework pages, explorer, entry forms
 - `scripts/landing.py` — landing map: zoom to a country, subnational scope per framework
   version (KB `geographic_scope` names matched to CODAB boundaries; one
@@ -35,10 +41,18 @@ CERF OneGMS mirror (`ds-cerf-supplement`). It adds:
 
 ## Running
 
-Source workbooks are read from `AA_TRACKING_DIR` (not committed). DB access via
-`ocha-stratus` env vars; `PGSSLMODE=require` is set automatically.
+The dev DB is the single source of truth: data is entered and corrected through the
+site (`entry.html`, `admin.html`) and the KB sync — there is no spreadsheet ingest any
+more (`scripts/ingest.py` is the retired migration-era loader and refuses to run).
+DB access via `ocha-stratus` env vars; `PGSSLMODE=require` is set automatically.
 
 ```sh
-uv run python scripts/ingest.py
-uv run python scripts/build_site.py   # needs graphviz (`brew install graphviz`) for the ERD
+uv run python scripts/ensure_schema.py   # idempotent: create missing tables, additive migrations, views
+uv run python scripts/sync_kb.py         # upsert new KB framework pages into the registry
+uv run python scripts/build_site.py      # needs graphviz (`brew install graphviz`) for the ERD
+bash scripts/publish.sh                  # build → encrypt → gh-pages (SKIP_BUILD=1 reuses the build)
 ```
+
+The proxy (`proxy/`) runs as Azure Web App `chd-ds-aa-extract`; app settings hold the
+Anthropic key, the DB write login, `SITE_TOKEN` (viewer) and `EDITOR_TOKEN` (editor).
+Redeploy with `az webapp deploy --type zip` from a zip of `proxy/`.

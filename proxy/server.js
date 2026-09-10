@@ -16,21 +16,55 @@
  *                    version's rows. The nightly/manual ingest merges entered_*
  *                    into aa.framework_version (entered values win).
  *
- * Guards: site token (embedded in the staticrypt-encrypted page), origin
- * allowlist, model allowlist, size cap, per-IP rate limits. The Anthropic key
- * can never be used for arbitrary requests; the DB login only reaches the
- * entered_* tables through the queries below.
+ *   GET  /schema     every aa table + column (types, keys, owner, writable) — the
+ *                    admin page is populated from this, Django-admin style
+ *   GET  /rows       ?table=&limit=&offset=&order=&dir=&q=&f.<col>= -> paged rows
+ *   GET  /distinct   ?table=&col= -> distinct values for filter sidebars
+ *   POST /save       {table, key|null, row, by} -> UPDATE (key given) or INSERT,
+ *                    field-level audit to aa.entry_audit
+ *   POST /delete     {table, key, by} -> DELETE one row, audited
+ *   GET  /whoami     -> {role}
+ *
+ * Two roles, two shared secrets in header x-site-token: SITE_TOKEN (viewer —
+ * embedded in the staticrypt-encrypted pages, so "has the site password" =
+ * viewer) and EDITOR_TOKEN (editor — never embedded; the pages prompt for it
+ * once and keep it in localStorage). Reads need viewer; /extract, /entry, /save
+ * and /delete need editor. Generic writes are refused on tables other writers
+ * own (KB loaders, OneGMS mirrors) and on the append-only audit table.
+ *
+ * Other guards: origin allowlist, model allowlist, size cap, per-IP rate limits.
+ * The Anthropic key can never be used for arbitrary requests.
  */
 const http = require("http");
 const { Pool } = require("pg");
 
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 const SITE_TOKEN = process.env.SITE_TOKEN || "";
+const EDITOR_TOKEN = process.env.EDITOR_TOKEN || "";   // unset -> SITE_TOKEN also edits (bootstrap only)
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ||
   "https://ocha-dap.github.io").split(",");
 const MODELS = new Set(["claude-opus-5"]);
 const MAX_BODY = 45 * 1024 * 1024;
-const RATE = { extract: 20, entry: 60, read: 300, windowMs: 60 * 60 * 1000 };
+const RATE = { extract: 20, entry: 60, read: 1200, write: 600, windowMs: 60 * 60 * 1000 };
+// tables the generic /save and /delete refuse: other repos' loaders own them, or append-only
+const READONLY_TABLES = new Set([
+  "entry_audit",
+  // ds-knowledge-base loaders
+  "window", "simulated_activation", "funding_breakdown", "actual_activation",
+  "activation_allocation", "version_performance_reported",
+  // ds-cerf-supplement OneGMS mirrors
+  "cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country",
+  "cerf_allocation_storm", "cerf_supplement",
+]);
+const READONLY_PREFIXES = ["cbpf_"];
+const TABLE_OWNER = (t) =>
+  READONLY_PREFIXES.some((p) => t.startsWith(p)) || t.startsWith("cerf_allocation_storm") ||
+  ["cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country", "cerf_supplement"].includes(t)
+    ? "ds-cerf-supplement"
+    : ["window", "simulated_activation", "funding_breakdown", "actual_activation",
+       "activation_allocation", "version_performance_reported"].includes(t)
+      ? "ds-knowledge-base" : "ds-aa-tracking";
+const isReadonly = (t) => READONLY_TABLES.has(t) || READONLY_PREFIXES.some((p) => t.startsWith(p));
 const hits = new Map();
 
 const pool = process.env.DSCI_AZ_DB_DEV_HOST
@@ -139,11 +173,24 @@ function cors(req, res) {
   const origin = req.headers.origin || "";
   if (ALLOWED_ORIGINS.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Access-Control-Allow-Headers", "content-type,x-site-token");
+    res.setHeader("Access-Control-Allow-Headers", "content-type,x-site-token,x-editor-token");
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
     return true;
   }
   return false;
+}
+
+function role(req) {
+  // viewer: x-site-token == SITE_TOKEN (embedded in the encrypted pages);
+  // editor: x-editor-token == EDITOR_TOKEN (prompted for, kept in localStorage)
+  const st = req.headers["x-site-token"] || "", et = req.headers["x-editor-token"] || "";
+  if (EDITOR_TOKEN) {
+    if (et === EDITOR_TOKEN || st === EDITOR_TOKEN) return "editor";
+    if (!SITE_TOKEN || st === SITE_TOKEN) return "viewer";
+    return null;
+  }
+  if (!SITE_TOKEN) return "editor";                       // nothing configured (local dev)
+  return st === SITE_TOKEN ? "editor" : null;             // bootstrap: one token does both
 }
 
 function send(res, code, obj) {
@@ -332,6 +379,28 @@ async function entry(req, res) {
       [...key, vf.doc_title, vf.doc_url, vf.endorsed_by, vf.valid_until,
        vf.valid_until_source, vf.window_rollup, vf.supersedes, vf.note, by]);
 
+    // --- merge into the registry, same transaction (DB-first: visible immediately).
+    //     source='entered' only on a brand-new row — it records the first sighting;
+    //     valid_from on insert = the version label padded to a date.
+    const vfrom = version.length === 4 ? `${version}-01-01` : version.length === 7 ? `${version}-01` : version;
+    await client.query(
+      `INSERT INTO aa.framework_version (country_iso3, hazard, version, valid_from,
+          doc_title, doc_url, endorsed_by, valid_until, valid_until_source,
+          window_rollup, supersedes, note, source)
+       VALUES ($1,$2,$3,$4::date,$5,$6,$7,$8::date,$9,$10,$11,$12,'entered')
+       ON CONFLICT (country_iso3, hazard, version) DO UPDATE SET
+          doc_title = COALESCE(EXCLUDED.doc_title, aa.framework_version.doc_title),
+          doc_url = COALESCE(EXCLUDED.doc_url, aa.framework_version.doc_url),
+          endorsed_by = COALESCE(EXCLUDED.endorsed_by, aa.framework_version.endorsed_by),
+          valid_until = COALESCE(EXCLUDED.valid_until, aa.framework_version.valid_until),
+          valid_until_source = COALESCE(EXCLUDED.valid_until_source, aa.framework_version.valid_until_source),
+          window_rollup = COALESCE(EXCLUDED.window_rollup, aa.framework_version.window_rollup),
+          supersedes = COALESCE(EXCLUDED.supersedes, aa.framework_version.supersedes),
+          note = COALESCE(EXCLUDED.note, aa.framework_version.note),
+          updated_at = now()`,
+      [...key, vfrom, vf.doc_title, vf.doc_url, vf.endorsed_by, vf.valid_until,
+       vf.valid_until_source, vf.window_rollup, vf.supersedes, vf.note]);
+
     // --- windows: replace-set with per-field audit
     const oldWin = (await client.query(
       `SELECT * FROM aa.entered_window
@@ -426,6 +495,212 @@ async function entry(req, res) {
   }
 }
 
+// ------------------------------------------------------ generic admin (CRUD)
+// Schema cache: every base table / view in aa with columns and key columns. The
+// admin page is populated from this, so new tables and columns show up on their
+// own. Identifiers are only ever taken from this cache (never from the request).
+let SCHEMA = null, schemaAt = 0;
+const IDENT = /^[a-z_][a-z0-9_]*$/;
+const q = (id) => '"' + id.replace(/"/g, '""') + '"';
+async function schema(force) {
+  if (SCHEMA && !force && Date.now() - schemaAt < 60_000) return SCHEMA;
+  const cols = (await pool.query(
+    `SELECT c.table_name, c.column_name, c.data_type, c.udt_name, c.is_nullable = 'YES' AS nullable,
+            c.column_default, c.ordinal_position, t.table_type
+     FROM information_schema.columns c
+     JOIN information_schema.tables t USING (table_schema, table_name)
+     WHERE c.table_schema = 'aa' ORDER BY c.table_name, c.ordinal_position`)).rows;
+  const keys = (await pool.query(
+    `SELECT c.conrelid::regclass::text AS tbl, c.contype,
+            array_agg(a.attname::text ORDER BY k.ord)::text[] AS cols
+     FROM pg_constraint c
+     JOIN pg_namespace n ON n.oid = c.connamespace
+     JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON true
+     JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+     WHERE n.nspname = 'aa' AND c.contype IN ('p','u')
+     GROUP BY 1, 2, c.oid ORDER BY (c.contype = 'p') DESC`)).rows;
+  const counts = (await pool.query(
+    `SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname = 'aa'`)).rows;
+  const nrows = Object.fromEntries(counts.map((r) => [r.relname, Number(r.n_live_tup)]));
+  const tables = {};
+  for (const c of cols) {
+    const t = (tables[c.table_name] ??= {
+      name: c.table_name, kind: c.table_type === "VIEW" ? "view" : "table", columns: [],
+      key: null, key_type: null, owner: TABLE_OWNER(c.table_name),
+      writable: false, n_rows: nrows[c.table_name] ?? null,
+    });
+    t.columns.push({
+      name: c.column_name, type: c.data_type, udt: c.udt_name, nullable: c.nullable,
+      has_default: c.column_default != null,
+      generated: /identity|nextval/i.test(c.column_default || "") || c.column_name === "updated_at",
+    });
+  }
+  for (const k of keys) {
+    const name = k.tbl.replace(/^aa\./, "").replace(/^"|"$/g, "");
+    const t = tables[name];
+    if (t && !t.key) { t.key = k.cols; t.key_type = k.contype === "p" ? "primary" : "unique"; }
+  }
+  for (const t of Object.values(tables))
+    t.writable = t.kind === "table" && !!t.key && !isReadonly(t.name);
+  SCHEMA = tables; schemaAt = Date.now();
+  return SCHEMA;
+}
+function tableOf(sch, name, res) {
+  const t = name && IDENT.test(name) ? sch[name] : null;
+  if (!t) { send(res, 404, { error: "unknown table" }); return null; }
+  return t;
+}
+const colOf = (t, name) => t.columns.find((c) => c.name === name) || null;
+const rowKey = (t, row) => (t.key || []).map((k) => row[k] == null ? "" : String(row[k])).join("/");
+
+async function adminSchema(req, res, qs) {
+  if (limited(req, res, "read")) return;
+  try { send(res, 200, { ok: true, role: role(req), tables: Object.values(await schema(qs.get("refresh") === "1")) }); }
+  catch (e) { send(res, 502, { error: String(e.message || e) }); }
+}
+
+async function adminRows(req, res, qs) {
+  if (limited(req, res, "read")) return;
+  try {
+    const sch = await schema(); const t = tableOf(sch, qs.get("table"), res); if (!t) return;
+    const limit = Math.min(Math.max(parseInt(qs.get("limit") || "100", 10) || 100, 1), 500);
+    const offset = Math.max(parseInt(qs.get("offset") || "0", 10) || 0, 0);
+    const where = [], params = [];
+    const search = (qs.get("q") || "").trim();
+    if (search) {
+      const textCols = t.columns.filter((c) => c.type === "text").map((c) => q(c.name));
+      if (textCols.length) { params.push("%" + search + "%"); where.push("(" + textCols.map((c) => `${c} ILIKE $${params.length}`).join(" OR ") + ")"); }
+    }
+    for (const [k, v] of qs.entries()) {
+      if (!k.startsWith("f.")) continue;
+      const c = colOf(t, k.slice(2)); if (!c) continue;
+      if (v === "∅") where.push(`${q(c.name)} IS NULL`);
+      else { params.push(v); where.push(`${q(c.name)}::text = $${params.length}`); }
+    }
+    const W = where.length ? " WHERE " + where.join(" AND ") : "";
+    const oc = colOf(t, qs.get("order") || "") || (t.key ? colOf(t, t.key[0]) : t.columns[0]);
+    const dir = qs.get("dir") === "desc" ? "DESC" : "ASC";
+    const order = oc ? ` ORDER BY ${q(oc.name)} ${dir} NULLS LAST` : "";
+    const sel = t.columns.map((c) =>
+      c.type === "date" ? `${q(c.name)}::text AS ${q(c.name)}`
+      : c.type.startsWith("timestamp") ? `to_char(${q(c.name)} AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI') AS ${q(c.name)}`
+      : q(c.name)).join(", ");
+    const [rows, total] = await Promise.all([
+      pool.query(`SELECT ${sel} FROM aa.${q(t.name)}${W}${order} LIMIT ${limit} OFFSET ${offset}`, params),
+      pool.query(`SELECT count(*)::int AS n FROM aa.${q(t.name)}${W}`, params),
+    ]);
+    send(res, 200, { ok: true, rows: rows.rows, total: total.rows[0].n, limit, offset });
+  } catch (e) { send(res, 502, { error: String(e.message || e) }); }
+}
+
+async function adminDistinct(req, res, qs) {
+  if (limited(req, res, "read")) return;
+  try {
+    const sch = await schema(); const t = tableOf(sch, qs.get("table"), res); if (!t) return;
+    const c = colOf(t, qs.get("col") || ""); if (!c) return send(res, 404, { error: "unknown column" });
+    const r = await pool.query(
+      `SELECT ${q(c.name)}::text AS v, count(*)::int AS n FROM aa.${q(t.name)}
+       GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 41`);
+    send(res, 200, { ok: true, values: r.rows, truncated: r.rows.length > 40 });
+  } catch (e) { send(res, 502, { error: String(e.message || e) }); }
+}
+
+// coerce form values: '' -> NULL; booleans; everything else is cast by Postgres
+function coerce(c, v) {
+  if (v === undefined) return undefined;
+  if (v === null || v === "") return null;
+  if (c.type === "boolean") return v === true || v === "true" || v === "t" || v === "1";
+  return String(v);
+}
+
+async function adminSave(req, res) {
+  if (limited(req, res, "write")) return;
+  const p = await readBody(req, res); if (!p) return;
+  const by = String(p.by || "").trim();
+  if (!by) return send(res, 400, { error: "'by' (your name) is required" });
+  const client = await pool.connect();
+  try {
+    const sch = await schema(); const t = tableOf(sch, p.table, res); if (!t) return;
+    if (!t.writable) return send(res, 403, { error: `${t.name} is read-only here (owned by ${t.owner})` });
+    const row = p.row && typeof p.row === "object" ? p.row : {};
+    const editable = t.columns.filter((c) => !c.generated);
+    await client.query("BEGIN");
+    let key = p.key && typeof p.key === "object" ? p.key : null, oldRow = null;
+    if (key) {
+      const kc = t.key.map((k, i) => `${q(k)}::text = $${i + 1}`).join(" AND ");
+      const cur = await client.query(`SELECT * FROM aa.${q(t.name)} WHERE ${kc}`, t.key.map((k) => String(key[k] ?? "")));
+      if (!cur.rows.length) { await client.query("ROLLBACK"); return send(res, 404, { error: "row not found" }); }
+      oldRow = cur.rows[0];
+    }
+    const audits = [], sets = [], params = [];
+    const norm = (v) => v == null ? null : v instanceof Date ? v.toISOString().slice(0, 10) : String(v);
+    for (const c of editable) {
+      if (!(c.name in row)) continue;
+      const v = coerce(c, row[c.name]);
+      if (oldRow ? norm(oldRow[c.name]) === norm(v) : v === null) continue;   // no-op: skip
+      params.push(v); sets.push(`${q(c.name)} = $${params.length}`);
+      audits.push([by, t.name, "", c.name, oldRow ? norm(oldRow[c.name]) : null, norm(v)]);
+    }
+    let saved;
+    if (oldRow) {
+      if (!sets.length) { await client.query("ROLLBACK"); return send(res, 200, { ok: true, changes: 0, key }); }
+      if (colOf(t, "updated_at")) sets.push("updated_at = now()");
+      const kc = t.key.map((k) => { params.push(String(key[k] ?? "")); return `${q(k)}::text = $${params.length}`; }).join(" AND ");
+      saved = (await client.query(`UPDATE aa.${q(t.name)} SET ${sets.join(", ")} WHERE ${kc} RETURNING *`, params)).rows[0];
+    } else {
+      const cols = editable.filter((c) => c.name in row && coerce(c, row[c.name]) !== null);
+      if (!cols.length) { await client.query("ROLLBACK"); return send(res, 400, { error: "empty row" }); }
+      const vals = cols.map((c) => coerce(c, row[c.name]));
+      saved = (await client.query(
+        `INSERT INTO aa.${q(t.name)} (${cols.map((c) => q(c.name)).join(", ")})
+         VALUES (${cols.map((_, i) => `$${i + 1}`).join(", ")}) RETURNING *`, vals)).rows[0];
+    }
+    const rk = rowKey(t, saved);
+    for (const a of audits) {
+      a[2] = rk;
+      await client.query(
+        `INSERT INTO aa.entry_audit (entered_by, table_name, row_key, field, old_value, new_value)
+         VALUES ($1,$2,$3,$4,$5,$6)`, a);
+    }
+    if (!oldRow)
+      await client.query(
+        `INSERT INTO aa.entry_audit (entered_by, table_name, row_key, field, old_value, new_value)
+         VALUES ($1,$2,$3,'(row)',NULL,'created')`, [by, t.name, rk]);
+    await client.query("COMMIT");
+    send(res, 200, { ok: true, changes: audits.length, key: Object.fromEntries(t.key.map((k) => [k, saved[k]])), row: saved });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    send(res, 400, { error: String(e.message || e) });
+  } finally { client.release(); }
+}
+
+async function adminDelete(req, res) {
+  if (limited(req, res, "write")) return;
+  const p = await readBody(req, res); if (!p) return;
+  const by = String(p.by || "").trim();
+  if (!by) return send(res, 400, { error: "'by' (your name) is required" });
+  const client = await pool.connect();
+  try {
+    const sch = await schema(); const t = tableOf(sch, p.table, res); if (!t) return;
+    if (!t.writable) return send(res, 403, { error: `${t.name} is read-only here (owned by ${t.owner})` });
+    const key = p.key && typeof p.key === "object" ? p.key : null;
+    if (!key) return send(res, 400, { error: "key required" });
+    const kc = t.key.map((k, i) => `${q(k)}::text = $${i + 1}`).join(" AND ");
+    const params = t.key.map((k) => String(key[k] ?? ""));
+    await client.query("BEGIN");
+    const gone = (await client.query(`DELETE FROM aa.${q(t.name)} WHERE ${kc} RETURNING *`, params)).rows;
+    if (gone.length !== 1) { await client.query("ROLLBACK"); return send(res, gone.length ? 409 : 404, { error: gone.length ? "key matches several rows" : "row not found" }); }
+    await client.query(
+      `INSERT INTO aa.entry_audit (entered_by, table_name, row_key, field, old_value, new_value)
+       VALUES ($1,$2,$3,'(row)',$4,'deleted')`, [by, t.name, rowKey(t, gone[0]), JSON.stringify(gone[0]).slice(0, 4000)]);
+    await client.query("COMMIT");
+    send(res, 200, { ok: true });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    send(res, 400, { error: String(e.message || e) });
+  } finally { client.release(); }
+}
+
 // ------------------------------------------------------------------- server
 const server = http.createServer(async (req, res) => {
   const allowed = cors(req, res);
@@ -437,11 +712,21 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, { ok: true, db, llm: !!API_KEY });
   }
   if (!allowed && req.headers.origin) return send(res, 403, { error: "origin not allowed" });
-  if (SITE_TOKEN && req.headers["x-site-token"] !== SITE_TOKEN)
-    return send(res, 401, { error: "bad site token" });
-  if (req.method === "POST" && url.pathname === "/extract") return extract(req, res);
+  const r = role(req);
+  if (!r) return send(res, 401, { error: "bad site token" });
+  if (req.method === "GET" && url.pathname === "/whoami") return send(res, 200, { ok: true, role: r });
   if (req.method === "GET" && url.pathname === "/framework") return framework(req, res, url.searchParams);
+  if (!pool && ["/schema", "/rows", "/distinct", "/save", "/delete"].includes(url.pathname))
+    return send(res, 500, { error: "DB not configured" });
+  if (req.method === "GET" && url.pathname === "/schema") return adminSchema(req, res, url.searchParams);
+  if (req.method === "GET" && url.pathname === "/rows") return adminRows(req, res, url.searchParams);
+  if (req.method === "GET" && url.pathname === "/distinct") return adminDistinct(req, res, url.searchParams);
+  if (r !== "editor" && ["/extract", "/entry", "/save", "/delete"].includes(url.pathname))
+    return send(res, 401, { error: "editor token required" });   // 401: pages prompt for it
+  if (req.method === "POST" && url.pathname === "/extract") return extract(req, res);
   if (req.method === "POST" && url.pathname === "/entry") return entry(req, res);
+  if (req.method === "POST" && url.pathname === "/save") return adminSave(req, res);
+  if (req.method === "POST" && url.pathname === "/delete") return adminDelete(req, res);
   send(res, 404, { error: "not found" });
 });
 

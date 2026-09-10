@@ -84,7 +84,7 @@ NAV = """
   <a href="dashboards.html">Dashboards</a>
   <a href="hierarchy.html">Explorer</a>
   <a href="entry.html">Data entry</a>
-  <a href="tables.html">Tracking tables</a>
+  <a href="admin.html">Admin</a>
   <a href="schema.html">DB schema</a>
   <a href="reconciliation.html">Reconciliation</a>
   <a href="review-julia.html">Julia</a>
@@ -345,6 +345,8 @@ def main():
 
     import dashboards
     dashboards.build_all(e, page, tbl)
+    import admin_page
+    admin_page.build_admin(page)
     for asset in ("chart.umd.js", "pdf.min.js", "pdf.worker.min.js"):
         shutil.copy(Path(__file__).parents[1] / "site_src" / asset, OUT / asset)
 
