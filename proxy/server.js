@@ -28,11 +28,7 @@ const API_KEY = process.env.ANTHROPIC_API_KEY;
 const SITE_TOKEN = process.env.SITE_TOKEN || "";
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ||
   "https://ocha-dap.github.io").split(",");
-const MODELS = new Set([
-  "claude-sonnet-5",
-  "claude-haiku-4-5-20251001",
-  "claude-opus-5",
-]);
+const MODELS = new Set(["claude-opus-5"]);
 const MAX_BODY = 45 * 1024 * 1024;
 const RATE = { extract: 20, entry: 60, read: 300, windowMs: 60 * 60 * 1000 };
 const hits = new Map();

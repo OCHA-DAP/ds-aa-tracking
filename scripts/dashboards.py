@@ -1040,13 +1040,7 @@ the ingest merges entered values into the registry, and entered values win.
  <div class='hint' style='margin-top:6px'>sent only to the team extraction service · max 32&nbsp;MB / 100 pages</div>
  <input type='file' id='file' accept='application/pdf' style='display:none'>
 </div>
-<div class='frow' style='margin:6px 0'>
- <label>Extraction model <select id='model'>
-   <option value='claude-opus-5' selected>Opus 5 — most thorough, default</option>
-   <option value='claude-sonnet-5'>Sonnet 5 — faster</option>
-   <option value='claude-haiku-4-5-20251001'>Haiku 4.5 — fastest</option>
- </select></label>
-</div>
+
 <div id='progress' class='muted' style='margin:8px 0'></div>
 <div id='spin' style='display:none; margin:14px 0; align-items:center; gap:12px'>
  <div class='spinner'></div><div id='spintext' class='muted'>Claude is reading the document…</div>
@@ -1255,7 +1249,7 @@ async function handle(f){
     const resp = await api('/extract', {
       method: 'POST',
       headers: {'content-type':'application/json'},
-      body: JSON.stringify({pdf_base64: b64, model: document.getElementById('model').value}),
+      body: JSON.stringify({pdf_base64: b64, model: 'claude-opus-5'}),
     });
     const out = await resp.json();
     if(!resp.ok || !out.ok) throw new Error(out.error || `service returned ${resp.status}`);
