@@ -1205,8 +1205,13 @@ framework PDF; the page reads it in your browser (nothing is uploaded anywhere) 
 decides which of three cases it is:
 <b>already ingested</b> (flags which version) · <b>new version of an existing
 framework</b> · <b>a brand-new framework</b> — then proposes the exact registry rows.
-This replaces field-by-field entry as the intended ingestion path
-(LLM/automation-assisted with human confirmation); the
+For <b>new versions / new frameworks</b> the verdict offers a
+<b>Start real ingestion</b> button: it pre-fills a GitHub issue that dispatches the
+KB's <code>kb-ingest</code> pipeline — headless Claude (running in GitHub Actions on
+the team token, never in this page) reads the document, drafts the framework version
+page with windows, triggers and funding, and opens a PR for human review; merging the
+PR closes the issue and the nightly sync lands it in the DB. This page itself holds
+no credentials — the browser only detects and pre-fills. The
 <a href='form.html'>manual form</a> and <a href='status.html'>status update</a>
 remain for corrections.</div>
 
@@ -1225,6 +1230,8 @@ remain for corrections.</div>
   <label>Hazard <select id='dh'></select></label>
   <label>Version / endorsement date <input type='date' id='dd'></label>
   <label>Title <input id='dt' style='min-width:380px'></label>
+  <label>Document URL <input id='du' style='min-width:380px'
+    placeholder='ReliefWeb/UNOCHA link — or attach the PDF to the issue and paste its attachment URL'></label>
  </div>
  <div class='frow'><button class='primary' onclick='classify()'>Classify & propose</button></div>
 </div>
@@ -1371,7 +1378,30 @@ function classify(){{
     fileHashHits[curHash] = `${{iso}}/${{hz}}/${{date}}`;
     localStorage.setItem('ingestHashes', JSON.stringify(fileHashHits));
   }}
-  v.innerHTML = `<div class='${{cls}}' style='margin:10px 0'>${{verdict}}</div>`;
+  let btn = '';
+  if(cls === 'card') {{
+    const KBHAZ = {{storm: 'tropical-cyclone', flood: 'flood', drought: 'drought',
+                   cholera: 'cholera', plague: 'plague', locusts: 'locusts'}};
+    const docUrl = document.getElementById('du').value;
+    const body = [
+      `country: ${{iso}}`,
+      `hazard: ${{KBHAZ[hz] || hz}}`,
+      `version: ${{date}}`,
+      `doc: ${{docUrl}}`,
+      fw && fw.kb ? `slug: ${{fw.kb}}` : 'slug:',
+      '',
+      `title: ${{title}}`,
+      docUrl ? '' : '_No public URL — attach the PDF to this issue and paste its attachment URL into the doc: line above._',
+      '',
+      '_Filed from the ds-aa-tracking ingestion page. The ingest-doc bridge dispatches kb-ingest; Claude drafts the framework version page as a PR for review._',
+    ].join('\\n');
+    const url = 'https://github.com/OCHA-DAP/ds-knowledge-base/issues/new?' +
+      'title=' + encodeURIComponent(`[ingest-doc] ${{iso}}/${{hz}} ${{date}}`) +
+      '&body=' + encodeURIComponent(body);
+    btn = `<div style='margin:10px 0'><a class='primary' style='display:inline-block;padding:9px 18px;border-radius:6px;background:#1f2a44;color:#fff;text-decoration:none' href='${{url}}' target='_blank'>Start real ingestion → (pre-filled KB issue)</a>
+      <span class='muted' style='margin-left:10px'>needs GitHub write access; Claude extracts windows/triggers/funding in Actions and opens a PR</span></div>`;
+  }}
+  v.innerHTML = `<div class='${{cls}}' style='margin:10px 0'>${{verdict}}</div>` + btn;
   const p = document.getElementById('payload');
   if(Object.keys(payload).length > 1) {{
     p.style.display='block'; p.textContent = JSON.stringify(payload, null, 2);
