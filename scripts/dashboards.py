@@ -593,13 +593,24 @@ def build_framework_pages(page, tbl, d):
             f"<td>{f'<a href={x.doc_url!r}>doc</a>' if pd.notna(x.doc_url) else ''}</td>"
             f"<td style='max-width:340px'>{x.analysis_ref if pd.notna(x.analysis_ref) else ''}</td></tr>"
             for x in v.itertuples())
-        arows = "".join(
-            f"<tr><td>{x.event_date}</td><td>{x.event_type}</td>"
-            f"<td>{x.window_name if pd.notna(x.window_name) else ''}</td><td>{x.fund_code}</td>"
-            f"<td>{x.allocation_code if pd.notna(x.allocation_code) else ''}</td>"
-            f"<td>{'' if pd.isna(x.amount_usd) else f'${x.amount_usd:,.0f}'}</td>"
-            f"<td>{'' if pd.isna(x.people_targeted) else f'{int(x.people_targeted):,}'}</td></tr>"
-            for x in a.sort_values("event_date").itertuples())
+        # one line per ACTIVATION; multi-fund events combine their funding rows
+        arows = ""
+        for (ed, et), g in a.sort_values("event_date").groupby(
+                ["event_date", "event_type"], sort=True):
+            first = g.iloc[0]
+            funding = "<br>".join(
+                f"{x.fund_code}: "
+                + ("" if pd.isna(x.amount_usd) else f"${x.amount_usd:,.0f}")
+                + (f" ({x.allocation_code})" if pd.notna(x.allocation_code) else "")
+                for x in g.itertuples())
+            total = g["amount_usd"].sum()
+            pt = g["people_targeted"].max()
+            arows += (
+                f"<tr><td>{ed}</td><td>{et}</td>"
+                f"<td>{first['window_name'] if pd.notna(first['window_name']) else ''}</td>"
+                f"<td>{funding}</td>"
+                f"<td>{'' if not total else f'${total:,.0f}'}</td>"
+                f"<td>{'' if pd.isna(pt) else f'{int(pt):,}'}</td></tr>")
         frows = "".join(f"<span class='badge b-kb'>{x.role}: {x.person}</span>"
                         for x in f.itertuples())
         srows = "".join(
@@ -609,9 +620,14 @@ def build_framework_pages(page, tbl, d):
                                   for x in r.itertuples()}))
         covered_txt = (f"{int(pc['people_covered'].iloc[0]):,}"
                        if not pc.empty else "—")
+        obs = fw.get("observed_status")
+        derived_note = (
+            f" <span class='muted' style='font-size:11px'>(derived from the endorsed "
+            f"{fw['current_version']} version — sheets last said “{str(obs).replace('_', ' ')}”)</span>"
+            if pd.notna(obs) and obs != fw["status"] else "")
         body = f"""
 <div class='card'><b>{fw['country_name']} — {h}</b> ·
-<span class='badge b-new'>{fw['status'] or 'no status'}</span>
+<span class='badge b-new'>{fw['status'] or 'no status'}</span>{derived_note}
 current version: <code>{fw['current_version'] or '—'}</code>
 {('· KB: <code>' + fw['kb_framework'] + '</code>') if pd.notna(fw['kb_framework']) else '· not in KB'}
 · people covered: <b>{covered_txt}</b><br>
@@ -626,7 +642,7 @@ Monitoring window: {_cal_strip(cal, c, h)}
 </div>
 <h2>Activations</h2>
 <section><div class='scroll'><table class='data'><thead>
-<tr><th>date</th><th>type</th><th>window</th><th>fund</th><th>allocation</th><th>USD</th><th>targeted</th></tr>
+<tr><th>date</th><th>type</th><th>window</th><th>funding (fund: USD, allocation)</th><th>total USD</th><th>targeted</th></tr>
 </thead><tbody>{arows or '<tr><td colspan=7>none recorded</td></tr>'}</tbody></table></div></section>
 <h2>Pre-arranged sector budgets</h2>
 <section><div class='scroll' style='max-height:320px'><table class='data'><thead>

@@ -426,7 +426,25 @@ VIEWS = {
         SELECT r.country_iso3, r.hazard, r.country_name, r.region, r.kb_framework,
                r.in_kb, r.language, r.us_prio,
                v.version AS current_version, v.version_status, v.valid_until,
-               s.status, s.status_raw, s.as_of AS status_as_of, s.source AS status_source,
+               -- resolved status: the version registry is authoritative for
+               -- endorsement state (a version IS an endorsed document; sheet
+               -- snapshot dates are approximate) — an endorsed version in validity
+               -- overrides stale pre-endorsement statuses; richer observed states
+               -- (activated_implementing) are kept
+               CASE WHEN v.version_status = 'endorsed'
+                         AND (v.valid_until IS NULL OR v.valid_until >= CURRENT_DATE)
+                         AND s.status IN ('under_revision', 'under_development',
+                                          'project_finalization',
+                                          'early_conversations',
+                                          'advanced_conversations')
+                    THEN 'active'
+                    WHEN s.status IS NULL AND v.version_status = 'endorsed'
+                         AND (v.valid_until IS NULL OR v.valid_until >= CURRENT_DATE)
+                    THEN 'active'
+                    ELSE s.status
+               END AS status,
+               s.status AS observed_status,
+               s.status_raw, s.as_of AS status_as_of, s.source AS status_source,
                p.amount_usd AS cerf_prearranged_usd, p.year AS prearranged_year,
                c.people_covered
         FROM aa.framework_registry r
