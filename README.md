@@ -28,6 +28,10 @@ CERF OneGMS mirror (`ds-cerf-supplement`). It adds:
 - `src/ds_aa_tracking/schema.py` — DDL (tables + views), all in schema `aa`
 - `scripts/ingest.py` — parse → crosswalk to KB → full-refresh load (dev DB)
 - `scripts/build_site.py` — render the password-protected GH Pages review site
+- `scripts/dashboards.py` — dashboards, per-framework pages, explorer, entry forms
+- `scripts/landing.py` — landing map: zoom to a country, subnational scope per framework
+  version (KB `geographic_scope` names matched to CODAB boundaries; one
+  `adm-<ISO3>.json` per country, CODAB layers cached under `data/codab/`)
 
 ## Running
 
