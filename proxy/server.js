@@ -123,17 +123,25 @@ const server = http.createServer((req, res) => {
     catch { return send(res, 400, { error: "bad JSON" }); }
     const model = MODELS.has(payload.model) ? payload.model : "claude-sonnet-5";
     if (!payload.pdf_base64) return send(res, 400, { error: "pdf_base64 required" });
+    // Claude Code OAuth tokens (sk-ant-oat…) authenticate via Bearer + the
+    // oauth beta header, and are only authorized for Claude Code requests —
+    // the system prompt must be Claude Code's own.
+    const oauth = API_KEY.startsWith("sk-ant-oat");
+    const auth = oauth
+      ? { authorization: `Bearer ${API_KEY}`, "anthropic-beta": "oauth-2025-04-20" }
+      : { "x-api-key": API_KEY };
     try {
       const r = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
-          "x-api-key": API_KEY,
+          ...auth,
           "anthropic-version": "2023-06-01",
           "content-type": "application/json",
         },
         body: JSON.stringify({
           model,
           max_tokens: 8192,
+          ...(oauth ? { system: "You are Claude Code, Anthropic's official CLI for Claude." } : {}),
           tools: [TOOL],
           tool_choice: { type: "tool", name: "record_framework" },
           messages: [{
