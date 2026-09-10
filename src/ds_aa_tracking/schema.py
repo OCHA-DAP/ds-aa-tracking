@@ -52,6 +52,22 @@ TABLES = {
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard, version)
         )""",
+    "entered_window": """
+        CREATE TABLE IF NOT EXISTS aa.entered_window (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,         -- framework_version this window belongs to
+            window_name text NOT NULL,
+            basis text,                    -- observational | forecast | mixed
+            trigger_statement text,        -- plain-text trigger, from the endorsed doc
+            budget_usd numeric,            -- window share of the version budget
+            monitoring_period text,
+            note text,
+            entered_by text,               -- GitHub login of the entry-issue author
+            entered_on date,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (country_iso3, hazard, version, window_name)
+        )""",
     "framework_status": """
         CREATE TABLE IF NOT EXISTS aa.framework_status (
             country_iso3 text NOT NULL,

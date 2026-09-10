@@ -196,9 +196,71 @@ def historical_versions(fv):
     return fv
 
 
+ENTERED_VERSION_COLS = [
+    "doc_title", "doc_url", "endorsed_by", "valid_until", "valid_until_source",
+    "prearranged_usd_doc", "supersedes", "note",
+]
+
+
+def entered_versions(fv):
+    """Merge reference/entered_framework_versions.csv — rows filed through the
+    site's ingestion page (browser LLM extraction → [framework-entry] issue →
+    bridge PR). Entered values are deliberate human-confirmed entries, so they
+    WIN over KB frontmatter and sweep values ("versions ENTERED, not inferred")."""
+    f = REFERENCE_DIR / "entered_framework_versions.csv"
+    if not f.exists():
+        return fv
+    ent = pd.read_csv(f, dtype=str)
+    new_rows = []
+    for _, e in ent.iterrows():
+        mask = (
+            (fv["country_iso3"] == e["country_iso3"])
+            & (fv["hazard"] == e["hazard"])
+            & (fv["version"] == e["version"])
+        )
+        if mask.any():
+            i = fv[mask].index[0]
+            for col in ENTERED_VERSION_COLS:
+                val = e.get(col)
+                if pd.notna(val) and str(val).strip():
+                    fv.at[i, col] = (
+                        pd.to_datetime(val).date() if col == "valid_until" else val
+                    )
+            continue
+        new_rows.append({
+            "country_iso3": e["country_iso3"], "hazard": e["hazard"],
+            "version": e["version"], "valid_from": _parse_version_date(e["version"]),
+            "valid_until": (
+                pd.to_datetime(e["valid_until"]).date()
+                if pd.notna(e.get("valid_until")) and str(e.get("valid_until")).strip()
+                else None
+            ),
+            "valid_until_source": e.get("valid_until_source"),
+            "endorsed_by": e.get("endorsed_by"), "supersedes": e.get("supersedes"),
+            "prearranged_usd_doc": e.get("prearranged_usd_doc"),
+            "doc_title": e.get("doc_title"), "doc_url": e.get("doc_url"),
+            "source": "entered", "note": e.get("note"),
+        })
+    if new_rows:
+        fv = pd.concat([fv, pd.DataFrame(new_rows)], ignore_index=True)
+    return fv
+
+
+def entered_windows():
+    """reference/entered_windows.csv → aa.entered_window rows (same entry path)."""
+    f = REFERENCE_DIR / "entered_windows.csv"
+    if not f.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(f, dtype=str)
+    if "budget_usd" in df.columns:
+        df["budget_usd"] = pd.to_numeric(df["budget_usd"], errors="coerce")
+    return df
+
+
 def build_framework_version(tables):
     kb = kb_versions()
     fv = historical_versions(kb)
+    fv = entered_versions(fv)
     sheet = sheet_revision_versions(tables.get("framework_status"), fv)
     fv = pd.concat([fv, sheet], ignore_index=True)
     # drop rows that collide with an earlier-priority version label exactly

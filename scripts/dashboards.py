@@ -1187,8 +1187,22 @@ fwChange(); addWindow(); addFund();
 
 # ------------------------------------------------------------------ doc ingest
 def build_ingest_doc(page, d):
-    """Upload-a-document ingestion demo: detects identical / new-version /
-    new-framework against the live registry, entirely client-side (pdf.js)."""
+    """Upload-a-document ingestion: Claude reads the PDF via the fixed-purpose
+    extraction proxy (chd-ds-aa-extract, key held server-side — never in this
+    page) and pre-fills the full entry form; classification against the live
+    registry decides identical / new-version / new-framework; submission files
+    a [framework-entry] issue whose bridge workflow PRs the entered-* reference
+    CSVs (merge = human confirmation). Heuristic pdf.js detection remains the
+    no-proxy fallback."""
+    import os as _os
+    from pathlib import Path as _P
+
+    token_file = _P(__file__).parents[1] / ".extract_token"
+    extract_token = _os.environ.get("EXTRACT_TOKEN", "").strip() or (
+        token_file.read_text().strip() if token_file.exists() else "")
+    if not extract_token:
+        print("  WARNING: no .extract_token / EXTRACT_TOKEN — AI extraction will 401")
+
     cur = d["current"].sort_values("country_name")
     ver = d["versions"]
     fw = [{"iso3": r.country_iso3, "hazard": r.hazard,
@@ -1199,218 +1213,375 @@ def build_ingest_doc(page, d):
                                       & (ver.hazard == r.hazard), "version"].tolist())}
           for r in cur.itertuples()]
     data = {"frameworks": fw}
-    body = f"""
-<div class='card'><b>Framework document ingestion (demo)</b> — drop an endorsed
-framework PDF; the page reads it in your browser (nothing is uploaded anywhere) and
-decides which of three cases it is:
-<b>already ingested</b> (flags which version) · <b>new version of an existing
-framework</b> · <b>a brand-new framework</b> — then proposes the exact registry rows.
-For <b>new versions / new frameworks</b> the verdict offers a
-<b>Start real ingestion</b> button: it pre-fills a GitHub issue that dispatches the
-KB's <code>kb-ingest</code> pipeline — headless Claude (running in GitHub Actions on
-the team token, never in this page) reads the document, drafts the framework version
-page with windows, triggers and funding, and opens a PR for human review; merging the
-PR closes the issue and the nightly sync lands it in the DB. This page itself holds
-no credentials — the browser only detects and pre-fills. The
-<a href='form.html'>manual form</a> and <a href='status.html'>status update</a>
-remain for corrections.</div>
+    body = r"""
+<div class='card'><b>Framework document ingestion</b> — drop an endorsed framework
+PDF and Claude reads it: country, hazard, endorsement date, validity, funding and
+<b>every activation window with its trigger statement</b> land in the form below,
+ready to correct and file. The document goes to a fixed-purpose team extraction
+service (the API key lives there, never in this page) and nowhere else. Filing
+creates a <code>[framework-entry]</code> issue in <code>ds-aa-tracking</code>; a
+bridge workflow turns it into a PR against the entered-registry CSVs — merging the
+PR is the human confirmation, and the next ingest loads it into the schema
+(<code>aa.framework_version</code> / <code>aa.entered_window</code>, entered values
+win). For frameworks that also need a KB page there's a second button dispatching
+the KB's <code>kb-ingest</code> pipeline. The <a href='form.html'>manual form</a>
+and <a href='status.html'>status update</a> remain for corrections.</div>
 
 <div class='form-card' id='drop' style='border:2px dashed #9db2c9; text-align:center;
      padding:40px; cursor:pointer'>
  <div style='font-size:15px; font-weight:600'>Drop a framework PDF here, or click to choose</div>
- <div class='hint' style='margin-top:6px'>read locally with pdf.js — the file never leaves your machine</div>
+ <div class='hint' style='margin-top:6px'>sent only to the team extraction service · max 32&nbsp;MB / 100 pages</div>
  <input type='file' id='file' accept='application/pdf' style='display:none'>
 </div>
+<div class='frow' style='margin:6px 0'>
+ <label>Extraction model <select id='model'>
+   <option value='claude-sonnet-5' selected>Sonnet 5 — fast, default</option>
+   <option value='claude-haiku-4-5-20251001'>Haiku 4.5 — fastest</option>
+   <option value='claude-opus-5'>Opus 5 — most thorough</option>
+ </select></label>
+</div>
 <div id='progress' class='muted' style='margin:8px 0'></div>
+<div id='spin' style='display:none; margin:14px 0; align-items:center; gap:12px'>
+ <div class='spinner'></div><div id='spintext' class='muted'>Claude is reading the document…</div>
+</div>
 
-<div class='form-card' id='detected' style='display:none'>
- <h3>Detected (edit if wrong)</h3>
+<div class='form-card' id='entry' style='display:none'>
+ <h3>Framework version <span class='hint' id='exmeta'></span></h3>
  <div class='frow'>
-  <label>Country <select id='dc'></select></label>
+  <label>Country <select id='dc' onchange="document.getElementById('dcNew').style.display = this.value==='NEW' ? '' : 'none'"></select></label>
+  <label id='dcNew' style='display:none'>ISO3 <input id='dcIso' size='4' maxlength='3' style='text-transform:uppercase'></label>
   <label>Hazard <select id='dh'></select></label>
   <label>Version / endorsement date <input type='date' id='dd'></label>
-  <label>Title <input id='dt' style='min-width:380px'></label>
+  <label>Endorsed by <select id='de'>
+    <option value=''>— unknown —</option>
+    <option value='erc'>ERC (major version)</option>
+    <option value='cerf_secretariat'>CERF secretariat (minor revision)</option>
+  </select></label>
+ </div>
+ <div class='frow'>
+  <label>Title <input id='dt' style='min-width:420px'></label>
   <label>Document URL <input id='du' style='min-width:380px'
     placeholder='ReliefWeb/UNOCHA link — or attach the PDF to the issue and paste its attachment URL'></label>
  </div>
- <div class='frow'><button class='primary' onclick='classify()'>Classify & propose</button></div>
+ <div class='frow'>
+  <label>Valid until <input type='date' id='dv'></label>
+  <label>Validity source <select id='dvs'>
+    <option value=''>—</option><option>doc-stated</option>
+    <option>convention</option><option>inherited</option>
+  </select></label>
+  <label>Pre-arranged USD <input id='dp' size='12'></label>
+  <label>Supersedes <input id='ds' size='12' placeholder='YYYY[-MM[-DD]]'></label>
+ </div>
+ <div class='frow'><label style='flex:1'>Note <input id='dn' style='min-width:420px'></label></div>
+
+ <h3 style='margin-top:14px'>Windows &amp; triggers
+   <button onclick='addWindow()' style='margin-left:10px'>+ add window</button></h3>
+ <div id='windows'></div>
+
+ <div class='frow' style='margin-top:14px'>
+  <button class='primary' onclick='classify()'>Classify &amp; preview entry</button>
+ </div>
 </div>
+
 <div id='verdict'></div>
 <pre id='payload' style='display:none'></pre>
 
 <script src="pdf.min.js"></script>
-<script>window.G = {json.dumps(data)};</script>
+<script>window.G = __DATA__;
+window.PROXY = '__PROXY__'; window.SITE_TOKEN = '__TOKEN__';</script>
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
-const HAZ = {{
+const HAZ = {
   drought: ['drought','sécheresse','secheresse','sequia','sequía','dry spell'],
   flood: ['flood','inondation','monsoon','riverine','crue'],
   storm: ['cyclone','typhoon','hurricane','tropical storm','tempête','ouragan'],
   cholera: ['cholera','choléra'],
-}};
-const MONTHS = {{january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,
+};
+const MONTHS = {january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,
   september:9,october:10,november:11,december:12,janvier:1,février:2,fevrier:2,mars:3,
   avril:4,mai:5,juin:6,juillet:7,août:8,aout:8,septembre:9,octobre:10,novembre:11,
-  décembre:12,decembre:12}};
-let fileHashHits = JSON.parse(localStorage.getItem('ingestHashes')||'{{}}');
-let curHash = null, curText = '';
+  décembre:12,decembre:12};
+let fileHashHits = JSON.parse(localStorage.getItem('ingestHashes')||'{}');
+let curHash = null, curText = '', curFile = null;
 
 const drop = document.getElementById('drop'), fileEl = document.getElementById('file');
 drop.onclick = () => fileEl.click();
-drop.ondragover = e => {{ e.preventDefault(); drop.style.background='#eef4fc'; }};
+drop.ondragover = e => { e.preventDefault(); drop.style.background='#eef4fc'; };
 drop.ondragleave = () => drop.style.background='';
-drop.ondrop = e => {{ e.preventDefault(); drop.style.background='';
-  if(e.dataTransfer.files[0]) handle(e.dataTransfer.files[0]); }};
+drop.ondrop = e => { e.preventDefault(); drop.style.background='';
+  if(e.dataTransfer.files[0]) handle(e.dataTransfer.files[0]); };
 fileEl.onchange = () => fileEl.files[0] && handle(fileEl.files[0]);
 
-async function handle(f){{
-  const prog = document.getElementById('progress');
-  prog.textContent = `reading ${{f.name}}…`;
-  const buf = await f.arrayBuffer();
-  curHash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buf))]
-    .map(b=>b.toString(16).padStart(2,'0')).join('');
-  let text = '';
-  try {{
-    const pdf = await pdfjsLib.getDocument({{data: buf}}).promise;
-    const n = Math.min(pdf.numPages, 8);
-    for(let i=1;i<=n;i++){{
-      const pg = await pdf.getPage(i);
-      const tc = await pg.getTextContent();
-      text += tc.items.map(x=>x.str).join(' ') + '\\n';
-    }}
-    prog.textContent = `read ${{n}} page(s) of ${{pdf.numPages}} · sha256 ${{curHash.slice(0,12)}}…`;
-  }} catch(err) {{
-    prog.textContent = `could not parse as PDF (${{err.message}}) — fill the fields manually`;
-  }}
-  curText = text;
-  detect(text, f.name);
-}}
-
-function detect(text, fname){{
-  const t = (text + ' ' + fname).toLowerCase();
-  // country: score registry names by occurrence
-  let best = null, bestN = 0;
-  const seen = new Set();
-  G.frameworks.forEach(f => f.names.forEach(nm => {{
-    if(seen.has(f.iso3)) return;
-    const n = t.split(nm.toLowerCase()).length - 1;
-    if(n > bestN) {{ best = f.iso3; bestN = n; seen.add(f.iso3); }}
-  }}));
-  // hazard: keyword scoring
-  let bh = null, bhN = 0;
-  for(const [h, kws] of Object.entries(HAZ)){{
-    const n = kws.reduce((a,k)=>a + (t.split(k).length - 1), 0);
-    if(n > bhN) {{ bh = h; bhN = n; }}
-  }}
-  // dates: 'DD Month YYYY' / 'Month YYYY' / ISO, prefer near endorse/approv/version/final
-  const dates = [];
-  const re = /(\d{{1,2}})?\s*(january|february|march|april|may|june|july|august|september|october|november|december|janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)\s+(20\d\d)|((20\d\d)-(\d\d)-(\d\d))/gi;
-  let m;
-  while((m = re.exec(t)) !== null){{
-    let iso;
-    if(m[4]) iso = m[4];
-    else iso = `${{m[3]}}-${{String(MONTHS[m[2]]).padStart(2,'0')}}-${{String(+(m[1]||15)).padStart(2,'0')}}`;
-    const ctx = t.slice(Math.max(0, m.index-80), m.index+80);
-    const w = /endors|approv|approuv|version|final|valid/.test(ctx) ? 3 : 1;
-    dates.push({{iso, w, pos: m.index}});
-  }}
-  dates.sort((a,b)=> b.w - a.w || a.pos - b.pos);
+function initSelects(){
   const dsel = document.getElementById('dc'), hsel = document.getElementById('dh');
-  dsel.innerHTML = ''; hsel.innerHTML = '';
+  if(dsel.options.length) return;
   [...new Map(G.frameworks.map(f=>[f.iso3, f.names[0]])).entries()]
     .sort((a,b)=>a[1].localeCompare(b[1]))
-    .forEach(([iso,nm])=>dsel.appendChild(new Option(`${{nm}} (${{iso}})`, iso)));
+    .forEach(([iso,nm])=>dsel.appendChild(new Option(`${nm} (${iso})`, iso)));
   dsel.appendChild(new Option('— other / new country —', 'NEW'));
   ['drought','flood','storm','cholera','plague','locusts','other']
     .forEach(h=>hsel.appendChild(new Option(h,h)));
-  if(best) dsel.value = best;
-  if(bh) hsel.value = bh;
-  if(dates.length) document.getElementById('dd').value = dates[0].iso;
-  const titleLine = (curText.split('\\n')[0]||'').trim().slice(0,120);
-  document.getElementById('dt').value = titleLine || fname.replace(/\.pdf$/i,'');
-  document.getElementById('detected').style.display = '';
-  document.getElementById('verdict').innerHTML = '';
-}}
+}
 
-function classify(){{
-  const iso = document.getElementById('dc').value,
-        hz = document.getElementById('dh').value,
-        date = document.getElementById('dd').value,
-        title = document.getElementById('dt').value;
+async function handle(f){
+  curFile = f;
+  const prog = document.getElementById('progress');
+  document.getElementById('verdict').innerHTML = '';
+  if(f.size > 32*1024*1024){ prog.textContent = 'file exceeds 32 MB — extraction service cap'; return; }
+  const buf = await f.arrayBuffer();
+  curHash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buf))]
+    .map(b=>b.toString(16).padStart(2,'0')).join('');
+  prog.textContent = `${f.name} · ${(f.size/1e6).toFixed(1)} MB · sha256 ${curHash.slice(0,12)}…`;
+  initSelects();
+  const t0 = Date.now();
+  showSpin(true, 'Claude is reading the document…');
+  try {
+    const b64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result.split(',')[1]);
+      r.onerror = rej;
+      r.readAsDataURL(f);
+    });
+    const resp = await fetch(PROXY + '/extract', {
+      method: 'POST',
+      headers: {'content-type':'application/json', 'x-site-token': SITE_TOKEN},
+      body: JSON.stringify({pdf_base64: b64, model: document.getElementById('model').value}),
+    });
+    const out = await resp.json();
+    if(!resp.ok || !out.ok) throw new Error(out.error || `service returned ${resp.status}`);
+    showSpin(false);
+    const secs = ((Date.now()-t0)/1000).toFixed(0);
+    document.getElementById('exmeta').textContent =
+      `— extracted by ${out.model} in ${secs}s; correct anything that's wrong`;
+    fillForm(out.data);
+  } catch(err) {
+    showSpin(false);
+    prog.textContent += ` · AI extraction unavailable (${err.message}) — heuristic detection instead`;
+    await heuristic(buf, f.name);
+  }
+  document.getElementById('entry').style.display = '';
+}
+
+function showSpin(on, txt){
+  const s = document.getElementById('spin');
+  s.style.display = on ? 'flex' : 'none';
+  if(txt) document.getElementById('spintext').textContent = txt;
+}
+
+function fillForm(x){
+  const dsel = document.getElementById('dc');
+  const iso = (x.country_iso3||'').toUpperCase();
+  if([...dsel.options].some(o=>o.value===iso)) dsel.value = iso;
+  else { dsel.value = 'NEW'; document.getElementById('dcNew').style.display='';
+         document.getElementById('dcIso').value = iso; }
+  document.getElementById('dh').value = x.hazard || 'other';
+  document.getElementById('dd').value = (x.version_date||'').slice(0,10);
+  document.getElementById('dt').value = x.doc_title || '';
+  document.getElementById('de').value = (x.endorsed_by==='unknown'?'':x.endorsed_by)||'';
+  document.getElementById('dv').value = (x.valid_until||'').slice(0,10);
+  document.getElementById('dvs').value = (x.valid_until_source==='unknown'?'':x.valid_until_source)||'';
+  document.getElementById('dp').value = x.prearranged_usd ?? '';
+  document.getElementById('ds').value = x.supersedes || '';
+  document.getElementById('dn').value = x.note || '';
+  document.getElementById('windows').innerHTML = '';
+  (x.windows && x.windows.length ? x.windows : [{}]).forEach(addWindow);
+}
+
+function addWindow(w){
+  w = (w && w.window_name !== undefined) || (w && w.trigger_statement) ? w : {};
+  const div = document.createElement('div');
+  div.className = 'wrow';
+  div.innerHTML = `
+   <div class='frow'>
+    <label>Window <input class='wn' value='' size='18'></label>
+    <label>Basis <select class='wb'><option value=''>—</option>
+      <option>observational</option><option>forecast</option><option>mixed</option></select></label>
+    <label>Monitoring period <input class='wm' size='16'></label>
+    <label>Budget USD <input class='wu' size='11'></label>
+    <button class='wdel' style='align-self:flex-end'>remove</button>
+   </div>
+   <label style='display:block'>Trigger statement
+    <textarea class='wt' rows='2' style='width:100%; box-sizing:border-box'></textarea></label>`;
+  div.querySelector('.wn').value = w.window_name || '';
+  div.querySelector('.wb').value = w.basis || '';
+  div.querySelector('.wm').value = w.monitoring_period || '';
+  div.querySelector('.wu').value = w.budget_usd ?? '';
+  div.querySelector('.wt').value = w.trigger_statement || '';
+  div.querySelector('.wdel').onclick = () => div.remove();
+  document.getElementById('windows').appendChild(div);
+}
+
+async function heuristic(buf, fname){
+  let text = '';
+  try {
+    const pdf = await pdfjsLib.getDocument({data: buf.slice(0)}).promise;
+    const n = Math.min(pdf.numPages, 8);
+    for(let i=1;i<=n;i++){
+      const pg = await pdf.getPage(i);
+      const tc = await pg.getTextContent();
+      text += tc.items.map(x=>x.str).join(' ') + '\n';
+    }
+  } catch(err) { /* fill manually */ }
+  curText = text;
+  const t = (text + ' ' + fname).toLowerCase();
+  let best = null, bestN = 0;
+  const seen = new Set();
+  G.frameworks.forEach(f => f.names.forEach(nm => {
+    if(seen.has(f.iso3)) return;
+    const n = t.split(nm.toLowerCase()).length - 1;
+    if(n > bestN) { best = f.iso3; bestN = n; seen.add(f.iso3); }
+  }));
+  let bh = null, bhN = 0;
+  for(const [h, kws] of Object.entries(HAZ)){
+    const n = kws.reduce((a,k)=>a + (t.split(k).length - 1), 0);
+    if(n > bhN) { bh = h; bhN = n; }
+  }
+  const dates = [];
+  const re = /(\d{1,2})?\s*(january|february|march|april|may|june|july|august|september|october|november|december|janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)\s+(20\d\d)|((20\d\d)-(\d\d)-(\d\d))/gi;
+  let m;
+  while((m = re.exec(t)) !== null){
+    let iso;
+    if(m[4]) iso = m[4];
+    else iso = `${m[3]}-${String(MONTHS[m[2]]).padStart(2,'0')}-${String(+(m[1]||15)).padStart(2,'0')}`;
+    const ctx = t.slice(Math.max(0, m.index-80), m.index+80);
+    const w = /endors|approv|approuv|version|final|valid/.test(ctx) ? 3 : 1;
+    dates.push({iso, w, pos: m.index});
+  }
+  dates.sort((a,b)=> b.w - a.w || a.pos - b.pos);
+  fillForm({
+    country_iso3: best || '', hazard: bh || 'other',
+    version_date: dates.length ? dates[0].iso : '',
+    doc_title: (curText.split('\n')[0]||'').trim().slice(0,120) || fname.replace(/\.pdf$/i,''),
+    windows: [],
+  });
+}
+
+function collect(){
+  const dcv = document.getElementById('dc').value;
+  const iso = dcv === 'NEW'
+    ? document.getElementById('dcIso').value.toUpperCase() : dcv;
+  const windows = [...document.querySelectorAll('#windows .wrow')].map(div => ({
+    window_name: div.querySelector('.wn').value.trim(),
+    basis: div.querySelector('.wb').value || null,
+    trigger_statement: div.querySelector('.wt').value.trim().slice(0,600) || null,
+    budget_usd: parseFloat(div.querySelector('.wu').value) || null,
+    monitoring_period: div.querySelector('.wm').value.trim() || null,
+  })).filter(w => w.window_name);
+  return {
+    country_iso3: iso,
+    hazard: document.getElementById('dh').value,
+    version: document.getElementById('dd').value,
+    doc_title: document.getElementById('dt').value.trim() || null,
+    doc_url: document.getElementById('du').value.trim() || null,
+    endorsed_by: document.getElementById('de').value || null,
+    valid_until: document.getElementById('dv').value || null,
+    valid_until_source: document.getElementById('dvs').value || null,
+    prearranged_usd_doc: parseFloat(document.getElementById('dp').value) || null,
+    supersedes: document.getElementById('ds').value.trim() || null,
+    note: document.getElementById('dn').value.trim() || null,
+    windows,
+  };
+}
+
+function classify(){
+  const e = collect();
   const v = document.getElementById('verdict');
-  const fw = G.frameworks.find(f=>f.iso3===iso && f.hazard===hz);
-  let verdict, cls, payload = {{_dummy:'no data written — proposal preview'}};
-  if(curHash && fileHashHits[curHash]) {{
-    const known = fileHashHits[curHash];
+  if(!/^[A-Z]{3}$/.test(e.country_iso3) || !e.version){
+    v.innerHTML = `<div class='dummy-banner' style='margin:10px 0'>need a 3-letter country code and a version date first</div>`;
+    return;
+  }
+  const fw = G.frameworks.find(f=>f.iso3===e.country_iso3 && f.hazard===e.hazard);
+  let verdict, isNew = false;
+  if(curHash && fileHashHits[curHash]) {
     verdict = `<b>Already ingested — identical file.</b> This exact document was
-      previously processed as <code>${{known}}</code>. Nothing to do.`;
-    cls = 'dummy-banner';
-  }} else if(fw && date && fw.versions.some(x => Math.abs(new Date(x) - new Date(date)) < 45*864e5)) {{
-    const hit = fw.versions.find(x => Math.abs(new Date(x) - new Date(date)) < 45*864e5);
+      previously processed as <code>${fileHashHits[curHash]}</code>. Nothing to do
+      (file anyway if that was a mistake).`;
+    isNew = true;
+  } else if(fw && fw.versions.some(x => Math.abs(new Date(x) - new Date(e.version)) < 45*864e5)) {
+    const hit = fw.versions.find(x => Math.abs(new Date(x) - new Date(e.version)) < 45*864e5);
     verdict = `<b>Already in the registry.</b> This looks like
-      <code>${{fw.label}}</code> version <code>${{hit}}</code> (endorsement date within
-      45 days). If this document differs (a secretariat revision), adjust the date and
-      re-classify.`;
-    cls = 'dummy-banner';
-  }} else if(fw) {{
+      <code>${fw.label}</code> version <code>${hit}</code> (endorsement date within
+      45 days). Filing the entry will still work — it enriches that version with the
+      extracted fields (trigger statements, validity, endorsement).`;
+    isNew = true;
+  } else if(fw) {
     const latest = fw.versions[fw.versions.length-1] || null;
-    verdict = `<b>New version of an existing framework:</b> <code>${{fw.label}}</code>
-      — this becomes version <code>${{date}}</code>, superseding
-      <code>${{latest||'—'}}</code>. Review the proposed rows, then confirm (in the
-      real pipeline: LLM extracts windows/triggers/funding from the doc for human
-      confirmation; official endorsement confirmation is recorded separately).`;
-    cls = 'card';
-    payload['aa.framework_version (insert)'] = {{country_iso3: iso, hazard: hz,
-      version: date, doc_title: title, supersedes: latest, source: 'doc-ingest',
-      endorsed_by: 'TO CONFIRM (erc | cerf_secretariat)'}};
-    payload['aa.window (LLM-extracted, human-confirmed)'] = '≥1 window with trigger statements — extracted from the doc';
-    payload['side_effect'] = latest ? `${{latest}} flips to superseded` : null;
-  }} else {{
-    verdict = `<b>Brand-new framework:</b> no ${{hz}} framework exists for
-      ${{iso === 'NEW' ? 'this country' : iso}} — this registers the framework AND its
-      first version <code>${{date}}</code>.`;
-    cls = 'card';
-    payload['aa.framework_registry (insert)'] = {{country_iso3: iso, hazard: hz}};
-    payload['aa.framework_version (insert)'] = {{country_iso3: iso, hazard: hz,
-      version: date, doc_title: title, supersedes: null, source: 'doc-ingest'}};
-  }}
-  if(curHash) {{
-    fileHashHits[curHash] = `${{iso}}/${{hz}}/${{date}}`;
+    verdict = `<b>New version of an existing framework:</b> <code>${fw.label}</code>
+      — this becomes version <code>${e.version}</code>, superseding
+      <code>${latest||'—'}</code>.`;
+    isNew = true;
+    if(!e.supersedes && latest) e.supersedes = latest;
+  } else {
+    verdict = `<b>Brand-new framework:</b> no ${e.hazard} framework exists for
+      ${e.country_iso3} — this registers the framework AND its first version
+      <code>${e.version}</code>.`;
+    isNew = true;
+  }
+  if(curHash) {
+    fileHashHits[curHash] = `${e.country_iso3}/${e.hazard}/${e.version}`;
     localStorage.setItem('ingestHashes', JSON.stringify(fileHashHits));
-  }}
-  let btn = '';
-  if(cls === 'card') {{
-    const KBHAZ = {{storm: 'tropical-cyclone', flood: 'flood', drought: 'drought',
-                   cholera: 'cholera', plague: 'plague', locusts: 'locusts'}};
-    const docUrl = document.getElementById('du').value;
-    const body = [
-      `country: ${{iso}}`,
-      `hazard: ${{KBHAZ[hz] || hz}}`,
-      `version: ${{date}}`,
-      `doc: ${{docUrl}}`,
-      fw && fw.kb ? `slug: ${{fw.kb}}` : 'slug:',
-      '',
-      `title: ${{title}}`,
-      docUrl ? '' : '_No public URL — attach the PDF to this issue and paste its attachment URL into the doc: line above._',
-      '',
-      '_Filed from the ds-aa-tracking ingestion page. The ingest-doc bridge dispatches kb-ingest; Claude drafts the framework version page as a PR for review._',
-    ].join('\\n');
-    const url = 'https://github.com/OCHA-DAP/ds-knowledge-base/issues/new?' +
-      'title=' + encodeURIComponent(`[ingest-doc] ${{iso}}/${{hz}} ${{date}}`) +
-      '&body=' + encodeURIComponent(body);
-    btn = `<div style='margin:10px 0'><a class='primary' style='display:inline-block;padding:9px 18px;border-radius:6px;background:#1f2a44;color:#fff;text-decoration:none' href='${{url}}' target='_blank'>Start real ingestion → (pre-filled KB issue)</a>
-      <span class='muted' style='margin-left:10px'>needs GitHub write access; Claude extracts windows/triggers/funding in Actions and opens a PR</span></div>`;
-  }}
-  v.innerHTML = `<div class='${{cls}}' style='margin:10px 0'>${{verdict}}</div>` + btn;
+  }
+  const yaml = JSON.stringify(e, null, 2);
+  const issueBody = ['```yaml', yaml, '```', '',
+    e.doc_url ? '' : '_No public URL — attach the PDF to this issue and paste its attachment URL into doc_url (edit the yaml above; edits re-run the bridge)._',
+    '_Filed from the ingestion page. The framework-entry bridge applies this to the entered-registry CSVs as a PR; merging = human confirmation._',
+  ].join('\n');
+  const entryUrl = 'https://github.com/OCHA-DAP/ds-aa-tracking/issues/new?' +
+    'title=' + encodeURIComponent(`[framework-entry] ${e.country_iso3}/${e.hazard} ${e.version}`) +
+    '&body=' + encodeURIComponent(issueBody);
+  const KBHAZ = {storm: 'tropical-cyclone', flood: 'flood', drought: 'drought',
+                 cholera: 'cholera', plague: 'plague', locusts: 'locusts'};
+  const kbBody = [
+    `country: ${e.country_iso3}`, `hazard: ${KBHAZ[e.hazard] || e.hazard}`,
+    `version: ${e.version}`, `doc: ${e.doc_url||''}`,
+    fw && fw.kb ? `slug: ${fw.kb}` : 'slug:', '', `title: ${e.doc_title||''}`, '',
+    '_Filed from the ds-aa-tracking ingestion page; the ingest-doc bridge dispatches kb-ingest (Claude drafts the KB framework page as a PR)._',
+  ].join('\n');
+  const kbUrl = 'https://github.com/OCHA-DAP/ds-knowledge-base/issues/new?' +
+    'title=' + encodeURIComponent(`[ingest-doc] ${e.country_iso3}/${e.hazard} ${e.version}`) +
+    '&body=' + encodeURIComponent(kbBody);
+  const tooLong = entryUrl.length > 7800;
+  const btns = `<div style='margin:10px 0; display:flex; gap:10px; flex-wrap:wrap; align-items:center'>
+    ${tooLong
+      ? `<span class='muted'>entry too large for a pre-filled link — download the JSON and paste it into a <code>[framework-entry]</code> issue inside a <code>\`\`\`yaml</code> fence</span>`
+      : `<a class='btn-main' href='${entryUrl}' target='_blank'>File entry in this repo →</a>`}
+    <a class='btn-sec' href='${kbUrl}' target='_blank'>Also draft KB page →</a>
+    <a class='btn-sec' href='#' onclick='downloadJson(); return false'>Download JSON</a>
+    <span class='muted'>filing needs GitHub write access; both paths end in a PR a human reviews</span>
+   </div>`;
+  v.innerHTML = `<div class='card' style='margin:10px 0'>${verdict}</div>` + btns;
   const p = document.getElementById('payload');
-  if(Object.keys(payload).length > 1) {{
-    p.style.display='block'; p.textContent = JSON.stringify(payload, null, 2);
-  }} else p.style.display='none';
-}}
+  p.style.display='block';
+  p.textContent = yaml;
+}
+
+function downloadJson(){
+  const blob = new Blob([JSON.stringify(collect(), null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const e = collect();
+  a.download = `framework-entry-${e.country_iso3||'XXX'}-${e.hazard}-${e.version||'undated'}.json`;
+  a.click();
+}
 </script>
-<style>{{DASH_CSS}}{{FORM_CSS}}</style>"""
-    body = body.replace("{DASH_CSS}", DASH_CSS).replace("{FORM_CSS}", FORM_CSS)
-    page("ingest-doc.html", "Document ingestion (demo)", body)
+<style>__DASH_CSS____FORM_CSS__
+.spinner { width:26px; height:26px; border:4px solid #d8dee6; border-top-color:#2a78d6;
+  border-radius:50%; animation:spin .8s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+#spin { display:none; }
+.wrow { border:1px solid #d8dee6; border-radius:8px; padding:10px 12px; margin:8px 0; }
+.btn-main { display:inline-block; padding:9px 18px; border-radius:6px; background:#1f2a44;
+  color:#fff; text-decoration:none; }
+.btn-sec { display:inline-block; padding:9px 14px; border-radius:6px; border:1.5px solid #1f2a44;
+  color:#1f2a44; text-decoration:none; }
+</style>"""
+    body = (body
+            .replace("__DATA__", json.dumps(data))
+            .replace("__PROXY__", "https://chd-ds-aa-extract.azurewebsites.net")
+            .replace("__TOKEN__", extract_token)
+            .replace("__DASH_CSS__", DASH_CSS)
+            .replace("__FORM_CSS__", FORM_CSS))
+    page("ingest-doc.html", "Document ingestion", body)
 
 
 # ------------------------------------------------------------------ status entry

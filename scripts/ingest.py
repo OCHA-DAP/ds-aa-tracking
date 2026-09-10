@@ -24,6 +24,7 @@ from ds_aa_tracking.parsers import parse_all  # noqa: E402
 from ds_aa_tracking.versions import (  # noqa: E402
     attribute_versions,
     build_framework_version,
+    entered_windows,
     historical_activation_events,
 )
 
@@ -395,6 +396,7 @@ def main():
     print("Building framework versions + attributing facts…")
     fv = build_framework_version(tables)
     tables["framework_version"] = fv
+    tables["entered_window"] = entered_windows()
     # registry KB link: the performance crosswalk only carries current versions —
     # any framework with a KB version page counts as in_kb
     reg = tables["framework_registry"]

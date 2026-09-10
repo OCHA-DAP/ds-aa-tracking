@@ -1,0 +1,79 @@
+name: Framework-entry bridge (issue → reference-CSV PR)
+
+# Bridge from the site's document-ingestion page (static, credential-free) to
+# this repo's own data: the page's browser-side LLM extraction pre-fills a
+# GitHub issue titled "[framework-entry] …" carrying a fenced yaml payload;
+# this workflow applies it to reference/entered_framework_versions.csv +
+# reference/entered_windows.csv (scripts/apply_entry.py, idempotent per
+# country/hazard/version) and opens a PR for human review. Merging the PR is
+# the human-confirmation step; the next ingest run loads the rows
+# (entered values WIN over KB/sweep values in versions.py).
+# GUARD: only issues opened or edited by users with write access are applied.
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  bridge:
+    if: startsWith(github.event.issue.title, '[framework-entry]')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check author permission
+        id: perm
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          P=$(gh api "repos/${{ github.repository }}/collaborators/${{ github.event.issue.user.login }}/permission" --jq .permission 2>/dev/null || echo none)
+          echo "perm=$P" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        if: contains(fromJSON('["admin","write","maintain"]'), steps.perm.outputs.perm)
+        uses: actions/checkout@v4
+
+      - name: Apply entry and open PR
+        if: contains(fromJSON('["admin","write","maintain"]'), steps.perm.outputs.perm)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BODY: ${{ github.event.issue.body }}
+          N: ${{ github.event.issue.number }}
+          ENTRY_AUTHOR: ${{ github.event.issue.user.login }}
+        run: |
+          set -e
+          pip install --quiet pyyaml
+          export ENTRY_DATE=$(date -u +%F)
+          if ! OUT=$(printf '%s' "$BODY" | python scripts/apply_entry.py 2>&1); then
+            gh issue comment "$N" --body "⚠️ Could not apply this entry: \`$OUT\` — edit the issue body (the fenced yaml block) and the bridge will retry."
+            exit 0
+          fi
+          if git diff --quiet reference/; then
+            gh issue comment "$N" --body "Nothing changed — the reference CSVs already carry exactly this entry."
+            exit 0
+          fi
+          BR="entry/issue-$N"
+          git config user.name "framework-entry-bridge"
+          git config user.email "actions@github.com"
+          git checkout -B "$BR"
+          git add reference/entered_framework_versions.csv reference/entered_windows.csv
+          git commit -m "Framework entry from issue #$N ($OUT)"
+          git push -f origin "$BR"
+          PR=$(gh pr list --head "$BR" --json url --jq '.[0].url')
+          if [ -z "$PR" ]; then
+            PR=$(gh pr create --head "$BR" \
+              --title "Framework entry: ${{ github.event.issue.title }}" \
+              --body "$(printf 'Applies the entry payload from #%s to the entered-* reference CSVs.\n\n%s\n\nMerging = human confirmation of the extracted values; the next ingest run loads them (entered values win over KB/sweep values).\n\nCloses #%s' "$N" "$OUT" "$N")")
+          fi
+          gh issue comment "$N" --body "📋 Entry applied ($OUT) — review and merge $PR to confirm. The next ingest run then loads it into \`aa.framework_version\` / \`aa.entered_window\`."
+
+      - name: Decline submissions without write access
+        if: "!contains(fromJSON('[\"admin\",\"write\",\"maintain\"]'), steps.perm.outputs.perm)"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue comment ${{ github.event.issue.number }} --body "This entry queue only accepts submissions from team members with write access; a maintainer can re-trigger by editing or re-opening the issue."
+          gh issue close ${{ github.event.issue.number }}
