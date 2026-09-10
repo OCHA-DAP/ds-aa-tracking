@@ -29,13 +29,78 @@ CACHE = ROOT / "data" / "codab"
 
 W, H = 980, 460
 LAT_TOP, LAT_BOT = 75.0, -58.0
+# visible crop of the world (the portfolio spans roughly lon -108..182, lat 50..-40)
+VB_X = (-108 + 180) / 360 * W
+VB_W = (182 + 108) / 360 * W
+VB_Y = (LAT_TOP - 50) / (LAT_TOP - LAT_BOT) * H
+VB_H = (50 + 40) / (LAT_TOP - LAT_BOT) * H
 
-STATUS_RANK = {"activated_implementing": 5, "active": 4, "under_revision": 3,
-               "under_development": 2, "advanced_conversations": 1,
-               "early_conversations": 1, "monitoring": 4, "project_finalization": 3}
-STATUS_FILL = {5: "#0e7a52", 4: "#1baf7a", 3: "#eda100", 2: "#f2c14e", 1: "#9db2c9"}
+import datetime as _dt
+
+# Lifecycle colours, glyphs, callout directions and centroids mirror the KB public map
+# (ds-knowledge-base/scripts/gen_public_site.py) so the two sites read the same.
+KB_COLOR = {"endorsed": "#2171b5", "recently-triggered": "#e0706a", "expired": "#b2a56e",
+            "development": "#9ecae1", "retired": "#b6bcc4"}
+KB_LABEL = {"endorsed": "Active", "recently-triggered": "Recently triggered", "expired": "Expired",
+            "development": "In development", "retired": "Retired / dormant"}
 HAZ_COLOR = {"flood": "#2a78d6", "drought": "#eb6834", "storm": "#8e5bd9",
              "cholera": "#1baf7a", "plague": "#b8860b"}
+HAZ_LABEL = {"storm": "Trop. cyclones", "flood": "Floods", "drought": "Drought",
+             "cholera": "Cholera", "plague": "Plague"}
+HAZ_GLYPH = {"storm": "tropical-cyclone", "flood": "flood", "drought": "drought",
+             "cholera": "cholera"}
+HAZARD_SVG = {
+    "drought": '<circle cx="12" cy="12" r="3.6" fill="#fff"/><g stroke="#fff" stroke-width="1.7" stroke-linecap="round">'
+               '<line x1="12" y1="2.5" x2="12" y2="5.5"/><line x1="12" y1="18.5" x2="12" y2="21.5"/>'
+               '<line x1="2.5" y1="12" x2="5.5" y2="12"/><line x1="18.5" y1="12" x2="21.5" y2="12"/>'
+               '<line x1="5.2" y1="5.2" x2="7.3" y2="7.3"/><line x1="16.7" y1="16.7" x2="18.8" y2="18.8"/>'
+               '<line x1="18.8" y1="5.2" x2="16.7" y2="7.3"/><line x1="7.3" y1="16.7" x2="5.2" y2="18.8"/></g>',
+    "flood": '<g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round">'
+             '<path d="M2 8.5c2 0 2 2 4 2s2-2 4-2 2 2 4 2 2-2 4-2 2 2 4 2"/>'
+             '<path d="M2 13.5c2 0 2 2 4 2s2-2 4-2 2 2 4 2 2-2 4-2 2 2 4 2"/>'
+             '<path d="M2 18.5c2 0 2 2 4 2s2-2 4-2 2 2 4 2 2-2 4-2 2 2 4 2"/></g>',
+    "tropical-cyclone": '<circle cx="12" cy="12" r="2.2" fill="#fff"/>'
+             '<g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round">'
+             '<path d="M12 4.2c4.2 0 7 2.1 7 5 0 2-1.8 3.2-4 3.2"/>'
+             '<path d="M12 19.8c-4.2 0-7-2.1-7-5 0-2 1.8-3.2 4-3.2"/></g>',
+    "cholera": '<circle cx="12" cy="12" r="3.2" fill="#fff"/>'
+             '<g stroke="#fff" stroke-width="1.6" stroke-linecap="round">'
+             '<line x1="12" y1="4" x2="12" y2="6.4"/><line x1="12" y1="17.6" x2="12" y2="20"/>'
+             '<line x1="4" y1="12" x2="6.4" y2="12"/><line x1="17.6" y1="12" x2="20" y2="12"/>'
+             '<line x1="6.3" y1="6.3" x2="8" y2="8"/><line x1="16" y1="16" x2="17.7" y2="17.7"/>'
+             '<line x1="17.7" y1="6.3" x2="16" y2="8"/><line x1="8" y1="16" x2="6.3" y2="17.7"/></g>'
+             '<g fill="#fff"><circle cx="12" cy="3.6" r="1.1"/><circle cx="12" cy="20.4" r="1.1"/>'
+             '<circle cx="3.6" cy="12" r="1.1"/><circle cx="20.4" cy="12" r="1.1"/></g>',
+    "other": '<circle cx="12" cy="12" r="3.5" fill="#fff"/>',
+}
+CENTROID = {   # iso3 -> (lat, lon) for the callout anchor dot
+    "AFG": (33.9, 67.7), "BFA": (12.2, -1.6), "BGD": (23.7, 90.4), "COD": (-2.9, 23.6),
+    "CUB": (21.7, -79.5), "ETH": (9.1, 40.5), "FJI": (-17.7, 178.0), "GTM": (15.7, -90.2),
+    "HND": (15.0, -86.5), "HTI": (19.0, -72.3), "KEN": (0.2, 37.9), "MDG": (-18.8, 46.9),
+    "MMR": (21.0, 96.0), "MOZ": (-18.0, 35.5), "MRT": (20.5, -10.9), "MWI": (-13.3, 34.3),
+    "NIC": (12.9, -85.2), "NER": (17.6, 9.4), "NGA": (9.1, 8.7), "NPL": (28.2, 84.0),
+    "PHL": (12.9, 121.8), "PLW": (7.5, 134.6), "SLV": (13.8, -88.9), "SOM": (5.2, 46.2),
+    "SSD": (7.3, 30.3), "TCD": (15.5, 18.7), "VUT": (-16.5, 168.0), "YEM": (15.6, 48.0),
+    "CMR": (5.7, 12.4), "MLI": (17.6, -4.0), "PAK": (30.4, 69.3), "SDN": (15.6, 30.2),
+    "SYR": (35.0, 38.5), "TON": (-21.2, -175.2), "ZWE": (-19.0, 29.9),
+}
+DIRECTIONS = {   # preferred callout direction (screen vector, +y down)
+    "AFG": (0.2, -1), "BFA": (-1, 0.2), "BGD": (0.7, -0.8), "COD": (-0.6, 1),
+    "CUB": (-0.9, -0.4), "ETH": (0.7, -0.5), "FJI": (-0.6, 0.8), "GTM": (-1, -0.3),
+    "HND": (0.3, 1), "HTI": (1, 0.3), "KEN": (1, 0.25), "MDG": (1, 0.1),
+    "MMR": (0.8, 0.5), "MOZ": (0.6, 0.8), "MRT": (-0.85, -0.5), "MWI": (-0.9, 0.3),
+    "NER": (-0.2, -1), "NGA": (-0.6, 0.85), "NIC": (0.9, 0.6), "NPL": (0.1, -1),
+    "PHL": (1, -0.1), "SLV": (-0.8, 0.7), "SOM": (1, 0.2), "SSD": (-0.5, -0.8),
+    "TCD": (0.5, -1), "VUT": (-0.7, -0.5), "YEM": (1, -0.1), "CMR": (-0.9, 0.6),
+    "MLI": (-0.3, -1), "PAK": (-0.6, -0.8), "SDN": (0.3, -1), "SYR": (0.9, -0.5),
+}
+# tracking-sheet statuses for frameworks without a KB version -> KB lifecycle bucket;
+# conversation stages are not frameworks yet and stay off the map
+SHEET_BUCKET = {"active": "endorsed", "activated_implementing": "endorsed",
+                "monitoring": "endorsed", "under_development": "development",
+                "under_revision": "development", "project_finalization": "development",
+                "dormant": "retired", "expired": "expired", "retired": "retired"}
+TODAY = _dt.date.today()
 
 # scope-name aliases the generic matcher cannot resolve (normalized KB name -> one or
 # more normalized CODAB names). Burkina Faso's 2025 region reform is not in CODAB yet:
@@ -66,27 +131,31 @@ def _ring_d(r):
     return "M" + "L".join(f"{x:.1f},{y:.1f}" for x, y in (pt(a, b) for a, b in r)) + "Z"
 
 
-def svg_world(status_by_iso, country_names):
+def svg_world(shown_iso, country_names):
+    """World SVG in the KB style: framework countries light blue, the rest grey."""
     gj = json.loads((ROOT / "site_src" / "countries.geo.json").read_text())
     paths, bboxes = [], {}
     for f in gj["features"]:
         iso = f.get("id")
         if iso == "ATA":
             continue
+        if iso == "-99" and f["properties"].get("name") == "Somaliland":
+            iso = "SOM"                                   # fold into Somalia (KB does the same)
         geom = f["geometry"]
         polys = geom["coordinates"] if geom["type"] == "MultiPolygon" else [geom["coordinates"]]
         d = "".join(_ring_d(r[::2] or r) for poly in polys for r in poly)
-        rank = status_by_iso.get(iso)
-        fill = STATUS_FILL.get(rank, "#e6eaef")
-        cls = "cty on" if rank else "cty"
+        on = iso in shown_iso
         nm = country_names.get(iso, f["properties"].get("name", iso))
-        paths.append(f"<path class='{cls}' data-iso='{iso}' data-name='{nm}' d='{d}' fill='{fill}'/>")
-        # bbox of the largest polygon (avoids antimeridian blow-ups for FJI etc.)
+        paths.append(f"<path class='{'cty on' if on else 'cty'}' data-iso='{iso}' data-name='{nm}' d='{d}'/>")
         big = max(polys, key=lambda p: len(p[0]))
         xs = [c[0] for c in big[0]]; ys = [c[1] for c in big[0]]
-        bboxes[iso] = [min(xs), min(ys), max(xs), max(ys)]
-    svg = (f"<svg id='map' viewBox='0 0 {W} {H}' preserveAspectRatio='xMidYMid meet'>"
-           f"<rect id='sea' x='0' y='0' width='{W}' height='{H}' fill='transparent'/>"
+        b = [min(xs), min(ys), max(xs), max(ys)]
+        if iso in bboxes:                                  # union of folded features
+            o = bboxes[iso]
+            b = [min(o[0], b[0]), min(o[1], b[1]), max(o[2], b[2]), max(o[3], b[3])]
+        bboxes[iso] = b
+    svg = (f"<svg id='map' viewBox='{VB_X:.1f} {VB_Y:.1f} {VB_W:.1f} {VB_H:.1f}' preserveAspectRatio='xMidYMid meet'>"
+           f"<rect id='sea' x='{VB_X-W}' y='{VB_Y-H}' width='{3*W}' height='{3*H}' fill='transparent'/>"
            f"<g id='world'>{''.join(paths)}<g id='adm'></g></g></svg>")
     return svg, bboxes
 
@@ -436,6 +505,7 @@ def assemble(d, e):
                 "agencies": fm.get("implementing_agencies") or [],
                 "target_people": _num(fm.get("target_people")),
                 "all_in": fm.get("all_in", None),
+                "n_windows": tf.get("n_windows") if isinstance(tf.get("n_windows"), int) else None,
                 "months": months, "months_src": months_src, "months_note": _s(mp.get("note")),
                 "basis": _s(tf.get("basis")), "calibration": _s(tf.get("calibration")),
                 "indicators": tf.get("indicators") or [],
@@ -481,18 +551,73 @@ def assemble(d, e):
                              "usd": _num(x.amount_usd)} for x in fr.itertuples()],
             })
 
-        cur_v = _s(r.get("current_version"))
-        if cur_v not in {x["v"] for x in versions} and versions:
-            cur_v = versions[-1]["v"]
+        # the map and the sidebar default to the MOST RECENT version (as the KB map does);
+        # the tracking view's in-force version is kept for reference
+        latest = versions[-1]["v"] if versions else None
+        in_force = _s(r.get("current_version"))
+        if in_force not in {x["v"] for x in versions}:
+            in_force = latest
+        sheet_status = _s(r.get("status"))
+        disp = lifecycle(versions[-1] if versions else None, sheet_status, activations)
+        if disp is None:
+            continue                                  # conversation stage: not on the map
+        able = able_to_trigger(versions[-1] if versions else None, h, disp)
+        months_now = (versions[-1]["months"] if versions else [])
+        ring = None
+        if able:
+            ring = "now" if TODAY.month in months_now else "able"
+        n_fw_act = sum(1 for a in activations if a["type"] == "framework_aa")
         countries[c]["fws"].append({
-            "hazard": h, "status": _s(r.get("status")), "kb": kb_fw,
+            "hazard": h, "status": sheet_status, "kb": kb_fw,
+            "disp": disp, "disp_label": KB_LABEL[disp], "ring": ring, "n_act": n_fw_act,
+            "hz_label": HAZ_LABEL.get(h, h.replace("_", " ").capitalize()),
+            "glyph": HAZ_GLYPH.get(h, "other"),
+            "latest": latest, "in_force": in_force,
             "page": f"fw-{c.lower()}-{h}.html",
             "prearranged": _num(r.get("cerf_prearranged_usd")),
             "prearranged_year": _num(r.get("prearranged_year")),
             "covered": _num(r.get("people_covered")),
-            "current": cur_v, "versions": versions, "activations": activations,
+            "current": latest, "versions": versions, "activations": activations,
         })
-    return countries
+    return {iso: cd for iso, cd in countries.items() if cd["fws"]}
+
+
+def _expired(valid_until):
+    if not valid_until:
+        return False
+    m = re.match(r"(\d{4})(?:-(\d{1,2}))?", str(valid_until))
+    if not m:
+        return False
+    mo = int(m.group(2)) if m.group(2) and 1 <= int(m.group(2)) <= 12 else 12
+    return (int(m.group(1)), mo) < (TODAY.year, TODAY.month)
+
+
+def lifecycle(latest, sheet_status, activations):
+    """KB display status of the most recent version (None = not shown on the map)."""
+    if latest is None:
+        if sheet_status in (None, "early_conversations", "advanced_conversations"):
+            return None
+        return SHEET_BUCKET.get(sheet_status, "development")
+    st = latest["status"] or ""
+    if st in ("development", "pre-development"):
+        return "development"
+    if st in ("retired", "superseded"):
+        return "retired"
+    if any(a["version"] == latest["v"] and a["type"] == "framework_aa" for a in activations):
+        return "recently-triggered"
+    if _expired(latest["valid_until"]):
+        return "expired"
+    return "endorsed"
+
+
+def able_to_trigger(latest, hazard, disp):
+    if disp not in ("endorsed", "recently-triggered"):
+        return False
+    if disp == "recently-triggered":
+        cholera = hazard == "cholera"
+        split = latest is not None and (latest["n_windows"] or 0) > 1 and latest["all_in"] is False
+        return cholera or split
+    return True
 
 
 def geo_pass(countries, bboxes):
@@ -522,6 +647,14 @@ def geo_pass(countries, bboxes):
                 v["scope"] = {"pcodes": pcodes, "unmatched": unmatched, "national": national}
                 if unmatched:
                     print(f"  ? {iso} {f['hazard']} {v['v']}: unmatched scope {unmatched}")
+        for f in cd["fws"]:
+            prev = None
+            for v in f["versions"]:
+                sc = v["scope"]
+                if not sc["pcodes"] and not sc["national"] and prev is not None:
+                    v["scope"] = dict(prev, inherited_from=prev["from"])
+                elif sc["pcodes"] or sc["national"]:
+                    prev = dict(sc, **{"from": v["v"]})
         if m is not None:
             b = write_country_geo(iso, m, adm0)
             if b is not None:
@@ -533,15 +666,15 @@ def geo_pass(countries, bboxes):
 # ---------------------------------------------------------------- page
 def build_landing(page, d, e):
     cur = d["current"]
-    status_by_iso = {}
-    for _, r in cur.iterrows():
-        rank = STATUS_RANK.get(r["status"] or "", 0)
-        if rank and rank > status_by_iso.get(r["country_iso3"], 0):
-            status_by_iso[r["country_iso3"]] = rank
     names = dict(zip(cur["country_iso3"], cur["country_name"]))
-    svg, bboxes = svg_world(status_by_iso, names)
-
     countries = assemble(d, e)
+    svg, bboxes = svg_world(set(countries), names)
+    for iso, cd in countries.items():
+        cd["lbbox"] = bboxes.get(iso)                 # layout box (world file, largest polygon)
+        cd["centroid"] = CENTROID.get(iso) or (
+            [(cd["lbbox"][1] + cd["lbbox"][3]) / 2, (cd["lbbox"][0] + cd["lbbox"][2]) / 2]
+            if cd["lbbox"] else None)
+        cd["dir"] = DIRECTIONS.get(iso, (0.7, -0.7))
     geo_pass(countries, bboxes)
 
     act = d["activation"]
@@ -551,33 +684,31 @@ def build_landing(page, d, e):
                         & (pre["fund_code"] != "all"), "amount_usd"].sum()
     n_act_all = act["event_date"].nunique()
     covered = d["covered"]["people_covered"].sum()
+    n_shown = sum(len(cd["fws"]) for cd in countries.values())
 
     body = f"""
 <div class='hero'>
- <p>The single source for the AA portfolio: every framework, endorsed version, trigger
- window, activation and dollar — across CERF, country-based and regional pooled funds.
- <b>Click a country</b> to zoom in and see the areas each framework covers.</p>
+ <p>Published triggers, windows, pre-arranged financing and activations across the AA
+ portfolio — CERF, country-based and regional pooled funds. Pin colour = lifecycle status of
+ the most recent version; each red dot = one past activation. <b>Click a country or a pin</b>
+ to zoom in and see the areas each framework covers.</p>
  <div class='tiles'>
-  <div class='tile'><div class='v'>{n_active}</div><div class='l'>active frameworks (of {len(cur)} tracked)</div></div>
+  <div class='tile'><div class='v'>{n_active}</div><div class='l'>active frameworks ({n_shown} on the map, {len(cur)} tracked)</div></div>
   <div class='tile'><div class='v'>${total_pre/1e6:,.0f}M</div><div class='l'>pre-arranged (2026)</div></div>
   <div class='tile'><div class='v'>{n_act_all}</div><div class='l'>activations since 2020</div></div>
   <div class='tile'><div class='v'>{covered/1e6:,.1f}M</div><div class='l'>people covered</div></div>
  </div>
 </div>
-<div class='maprow'>
- <div class='mapbox'>
+<div class='maprow' id='maprow'>
+ <div class='mapbox' id='mapbox'>
   <button id='back' class='backbtn' hidden>← world</button>
   <div id='tip' class='tip' hidden></div>
   {svg}
-  <div class='legend' id='legend'>
-   <span><i style='background:#0e7a52'></i>activated &amp; implementing</span>
-   <span><i style='background:#1baf7a'></i>active</span>
-   <span><i style='background:#eda100'></i>revision / development</span>
-   <span><i style='background:#9db2c9'></i>early conversations</span>
-  </div>
+  <div id='lpane' class='labelpane'><svg id='leaders' class='leadersvg'></svg></div>
+  <div class='maplegend' id='legend'></div>
  </div>
  <div class='side' id='side'>
-  <div class='muted' style='padding:20px 6px'>Select a country on the map to see its
+  <div class='muted' style='padding:20px 6px'>Select a country or a pin to see its
   frameworks — status, funding, monitoring window, triggers, versions and activations.</div>
  </div>
 </div>
@@ -588,81 +719,119 @@ def build_landing(page, d, e):
  <div class='tile'><a href='overview.html'><b>Data &amp; schema review</b></a><div class='l'>tables · reconciliation · roadmap</div></div>
 </div>
 <script>window.L = {json.dumps(countries, default=str)};
-window.HAZ = {json.dumps(HAZ_COLOR)}; window.MAPW={W}; window.MAPH={H}; window.LATT={LAT_TOP}; window.LATB={LAT_BOT};</script>
+window.HAZ = {json.dumps(HAZ_COLOR)}; window.COLOR = {json.dumps(KB_COLOR)};
+window.KBLABEL = {json.dumps(KB_LABEL)}; window.GLYPH = {json.dumps(HAZARD_SVG)};
+window.MAPW={W}; window.MAPH={H}; window.LATT={LAT_TOP}; window.LATB={LAT_BOT};
+window.VB = {{x:{VB_X:.2f}, y:{VB_Y:.2f}, w:{VB_W:.2f}, h:{VB_H:.2f}}};
+window.CURMONTH = {json.dumps(TODAY.strftime("%B %Y"))};</script>
 <script>{LANDING_JS}</script>
 <style>{LANDING_CSS}</style>"""
     page("index.html", "OCHA Anticipatory Action — portfolio", body)
 
 
 LANDING_CSS = r"""
+:root { --ocha:#1a6bb5; --ink:#222; --muted:#777; --line:#e3e6ea; }
 .hero { text-align:left; padding:6px 0 2px; }
-.hero p { color:#556; max-width:800px; }
+.hero p { color:#556; max-width:860px; font-size:13.5px; }
 .tiles { display:flex; gap:14px; flex-wrap:wrap; margin:12px 0; }
-.tile { background:#fff; border:1px solid #e0e0e0; border-radius:6px; padding:12px 18px; min-width:150px; }
-.tile .v { font-size:22px; font-weight:700; } .tile .l { font-size:12px; color:#666; }
-.maprow { display:grid; grid-template-columns: minmax(0,1fr) 420px; gap:16px; align-items:start; }
-@media (max-width: 1000px) { .maprow { grid-template-columns: 1fr; } }
-.mapbox { background:#fff; border:1px solid #dfe4ea; border-radius:10px; padding:10px; position:relative; overflow:hidden; }
-#map { width:100%; height:auto; display:block; background:#f7f9fc; border-radius:6px; }
-.cty { stroke:#fff; stroke-width:.5; vector-effect:non-scaling-stroke; transition: opacity .5s, fill .5s; }
-.cty.on { cursor:pointer; }
-.cty.on:hover { filter:brightness(.9); }
-#map.zoomed .cty { opacity:.14; } #map.zoomed .cty.sel { opacity:0; }
-.a0 { fill:#fff; stroke:#2f3d59; stroke-width:1.5; vector-effect:non-scaling-stroke; }
-.a1 { fill:#eef1f5; stroke:#aab5c4; stroke-width:.8; vector-effect:non-scaling-stroke; }
-.a1:hover { fill:#e2e7ee; }
-.sc { stroke:#fff; stroke-width:.8; vector-effect:non-scaling-stroke; fill-opacity:.78; cursor:pointer; transition: fill-opacity .3s; }
+.tile { background:#fff; border:1px solid var(--line); border-radius:8px; padding:12px 18px; min-width:150px; box-shadow:0 1px 3px rgba(0,0,0,.05); }
+.tile .v { font-size:22px; font-weight:700; } .tile .l { font-size:12px; color:var(--muted); }
+.tile a { color:var(--ocha); }
+/* the sidebar slides in only when a country is selected, so the world view keeps the full width */
+.maprow { display:grid; grid-template-columns: minmax(0,1fr) 0px; gap:0; align-items:start;
+  transition: grid-template-columns .55s cubic-bezier(.22,.8,.2,1), gap .55s; }
+.maprow.open { grid-template-columns: minmax(0,1fr) 380px; gap:16px; }
+.maprow .side { opacity:0; visibility:hidden; transition: opacity .3s; }
+.maprow.open .side { opacity:1; visibility:visible; transition: opacity .4s .25s; }
+@media (max-width: 1000px) { .maprow, .maprow.open { grid-template-columns: 1fr; gap:16px; } }
+.mapbox { background:#fff; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,.08); position:relative; overflow:hidden; }
+#map { width:100%; height:auto; display:block; background:#fff; }
+.cty { fill:#ebedf0; stroke:#d3d7dc; stroke-width:.5; vector-effect:non-scaling-stroke; transition: opacity .5s, fill .5s; }
+.cty.on { fill:#cfe0f2; stroke:#9cc0e3; stroke-width:.8; cursor:pointer; }
+.cty.on:hover { fill:#bcd4ee; }
+#map.zoomed .cty { opacity:.35; } #map.zoomed .cty.on { opacity:.55; } #map.zoomed .cty.sel { opacity:0; }
+.a0 { fill:#fff; stroke:#39506b; stroke-width:1.4; vector-effect:non-scaling-stroke; }
+.a1 { fill:#eef3f9; stroke:#9cc0e3; stroke-width:.8; vector-effect:non-scaling-stroke; }
+.a1:hover { fill:#e0eaf6; }
+.sc { stroke:#fff; stroke-width:.8; vector-effect:non-scaling-stroke; fill-opacity:.8; cursor:pointer; transition: fill-opacity .3s; }
 .sc:hover { fill-opacity:1; }
-.sc.dim { fill-opacity:.25; }
 .nat { fill-opacity:.35; pointer-events:none; }
 #adm { opacity:0; transition: opacity .5s ease .35s; } #adm.show { opacity:1; }
-.backbtn { position:absolute; top:18px; left:18px; z-index:3; padding:5px 12px; border:1px solid #bbb;
-  border-radius:16px; background:#fff; cursor:pointer; font-size:12.5px; box-shadow:0 1px 3px rgba(0,0,0,.1); }
-.tip { position:absolute; z-index:4; background:#1f2a44; color:#fff; font-size:12px; padding:4px 9px;
+/* callouts (KB style) */
+.labelpane { position:absolute; inset:0; pointer-events:none; transition: opacity .35s; }
+.labelpane.hide { opacity:0; }
+.leadersvg { position:absolute; inset:0; width:100%; height:100%; overflow:visible; }
+.leader { stroke:#8a99a8; stroke-width:1; }
+.cdot { fill:#39506b; stroke:#fff; stroke-width:1.5; }
+.callout { position:absolute; display:flex; flex-direction:column; align-items:flex-start; pointer-events:auto; visibility:hidden; }
+.cname { font-weight:700; font-size:11px; color:#16324f; white-space:nowrap; line-height:1.15; margin-bottom:1px; cursor:pointer; }
+.cname:hover { text-decoration:underline; }
+.hrow { display:flex; align-items:center; gap:4px; margin:1px 0; }
+.hlab { font-size:10px; font-weight:400; color:#1c3550; white-space:nowrap; line-height:1.15; }
+.iconbox { position:relative; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;
+  border-radius:6px; border:1.5px solid #fff; box-shadow:0 1px 3px rgba(0,0,0,.4); cursor:pointer; flex:none; }
+.iconbox svg.hz { width:15px; height:15px; display:block; }
+.iconbox:hover { filter:brightness(1.08); }
+@keyframes ablepulse {
+  0%   { box-shadow: 0 0 0 2px #f5a300, 0 0 0 0 rgba(245,163,0,.85), 0 1px 3px rgba(0,0,0,.4); }
+  65%  { box-shadow: 0 0 0 2px #f5a300, 0 0 0 11px rgba(245,163,0,0), 0 1px 3px rgba(0,0,0,.4); }
+  100% { box-shadow: 0 0 0 2px #f5a300, 0 0 0 11px rgba(245,163,0,0), 0 1px 3px rgba(0,0,0,.4); } }
+.iconbox.able-now { box-shadow:0 0 0 2px #f5a300, 0 1px 3px rgba(0,0,0,.4); animation:ablepulse 1.1s ease-out infinite; }
+.iconbox.able-off { box-shadow:0 0 0 2px #f6c95f, 0 1px 3px rgba(0,0,0,.4); }
+.actdots { position:absolute; top:-5px; right:-4px; display:flex; flex-direction:row-reverse; gap:1px; }
+.actdot { width:7px; height:7px; border-radius:50%; background:#e3322d; border:1.5px solid #fff; display:inline-block; }
+.maplegend { position:absolute; left:10px; bottom:10px; font-size:12px; line-height:1.5; background:#fff; padding:7px 9px;
+  border-radius:6px; box-shadow:0 1px 4px rgba(0,0,0,.2); z-index:3; transition: opacity .3s; }
+.maplegend .dot { display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:5px; vertical-align:-1px; }
+.maplegend .sq { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
+.backbtn { position:absolute; top:10px; left:10px; z-index:4; padding:5px 12px; border:1px solid #cfd6de;
+  border-radius:16px; background:#fff; cursor:pointer; font-size:12.5px; box-shadow:0 1px 3px rgba(0,0,0,.12); }
+.tip { position:absolute; z-index:5; background:#16324f; color:#fff; font-size:12px; padding:4px 9px;
   border-radius:5px; pointer-events:none; white-space:nowrap; transform:translate(-50%,-130%); }
-.legend { display:flex; gap:16px; flex-wrap:wrap; padding:8px 6px 2px; font-size:12px; color:#556; }
-.legend i { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
-.side { background:#fff; border:1px solid #dfe4ea; border-radius:10px; padding:12px 16px 16px;
-  max-height:640px; overflow-y:auto; font-size:13px; }
-.side h3 { margin:2px 0 4px; font-size:18px; } .side h4 { margin:14px 0 4px; font-size:11.5px;
-  text-transform:uppercase; letter-spacing:.05em; color:#778; }
-.crumb { font-size:12px; color:#667; margin-bottom:8px; } .crumb a { color:#1d5aa8; cursor:pointer; text-decoration:none; }
+/* sidebar (KB info-pop styling) */
+.side { background:#fff; border:1px solid #d4d8de; border-radius:8px; padding:12px 16px 16px;
+  max-height:640px; overflow-y:auto; font-size:12.5px; line-height:1.45; color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.08); }
+.side a { color:var(--ocha); }
+.side h3 { margin:2px 0 4px; font-size:17px; color:#16324f; } .side h4 { margin:14px 0 4px; font-size:11.5px;
+  text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+.crumb { font-size:12px; color:var(--muted); margin-bottom:8px; } .crumb a { cursor:pointer; text-decoration:none; }
 .crumb a:hover { text-decoration:underline; }
-.fwlist .fcardx { border:1px solid #e6eaef; border-radius:8px; padding:10px 12px; margin:8px 0; cursor:pointer;
+.fwlist .fcardx { border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin:8px 0; cursor:pointer;
   border-left:4px solid var(--hz,#999); transition: background .15s; }
-.fwlist .fcardx:hover { background:#f6f8fb; }
+.fwlist .fcardx:hover { background:#f6f9fc; }
 .fhead { display:flex; justify-content:space-between; align-items:center; gap:8px; }
-.fhead b { text-transform:capitalize; font-size:14px; }
-.st { display:inline-block; padding:0 8px; border-radius:9px; font-size:11px; font-weight:600; white-space:nowrap; }
-.st-on { background:#e3f1e6; color:#1c6b31; } .st-off { background:#ededed; color:#777; }
-.st-dev { background:#fdf1dc; color:#8a5c0a; } .st-past { background:#eceff5; color:#4a5670; }
+.fhead b { font-size:13.5px; display:inline-flex; align-items:center; gap:6px; }
+.fhead .iconbox { width:20px; height:20px; cursor:default; } .fhead .iconbox svg.hz { width:13px; height:13px; }
+.badge { display:inline-block; padding:1px 7px; border-radius:9px; font-size:11px; font-weight:600; white-space:nowrap; }
+.b-endorsed { background:#e2f3e6; color:#1e7a37; } .b-recently-triggered { background:#fce4cd; color:#b5650a; }
+.b-expired { background:#f1ead0; color:#7d6b1a; } .b-development { background:#fdf0d5; color:#9a6d0a; }
+.b-retired, .b-superseded { background:#e8e8e8; color:#666; } .b-pre-development { background:#e5eefb; color:#15c; }
 table.mini { border-collapse:collapse; font-size:12px; width:100%; }
 table.mini td, table.mini th { padding:3px 6px; border-bottom:1px solid #eef1f5; vertical-align:top; text-align:left; }
-table.mini th { font-weight:600; color:#556; background:#f4f6f9; white-space:nowrap; }
-table.mini td.lbl { color:#667; width:118px; white-space:nowrap; }
+table.mini th { font-weight:600; color:#556; background:#f1f4f7; white-space:nowrap; }
+table.mini td.lbl { color:var(--muted); width:118px; white-space:nowrap; }
 table.mini td.num { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
 .mm { display:inline-grid; place-items:center; width:17px; height:17px; font-size:9px;
   border-radius:3px; background:#f0f2f5; color:#99a; margin-right:1px; }
-.mm.on { background:#1baf7a; color:#fff; }
-.muted { color:#667; font-size:12px; }
+.mm.on { background:#2171b5; color:#fff; }
+.muted { color:var(--muted); font-size:12px; }
 .small { font-size:11.5px; color:#556; }
 .verbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:8px 0 4px; }
 .verbar select { padding:4px 8px; border:1px solid #bbb; border-radius:5px; font-size:12.5px; background:#fff; }
-.docbtn { display:inline-block; padding:5px 11px; border-radius:5px; background:#1d5aa8; color:#fff !important;
+.docbtn { display:inline-block; padding:5px 11px; border-radius:5px; background:var(--ocha); color:#fff !important;
   text-decoration:none; font-size:12.5px; font-weight:600; }
-.docbtn.ghost { background:#fff; color:#1d5aa8 !important; border:1px solid #9bb8dd; }
-.warnbox { background:#fdf6e7; border:1px solid #f1d9a5; color:#7a5410; border-radius:6px; padding:6px 10px; font-size:12px; margin:8px 0; }
-.trig { border:1px solid #e6eaef; border-radius:6px; padding:7px 10px; margin:6px 0; background:#fbfcfd; }
-.trig .tn { font-weight:650; } .trig .tt { margin-top:2px; }
-.trig .tm { color:#667; font-size:11.5px; margin-top:3px; }
+.warnbox { background:#fff4d6; border:1px solid #e6cf8f; color:#6b5310; border-radius:6px; padding:6px 10px; font-size:12px; margin:8px 0; }
+.trig { border:1px solid var(--line); border-radius:6px; padding:7px 10px; margin:6px 0; background:#f8fafc; }
+.trig .tn { font-weight:650; color:var(--ocha); } .trig .tt { margin-top:2px; }
+.trig .tm { color:var(--muted); font-size:11.5px; margin-top:3px; }
 .actrow { border-bottom:1px solid #eef1f5; padding:6px 0; }
 .actrow .ah { display:flex; justify-content:space-between; gap:8px; align-items:baseline; }
-.actrow .ad { font-weight:650; white-space:nowrap; }
+.actrow .ad { font-weight:650; white-space:nowrap; color:#b3261e; }
+.actrow .ad a { color:#e3322d; }
 .vtag { display:inline-block; font-size:10.5px; padding:0 6px; border-radius:8px; background:#eceff5; color:#4a5670; margin-left:6px; font-family:ui-monospace,monospace; }
 .vtag.other { background:#fdf1dc; color:#8a5c0a; }
 .chips span { display:inline-block; background:#f0f2f5; border-radius:9px; padding:0 7px; font-size:11px; margin:2px 3px 2px 0; }
 .scopelist { font-size:12px; color:#334; line-height:1.5; }
-.hzdot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:5px; vertical-align:0; }
 """
 
 LANDING_JS = r"""
@@ -670,32 +839,36 @@ const MONL = 'JFMAMJJASOND';
 const svg = document.getElementById('map'), world = document.getElementById('world'),
       adm = document.getElementById('adm'), side = document.getElementById('side'),
       back = document.getElementById('back'), tip = document.getElementById('tip'),
-      legend = document.getElementById('legend');
-const GEO = {};   // iso -> fetched adm-XXX.json
+      legend = document.getElementById('legend'), lpane = document.getElementById('lpane'),
+      leaders = document.getElementById('leaders'), mapbox = document.getElementById('mapbox'),
+      maprow = document.getElementById('maprow');
+const GEO = {};
 let state = { iso:null, hz:null, ver:null };
-const LEGEND_WORLD = legend.innerHTML;
 
 function money(v){ return v==null ? '—' : v>=1e6 ? '$'+(v/1e6).toFixed(v>=1e7?0:1)+'M' : v>=1e3 ? '$'+Math.round(v/1e3)+'k' : '$'+Math.round(v); }
 function num(v){ return v==null ? '—' : Math.round(v).toLocaleString(); }
 function esc(s){ return s==null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function stCls(s){ s=s||''; return ['active','activated_implementing','endorsed'].includes(s) ? 'st-on'
-  : (s.includes('dev')||s.includes('revision')||s.includes('conversation')) ? 'st-dev' : s==='superseded' ? 'st-past' : 'st-off'; }
-function stTxt(s){ return s ? s.replace(/_/g,' ') : 'no status'; }
+function badge(st, label){ st = st || 'retired'; return `<span class='badge b-${esc(st)}'>${esc(label || KBLABEL[st] || st.replace(/_/g,' '))}</span>`; }
+function verBadge(st){ st=st||''; const m = {endorsed:'endorsed', superseded:'superseded', development:'development', 'pre-development':'pre-development', retired:'retired'};
+  return `<span class='badge b-${m[st]||'retired'}'>${esc(st||'?')}</span>`; }
 function hzColor(h){ return HAZ[h] || '#7a8699'; }
+function iconHTML(f, extra=''){ return `<span class='iconbox ${f.ring==='now'?'able-now':f.ring==='able'?'able-off':''} ${extra}' style='background:${COLOR[f.disp]}' data-hz='${f.hazard}'>`
+  + `<svg viewBox='0 0 24 24' class='hz'>${GLYPH[f.glyph]||GLYPH.other}</svg>`
+  + (f.n_act ? `<span class='actdots'>${'<span class="actdot"></span>'.repeat(Math.min(f.n_act,6))}</span>` : '') + `</span>`; }
 function pt(lon, lat){ return [(lon+180)/360*MAPW, (LATT-lat)/(LATT-LATB)*MAPH]; }
 function ringsD(rings){ return rings.map(r=>'M'+r.map(([x,y])=>{const p=pt(x,y);return p[0].toFixed(2)+','+p[1].toFixed(2);}).join('L')+'Z').join(''); }
+function kpx(){ return svg.getBoundingClientRect().width / VB.w; }   // CSS px per map unit
+function toPx(lon, lat){ const [x,y]=pt(lon,lat), k=kpx(); return [(x-VB.x)*k, (y-VB.y)*k]; }
 
-// ---------- map: zoom (SVG transform attribute animated in user units — CSS px transforms
-// on <g> do not map to the viewBox reliably)
+// ---------- zoom (SVG transform attribute animated in user units)
 let T = {tx:0, ty:0, sx:1, sy:1}, animId = null, animSeq = 0;
 function applyT(t){ world.setAttribute('transform', `translate(${t.tx} ${t.ty}) scale(${t.sx} ${t.sy})`); }
 function animateTo(target, ms=800){
   if(animId) cancelAnimationFrame(animId);
-  if(document.hidden){ T = {...target}; applyT(T); return; }   // rAF is paused in hidden tabs
-  const seq = ++animSeq;                                        // guarantee the final state
+  if(document.hidden){ T = {...target}; applyT(T); return; }
+  const seq = ++animSeq;
   setTimeout(()=>{ if(seq===animSeq){ T = {...target}; applyT(T); animId=null; } }, ms+80);
-  const from = {...T}, t0 = performance.now();
-  const ease = x => 1 - Math.pow(1 - x, 3);
+  const from = {...T}, t0 = performance.now(), ease = x => 1 - Math.pow(1 - x, 3);
   function step(now){
     const k = Math.min(1, (now - t0)/ms), e = ease(k);
     T = { tx: from.tx + (target.tx-from.tx)*e, ty: from.ty + (target.ty-from.ty)*e,
@@ -709,14 +882,13 @@ function zoomTo(bbox){
   const [x0,y0] = pt(bbox[0], bbox[3]), [x1,y1] = pt(bbox[2], bbox[1]);
   const lat0 = (bbox[1]+bbox[3])/2, cosf = Math.max(.35, Math.cos(lat0*Math.PI/180));
   const bw = Math.max(x1-x0, 2), bh = Math.max(y1-y0, 2), pad = 1.3;
-  let s = Math.min(MAPW/(bw*cosf*pad), MAPH/(bh*pad));
-  s = Math.min(s, 60);
+  let s = Math.min(VB.w/(bw*cosf*pad), VB.h/(bh*pad), 60);
   const cx = (x0+x1)/2, cy = (y0+y1)/2;
-  animateTo({ tx: MAPW/2 - cx*s*cosf, ty: MAPH/2 - cy*s, sx: s*cosf, sy: s });
+  animateTo({ tx: VB.x + VB.w/2 - cx*s*cosf, ty: VB.y + VB.h/2 - cy*s, sx: s*cosf, sy: s });
 }
 function resetZoom(){ animateTo({tx:0, ty:0, sx:1, sy:1}, 650); }
 
-// ---------- map: admin layers
+// ---------- admin layers (country view)
 async function loadGeo(iso){
   if(GEO[iso] !== undefined) return GEO[iso];
   try { const r = await fetch(`adm-${iso}.json`); GEO[iso] = r.ok ? await r.json() : null; }
@@ -730,9 +902,7 @@ function drawAdmin(iso, fade){
   let html = '';
   if(g.adm0.length) html += `<path class='a0' d='${ringsD(g.adm0)}'/>`;
   g.adm1.forEach(a => html += `<path class='a1' data-n='${esc(a.n)}' d='${ringsD(a.r)}'/>`);
-  // which areas to paint: selected framework+version, else the current version of every framework
-  const paint = {};  // pcode -> [{hz}]
-  let national = [];
+  const paint = {}; let national = [];
   const targets = state.hz ? c.fws.filter(f=>f.hazard===state.hz) : c.fws;
   targets.forEach(f => {
     const v = f.versions.find(x => x.v === (state.hz && state.ver ? state.ver : f.current));
@@ -743,36 +913,139 @@ function drawAdmin(iso, fade){
   national.forEach(h => { if(g.adm0.length) html += `<path class='nat' fill='${hzColor(h)}' d='${ringsD(g.adm0)}'/>`; });
   Object.entries(paint).forEach(([p, hzs]) => {
     const a = g.areas[p]; if(!a) return;
-    html += `<path class='sc' fill='${hzColor(hzs[0])}' data-n='${esc(a.n)}' data-hz='${esc(hzs.join(', '))}' d='${ringsD(a.r)}'/>`;
+    html += `<path class='sc' fill='${hzColor(hzs[0])}' data-n='${esc(a.n)}' data-hz='${esc(hzs.map(h=>L[iso].fws.find(f=>f.hazard===h)?.hz_label||h).join(', '))}' d='${ringsD(a.r)}'/>`;
   });
   adm.innerHTML = html;
-  if(fade) void adm.getBoundingClientRect();   // force a style flush so the opacity transition runs
+  if(fade) void adm.getBoundingClientRect();
   adm.classList.add('show');
-  // legend: hazards in view
   const hzs = [...new Set(targets.map(f=>f.hazard))];
-  legend.innerHTML = hzs.map(h=>`<span><i style='background:${hzColor(h)}'></i>${h} framework scope</span>`).join('')
-    + `<span><i style='background:#f3f5f8;border:1px solid #c9d1dc'></i>admin-1 boundaries</span>`
-    + (national.length ? `<span class='small'>shaded whole country = national trigger</span>` : '');
+  legend.innerHTML = `<b>${esc(c.name)}</b><br>` + hzs.map(h=>`<span class='sq' style='background:${hzColor(h)}'></span>${esc(targets.find(f=>f.hazard===h).hz_label)} — scope of the displayed version<br>`).join('')
+    + `<span class='sq' style='background:#eef3f9;border:1px solid #9cc0e3'></span>admin-1 boundaries`
+    + (national.length ? `<br><span class='small'>whole country shaded = national trigger</span>` : '');
 }
 
+// ---------- world legend (KB style)
+function worldLegend(){
+  const fws = Object.values(L).flatMap(c=>c.fws);
+  const n = k => fws.filter(f=>f.disp===k).length;
+  const nAct = fws.reduce((s,f)=>s+f.n_act,0), nNow = fws.filter(f=>f.ring==='now').length, nOff = fws.filter(f=>f.ring==='able').length;
+  legend.innerHTML = `<b>Framework</b><br>`
+    + `<span class='dot' style='background:${COLOR.endorsed}'></span>Active (${n('endorsed')})<br>`
+    + `<span class='dot' style='background:${COLOR['recently-triggered']}'></span>Recently triggered (${n('recently-triggered')})<br>`
+    + `<span class='dot' style='background:${COLOR.expired}'></span>Expired (${n('expired')})<br>`
+    + `<span class='dot' style='background:${COLOR.development}'></span>In development (${n('development')})<br>`
+    + `<span class='dot' style='background:${COLOR.retired}'></span>Retired / dormant (${n('retired')})<br>`
+    + `<span class='dot' style='background:#e3322d;width:11px;height:11px;border:2px solid #fff'></span>Activated — a dot per activation (${nAct})<br>`
+    + `<span class='dot' style='background:#fff;width:12px;height:12px;border:2.5px solid #f5a300'></span>Able to trigger now — in season (${CURMONTH}), pulsing (${nNow})<br>`
+    + `<span class='dot' style='background:#fff;width:12px;height:12px;border:2.5px solid #f6c95f'></span>Able to trigger — off-season (${nOff})<br>`
+    + `<span class='dot' style='background:#fff;width:12px;height:12px;border:2.5px solid #e3e6ea'></span>No ring = cannot trigger (activated &amp; spent, expired, or in development)`;
+}
+
+// ---------- callouts: one per country, laid out clear of every framework country (ported from the KB map)
+const NS = 'http://www.w3.org/2000/svg';
+const labels = [];
+function buildCallouts(){
+  Object.entries(L).forEach(([iso, c]) => {
+    if(!c.centroid) return;
+    const el = document.createElement('div'); el.className = 'callout';
+    el.innerHTML = `<span class='cname' data-iso='${iso}'>${esc(c.name)}</span>` +
+      c.fws.map(f => `<span class='hrow'>${iconHTML(f)}<span class='hlab'>${esc(f.hz_label)}</span></span>`).join('');
+    el.querySelector('.cname').onclick = e => { e.stopPropagation(); selectCountry(iso); };
+    el.querySelectorAll('.iconbox').forEach(ib => { ib.onclick = e => { e.stopPropagation(); selectCountry(iso, ib.dataset.hz); };
+      ib.onmouseenter = ev => { const f = c.fws.find(x=>x.hazard===ib.dataset.hz); showTip(ev, `${c.name} — ${f.hz_label}: ${f.disp_label}${f.n_act?` · ${f.n_act} activation${f.n_act>1?'s':''}`:''}`); };
+      ib.onmouseleave = () => tip.hidden = true; });
+    lpane.appendChild(el);
+    const ln = document.createElementNS(NS, 'line'); ln.setAttribute('class','leader'); leaders.appendChild(ln);
+    const dot = document.createElementNS(NS, 'circle'); dot.setAttribute('class','cdot'); dot.setAttribute('r','3.5'); leaders.appendChild(dot);
+    labels.push({iso, lat:c.centroid[0], lon:c.centroid[1], dir:c.dir, el, ln, dot, bbox:c.lbbox});
+  });
+}
+const PAD = 8, GAP = 4; let ALLRECTS = [];
+function rectOf(bbox){ if(!bbox || bbox[2]-bbox[0] > 170) return null;
+  const [x1,y1] = toPx(bbox[0], bbox[3]), [x2,y2] = toPx(bbox[2], bbox[1]);
+  return {x1:Math.min(x1,x2), y1:Math.min(y1,y2), x2:Math.max(x1,x2), y2:Math.max(y1,y2)}; }
+function clampAll(W, H){ labels.forEach(Lb => {
+  if(Lb.cx - Lb.w/2 < 3) Lb.cx = 3 + Lb.w/2; if(Lb.cx + Lb.w/2 > W-3) Lb.cx = W-3-Lb.w/2;
+  if(Lb.cy - Lb.h/2 < 3) Lb.cy = 3 + Lb.h/2; if(Lb.cy + Lb.h/2 > H-3) Lb.cy = H-3-Lb.h/2; }); }
+function ejectCountries(Lb){
+  const bx1 = Lb.cx-Lb.w/2-GAP, by1 = Lb.cy-Lb.h/2-GAP, bx2 = Lb.cx+Lb.w/2+GAP, by2 = Lb.cy+Lb.h/2+GAP;
+  let best = null, bestA = 0;
+  for(const r of ALLRECTS){ const ox = Math.min(bx2,r.x2)-Math.max(bx1,r.x1), oy = Math.min(by2,r.y2)-Math.max(by1,r.y1);
+    if(ox>0 && oy>0){ const a = Math.min(ox,oy); if(a>bestA){ bestA=a; best=r; } } }
+  if(!best) return false;
+  const pushL = best.x1-bx2, pushR = best.x2-bx1, pushU = best.y1-by2, pushD = best.y2-by1;
+  const cands = [[Math.abs(pushL),pushL,0],[Math.abs(pushR),pushR,0],[Math.abs(pushU),0,pushU],[Math.abs(pushD),0,pushD]].sort((a,b)=>a[0]-b[0]);
+  const bias = cands.filter(c => (c[1]*Lb.dir[0] + c[2]*Lb.dir[1]) >= 0);
+  const pick = (bias[0] && bias[0][0] <= cands[0][0]*1.6) ? bias[0] : cands[0];
+  Lb.cx += pick[1]; Lb.cy += pick[2]; return true;
+}
+function separate(iters, W, H){
+  for(let s=0; s<iters; s++){
+    let clean = true;
+    for(let i=0;i<labels.length;i++) for(let j=i+1;j<labels.length;j++){
+      const a = labels[i], b = labels[j];
+      const ax = a.cx-a.w/2, ay = a.cy-a.h/2, bx = b.cx-b.w/2, by = b.cy-b.h/2;
+      if(ax < bx+b.w+PAD && ax+a.w+PAD > bx && ay < by+b.h+PAD && ay+a.h+PAD > by){
+        clean = false;
+        const ox = Math.min(ax+a.w, bx+b.w)-Math.max(ax,bx)+PAD, oy = Math.min(ay+a.h, by+b.h)-Math.max(ay,by)+PAD;
+        if(ox <= oy){ const hx = ox/2+.5; if(a.cx < b.cx){ a.cx-=hx; b.cx+=hx; } else { a.cx+=hx; b.cx-=hx; } }
+        else { const hy = oy/2+.5; if(a.cy < b.cy){ a.cy-=hy; b.cy+=hy; } else { a.cy+=hy; b.cy-=hy; } }
+      }
+    }
+    labels.forEach(Lb => { if(ejectCountries(Lb)) clean = false; });
+    clampAll(W, H);
+    if(clean) return true;
+  }
+  return false;
+}
+function runLayout(){
+  const r = svg.getBoundingClientRect(), W = r.width, H = r.height;
+  if(!W) return;
+  ALLRECTS = labels.map(Lb => rectOf(Lb.bbox)).filter(Boolean);
+  const lr = legend.getBoundingClientRect(), mr = mapbox.getBoundingClientRect();
+  if(lr.width) ALLRECTS.push({x1:lr.left-mr.left-6, y1:lr.top-mr.top-6, x2:lr.right-mr.left+6, y2:lr.bottom-mr.top+6});
+  labels.forEach(Lb => {
+    const p = toPx(Lb.lon, Lb.lat); Lb.px = p[0]; Lb.py = p[1];
+    Lb.w = Lb.el.offsetWidth; Lb.h = Lb.el.offsetHeight;
+    const ib = Lb.el.querySelector('.iconbox');
+    Lb.iox = ib ? ib.offsetLeft + ib.offsetWidth/2 : 12; Lb.ioy = ib ? ib.offsetTop + ib.offsetHeight/2 : Lb.h/2;
+    const rc = rectOf(Lb.bbox);
+    const dl = Math.hypot(Lb.dir[0], Lb.dir[1]) || 1, ux = Lb.dir[0]/dl, uy = Lb.dir[1]/dl;
+    const cx0 = rc ? (rc.x1+rc.x2)/2 : Lb.px, cy0 = rc ? (rc.y1+rc.y2)/2 : Lb.py;
+    const hx = rc ? (rc.x2-rc.x1)/2 : 0, hy = rc ? (rc.y2-rc.y1)/2 : 0;
+    const reach = Math.abs(ux)*hx + Math.abs(uy)*hy + GAP + Math.abs(ux)*Lb.w/2 + Math.abs(uy)*Lb.h/2 + 2;
+    Lb.cx = cx0 + ux*reach; Lb.cy = cy0 + uy*reach;
+  });
+  for(let step=0; step<55; step++){
+    labels.forEach(Lb => { Lb.cx += (Lb.px-Lb.cx)*.06; Lb.cy += (Lb.py-Lb.cy)*.06; ejectCountries(Lb); });
+    separate(10, W, H);
+  }
+  separate(700, W, H);
+  labels.forEach(Lb => {
+    Lb.el.style.visibility = 'visible'; Lb.el.style.left = (Lb.cx-Lb.w/2)+'px'; Lb.el.style.top = (Lb.cy-Lb.h/2)+'px';
+    Lb.ln.setAttribute('x1', Lb.px); Lb.ln.setAttribute('y1', Lb.py);
+    Lb.ln.setAttribute('x2', Lb.cx-Lb.w/2+Lb.iox); Lb.ln.setAttribute('y2', Lb.cy-Lb.h/2+Lb.ioy);
+    Lb.dot.setAttribute('cx', Lb.px); Lb.dot.setAttribute('cy', Lb.py);
+  });
+}
+let rto = null; window.addEventListener('resize', () => { clearTimeout(rto); rto = setTimeout(runLayout, 150); });
+
 // ---------- tooltips
+function showTip(ev, txt){ const box = mapbox.getBoundingClientRect(); tip.textContent = txt; tip.hidden = false;
+  tip.style.left = (ev.clientX-box.left)+'px'; tip.style.top = (ev.clientY-box.top)+'px'; }
 svg.addEventListener('mousemove', ev => {
-  const t = ev.target, box = svg.getBoundingClientRect();
-  let txt = null;
-  if(t.classList.contains('cty') && t.classList.contains('on') && !state.iso){
-    const c = L[t.dataset.iso]; txt = `${c.name} · ${c.fws.length} framework${c.fws.length>1?'s':''}`;
-  } else if(t.classList.contains('sc')) txt = `${t.dataset.n} · ${t.dataset.hz}`;
+  const t = ev.target; let txt = null;
+  if(t.classList.contains('cty') && t.classList.contains('on') && !state.iso){ const c = L[t.dataset.iso]; if(c) txt = `${c.name} · ${c.fws.length} framework${c.fws.length>1?'s':''}`; }
+  else if(t.classList.contains('sc')) txt = `${t.dataset.n} · ${t.dataset.hz}`;
   else if(t.classList.contains('a1')) txt = t.dataset.n;
-  if(txt){ tip.textContent = txt; tip.hidden = false;
-    tip.style.left = (ev.clientX-box.left)+'px'; tip.style.top = (ev.clientY-box.top)+'px'; }
-  else tip.hidden = true;
+  if(txt) showTip(ev, txt); else tip.hidden = true;
 });
 svg.addEventListener('mouseleave', ()=> tip.hidden = true);
 
 // ---------- selection
 svg.addEventListener('click', ev => {
   const t = ev.target;
-  if(t.classList.contains('cty') && t.classList.contains('on')) selectCountry(t.dataset.iso);
+  if(t.classList.contains('cty') && t.classList.contains('on') && L[t.dataset.iso]) selectCountry(t.dataset.iso);
   else if(t.id === 'sea' && state.iso) goWorld();
 });
 back.addEventListener('click', goWorld);
@@ -781,18 +1054,18 @@ function goWorld(){
   state = { iso:null, hz:null, ver:null };
   document.querySelectorAll('.cty.sel').forEach(x=>x.classList.remove('sel'));
   svg.classList.remove('zoomed'); adm.innerHTML=''; adm.classList.remove('show');
-  resetZoom(); back.hidden = true; legend.innerHTML = LEGEND_WORLD;
-  side.innerHTML = `<div class='muted' style='padding:20px 6px'>Select a country on the map.</div>`;
+  resetZoom(); back.hidden = true; worldLegend(); maprow.classList.remove('open');
+  setTimeout(()=>{ runLayout(); lpane.classList.remove('hide'); }, 580);   // after the sidebar has closed
+  side.innerHTML = `<div class='muted' style='padding:20px 6px'>Select a country or a pin on the map.</div>`;
   history.replaceState(null, '', location.pathname);
 }
-
 async function selectCountry(iso, hz, ver){
   const c = L[iso]; if(!c) return;
   const changed = state.iso !== iso;
   state = { iso, hz: hz || (c.fws.length===1 ? c.fws[0].hazard : null), ver: ver || null };
   document.querySelectorAll('.cty.sel').forEach(x=>x.classList.remove('sel'));
-  const el = svg.querySelector(`.cty[data-iso='${iso}']`); if(el) el.classList.add('sel');
-  svg.classList.add('zoomed'); back.hidden = false;
+  svg.querySelectorAll(`.cty[data-iso='${iso}']`).forEach(el => el.classList.add('sel'));
+  svg.classList.add('zoomed'); back.hidden = false; lpane.classList.add('hide'); tip.hidden = true; maprow.classList.add('open');
   if(changed){ adm.innerHTML=''; adm.classList.remove('show'); if(c.bbox) zoomTo(c.bbox); }
   renderSide();
   await loadGeo(iso);
@@ -800,33 +1073,32 @@ async function selectCountry(iso, hz, ver){
   location.hash = [iso, state.hz, state.ver].filter(Boolean).join('/');
 }
 function selectFramework(hz){ selectCountry(state.iso, hz, null); }
-function selectVersion(v){ state.ver = v; renderSide(); drawAdmin(state.iso, false);
-  location.hash = [state.iso, state.hz, v].join('/'); }
+function selectVersion(v){ state.ver = v; renderSide(); drawAdmin(state.iso, false); location.hash = [state.iso, state.hz, v].join('/'); }
 
 // ---------- sidebar
+function monthStrip(months){ months = months||[]; return [...MONL].map((m,i)=>`<span class='mm ${months.includes(i+1)?'on':''}'>${m}</span>`).join(''); }
 function renderSide(){
   const c = L[state.iso];
   const crumb = `<div class='crumb'><a onclick='goWorld()'>World</a> › ` +
-    (state.hz ? `<a onclick='selectCountry("${state.iso}", null)'>${esc(c.name)}</a> › <span style='text-transform:capitalize'>${esc(state.hz)}</span>` : `<b>${esc(c.name)}</b>`) + `</div>`;
+    (state.hz ? `<a onclick='selectCountry("${state.iso}", null)'>${esc(c.name)}</a> › ${esc(c.fws.find(f=>f.hazard===state.hz)?.hz_label||state.hz)}` : `<b>${esc(c.name)}</b>`) + `</div>`;
   if(!state.hz){
     side.innerHTML = crumb + `<h3>${esc(c.name)}</h3><div class='muted'>${esc(c.region||'')} · ${c.fws.length} framework${c.fws.length>1?'s':''} — select one</div>` +
       `<div class='fwlist'>` + c.fws.map(f => {
         const v = f.versions.find(x=>x.v===f.current);
-        const nAct = f.activations.length;
         return `<div class='fcardx' style='--hz:${hzColor(f.hazard)}' onclick='selectFramework("${f.hazard}")'>
-          <div class='fhead'><b>${esc(f.hazard)}</b><span class='st ${stCls(f.status)}'>${stTxt(f.status)}</span></div>
+          <div class='fhead'><b>${iconHTML(f)}${esc(f.hz_label)}</b>${badge(f.disp)}</div>
           <table class='mini'>
-           <tr><td class='lbl'>Current version</td><td>${f.current ? `<code>${f.current}</code> <span class='muted'>(${f.versions.length} total)</span>` : '<span class="muted">none endorsed yet</span>'}</td></tr>
+           <tr><td class='lbl'>Latest version</td><td>${f.current ? `<code>${f.current}</code> <span class='muted'>(${f.versions.length} total)</span>` : '<span class="muted">none in the KB yet</span>'}</td></tr>
            <tr><td class='lbl'>Pre-arranged</td><td>${money(f.prearranged)}${f.prearranged_year?` <span class='muted'>(${f.prearranged_year})</span>`:''}</td></tr>
            <tr><td class='lbl'>People covered</td><td>${num(f.covered)}</td></tr>
-           <tr><td class='lbl'>Activations</td><td>${nAct||'—'}</td></tr>
+           <tr><td class='lbl'>Activations</td><td>${f.n_act||'—'}</td></tr>
            <tr><td class='lbl'>Monitoring</td><td>${monthStrip(v ? v.months : [])}</td></tr>
           </table></div>`; }).join('') + `</div>`;
     return;
   }
   const f = c.fws.find(x=>x.hazard===state.hz); if(!f){ state.hz=null; return renderSide(); }
   if(!f.versions.length){
-    side.innerHTML = crumb + fwHeader(c, f) + `<p class='muted'>No endorsed version anywhere yet — a pipeline framework. Status comes from colleagues' tracking sheets.</p>` +
+    side.innerHTML = crumb + fwHeader(c, f) + `<p class='muted'>No version in the knowledge base yet — status comes from the tracking sheets (${esc((f.status||'').replace(/_/g,' '))}).</p>` +
       activationsBlock(f, null) + `<p><a href='${f.page}'>framework page →</a></p>`;
     return;
   }
@@ -834,23 +1106,23 @@ function renderSide(){
   const v = f.versions.find(x=>x.v===ver) || f.versions[f.versions.length-1];
   const isCur = v.v === f.current;
   side.innerHTML = crumb + fwHeader(c, f) + versionBar(f, v, isCur) +
-    (isCur ? '' : `<div class='warnbox'>Viewing a <b>${esc(v.status||'past')}</b> version. The map shows this version's scope. Current version: <a onclick='selectVersion("${f.current}")' style='cursor:pointer;color:#1d5aa8'>${f.current}</a>.</div>`) +
+    (isCur ? '' : `<div class='warnbox'>Viewing an older version (${esc(v.status||'past')}). The map shows this version's scope. Most recent: <a onclick='selectVersion("${f.current}")' style='cursor:pointer'>${f.current}</a>.</div>`) +
     factsBlock(f, v) + triggersBlock(v) + fundingBlock(v) + activationsBlock(f, v) + scopeBlock(v) +
     `<p class='small' style='margin-top:12px'><a href='${f.page}'>full framework page →</a> · <a href='hierarchy.html'>explorer</a></p>`;
 }
 function fwHeader(c, f){
-  return `<h3><span class='hzdot' style='background:${hzColor(f.hazard)}'></span>${esc(c.name)} — <span style='text-transform:capitalize'>${esc(f.hazard)}</span></h3>
-   <div><span class='st ${stCls(f.status)}'>${stTxt(f.status)}</span> <span class='muted'>${f.kb?`· KB <code>${f.kb}</code>`:''}</span></div>`;
+  return `<h3 style='display:flex;align-items:center;gap:8px'>${iconHTML(f)}<span>${esc(c.name)} — ${esc(f.hz_label)}</span></h3>
+   <div>${badge(f.disp)} ${f.ring ? `<span class='small' style='color:#c8860a'>&bull; able to trigger${f.ring==='now'?' now (in season)':' (off-season)'}</span>` : (f.disp==='recently-triggered' ? `<span class='small' style='color:#999'>&bull; not able to trigger now (spent)</span>` : '')}
+   ${f.kb?` <span class='muted'>· KB <code>${f.kb}</code></span>`:''}${f.in_force && f.in_force!==f.current ? ` <span class='muted'>· tracking view in force: ${f.in_force}</span>` : ''}</div>`;
 }
 function versionBar(f, v, isCur){
-  const opts = [...f.versions].reverse().map(x=>`<option value='${x.v}' ${x.v===v.v?'selected':''}>${x.v}${x.v===f.current?' (in force)':''} — ${stTxt(x.status)}</option>`).join('');
+  const opts = [...f.versions].reverse().map(x=>`<option value='${x.v}' ${x.v===v.v?'selected':''}>${x.v}${x.v===f.current?' (latest)':''} — ${x.status||'?'}</option>`).join('');
   return `<div class='verbar'><label class='small'>Version</label><select onchange='selectVersion(this.value)'>${opts}</select>
-    ${v.doc_url ? `<a class='docbtn' href='${esc(v.doc_url)}' target='_blank' rel='noopener' title='${esc(v.doc_title||'')}'>Framework document ↗</a>` : `<span class='st st-off'>no document link</span>`}</div>`;
+    ${v.doc_url ? `<a class='docbtn' href='${esc(v.doc_url)}' target='_blank' rel='noopener' title='${esc(v.doc_title||'')}'>Framework doc ↗</a>` : `<span class='badge b-retired'>no document link</span>`}</div>`;
 }
-function monthStrip(months){ months = months||[]; return [...MONL].map((m,i)=>`<span class='mm ${months.includes(i+1)?'on':''}'>${m}</span>`).join(''); }
 function factsBlock(f, v){
   const rows = [];
-  rows.push(['Status', `<span class='st ${stCls(v.status)}'>${stTxt(v.status)}</span>${v.endorsed_by?` <span class='muted'>endorsed by ${esc(v.endorsed_by)}</span>`:''}`]);
+  rows.push(['Status', `${verBadge(v.status)}${v.endorsed_by?` <span class='muted'>endorsed by ${esc(v.endorsed_by)}</span>`:''}`]);
   rows.push(['Valid', `${v.valid_from||'?'} → ${v.valid_until||'<span class="muted">open</span>'}${v.valid_until_source?` <span class='muted'>(${esc(v.valid_until_source)})</span>`:''}`]);
   if(v.doc_title) rows.push(['Document', `${esc(v.doc_title)}${v.doc_date?` <span class='muted'>(${v.doc_date})</span>`:''}`]);
   rows.push(['Pre-arranged', `${money(v.prearranged_doc)}${v.regional?` <span class='muted'>· regional document total (all countries)</span>`:''}${v.all_in===false?` <span class='muted'>· split budget per window</span>`:v.all_in===true?` <span class='muted'>· all-in</span>`:''}`]);
@@ -860,9 +1132,11 @@ function factsBlock(f, v){
   rows.push(['Monitored', `${monthStrip(v.months)}${v.months_src?` <span class='muted'>${esc(v.months_src)}</span>`:''}${v.months_note?`<div class='small' style='margin-top:3px'>${esc(v.months_note)}</div>`:''}`]);
   if(v.basis||v.indicators.length) rows.push(['Trigger basis', `${esc(v.basis||'')}${v.calibration?` · ${esc(v.calibration)}`:''}${v.indicators.length?`<div class='chips'>${v.indicators.map(i=>`<span>${esc(i)}</span>`).join('')}</div>`:''}`]);
   if(v.agencies.length) rows.push(['Agencies', esc(v.agencies.join(', '))]);
-  if(v.supersedes) rows.push(['Supersedes', `<a onclick='selectVersion("${esc(v.supersedes)}")' style='cursor:pointer;color:#1d5aa8'>${esc(v.supersedes)}</a>`]);
+  if(v.supersedes) rows.push(['Supersedes', `<a onclick='selectVersion("${esc(v.supersedes)}")' style='cursor:pointer'>${esc(v.supersedes)}</a>`]);
   return `<table class='mini' style='margin-top:6px'>${rows.map(([k,val])=>`<tr><td class='lbl'>${k}</td><td>${val}</td></tr>`).join('')}</table>`;
 }
+function sameWin(a, b){ if(!a||!b) return false; a=String(a).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim(); b=String(b).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+  return a===b || a.includes(b) || b.includes(a); }
 function triggersBlock(v){
   let html = '';
   if(v.triggers.length){
@@ -870,15 +1144,14 @@ function triggersBlock(v){
     v.triggers.forEach(t => {
       const name = t.window || t.trigger || t.component || Object.values(t)[0];
       const sub = [t.basin, t.basis, t.country].filter(Boolean).join(' · ');
-      const ind = t.indicator || t.indicators || '';
-      const thr = t.threshold || t.condition || '';
+      const ind = t.indicator || t.indicators || '', thr = t.threshold || t.condition || '';
       const meta = [t['lead time'] ? `lead ${t['lead time']}` : null, t['return period'] ? `RP ${t['return period']}` : null,
                     t.releases ? `releases: ${t.releases}` : null].filter(Boolean);
-      const fired = v.windows.find(w => sameWin(w.name, name));
+      const bt = v.windows.find(w => sameWin(w.name, name));
       html += `<div class='trig'><div class='tn'>${esc(name)}${sub?` <span class='muted'>· ${esc(sub)}</span>`:''}</div>
         <div class='tt'>${esc(ind)}${ind&&thr?' — ':''}<b>${esc(thr)}</b></div>
         ${meta.length?`<div class='tm'>${esc(meta.join(' · '))}</div>`:''}
-        ${fired?`<div class='tm'>backtest: ${fired.rp?`1-in-${fired.rp.toFixed(1)} yr`:''}${fired.prob?` · ${(fired.prob*100).toFixed(0)}%/yr`:''}${fired.sim!=null?` · ${fired.sim} in ${fired.years} yrs`:''}${fired.budget?` · budget ${money(fired.budget)}`:''}</div>`:''}
+        ${bt?`<div class='tm'>backtest: ${bt.rp?`1-in-${bt.rp.toFixed(1)} yr`:''}${bt.prob?` · ${(bt.prob*100).toFixed(0)}%/yr`:''}${bt.sim!=null?` · ${bt.sim} in ${bt.years} yrs`:''}${bt.budget?` · budget ${money(bt.budget)}`:''}</div>`:''}
       </div>`;
     });
   }
@@ -890,8 +1163,6 @@ function triggersBlock(v){
   if(!html) html = `<h4>Triggers</h4><div class='muted'>No structured trigger information for this version yet — see the framework document.</div>`;
   return html;
 }
-function sameWin(a, b){ if(!a||!b) return false; a=String(a).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim(); b=String(b).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
-  return a===b || a.includes(b) || b.includes(a); }
 function fundingBlock(v){
   const F = v.funding; if(!F.agency.length && !F.sector.length && !F.fund.length) return '';
   const funds = [...new Set(F.fund.map(x=>x.fund))];
@@ -911,7 +1182,7 @@ function fundingBlock(v){
   }
   if(F.sector.length){
     const secs = {}; F.sector.forEach(x=>secs[x.sector]=(secs[x.sector]||0)+x.usd);
-    html += `<details style='margin-top:6px'><summary class='small' style='cursor:pointer'>by sector</summary><table class='mini'>` +
+    html += `<details style='margin-top:6px'><summary class='small' style='cursor:pointer;color:var(--ocha)'>by sector</summary><table class='mini'>` +
       Object.entries(secs).sort((a,b)=>b[1]-a[1]).map(([s,u])=>`<tr><td>${esc(s)}</td><td class='num'>${money(u)}</td></tr>`).join('') + `</table></details>`;
   }
   return html;
@@ -921,7 +1192,7 @@ function activationsBlock(f, v){
   let html = `<h4>Activations — all versions (${A.length})</h4>`;
   if(!A.length) return html + `<div class='muted'>Never activated.</div>`;
   const byWin = {};
-  A.forEach(a => { const k = a.version && v && a.version===v.v ? (a.window||'unspecified window') : null; if(k) (byWin[k] ??= []).push(a); });
+  A.forEach(a => { if(v && a.version===v.v) (byWin[a.window||'unspecified window'] ??= []).push(a); });
   if(v && Object.keys(byWin).length){
     html += `<div class='small' style='margin-bottom:4px'>Under this version, by trigger: ` +
       Object.entries(byWin).map(([w,as])=>`<b>${esc(w)}</b> ×${as.length}`).join(' · ') + `</div>`;
@@ -929,24 +1200,28 @@ function activationsBlock(f, v){
   html += A.map(a => {
     const other = v ? (a.version !== v.v) : false;
     const funding = a.funding.filter(x=>x.usd!=null||x.code).map(x=>`${esc(x.fund)}: ${money(x.usd)}${x.code?` <span class='muted'>(${esc(x.code)})</span>`:''}`).join('<br>');
+    const dateHtml = a.url ? `<a href='${esc(a.url)}' target='_blank' rel='noopener'>${a.date}↗</a>` : a.date;
     return `<div class='actrow' ${other?"style='opacity:.85'":''}>
-      <div class='ah'><span class='ad'>${a.date}${a.type!=='framework_aa'?` <span class='st st-off'>${esc(a.type.replace(/_/g,' '))}</span>`:''}${a.full===false?` <span class='st st-dev'>partial</span>`:''}</span>
+      <div class='ah'><span class='ad'>${dateHtml}${a.type!=='framework_aa'?` <span class='badge b-retired'>${esc(a.type.replace(/_/g,' '))}</span>`:''}${a.full===false?` <span class='badge b-development'>partial</span>`:''}</span>
         ${a.version ? `<span class='vtag ${other?'other':''}' title='${other?'fired under a different version than the one displayed':'fired under the displayed version'}'>${other?'under ':''}${a.version}</span>` : `<span class='vtag other'>no version</span>`}</div>
       <div class='small'>${a.window?esc(a.window):'<span class="muted">window not recorded</span>'}</div>
-      <div class='small'>${funding||(a.released?`released ${money(a.released)}`:'<span class="muted">funding not recorded</span>')}${a.people?` · ${num(a.people)} people targeted`:''}${a.url?` · <a href='${esc(a.url)}' target='_blank' rel='noopener'>source ↗</a>`:''}</div>
+      <div class='small'>${funding||(a.released?`released ${money(a.released)}`:'<span class="muted">funding not recorded</span>')}${a.people?` · ${num(a.people)} people targeted`:''}</div>
     </div>`; }).join('');
   return html;
 }
 function scopeBlock(v){
   const s = v.scope; if(!s) return '';
   let html = `<h4>Geographic scope${v.admin_level!=null?` <span class='muted' style='text-transform:none'>(trigger at admin ${v.admin_level})</span>`:''}</h4>`;
+  if(s.inherited_from) html += `<div class='warnbox'>Scope not yet extracted for this version — the map shows the ${esc(s.inherited_from)} scope.</div>`;
   if(s.national) html += `<div class='scopelist'>National trigger — whole country shaded.</div>`;
   if(v.scope_raw.length) html += `<div class='scopelist'>${v.scope_raw.map(x=>esc(x)).join(' · ')}</div>`;
-  if(!s.national && !v.scope_raw.length) html += `<div class='muted'>Scope not extracted for this version yet.</div>`;
+  if(!s.national && !v.scope_raw.length && !s.inherited_from) html += `<div class='muted'>Scope not extracted for this version yet.</div>`;
   if(s.unmatched.length) html += `<div class='small' style='margin-top:4px;color:#8a5c0a'>Not on the map (no boundary match): ${s.unmatched.map(esc).join('; ')}</div>`;
   return html;
 }
 
-// deep link  #ISO/hazard/version
+// ---------- boot
+worldLegend(); buildCallouts(); runLayout();
+setTimeout(runLayout, 300);   // once fonts have settled
 (function(){ const h = location.hash.replace('#','').split('/'); if(h[0] && L[h[0]]) selectCountry(h[0], h[1]||null, h[2]||null); })();
 """

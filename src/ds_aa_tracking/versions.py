@@ -62,6 +62,23 @@ def _parse_version_date(label):
     return None
 
 
+def _parse_valid_until(label):
+    """KB `valid_until` is the END of the validity period at whatever precision is given:
+    'YYYY' -> 31 Dec of that year, 'YYYY-MM' -> last day of that month, full dates as is."""
+    if label is None or str(label).strip() in ("", "None", "null", "nan"):
+        return None
+    label = str(label).strip()
+    if re.fullmatch(r"\d{4}", label):
+        return date(int(label), 12, 31)
+    if re.fullmatch(r"\d{4}-\d{1,2}", label):
+        y, m = (int(x) for x in label.split("-"))
+        return (pd.Timestamp(year=y, month=m, day=1) + pd.offsets.MonthEnd(0)).date()
+    try:
+        return pd.to_datetime(label).date()
+    except (ValueError, TypeError):
+        return None
+
+
 def _frontmatter(path):
     text = path.read_text()
     m = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
@@ -91,7 +108,7 @@ def kb_versions():
                 "kb_status": fm.get("status"),
                 "valid_from": _parse_version_date(version),
                 "valid_until": (
-                    pd.to_datetime(str(valid_until)).date() if valid_until else None
+                    _parse_valid_until(valid_until) if valid_until else None
                 ),
                 "supersedes": str(fm["supersedes"]) if fm.get("supersedes") else None,
                 "prearranged_usd_doc": fm.get("prearranged_funding_usd"),
@@ -224,14 +241,14 @@ def entered_versions(fv):
                 val = e.get(col)
                 if pd.notna(val) and str(val).strip():
                     fv.at[i, col] = (
-                        pd.to_datetime(val).date() if col == "valid_until" else val
+                        _parse_valid_until(val) if col == "valid_until" else val
                     )
             continue
         new_rows.append({
             "country_iso3": e["country_iso3"], "hazard": e["hazard"],
             "version": e["version"], "valid_from": _parse_version_date(e["version"]),
             "valid_until": (
-                pd.to_datetime(e["valid_until"]).date()
+                _parse_valid_until(e["valid_until"])
                 if pd.notna(e.get("valid_until")) and str(e.get("valid_until")).strip()
                 else None
             ),
