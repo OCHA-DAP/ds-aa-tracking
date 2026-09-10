@@ -779,13 +779,33 @@ def build_hierarchy(page, d, e):
         """SELECT * FROM aa.framework_version
            ORDER BY country_iso3, hazard, valid_from NULLS LAST""", e)
     win = pd.read_sql(
-        """SELECT w.kb_framework, w.kb_version, w.country_iso3, w.window_name,
+        """SELECT w.country_iso3, w.hazard, w.version, w.window_name,
                   w.all_in, w.basis, w.allocation_usd,
                   p.n_activations AS sim_activations, p.analysis_years,
                   p.return_period, p.activation_prob
            FROM aa.window w
            LEFT JOIN aa.v_window_performance p
-             USING (kb_framework, kb_version, country_iso3, window_name)""", e)
+             USING (country_iso3, hazard, version, window_name)""", e)
+    # browser-entered windows (entry.html → aa.entered_window): trigger statements,
+    # basis and per-window funding; they enrich KB windows and add missing ones
+    ew = pd.read_sql(
+        """SELECT w.country_iso3, w.hazard, w.version, w.window_name,
+                  w.basis AS basis_entered, w.trigger_statement,
+                  f.amount_usd AS entered_usd
+           FROM aa.entered_window w
+           LEFT JOIN (SELECT country_iso3, hazard, version, window_name,
+                             sum(amount_usd) AS amount_usd
+                      FROM aa.entered_window_funding
+                      GROUP BY country_iso3, hazard, version, window_name) f
+             USING (country_iso3, hazard, version, window_name)""", e)
+    if len(ew):
+        win = win.merge(ew, on=["country_iso3", "hazard", "version", "window_name"],
+                        how="outer")
+        win["basis"] = win["basis"].where(win["basis"].notna(), win["basis_entered"])
+        win["allocation_usd"] = win["allocation_usd"].where(
+            win["allocation_usd"].notna(), win["entered_usd"])
+    else:
+        win["trigger_statement"] = None
     act = d["activation"]
     urls = pd.read_sql(
         "SELECT kb_framework, event_date, url FROM aa.actual_activation "
@@ -807,10 +827,16 @@ def build_hierarchy(page, d, e):
             f"<td>{f'{w.activation_prob:.0%}' if pd.notna(w.activation_prob) else ''}</td>"
             f"<td>{f'{int(w.sim_activations)} in {int(w.analysis_years)} yrs' if pd.notna(w.sim_activations) else ''}</td></tr>"
             for w in wins_v.itertuples())
+        trig_rows = "".join(
+            f"<div class='hint' style='margin:2px 0'><b>{w.window_name}:</b> "
+            f"{w.trigger_statement}</div>"
+            for w in wins_v.itertuples()
+            if pd.notna(getattr(w, "trigger_statement", None)))
         return ("<h4 class='sect'>Windows</h4>"
                 "<table class='mini'><thead><tr><th>window</th><th>basis</th>"
                 "<th>budget</th><th>return period</th><th>annual prob</th>"
-                "<th>backtest</th></tr></thead><tbody>" + rows + "</tbody></table>")
+                "<th>backtest</th></tr></thead><tbody>" + rows + "</tbody></table>"
+                + trig_rows)
 
     def activations_table(acts_v, kb_fw):
         if not len(acts_v):
@@ -900,9 +926,8 @@ def build_hierarchy(page, d, e):
             + "</table>")
         inner = ""
         for v in vs.itertuples():
-            wins_v = win[(win["country_iso3"] == c)
-                         & (win["kb_framework"] == (kb_fw or "—"))
-                         & (win["kb_version"] == v.version)]
+            wins_v = win[(win["country_iso3"] == c) & (win["hazard"] == h)
+                         & (win["version"] == v.version)]
             acts_v = acts_f[acts_f["version"] == v.version]
             inner += ver_block(v, wins_v, acts_v, kb_fw)
         stray_f = acts_f[~acts_f["version"].isin(set(vs["version"]))]
@@ -969,230 +994,14 @@ button.primary { padding:8px 18px; border:0; border-radius:6px; background:#1f2a
 """
 
 
-def build_entry_form(page, d, e):
-    cur = d["current"].sort_values("country_name")
-    ver = d["versions"]
-    funds = pd.read_sql(
-        "SELECT fund_code, name FROM aa.fund ORDER BY fund_type, name", e)
-    fw_options = [
-        {"key": f"{r.country_iso3}|{r.hazard}",
-         "label": f"{r.country_name} — {r.hazard}",
-         "iso3": r.country_iso3, "hazard": r.hazard,
-         "kb": r.kb_framework if pd.notna(r.kb_framework) else None,
-         "status": r.status if pd.notna(r.status) else None,
-         "versions": sorted(
-             ver.loc[(ver.country_iso3 == r.country_iso3)
-                     & (ver.hazard == r.hazard), "version"].tolist())}
-        for r in cur.itertuples()]
-    hazards = ["drought", "flood", "storm", "cholera", "plague", "locusts",
-               "food_insecurity", "other"]
-    data = {"frameworks": fw_options,
-            "funds": funds.to_dict("records"),
-            "hazards": hazards}
-    body = f"""
-<div class='card'><b>Framework entry form (demo)</b> — what data entry looks like once
-the sheets retire: one form writes the registry, version, windows and funding tables.
-<div class='dummy-banner'>Dummy form — nothing is saved. “Submit” previews the exact
-rows that would be written to the <code>aa</code> schema, so the entry model itself
-can be reviewed (a version is an <b>endorsed document</b>; every framework version has
-at least one <b>window</b>; version and dates are <b>entered, never inferred</b>).</div></div>
-
-<div class='form-card'>
- <h3>1 · Framework</h3>
- <p class='hint'>Identity is (country, hazard). Updating an existing framework adds a
- new version to it; the previous endorsed version becomes superseded.</p>
- <div class='frow'>
-  <label>Mode
-   <select id='mode' onchange='modeChange()'>
-    <option value='update'>Update existing framework (new version)</option>
-    <option value='new'>Register new framework</option>
-   </select></label>
-  <label id='l-existing'>Framework
-   <select id='existing' onchange='fwChange()'></select></label>
-  <label id='l-ctry' style='display:none'>Country ISO3
-   <input id='ctry' maxlength='3' placeholder='e.g. KEN' style='min-width:90px'></label>
-  <label id='l-hz' style='display:none'>Hazard
-   <select id='hz'></select></label>
- </div>
- <div class='frow' id='fw-info'></div>
-</div>
-
-<div class='form-card'>
- <h3>2 · Version — the endorsed document</h3>
- <p class='hint'>Every version is a document endorsement. ERC endorsement = major
- revision (recommits funds, new validity period); CERF-secretariat = minor revision
- (validity and budget inherited from the predecessor).</p>
- <div class='frow'>
-  <label>Endorsement date <input type='date' id='vdate'></label>
-  <label>Endorsed by
-   <select id='endorsed_by'>
-    <option value='erc'>ERC (major — new validity + funds)</option>
-    <option value='cerf_secretariat'>CERF secretariat (minor — inherits)</option>
-   </select></label>
-  <label>Valid until <input type='date' id='vuntil'></label>
-  <label>Validity source
-   <select id='vuntil_src'><option>doc-stated</option><option>convention</option>
-    <option>inherited</option></select></label>
- </div>
- <div class='frow'>
-  <label>Document title <input id='dtitle' style='min-width:340px'
-    placeholder='e.g. Kenya: AA Framework for Drought — 2026'></label>
-  <label>Document URL <input id='durl' style='min-width:340px'
-    placeholder='https://reliefweb.int/…'></label>
-  <label>Supersedes <select id='supersedes'><option value=''>— none (first version)</option></select></label>
- </div>
-</div>
-
-<div class='form-card'>
- <h3>3 · Windows</h3>
- <p class='hint'>At least one window per version — single-window frameworks get one
- explicit window. The trigger statement is the condition in plain language, verbatim
- from the endorsed document.</p>
- <div id='windows'></div>
- <button class='small' onclick='addWindow()'>+ add window</button>
-</div>
-
-<div class='form-card'>
- <h3>4 · Funding & coverage</h3>
- <p class='hint'>Pre-arranged amounts per OCHA pooled fund; co-financing is not a fund
- — it takes a free-text financier.</p>
- <div id='fundrows'></div>
- <button class='small' onclick='addFund()'>+ add fund</button>
- <div class='frow' style='margin-top:10px'>
-  <label>Co-financing financier <input id='cofin_who' placeholder='e.g. WFP internal'></label>
-  <label>Co-financing USD <input type='number' id='cofin_usd' style='min-width:120px'></label>
-  <label>People covered <input type='number' id='covered' style='min-width:120px'></label>
- </div>
-</div>
-
-<div style='display:flex; gap:12px; align-items:center; margin:16px 0'>
- <button class='primary' onclick='preview()'>Submit (preview rows)</button>
- <span class='muted' style='font-size:12px'>writes nothing — shows the aa-schema rows this entry produces</span>
-</div>
-<pre id='payload'></pre>
-
-<script>window.F = {json.dumps(data)};</script>
-<script>
-const MON = ['J','F','M','A','M','J','J','A','S','O','N','D'];
-function el(html){{ const t=document.createElement('template'); t.innerHTML=html.trim(); return t.content.firstChild; }}
-function monthPicker(){{ return '<div class="months">' + MON.map((m,i)=>
-  `<span data-m="${{i+1}}" onclick="this.classList.toggle('on')">${{m}}</span>`).join('') + '</div>'; }}
-function addWindow(pref={{}}){{
-  document.getElementById('windows').appendChild(el(`
-   <div class='rep win'>
-    <div class='frow'>
-     <label>Window name <input class='wname' value='${{pref.name||''}}' placeholder='e.g. Gu season / single'></label>
-     <label>Basis <select class='wbasis'><option>forecast</option><option>observational</option><option>mixed</option></select></label>
-     <label>Budget USD <input type='number' class='wbudget' style='min-width:120px'></label>
-     <label>Monitoring months ${{monthPicker()}}</label>
-     <button class='small' onclick='this.closest(".rep").remove()'>remove</button>
-    </div>
-    <div class='frow'><label>Trigger statement (plain text, verbatim from the doc)
-     <textarea class='wtrig' placeholder='e.g. 7-day GloFAS forecast ≥70% probability of exceeding the 1-in-2-year level at Chatara'></textarea></label></div>
-   </div>`));
-}}
-function addFund(){{
-  const opts = F.funds.map(f=>`<option value='${{f.fund_code}}'>${{f.fund_code}} — ${{f.name}}</option>`).join('');
-  document.getElementById('fundrows').appendChild(el(`
-   <div class='rep fund'><div class='frow'>
-    <label>Fund <select class='fcode'>${{opts}}</select></label>
-    <label>Pre-arranged USD <input type='number' class='famt' style='min-width:130px'></label>
-    <button class='small' onclick='this.closest(".rep").remove()'>remove</button>
-   </div></div>`));
-}}
-function fwChange(){{
-  const fw = F.frameworks.find(f=>f.key===document.getElementById('existing').value);
-  const info = document.getElementById('fw-info');
-  info.innerHTML = fw ? `<span class='muted'>current status: ${{fw.status||'—'}} · KB: ${{fw.kb||'not in KB'}} · ${{fw.versions.length}} known version(s)</span>` : '';
-  const sup = document.getElementById('supersedes');
-  sup.innerHTML = "<option value=''>— none (first version)</option>" +
-    (fw ? fw.versions.map(v=>`<option ${{v===fw.versions[fw.versions.length-1]?'selected':''}}>${{v}}</option>`).join('') : '');
-}}
-function modeChange(){{
-  const upd = document.getElementById('mode').value==='update';
-  document.getElementById('l-existing').style.display = upd?'':'none';
-  document.getElementById('l-ctry').style.display = upd?'none':'';
-  document.getElementById('l-hz').style.display = upd?'none':'';
-  if(!upd) document.getElementById('supersedes').innerHTML = "<option value=''>— none (first version)</option>";
-  else fwChange();
-}}
-function preview(){{
-  const upd = document.getElementById('mode').value==='update';
-  const fw = upd ? F.frameworks.find(f=>f.key===document.getElementById('existing').value) : null;
-  const iso3 = upd ? fw.iso3 : document.getElementById('ctry').value.toUpperCase();
-  const hz = upd ? fw.hazard : document.getElementById('hz').value;
-  const vdate = document.getElementById('vdate').value;
-  const problems = [];
-  if(!iso3 || iso3.length!==3) problems.push('country ISO3 required');
-  if(!vdate) problems.push('endorsement date required (a version IS an endorsed document)');
-  const wins = [...document.querySelectorAll('.win')].map(w=>({{
-    country_iso3: iso3, hazard: hz, version: vdate,
-    window_name: w.querySelector('.wname').value || 'single',
-    basis: w.querySelector('.wbasis').value,
-    allocation_usd: +w.querySelector('.wbudget').value || null,
-    trigger_statement: w.querySelector('.wtrig').value || null,
-    monitoring_months: [...w.querySelectorAll('.months .on')].map(x=>+x.dataset.m),
-  }}));
-  if(!wins.length) problems.push('at least one window required (single-window frameworks get one explicit window)');
-  const fundsR = [...document.querySelectorAll('.fund')].map(f=>({{
-    country_iso3: iso3, hazard: hz, version: vdate, year: +(vdate||'0').slice(0,4),
-    kind:'prearranged', fund_code: f.querySelector('.fcode').value,
-    amount_usd: +f.querySelector('.famt').value || null }}));
-  const cofin = +document.getElementById('cofin_usd').value || null;
-  if(cofin) fundsR.push({{country_iso3: iso3, hazard: hz, version: vdate,
-    year:+(vdate||'0').slice(0,4), kind:'cofinancing', fund_code: null,
-    financier: document.getElementById('cofin_who').value || 'unspecified',
-    amount_usd: cofin}});
-  const payload = {{
-    _dummy: 'no data written — this is the row preview',
-    _problems: problems,
-    'aa.framework_registry (upsert)': {{country_iso3: iso3, hazard: hz,
-      kb_framework: fw ? fw.kb : null, new_framework: !upd}},
-    'aa.framework_version (insert)': {{country_iso3: iso3, hazard: hz, version: vdate,
-      endorsed_by: document.getElementById('endorsed_by').value,
-      valid_from: vdate, valid_until: document.getElementById('vuntil').value || null,
-      valid_until_source: document.getElementById('vuntil_src').value,
-      doc_title: document.getElementById('dtitle').value || null,
-      doc_url: document.getElementById('durl').value || null,
-      supersedes: document.getElementById('supersedes').value || null,
-      source: 'entry-form'}},
-    'aa.window (insert, one per window)': wins,
-    'aa.prearranged_funding (insert)': fundsR,
-    'aa.people_covered (insert)': (+document.getElementById('covered').value || null) && {{
-      country_iso3: iso3, hazard: hz, version: vdate,
-      people_covered: +document.getElementById('covered').value, source: 'entry-form'}},
-    _side_effects: [
-      upd && document.getElementById('supersedes').value ?
-        `previous version ${{document.getElementById('supersedes').value}} flips to superseded` : null,
-      'KB framework page generated/updated from these rows (future: DB is the source)',
-    ].filter(Boolean),
-  }};
-  const p = document.getElementById('payload');
-  p.style.display='block';
-  p.textContent = JSON.stringify(payload, null, 2);
-  p.scrollIntoView({{behavior:'smooth'}});
-}}
-F.frameworks.forEach(f=>document.getElementById('existing')
-  .appendChild(new Option(f.label, f.key)));
-F.hazards.forEach(h=>document.getElementById('hz').appendChild(new Option(h,h)));
-fwChange(); addWindow(); addFund();
-</script>
-<style>{{DASH_CSS}}{{FORM_CSS}}</style>"""
-    body = body.replace("{DASH_CSS}", DASH_CSS).replace("{FORM_CSS}", FORM_CSS)
-    page("form.html", "Framework entry form (demo)", body)
-
-
-
-
-
-# ------------------------------------------------------------------ doc ingest
-def build_ingest_doc(page, d):
-    """Upload-a-document ingestion: Claude reads the PDF via the fixed-purpose
-    extraction proxy (chd-ds-aa-extract, key held server-side — never in this
-    page) and pre-fills the full entry form; classification against the live
-    registry decides identical / new-version / new-framework; submission files
-    a [framework-entry] issue whose bridge workflow PRs the entered-* reference
-    CSVs (merge = human confirmation). Heuristic pdf.js detection remains the
+def build_entry(page, d, e):
+    """Unified data entry (entry.html): optional PDF upload -> Claude extraction
+    via the chd-ds-aa-extract proxy (spinner) -> full prefilled form (version
+    fields, per-fund totals, windows with triggers and per-window per-fund
+    funding) -> live per-field diff against the DB -> Save writes straight to
+    aa.entered_* through the proxy, with every field change audited. The ingest
+    merges entered values into aa.framework_version (entered wins). Replaces the
+    old ingest-doc demo + dummy form; heuristic pdf.js detection remains the
     no-proxy fallback."""
     import os as _os
     from pathlib import Path as _P
@@ -1201,10 +1010,11 @@ def build_ingest_doc(page, d):
     extract_token = _os.environ.get("EXTRACT_TOKEN", "").strip() or (
         token_file.read_text().strip() if token_file.exists() else "")
     if not extract_token:
-        print("  WARNING: no .extract_token / EXTRACT_TOKEN — AI extraction will 401")
+        print("  WARNING: no .extract_token / EXTRACT_TOKEN — proxy calls will 401")
 
     cur = d["current"].sort_values("country_name")
     ver = d["versions"]
+    funds = pd.read_sql("SELECT fund_code, name FROM aa.fund ORDER BY fund_code", e)
     fw = [{"iso3": r.country_iso3, "hazard": r.hazard,
            "label": f"{r.country_name} — {r.hazard}",
            "names": [r.country_name],
@@ -1212,24 +1022,21 @@ def build_ingest_doc(page, d):
            "versions": sorted(ver.loc[(ver.country_iso3 == r.country_iso3)
                                       & (ver.hazard == r.hazard), "version"].tolist())}
           for r in cur.itertuples()]
-    data = {"frameworks": fw}
+    data = {"frameworks": fw, "funds": funds.to_dict("records")}
     body = r"""
-<div class='card'><b>Framework document ingestion</b> — drop an endorsed framework
-PDF and Claude reads it: country, hazard, endorsement date, validity, funding and
-<b>every activation window with its trigger statement</b> land in the form below,
-ready to correct and file. The document goes to a fixed-purpose team extraction
-service (the API key lives there, never in this page) and nowhere else. Filing
-creates a <code>[framework-entry]</code> issue in <code>ds-aa-tracking</code>; a
-bridge workflow turns it into a PR against the entered-registry CSVs — merging the
-PR is the human confirmation, and the next ingest loads it into the schema
-(<code>aa.framework_version</code> / <code>aa.entered_window</code>, entered values
-win). For frameworks that also need a KB page there's a second button dispatching
-the KB's <code>kb-ingest</code> pipeline. The <a href='form.html'>manual form</a>
-and <a href='status.html'>status update</a> remain for corrections.</div>
+<div class='card'><b>Framework data entry</b> — the one place frameworks are entered
+or corrected. Drop an endorsed framework PDF and Claude fills the form (country,
+version, validity, per-fund totals, every window with its trigger statement and
+funding); or fill it by hand. If the version already exists, the page shows a
+<b>field-by-field diff against the database</b> — overwrite what the document
+corrects, keep what the database already has right. <b>Save writes straight to the
+DB</b> (<code>aa.entered_*</code>, every change audited with who/when/old/new);
+the ingest merges entered values into the registry, and entered values win.
+<a href='status.html'>Status updates</a> stay on their own page.</div>
 
 <div class='form-card' id='drop' style='border:2px dashed #9db2c9; text-align:center;
-     padding:40px; cursor:pointer'>
- <div style='font-size:15px; font-weight:600'>Drop a framework PDF here, or click to choose</div>
+     padding:34px; cursor:pointer'>
+ <div style='font-size:15px; font-weight:600'>Drop a framework PDF here, or click to choose — or skip and fill the form manually</div>
  <div class='hint' style='margin-top:6px'>sent only to the team extraction service · max 32&nbsp;MB / 100 pages</div>
  <input type='file' id='file' accept='application/pdf' style='display:none'>
 </div>
@@ -1245,10 +1052,10 @@ and <a href='status.html'>status update</a> remain for corrections.</div>
  <div class='spinner'></div><div id='spintext' class='muted'>Claude is reading the document…</div>
 </div>
 
-<div class='form-card' id='entry' style='display:none'>
+<div class='form-card' id='entry'>
  <h3>Framework version <span class='hint' id='exmeta'></span></h3>
  <div class='frow'>
-  <label>Country <select id='dc' onchange="document.getElementById('dcNew').style.display = this.value==='NEW' ? '' : 'none'"></select></label>
+  <label>Country <select id='dc'></select></label>
   <label id='dcNew' style='display:none'>ISO3 <input id='dcIso' size='4' maxlength='3' style='text-transform:uppercase'></label>
   <label>Hazard <select id='dh'></select></label>
   <label>Version / endorsement date <input type='date' id='dd'></label>
@@ -1260,8 +1067,7 @@ and <a href='status.html'>status update</a> remain for corrections.</div>
  </div>
  <div class='frow'>
   <label>Title <input id='dt' style='min-width:420px'></label>
-  <label>Document URL <input id='du' style='min-width:380px'
-    placeholder='ReliefWeb/UNOCHA link — or attach the PDF to the issue and paste its attachment URL'></label>
+  <label>Document URL <input id='du' style='min-width:360px' placeholder='ReliefWeb / UNOCHA link'></label>
  </div>
  <div class='frow'>
   <label>Valid until <input type='date' id='dv'></label>
@@ -1269,22 +1075,35 @@ and <a href='status.html'>status update</a> remain for corrections.</div>
     <option value=''>—</option><option>doc-stated</option>
     <option>convention</option><option>inherited</option>
   </select></label>
-  <label>Pre-arranged USD <input id='dp' size='12'></label>
+  <label>Window rollup <select id='dr'>
+    <option value=''>— unknown —</option>
+    <option value='additive'>additive — all windows can fire; total = sum</option>
+    <option value='exclusive'>exclusive — either/or; each can draw the pot</option>
+    <option value='capped'>capped — windows sum past the envelope</option>
+  </select></label>
   <label>Supersedes <input id='ds' size='12' placeholder='YYYY[-MM[-DD]]'></label>
  </div>
  <div class='frow'><label style='flex:1'>Note <input id='dn' style='min-width:420px'></label></div>
+
+ <h3 style='margin-top:14px'>Pre-arranged totals per fund
+   <button onclick='addVFund()' style='margin-left:10px'>+ add fund</button></h3>
+ <div class='hint'>The explicit stated total per fund — entered, never derived from windows.</div>
+ <div id='vfund'></div>
 
  <h3 style='margin-top:14px'>Windows &amp; triggers
    <button onclick='addWindow()' style='margin-left:10px'>+ add window</button></h3>
  <div id='windows'></div>
 
- <div class='frow' style='margin-top:14px'>
-  <button class='primary' onclick='classify()'>Classify &amp; preview entry</button>
- </div>
-</div>
+ <div id='diffpane'></div>
 
-<div id='verdict'></div>
-<pre id='payload' style='display:none'></pre>
+ <div class='frow' style='margin-top:14px; align-items:center'>
+  <label>Entered by <input id='by' size='16' placeholder='your name' required></label>
+  <button class='primary' onclick='save()'>Save to database</button>
+  <a class='btn-sec' href='#' onclick='downloadJson(); return false'>Download JSON</a>
+  <a class='btn-sec' id='kbbtn' href='#' target='_blank' style='display:none'>Draft KB page →</a>
+ </div>
+ <div id='result'></div>
+</div>
 
 <script src="pdf.min.js"></script>
 <script>window.G = __DATA__;
@@ -1297,12 +1116,15 @@ const HAZ = {
   storm: ['cyclone','typhoon','hurricane','tropical storm','tempête','ouragan'],
   cholera: ['cholera','choléra'],
 };
-const MONTHS = {january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,
-  september:9,october:10,november:11,december:12,janvier:1,février:2,fevrier:2,mars:3,
-  avril:4,mai:5,juin:6,juillet:7,août:8,aout:8,septembre:9,octobre:10,novembre:11,
-  décembre:12,decembre:12};
+const HAZARDS = ['drought','flood','storm','cholera','plague','locusts','other'];
+const VFIELDS = {doc_title:'dt', doc_url:'du', endorsed_by:'de', valid_until:'dv',
+  valid_until_source:'dvs', window_rollup:'dr', supersedes:'ds', note:'dn'};
+const WFIELDS = ['basis','trigger_statement','monitoring_period'];
+let cur = null;        // GET /framework response for the selected framework
+let matched = null;    // version label in the DB this entry matches
+let curHash = null;
 let fileHashHits = JSON.parse(localStorage.getItem('ingestHashes')||'{}');
-let curHash = null, curText = '', curFile = null;
+document.getElementById('by').value = localStorage.getItem('enteredBy') || '';
 
 const drop = document.getElementById('drop'), fileEl = document.getElementById('file');
 drop.onclick = () => fileEl.click();
@@ -1312,6 +1134,22 @@ drop.ondrop = e => { e.preventDefault(); drop.style.background='';
   if(e.dataTransfer.files[0]) handle(e.dataTransfer.files[0]); };
 fileEl.onchange = () => fileEl.files[0] && handle(fileEl.files[0]);
 
+function api(path, opts){
+  return fetch(PROXY + path, {...opts,
+    headers: {...(opts && opts.headers || {}), 'x-site-token': SITE_TOKEN}});
+}
+function showSpin(on, txt){
+  document.getElementById('spin').style.display = on ? 'flex' : 'none';
+  if(txt) document.getElementById('spintext').textContent = txt;
+}
+function fundDatalist(){
+  const dl = document.createElement('datalist'); dl.id = 'fundlist';
+  G.funds.forEach(f=>{ const o = document.createElement('option');
+    o.value = f.fund_code; o.label = f.name || f.fund_code; dl.appendChild(o); });
+  ['cofinancing','other'].forEach(v=>{ const o = document.createElement('option');
+    o.value = v; dl.appendChild(o); });
+  document.body.appendChild(dl);
+}
 function initSelects(){
   const dsel = document.getElementById('dc'), hsel = document.getElementById('dh');
   if(dsel.options.length) return;
@@ -1319,20 +1157,92 @@ function initSelects(){
     .sort((a,b)=>a[1].localeCompare(b[1]))
     .forEach(([iso,nm])=>dsel.appendChild(new Option(`${nm} (${iso})`, iso)));
   dsel.appendChild(new Option('— other / new country —', 'NEW'));
-  ['drought','flood','storm','cholera','plague','locusts','other']
-    .forEach(h=>hsel.appendChild(new Option(h,h)));
+  HAZARDS.forEach(h=>hsel.appendChild(new Option(h,h)));
+  dsel.onchange = () => {
+    document.getElementById('dcNew').style.display = dsel.value==='NEW' ? '' : 'none';
+    refreshCurrent();
+  };
+  hsel.onchange = refreshCurrent;
+  document.getElementById('dd').onchange = refreshCurrent;
+  fundDatalist();
+  addVFund(); addWindow();
+}
+initSelects();
+
+function isoNow(){
+  const v = document.getElementById('dc').value;
+  return v==='NEW' ? document.getElementById('dcIso').value.toUpperCase() : v;
+}
+
+// ------------------------------------------------------------- dynamic rows
+function fundRow(container, f, withAmountLabel){
+  const div = document.createElement('div');
+  div.className = 'frow fundrow';
+  div.innerHTML = `
+   <label>Fund <input class='ff' list='fundlist' size='12'></label>
+   <label>Financier <input class='fi' size='14' placeholder='if cofinancing'></label>
+   <label>${withAmountLabel} USD <input class='fa' size='12'></label>
+   <button class='fdel'>remove</button>`;
+  div.querySelector('.ff').value = (f && f.fund_code) || '';
+  div.querySelector('.fi').value = (f && f.financier) || '';
+  div.querySelector('.fa').value = (f && f.amount != null) ? f.amount : '';
+  div.querySelector('.fdel').onclick = () => div.remove();
+  container.appendChild(div);
+}
+function addVFund(f){ fundRow(document.getElementById('vfund'),
+  f && f.fund_code !== undefined ? f : null, 'Total'); }
+function addWindow(w){
+  w = w && w.window_name !== undefined ? w : {};
+  const div = document.createElement('div');
+  div.className = 'wrow';
+  div.innerHTML = `
+   <div class='frow'>
+    <label>Window <input class='wn' size='18'></label>
+    <label>Basis <select class='wb'><option value=''>—</option>
+      <option>observational</option><option>forecast</option><option>mixed</option></select></label>
+    <label>Monitoring period <input class='wm' size='16'></label>
+    <button class='wdel' style='align-self:flex-end'>remove window</button>
+   </div>
+   <label style='display:block'>Trigger statement
+    <textarea class='wt' rows='2' style='width:100%; box-sizing:border-box'></textarea></label>
+   <div class='hint' style='margin-top:6px'>Window funding per fund
+    <button class='wfadd small'>+ add</button></div>
+   <div class='wfund'></div>`;
+  div.querySelector('.wn').value = w.window_name || '';
+  div.querySelector('.wb').value = w.basis || '';
+  div.querySelector('.wm').value = w.monitoring_period || '';
+  div.querySelector('.wt').value = w.trigger_statement || '';
+  div.querySelector('.wdel').onclick = () => div.remove();
+  const wf = div.querySelector('.wfund');
+  div.querySelector('.wfadd').onclick = () => fundRow(wf, null, 'Amount');
+  (w.funding || []).forEach(f => fundRow(wf, f, 'Amount'));
+  document.getElementById('windows').appendChild(div);
+}
+
+// ------------------------------------------------------------- extraction
+function mapFund(f, iso){
+  const code = (f.fund || '').toLowerCase();
+  if(code === 'cbpf'){
+    const c = 'cbpf-' + iso.toLowerCase();
+    if(G.funds.some(x=>x.fund_code===c)) return c;
+  }
+  if(code === 'rhpf'){
+    const hit = G.funds.find(x=>x.fund_code.startsWith('rhpf') &&
+      x.fund_code.endsWith(iso.toLowerCase()));
+    if(hit) return hit.fund_code;
+  }
+  return code;
 }
 
 async function handle(f){
-  curFile = f;
   const prog = document.getElementById('progress');
-  document.getElementById('verdict').innerHTML = '';
+  document.getElementById('result').innerHTML = '';
   if(f.size > 32*1024*1024){ prog.textContent = 'file exceeds 32 MB — extraction service cap'; return; }
   const buf = await f.arrayBuffer();
   curHash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buf))]
     .map(b=>b.toString(16).padStart(2,'0')).join('');
-  prog.textContent = `${f.name} · ${(f.size/1e6).toFixed(1)} MB · sha256 ${curHash.slice(0,12)}…`;
-  initSelects();
+  prog.textContent = `${f.name} · ${(f.size/1e6).toFixed(1)} MB · sha256 ${curHash.slice(0,12)}…` +
+    (fileHashHits[curHash] ? ` · previously processed as ${fileHashHits[curHash]}` : '');
   const t0 = Date.now();
   showSpin(true, 'Claude is reading the document…');
   try {
@@ -1342,73 +1252,48 @@ async function handle(f){
       r.onerror = rej;
       r.readAsDataURL(f);
     });
-    const resp = await fetch(PROXY + '/extract', {
+    const resp = await api('/extract', {
       method: 'POST',
-      headers: {'content-type':'application/json', 'x-site-token': SITE_TOKEN},
+      headers: {'content-type':'application/json'},
       body: JSON.stringify({pdf_base64: b64, model: document.getElementById('model').value}),
     });
     const out = await resp.json();
     if(!resp.ok || !out.ok) throw new Error(out.error || `service returned ${resp.status}`);
     showSpin(false);
-    const secs = ((Date.now()-t0)/1000).toFixed(0);
     document.getElementById('exmeta').textContent =
-      `— extracted by ${out.model} in ${secs}s; correct anything that's wrong`;
+      `— extracted by ${out.model} in ${((Date.now()-t0)/1000).toFixed(0)}s; correct anything that's wrong`;
     fillForm(out.data);
   } catch(err) {
     showSpin(false);
     prog.textContent += ` · AI extraction unavailable (${err.message}) — heuristic detection instead`;
     await heuristic(buf, f.name);
   }
-  document.getElementById('entry').style.display = '';
+  refreshCurrent();
 }
 
-function showSpin(on, txt){
-  const s = document.getElementById('spin');
-  s.style.display = on ? 'flex' : 'none';
-  if(txt) document.getElementById('spintext').textContent = txt;
-}
-
+function setVal(id, v){ document.getElementById(id).value = v == null ? '' : v; }
 function fillForm(x){
   const dsel = document.getElementById('dc');
   const iso = (x.country_iso3||'').toUpperCase();
   if([...dsel.options].some(o=>o.value===iso)) dsel.value = iso;
   else { dsel.value = 'NEW'; document.getElementById('dcNew').style.display='';
-         document.getElementById('dcIso').value = iso; }
-  document.getElementById('dh').value = x.hazard || 'other';
-  document.getElementById('dd').value = (x.version_date||'').slice(0,10);
-  document.getElementById('dt').value = x.doc_title || '';
-  document.getElementById('de').value = (x.endorsed_by==='unknown'?'':x.endorsed_by)||'';
-  document.getElementById('dv').value = (x.valid_until||'').slice(0,10);
-  document.getElementById('dvs').value = (x.valid_until_source==='unknown'?'':x.valid_until_source)||'';
-  document.getElementById('dp').value = x.prearranged_usd ?? '';
-  document.getElementById('ds').value = x.supersedes || '';
-  document.getElementById('dn').value = x.note || '';
+         setVal('dcIso', iso); }
+  setVal('dh', x.hazard || 'other');
+  setVal('dd', (x.version_date||'').slice(0,10));
+  setVal('dt', x.doc_title); setVal('du', x.doc_url);
+  setVal('de', (x.endorsed_by==='unknown'?'':x.endorsed_by));
+  setVal('dv', (x.valid_until||'').slice(0,10));
+  setVal('dvs', (x.valid_until_source==='unknown'?'':x.valid_until_source));
+  setVal('dr', (x.window_rollup==='unknown'?'':x.window_rollup));
+  setVal('ds', x.supersedes); setVal('dn', x.note);
+  document.getElementById('vfund').innerHTML = '';
+  (x.version_funding || []).forEach(f => addVFund(
+    {fund_code: mapFund(f, iso), financier: f.financier, amount: f.total_usd}));
+  if(!(x.version_funding||[]).length) addVFund();
   document.getElementById('windows').innerHTML = '';
-  (x.windows && x.windows.length ? x.windows : [{}]).forEach(addWindow);
-}
-
-function addWindow(w){
-  w = (w && w.window_name !== undefined) || (w && w.trigger_statement) ? w : {};
-  const div = document.createElement('div');
-  div.className = 'wrow';
-  div.innerHTML = `
-   <div class='frow'>
-    <label>Window <input class='wn' value='' size='18'></label>
-    <label>Basis <select class='wb'><option value=''>—</option>
-      <option>observational</option><option>forecast</option><option>mixed</option></select></label>
-    <label>Monitoring period <input class='wm' size='16'></label>
-    <label>Budget USD <input class='wu' size='11'></label>
-    <button class='wdel' style='align-self:flex-end'>remove</button>
-   </div>
-   <label style='display:block'>Trigger statement
-    <textarea class='wt' rows='2' style='width:100%; box-sizing:border-box'></textarea></label>`;
-  div.querySelector('.wn').value = w.window_name || '';
-  div.querySelector('.wb').value = w.basis || '';
-  div.querySelector('.wm').value = w.monitoring_period || '';
-  div.querySelector('.wu').value = w.budget_usd ?? '';
-  div.querySelector('.wt').value = w.trigger_statement || '';
-  div.querySelector('.wdel').onclick = () => div.remove();
-  document.getElementById('windows').appendChild(div);
+  (x.windows && x.windows.length ? x.windows : [{}]).forEach(w => addWindow({
+    ...w, funding: (w.funding||[]).map(f =>
+      ({fund_code: mapFund(f, iso), financier: f.financier, amount: f.amount_usd}))}));
 }
 
 async function heuristic(buf, fname){
@@ -1422,145 +1307,211 @@ async function heuristic(buf, fname){
       text += tc.items.map(x=>x.str).join(' ') + '\n';
     }
   } catch(err) { /* fill manually */ }
-  curText = text;
   const t = (text + ' ' + fname).toLowerCase();
   let best = null, bestN = 0;
-  const seen = new Set();
   G.frameworks.forEach(f => f.names.forEach(nm => {
-    if(seen.has(f.iso3)) return;
     const n = t.split(nm.toLowerCase()).length - 1;
-    if(n > bestN) { best = f.iso3; bestN = n; seen.add(f.iso3); }
+    if(n > bestN) { best = f.iso3; bestN = n; }
   }));
   let bh = null, bhN = 0;
   for(const [h, kws] of Object.entries(HAZ)){
     const n = kws.reduce((a,k)=>a + (t.split(k).length - 1), 0);
     if(n > bhN) { bh = h; bhN = n; }
   }
-  const dates = [];
-  const re = /(\d{1,2})?\s*(january|february|march|april|may|june|july|august|september|october|november|december|janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)\s+(20\d\d)|((20\d\d)-(\d\d)-(\d\d))/gi;
-  let m;
-  while((m = re.exec(t)) !== null){
-    let iso;
-    if(m[4]) iso = m[4];
-    else iso = `${m[3]}-${String(MONTHS[m[2]]).padStart(2,'0')}-${String(+(m[1]||15)).padStart(2,'0')}`;
-    const ctx = t.slice(Math.max(0, m.index-80), m.index+80);
-    const w = /endors|approv|approuv|version|final|valid/.test(ctx) ? 3 : 1;
-    dates.push({iso, w, pos: m.index});
-  }
-  dates.sort((a,b)=> b.w - a.w || a.pos - b.pos);
-  fillForm({
-    country_iso3: best || '', hazard: bh || 'other',
-    version_date: dates.length ? dates[0].iso : '',
-    doc_title: (curText.split('\n')[0]||'').trim().slice(0,120) || fname.replace(/\.pdf$/i,''),
-    windows: [],
-  });
+  fillForm({country_iso3: best || '', hazard: bh || 'other',
+    doc_title: (text.split('\n')[0]||'').trim().slice(0,120) || fname.replace(/\.pdf$/i,''),
+    windows: []});
 }
 
+// ------------------------------------------------------------- live diff
+async function refreshCurrent(){
+  const iso = isoNow(), hz = document.getElementById('dh').value;
+  const pane = document.getElementById('diffpane');
+  if(!/^[A-Z]{3}$/.test(iso) || !hz){ pane.innerHTML=''; return; }
+  try {
+    const r = await api(`/framework?iso3=${iso}&hazard=${hz}`);
+    cur = await r.json();
+    if(!r.ok || !cur.ok) throw new Error(cur.error || r.status);
+  } catch(err) {
+    pane.innerHTML = `<div class='dummy-banner'>live DB check unavailable (${err.message}) — you can still save; the diff just can't be shown</div>`;
+    cur = null; matched = null; return;
+  }
+  renderDiff();
+}
+
+function matchVersion(){
+  const vd = document.getElementById('dd').value;
+  if(!cur || !vd) return null;
+  const exact = cur.versions.find(v=>v.version===vd);
+  if(exact) return vd;
+  let best = null, bestD = 46*864e5;
+  cur.versions.forEach(v=>{
+    if(!v.valid_from) return;
+    const dd = Math.abs(new Date(v.valid_from) - new Date(vd));
+    if(dd < bestD){ best = v.version; bestD = dd; }
+  });
+  return best;
+}
+
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+function formVal(id){ return document.getElementById(id).value.trim() || null; }
+
+function renderDiff(){
+  const pane = document.getElementById('diffpane');
+  matched = matchVersion();
+  const iso = isoNow(), hz = document.getElementById('dh').value,
+        vd = document.getElementById('dd').value;
+  const fwKnown = G.frameworks.some(f=>f.iso3===iso && f.hazard===hz) ||
+                  (cur && cur.versions.length);
+  if(!matched){
+    pane.innerHTML = vd ? `<div class='card' style='margin:12px 0'>${
+      fwKnown ? `<b>New version</b> of ${iso}/${hz} — nothing to diff; saving creates version <code>${esc(vd)}</code>.`
+              : `<b>Brand-new framework</b> ${iso}/${hz} — saving registers it with version <code>${esc(vd)}</code>.`}</div>` : '';
+    return;
+  }
+  const vrow = cur.versions.find(v=>v.version===matched) || {};
+  const erow = (cur.entered_versions||[]).find(v=>v.version===matched) || {};
+  const dbv = f => erow[f] != null && String(erow[f]).trim() !== '' ? erow[f] : vrow[f];
+  let rows = '';
+  for(const [f, id] of Object.entries(VFIELDS)){
+    let curV = dbv(f); if(f==='valid_until' && curV) curV = String(curV).slice(0,10);
+    const newV = formVal(id);
+    if(String(curV??'') === String(newV??'')) continue;
+    rows += `<tr><td>${f}</td><td class='cv'>${esc(curV)??''}</td><td class='nv'>${esc(newV)}</td>
+      <td><button class='small' onclick="setVal('${id}', ${JSON.stringify(curV==null?'':String(curV))}); renderDiff()">keep current</button></td></tr>`;
+  }
+  const dbWin = (cur.windows||[]).filter(w=>w.version===matched);
+  const dbWinBy = Object.fromEntries(dbWin.map(w=>[w.window_name, w]));
+  const formWins = collect().windows;
+  const formNames = new Set(formWins.map(w=>w.window_name));
+  formWins.forEach(w=>{
+    const o = dbWinBy[w.window_name];
+    if(!o){ rows += `<tr><td>window “${esc(w.window_name)}”</td><td class='cv'>— not in DB —</td><td class='nv'>added</td><td></td></tr>`; return; }
+    WFIELDS.forEach(f=>{
+      if(String(o[f]??'') !== String(w[f]??''))
+        rows += `<tr><td>“${esc(w.window_name)}” · ${f}</td><td class='cv'>${esc(o[f])}</td><td class='nv'>${esc(w[f])}</td><td></td></tr>`;
+    });
+  });
+  dbWin.forEach(o=>{ if(!formNames.has(o.window_name))
+    rows += `<tr><td>window “${esc(o.window_name)}”</td><td class='cv'>${esc(o.trigger_statement||'').slice(0,60)}…</td><td class='nv'>— removed on save —</td><td></td></tr>`; });
+  const dbVF = (cur.version_funding||[]).filter(f=>f.version===matched);
+  const formVF = collect().version_funding;
+  const vfBy = Object.fromEntries(dbVF.map(f=>[f.fund_code, f.total_usd]));
+  formVF.forEach(f=>{
+    if(String(vfBy[f.fund_code]??'') !== String(f.total_usd??''))
+      rows += `<tr><td>total · ${esc(f.fund_code)}</td><td class='cv'>${esc(vfBy[f.fund_code])}</td><td class='nv'>${esc(f.total_usd)}</td><td></td></tr>`;
+  });
+  dbVF.forEach(f=>{ if(!formVF.some(x=>x.fund_code===f.fund_code))
+    rows += `<tr><td>total · ${esc(f.fund_code)}</td><td class='cv'>${esc(f.total_usd)}</td><td class='nv'>— removed on save —</td><td></td></tr>`; });
+  const head = `<div class='card' style='margin:12px 0'><b>Version <code>${esc(matched)}</code> exists in the DB</b>
+    ${matched!==vd ? ` (matched from your date <code>${esc(vd)}</code> — same version within 45 days; change the date if this is genuinely a new version)` : ''}
+    — the table shows exactly what saving would change. <button class='small' onclick='loadCurrent()'>Load ALL current values into the form</button></div>`;
+  pane.innerHTML = head + (rows
+    ? `<table class='difftable'><tr><th>field</th><th>current (DB)</th><th>new (form)</th><th></th></tr>${rows}</table>`
+    : `<div class='hint'>No differences — the form matches the database.</div>`);
+}
+
+function loadCurrent(){
+  if(!matched || !cur) return;
+  const vrow = cur.versions.find(v=>v.version===matched) || {};
+  const erow = (cur.entered_versions||[]).find(v=>v.version===matched) || {};
+  const dbv = f => erow[f] != null && String(erow[f]).trim() !== '' ? erow[f] : vrow[f];
+  for(const [f, id] of Object.entries(VFIELDS)){
+    let v = dbv(f); if(f==='valid_until' && v) v = String(v).slice(0,10);
+    setVal(id, v);
+  }
+  document.getElementById('dd').value = /^\d{4}-\d{2}-\d{2}$/.test(matched) ? matched
+    : document.getElementById('dd').value;
+  document.getElementById('windows').innerHTML = '';
+  const wf = cur.window_funding || [];
+  const dbWin = (cur.windows||[]).filter(w=>w.version===matched);
+  (dbWin.length ? dbWin : [{}]).forEach(w => addWindow({...w,
+    funding: wf.filter(f=>f.version===matched && f.window_name===w.window_name)
+      .map(f=>({fund_code: f.fund_code, financier: f.financier, amount: f.amount_usd}))}));
+  document.getElementById('vfund').innerHTML = '';
+  const dbVF = (cur.version_funding||[]).filter(f=>f.version===matched);
+  (dbVF.length ? dbVF : [null]).forEach(f => addVFund(f
+    ? {fund_code: f.fund_code, financier: f.financier, amount: f.total_usd} : undefined));
+  renderDiff();
+}
+
+// ------------------------------------------------------------- collect/save
+function collectFunding(container){
+  return [...container.querySelectorAll('.fundrow')].map(div => ({
+    fund_code: div.querySelector('.ff').value.trim().toLowerCase(),
+    financier: div.querySelector('.fi').value.trim() || null,
+    amount_usd: parseFloat(div.querySelector('.fa').value) || null,
+  })).filter(f => f.fund_code && f.amount_usd != null);
+}
 function collect(){
-  const dcv = document.getElementById('dc').value;
-  const iso = dcv === 'NEW'
-    ? document.getElementById('dcIso').value.toUpperCase() : dcv;
   const windows = [...document.querySelectorAll('#windows .wrow')].map(div => ({
     window_name: div.querySelector('.wn').value.trim(),
     basis: div.querySelector('.wb').value || null,
-    trigger_statement: div.querySelector('.wt').value.trim().slice(0,600) || null,
-    budget_usd: parseFloat(div.querySelector('.wu').value) || null,
+    trigger_statement: div.querySelector('.wt').value.trim() || null,
     monitoring_period: div.querySelector('.wm').value.trim() || null,
+    funding: collectFunding(div.querySelector('.wfund')),
   })).filter(w => w.window_name);
   return {
-    country_iso3: iso,
+    country_iso3: isoNow(),
     hazard: document.getElementById('dh').value,
     version: document.getElementById('dd').value,
-    doc_title: document.getElementById('dt').value.trim() || null,
-    doc_url: document.getElementById('du').value.trim() || null,
-    endorsed_by: document.getElementById('de').value || null,
-    valid_until: document.getElementById('dv').value || null,
-    valid_until_source: document.getElementById('dvs').value || null,
-    prearranged_usd_doc: parseFloat(document.getElementById('dp').value) || null,
-    supersedes: document.getElementById('ds').value.trim() || null,
-    note: document.getElementById('dn').value.trim() || null,
-    windows,
+    entered_by: document.getElementById('by').value.trim(),
+    version_fields: Object.fromEntries(
+      Object.entries(VFIELDS).map(([f, id]) => [f, formVal(id)])),
+    windows: windows.map(({funding, ...w}) => w),
+    window_funding: windows.flatMap(w => w.funding.map(f => ({...f, window_name: w.window_name}))),
+    version_funding: collectFunding(document.getElementById('vfund'))
+      .map(({amount_usd, ...f}) => ({...f, total_usd: amount_usd})),
   };
 }
 
-function classify(){
-  const e = collect();
-  const v = document.getElementById('verdict');
-  if(!/^[A-Z]{3}$/.test(e.country_iso3) || !e.version){
-    v.innerHTML = `<div class='dummy-banner' style='margin:10px 0'>need a 3-letter country code and a version date first</div>`;
-    return;
+async function save(){
+  const p = collect();
+  const out = document.getElementById('result');
+  if(!/^[A-Z]{3}$/.test(p.country_iso3) || !p.version){
+    out.innerHTML = `<div class='dummy-banner'>need a 3-letter country code and a version date</div>`; return;
   }
-  const fw = G.frameworks.find(f=>f.iso3===e.country_iso3 && f.hazard===e.hazard);
-  let verdict, isNew = false;
-  if(curHash && fileHashHits[curHash]) {
-    verdict = `<b>Already ingested — identical file.</b> This exact document was
-      previously processed as <code>${fileHashHits[curHash]}</code>. Nothing to do
-      (file anyway if that was a mistake).`;
-    isNew = true;
-  } else if(fw && fw.versions.some(x => Math.abs(new Date(x) - new Date(e.version)) < 45*864e5)) {
-    const hit = fw.versions.find(x => Math.abs(new Date(x) - new Date(e.version)) < 45*864e5);
-    verdict = `<b>Already in the registry.</b> This looks like
-      <code>${fw.label}</code> version <code>${hit}</code> (endorsement date within
-      45 days). Filing the entry will still work — it enriches that version with the
-      extracted fields (trigger statements, validity, endorsement).`;
-    isNew = true;
-  } else if(fw) {
-    const latest = fw.versions[fw.versions.length-1] || null;
-    verdict = `<b>New version of an existing framework:</b> <code>${fw.label}</code>
-      — this becomes version <code>${e.version}</code>, superseding
-      <code>${latest||'—'}</code>.`;
-    isNew = true;
-    if(!e.supersedes && latest) e.supersedes = latest;
-  } else {
-    verdict = `<b>Brand-new framework:</b> no ${e.hazard} framework exists for
-      ${e.country_iso3} — this registers the framework AND its first version
-      <code>${e.version}</code>.`;
-    isNew = true;
+  if(!p.entered_by){
+    out.innerHTML = `<div class='dummy-banner'>fill “Entered by” — every change is audited</div>`; return;
   }
-  if(curHash) {
-    fileHashHits[curHash] = `${e.country_iso3}/${e.hazard}/${e.version}`;
-    localStorage.setItem('ingestHashes', JSON.stringify(fileHashHits));
+  localStorage.setItem('enteredBy', p.entered_by);
+  if(curHash){ fileHashHits[curHash] = `${p.country_iso3}/${p.hazard}/${p.version}`;
+    localStorage.setItem('ingestHashes', JSON.stringify(fileHashHits)); }
+  out.innerHTML = `<div class='hint'>saving…</div>`;
+  try {
+    const r = await api('/entry', {method:'POST',
+      headers:{'content-type':'application/json'}, body: JSON.stringify(p)});
+    const res = await r.json();
+    if(!r.ok || !res.ok) throw new Error(res.error || r.status);
+    const kb = G.frameworks.find(f=>f.iso3===p.country_iso3 && f.hazard===p.hazard);
+    out.innerHTML = `<div class='card' style='border-color:#1c6b31; background:#eef7f0'>
+      <b>Saved.</b> ${res.changes} field change(s) written to <code>aa.entered_*</code>
+      (${res.saved.windows} window(s), ${res.saved.window_funding} window-funding,
+      ${res.saved.version_funding} fund-total row(s)), all audited as
+      “${esc(p.entered_by)}”. The registry (<code>aa.framework_version</code>) and this
+      site pick it up on the next ingest — entered values win.</div>`;
+    const KBHAZ = {storm:'tropical-cyclone', flood:'flood', drought:'drought',
+                   cholera:'cholera', plague:'plague', locusts:'locusts'};
+    const kbBody = [`country: ${p.country_iso3}`, `hazard: ${KBHAZ[p.hazard]||p.hazard}`,
+      `version: ${p.version}`, `doc: ${p.version_fields.doc_url||''}`,
+      kb && kb.kb ? `slug: ${kb.kb}` : 'slug:', '', `title: ${p.version_fields.doc_title||''}`].join('\n');
+    const kbbtn = document.getElementById('kbbtn');
+    kbbtn.style.display = '';
+    kbbtn.href = 'https://github.com/OCHA-DAP/ds-knowledge-base/issues/new?title=' +
+      encodeURIComponent(`[ingest-doc] ${p.country_iso3}/${p.hazard} ${p.version}`) +
+      '&body=' + encodeURIComponent(kbBody);
+    refreshCurrent();
+  } catch(err) {
+    out.innerHTML = `<div class='dummy-banner'>save failed: ${esc(err.message)}</div>`;
   }
-  const yaml = JSON.stringify(e, null, 2);
-  const issueBody = ['```yaml', yaml, '```', '',
-    e.doc_url ? '' : '_No public URL — attach the PDF to this issue and paste its attachment URL into doc_url (edit the yaml above; edits re-run the bridge)._',
-    '_Filed from the ingestion page. The framework-entry bridge applies this to the entered-registry CSVs as a PR; merging = human confirmation._',
-  ].join('\n');
-  const entryUrl = 'https://github.com/OCHA-DAP/ds-aa-tracking/issues/new?' +
-    'title=' + encodeURIComponent(`[framework-entry] ${e.country_iso3}/${e.hazard} ${e.version}`) +
-    '&body=' + encodeURIComponent(issueBody);
-  const KBHAZ = {storm: 'tropical-cyclone', flood: 'flood', drought: 'drought',
-                 cholera: 'cholera', plague: 'plague', locusts: 'locusts'};
-  const kbBody = [
-    `country: ${e.country_iso3}`, `hazard: ${KBHAZ[e.hazard] || e.hazard}`,
-    `version: ${e.version}`, `doc: ${e.doc_url||''}`,
-    fw && fw.kb ? `slug: ${fw.kb}` : 'slug:', '', `title: ${e.doc_title||''}`, '',
-    '_Filed from the ds-aa-tracking ingestion page; the ingest-doc bridge dispatches kb-ingest (Claude drafts the KB framework page as a PR)._',
-  ].join('\n');
-  const kbUrl = 'https://github.com/OCHA-DAP/ds-knowledge-base/issues/new?' +
-    'title=' + encodeURIComponent(`[ingest-doc] ${e.country_iso3}/${e.hazard} ${e.version}`) +
-    '&body=' + encodeURIComponent(kbBody);
-  const tooLong = entryUrl.length > 7800;
-  const btns = `<div style='margin:10px 0; display:flex; gap:10px; flex-wrap:wrap; align-items:center'>
-    ${tooLong
-      ? `<span class='muted'>entry too large for a pre-filled link — download the JSON and paste it into a <code>[framework-entry]</code> issue inside a <code>\`\`\`yaml</code> fence</span>`
-      : `<a class='btn-main' href='${entryUrl}' target='_blank'>File entry in this repo →</a>`}
-    <a class='btn-sec' href='${kbUrl}' target='_blank'>Also draft KB page →</a>
-    <a class='btn-sec' href='#' onclick='downloadJson(); return false'>Download JSON</a>
-    <span class='muted'>filing needs GitHub write access; both paths end in a PR a human reviews</span>
-   </div>`;
-  v.innerHTML = `<div class='card' style='margin:10px 0'>${verdict}</div>` + btns;
-  const p = document.getElementById('payload');
-  p.style.display='block';
-  p.textContent = yaml;
 }
 
 function downloadJson(){
-  const blob = new Blob([JSON.stringify(collect(), null, 2)], {type:'application/json'});
+  const p = collect();
+  const blob = new Blob([JSON.stringify(p, null, 2)], {type:'application/json'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  const e = collect();
-  a.download = `framework-entry-${e.country_iso3||'XXX'}-${e.hazard}-${e.version||'undated'}.json`;
+  a.download = `framework-entry-${p.country_iso3||'XXX'}-${p.hazard}-${p.version||'undated'}.json`;
   a.click();
 }
 </script>
@@ -1570,10 +1521,14 @@ function downloadJson(){
 @keyframes spin { to { transform:rotate(360deg); } }
 #spin { display:none; }
 .wrow { border:1px solid #d8dee6; border-radius:8px; padding:10px 12px; margin:8px 0; }
-.btn-main { display:inline-block; padding:9px 18px; border-radius:6px; background:#1f2a44;
-  color:#fff; text-decoration:none; }
-.btn-sec { display:inline-block; padding:9px 14px; border-radius:6px; border:1.5px solid #1f2a44;
+.fundrow { margin:4px 0; }
+.btn-sec { display:inline-block; padding:8px 14px; border-radius:6px; border:1.5px solid #1f2a44;
   color:#1f2a44; text-decoration:none; }
+.difftable { border-collapse:collapse; margin:8px 0; font-size:12.5px; }
+.difftable th, .difftable td { border:1px solid #d8dee6; padding:5px 10px; text-align:left;
+  max-width:340px; overflow-wrap:break-word; }
+.difftable .cv { background:#fdf6ec; }
+.difftable .nv { background:#eef7f0; }
 </style>"""
     body = (body
             .replace("__DATA__", json.dumps(data))
@@ -1581,7 +1536,12 @@ function downloadJson(){
             .replace("__TOKEN__", extract_token)
             .replace("__DASH_CSS__", DASH_CSS)
             .replace("__FORM_CSS__", FORM_CSS))
-    page("ingest-doc.html", "Document ingestion", body)
+    page("entry.html", "Framework data entry", body)
+    redirect = ("<meta http-equiv='refresh' content='0; url=entry.html'>"
+                "<p>Moved to <a href='entry.html'>entry.html</a>.</p>")
+    page("ingest-doc.html", "Moved — framework data entry", redirect)
+    page("form.html", "Moved — framework data entry", redirect)
+
 
 
 # ------------------------------------------------------------------ status entry
@@ -1616,8 +1576,7 @@ def build_status_form(page, d):
 <div class='card'><b>Framework status update (demo)</b> — the quick way to record
 where a framework is in its lifecycle. One click per state; “Save” previews the
 <code>aa.framework_status</code> row (nothing is written). Activation events
-themselves are entered via <a href='ingest-doc.html'>document ingestion</a> /
-the <a href='form.html'>form</a> — this page only moves the status.</div>
+themselves are entered via the <a href='entry.html'>data entry page</a> — this page only moves the status.</div>
 <div class='form-card'>
  <div class='frow'>
   <label>Framework <select id='fw' onchange='fwSel()'></select></label>
@@ -1689,8 +1648,7 @@ def build_all(e, page, tbl):
     links = build_framework_pages(page, tbl, d)
     build_hub(page, d, links)
     build_hierarchy(page, d, e)
-    build_entry_form(page, d, e)
-    build_ingest_doc(page, d)
+    build_entry(page, d, e)
     build_status_form(page, d)
     import landing
     landing.build_landing(page, d, e)

@@ -24,7 +24,6 @@ from ds_aa_tracking.parsers import parse_all  # noqa: E402
 from ds_aa_tracking.versions import (  # noqa: E402
     attribute_versions,
     build_framework_version,
-    entered_windows,
     historical_activation_events,
 )
 
@@ -98,10 +97,19 @@ def kb_crosswalk(engine, tables):
     ]
     reg["in_kb"] = reg["kb_framework"].notna()
 
+    # actual_activation is per-window since the 2026-09 cutover; the matcher works
+    # at event grain, so collapse windows back to the event first
     acts = pd.read_sql(
-        """SELECT a.kb_framework, a.event_date, a.country_iso3, a.kb_version,
+        """WITH ev AS (
+               SELECT kb_framework, event_date,
+                      max(country_iso3) AS country_iso3, max(version) AS kb_version,
+                      sum(released_usd) AS released_usd
+               FROM aa.actual_activation
+               GROUP BY kb_framework, event_date
+           )
+           SELECT a.kb_framework, a.event_date, a.country_iso3, a.kb_version,
                   a.released_usd, l.application_code
-           FROM aa.actual_activation a
+           FROM ev a
            LEFT JOIN aa.activation_allocation l
              ON l.kb_framework = a.kb_framework AND l.event_date = a.event_date""",
         engine,
@@ -194,8 +202,14 @@ def split_activations(tables, pf_to_fund, engine):
     Framework activations get window_name from the matched KB activation, else
     'unspecified' (curation queue) — every framework activation has a window."""
     ev = tables.pop("activation_event")
+    # per-window rows since the 2026-09 cutover: a multi-window event yields
+    # 'W1 + W2' at this (event-grain) table's window slot
     win = pd.read_sql(
-        "SELECT kb_framework, event_date, window_name FROM aa.actual_activation", engine
+        """SELECT kb_framework, event_date,
+                  string_agg(DISTINCT window_name, ' + ' ORDER BY window_name)
+                      AS window_name
+           FROM aa.actual_activation
+           GROUP BY kb_framework, event_date""", engine
     )
     win_map = {(r["kb_framework"], r["event_date"]): r["window_name"]
                for _, r in win.iterrows()}
@@ -332,6 +346,21 @@ LEGACY_OBJECTS = [
 ]
 
 
+def ensure_durable(engine):
+    """Create the entry-path tables if missing and return current entered data.
+
+    These are written by the chd-ds-aa-extract proxy (browser entry page) and
+    are NEVER dropped or truncated here — they are the durable human-entry
+    record the full refresh merges from."""
+    with engine.begin() as conn:
+        for ddl in schema.DURABLE_TABLES.values():
+            conn.execute(sa.text(ddl))
+    entered = {}
+    for name in schema.DURABLE_TABLES:
+        entered[name] = pd.read_sql(f"SELECT * FROM aa.{name}", engine)
+    return entered
+
+
 def load(engine, tables):
     with engine.begin() as conn:
         for name, ddl in schema.VIEWS.items():
@@ -394,9 +423,9 @@ def main():
     pf_to_fund = seed_fund(engine, tables)
     split_activations(tables, pf_to_fund, engine)
     print("Building framework versions + attributing facts…")
-    fv = build_framework_version(tables)
+    entered = ensure_durable(engine)
+    fv = build_framework_version(tables, entered["entered_version"])
     tables["framework_version"] = fv
-    tables["entered_window"] = entered_windows()
     # registry KB link: the performance crosswalk only carries current versions —
     # any framework with a KB version page counts as in_kb
     reg = tables["framework_registry"]

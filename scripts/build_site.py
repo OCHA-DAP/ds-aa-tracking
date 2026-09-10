@@ -83,7 +83,7 @@ NAV = """
   <a href="overview.html">Overview</a>
   <a href="dashboards.html">Dashboards</a>
   <a href="hierarchy.html">Explorer</a>
-  <a href="ingest-doc.html">Data entry</a>
+  <a href="entry.html">Data entry</a>
   <a href="tables.html">Tracking tables</a>
   <a href="schema.html">DB schema</a>
   <a href="reconciliation.html">Reconciliation</a>
@@ -371,7 +371,7 @@ activation_funding · report_channel_inclusion · plan_inclusion · start_networ
 cerf_application_people · cerf_application_report · cerf_allocation_extra ·
 cerf_project_supplement · cerf_cva_history · emergency_type_override<br>
 <span class='badge b-kb'>ds-knowledge-base</span>
-trigger_source_crosswalk (framework_version_map = compat view) · window · simulated_activation · funding_breakdown ·
+window · simulated_activation · funding_breakdown · version_performance_reported (framework_version_map = compat view) ·
 actual_activation · activation_allocation<br>
 <span class='badge b-mirror'>ds-cerf-supplement</span>
 cerf_allocation · cerf_project · cerf_project_sector · cerf_project_country ·
@@ -637,7 +637,7 @@ TARGET_NODES = [
     ("fund", "new", "fund_code — OCHA pooled funds only"),
     ("framework_registry", "new", "country_iso3 · hazard (identity only)"),
     ("framework_version", "new", "+ version — THE unified registry"),
-    ("trigger_source_crosswalk", "kb", "gsheet_tab · excel_fv · *_reported"),
+    ("version_performance_reported", "kb", "gsheet_tab · excel_fv · *_reported"),
     ("window", "kb", "+ window_name · basis · trigger_statement"),
     ("v_version_funding", "future", "window × fund_code × agency × sector"),
     ("activation", "new", "+ event_date (partial ISO → datetime) · event_label"),
@@ -649,7 +649,7 @@ TARGET_NODES = [
 
 TARGET_EDGES = [
     ("framework_version", "framework_registry", "", "many", "one", False),
-    ("trigger_source_crosswalk", "framework_version", "", "one0", "one", False),
+    ("version_performance_reported", "framework_version", "", "one0", "one", False),
     ("window", "framework_version", "min 1 per version (single-window explicit)", "many", "one", False),
     ("v_version_funding", "window", "window x fund x agency x sector", "many", "one", False),
     ("v_version_funding", "fund", "fund_code", "many", "one", False),
@@ -666,7 +666,7 @@ TARGET_FULL_NODES = [
     ("fund", "new", "fund_code — OCHA pooled funds only"),
     ("framework_registry", "new", "country_iso3 · hazard (identity only)"),
     ("framework_version", "new", "+ version = an ENDORSED doc · endorsed_by"),
-    ("trigger_source_crosswalk", "kb", "gsheet_tab · excel_fv · *_reported"),
+    ("version_performance_reported", "kb", "gsheet_tab · excel_fv · *_reported"),
     ("window", "kb", "+ window_name · basis · trigger_statement"),
     ("window_month", "future", "+ month (monitoring period)"),
     ("version_funding", "future", "window × fund × agency × sector · provenance"),
@@ -702,7 +702,7 @@ TARGET_FULL_NODES = [
 
 TARGET_FULL_EDGES = [
     ("framework_version", "framework_registry", "", "many", "one", False),
-    ("trigger_source_crosswalk", "framework_version", "", "one0", "one", False),
+    ("version_performance_reported", "framework_version", "", "one0", "one", False),
     ("window", "framework_version", "", "many", "one", False),
     ("window_month", "window", "", "many", "one", False),
     ("version_funding", "window", "", "many", "one", False),
@@ -859,7 +859,7 @@ def build_roadmap_page():
 
 
 KB_TABLES = [
-    "trigger_source_crosswalk", "window", "simulated_activation", "funding_breakdown",
+    "version_performance_reported", "window", "simulated_activation", "funding_breakdown",
     "actual_activation", "activation_allocation",
 ]
 MIRROR_TABLES = [
@@ -901,11 +901,11 @@ ERD_NODES = [
     ("cerf_allocation_extra", "new", "application_code"),
     ("cerf_project_supplement", "new", "project_code"),
     ("emergency_type_override", "new", "application_code"),
-    ("trigger_source_crosswalk", "kb", "kb_framework · kb_version · country_iso3 (source codes)"),
-    ("window", "kb", "+ window_name"),
+    ("version_performance_reported", "kb", "country_iso3 · hazard · version (reported RP/prob + source tabs)"),
+    ("window", "kb", "country_iso3 · hazard · version · window_name"),
     ("simulated_activation", "kb", "+ window_name · event_year"),
     ("funding_breakdown", "kb", "+ window · fund · agency · sector"),
-    ("actual_activation", "kb", "kb_framework · event_date"),
+    ("actual_activation", "kb", "kb_framework · event_date · window_name"),
     ("activation_allocation", "kb", "kb_framework+event_date ⇄ app_code"),
     ("cerf_allocation", "mirror", "application_code"),
     ("cerf_project", "mirror", "project_code"),
@@ -947,12 +947,12 @@ ERD_EDGES = [
     ("activation_funding", "activation", "", "many", "one", False),
     ("activation_funding", "fund", "fund_code", "many", "one", False),
     ("report_channel_inclusion", "framework_version", "", "many0", "one0", False),
-    ("framework_version", "trigger_source_crosswalk", "kb_framework · kb_version", "one0", "one0", False),
-    ("window", "trigger_source_crosswalk", "", "many", "one", False),
+    ("version_performance_reported", "framework_version", "country_iso3 · hazard · version", "one0", "one0", False),
+    ("window", "framework_version", "country_iso3 · hazard · version", "many", "one", False),
     ("simulated_activation", "window", "", "many", "one", False),
-    ("funding_breakdown", "trigger_source_crosswalk", "", "many", "one", False),
-    ("actual_activation", "trigger_source_crosswalk", "kb_framework", "many0", "one0", False),
-    ("activation", "actual_activation", "kb_framework+event_date", "many0", "one0", False),
+    ("funding_breakdown", "framework_version", "", "many", "one", False),
+    ("actual_activation", "framework_version", "country_iso3 · hazard · version", "many0", "one0", False),
+    ("activation", "actual_activation", "kb_framework+event_date+window", "many0", "one0", False),
     ("activation_funding", "v_allocation", "allocation_code", "many0", "one0", False),
     ("activation_allocation", "actual_activation", "FK", "many0", "one0", True),
     ("activation_allocation", "cerf_allocation", "FK", "many0", "one0", True),
@@ -1116,7 +1116,7 @@ def build_schema_page(e):
     )
 
     def owner_of(t):
-        if t in trk_schema.TABLES:
+        if t in trk_schema.TABLES or t in trk_schema.DURABLE_TABLES:
             return "ds-aa-tracking"
         if t in KB_TABLES:
             return "ds-knowledge-base"
@@ -1147,12 +1147,17 @@ def build_schema_page(e):
         "<code>framework_version</code> (the approved unit) — the registry holds only "
         "identity and descriptive attributes; country-level context tables (boxed) "
         "join on country alone. "
-        "<b>Version unification (done 2026-09):</b> <code>framework_version</code> is "
-        "THE version registry. The KB's old <code>framework_version_map</code> table "
-        "is now <code>trigger_source_crosswalk</code> — only the gsheet/Excel source "
-        "codes and reported cross-checks for trigger performance — with "
-        "<code>framework_version_map</code> kept as a compatibility view until "
-        "remaining readers repoint (phase 3).</p>"
+        "<b>Version unification + crosswalk removal (done 2026-09):</b> "
+        "<code>framework_version</code> is THE version registry and "
+        "<code>window</code> / <code>actual_activation</code> key on it DIRECTLY "
+        "(country_iso3 · hazard · version) — the crosswalk table is gone; reported "
+        "trigger-performance headlines live in "
+        "<code>version_performance_reported</code>, and "
+        "<code>framework_version_map</code> survives only as a compatibility view "
+        "until remaining readers repoint (phase 3). <b>Entry path:</b> the "
+        "<code>entered_*</code> tables (durable, browser-written via the entry "
+        "page's proxy, every change audited in <code>entry_audit</code>) are merged "
+        "by the ingest — entered values win.</p>"
         f"<div class='scroll' style='max-height:none'>{build_erd()}</div></div>"
     )
     tables = sorted(cols["table_name"].unique(), key=lambda t: (owner_of(t) != "ds-aa-tracking", t))

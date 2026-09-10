@@ -715,7 +715,7 @@ def build_landing(page, d, e):
 <div class='tiles' style='margin-top:18px'>
  <div class='tile'><a href='dashboards.html'><b>Dashboards</b></a><div class='l'>funding · allocations · delivery</div></div>
  <div class='tile'><a href='hierarchy.html'><b>Portfolio explorer</b></a><div class='l'>framework › version › window › activation</div></div>
- <div class='tile'><a href='ingest-doc.html'><b>Ingest a document</b></a><div class='l'>upload an endorsed framework PDF</div></div>
+ <div class='tile'><a href='entry.html'><b>Enter / ingest a framework</b></a><div class='l'>upload a PDF or fill the form — writes to the DB</div></div>
  <div class='tile'><a href='overview.html'><b>Data &amp; schema review</b></a><div class='l'>tables · reconciliation · roadmap</div></div>
 </div>
 <script>window.L = {json.dumps(countries, default=str)};

@@ -47,26 +47,16 @@ TABLES = {
             doc_title text,
             doc_url text,                  -- endorsed framework document (PDF)
             analysis_ref text,             -- trigger analysis, e.g. repo@branch:path
-            source text NOT NULL,          -- kb-frontmatter | sheet-revision | ocha-web | pa-monorepo
+            window_rollup text,            -- how window funding rolls up to the total:
+                                           -- additive (all windows can fire; total = sum)
+                                           -- exclusive (either/or; each window can draw
+                                           --   up to the shared pot; total = max)
+                                           -- capped (windows sum past the envelope;
+                                           --   first to fire draws down)
+            source text NOT NULL,          -- kb-frontmatter | sheet-revision | ocha-web | pa-monorepo | entered
             note text,
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard, version)
-        )""",
-    "entered_window": """
-        CREATE TABLE IF NOT EXISTS aa.entered_window (
-            country_iso3 text NOT NULL,
-            hazard text NOT NULL,
-            version text NOT NULL,         -- framework_version this window belongs to
-            window_name text NOT NULL,
-            basis text,                    -- observational | forecast | mixed
-            trigger_statement text,        -- plain-text trigger, from the endorsed doc
-            budget_usd numeric,            -- window share of the version budget
-            monitoring_period text,
-            note text,
-            entered_by text,               -- GitHub login of the entry-issue author
-            entered_on date,
-            updated_at timestamptz NOT NULL DEFAULT now(),
-            PRIMARY KEY (country_iso3, hazard, version, window_name)
         )""",
     "framework_status": """
         CREATE TABLE IF NOT EXISTS aa.framework_status (
@@ -398,6 +388,82 @@ TABLES = {
         )""",
 }
 
+# ------------------------------------------------------------------ durable
+# Entry-path tables: written by the chd-ds-aa-extract proxy (browser entry page)
+# and READ by the ingest, which merges them (entered values WIN over KB/sweeps —
+# "versions ENTERED, not inferred"). The full-refresh load creates them if
+# missing but NEVER drops or truncates them: they are the durable record of
+# human entry, not derived data.
+DURABLE_TABLES = {
+    "entered_version": """
+        CREATE TABLE IF NOT EXISTS aa.entered_version (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,         -- date label YYYY[-MM[-DD]]
+            doc_title text,
+            doc_url text,
+            endorsed_by text,              -- erc | cerf_secretariat
+            valid_until date,
+            valid_until_source text,       -- doc-stated | convention | inherited
+            window_rollup text,            -- additive | exclusive | capped
+            supersedes text,
+            note text,
+            entered_by text NOT NULL,
+            entered_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (country_iso3, hazard, version)
+        )""",
+    "entered_window": """
+        CREATE TABLE IF NOT EXISTS aa.entered_window (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,
+            window_name text NOT NULL,
+            basis text,                    -- observational | forecast | mixed
+            trigger_statement text,        -- plain-text trigger, from the endorsed doc
+            monitoring_period text,
+            note text,
+            entered_by text NOT NULL,
+            entered_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (country_iso3, hazard, version, window_name)
+        )""",
+    "entered_window_funding": """
+        CREATE TABLE IF NOT EXISTS aa.entered_window_funding (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,
+            window_name text NOT NULL,
+            fund_code text NOT NULL,       -- cerf | cbpf-<iso3> | rhpf-* | cofinancing
+            financier text,                -- named source when fund_code='cofinancing'
+            amount_usd numeric,            -- what this window can draw from this fund
+            entered_by text NOT NULL,
+            entered_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (country_iso3, hazard, version, window_name, fund_code)
+        )""",
+    "entered_version_funding": """
+        CREATE TABLE IF NOT EXISTS aa.entered_version_funding (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,
+            fund_code text NOT NULL,
+            financier text,
+            total_usd numeric NOT NULL,    -- EXPLICIT total per fund, entered not derived
+            entered_by text NOT NULL,
+            entered_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (country_iso3, hazard, version, fund_code)
+        )""",
+    "entry_audit": """
+        CREATE TABLE IF NOT EXISTS aa.entry_audit (
+            id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            at timestamptz NOT NULL DEFAULT now(),
+            entered_by text NOT NULL,
+            table_name text NOT NULL,
+            row_key text NOT NULL,         -- 'ISO/hazard/version[/window[/fund]]'
+            field text NOT NULL,
+            old_value text,
+            new_value text
+        )""",
+}
+
 INDEXES = [
     "CREATE INDEX IF NOT EXISTS cerf_subgrant_project_idx ON aa.cerf_subgrant (project_code)",
     "CREATE INDEX IF NOT EXISTS cerf_subgrant_app_idx ON aa.cerf_subgrant (application_code)",
@@ -575,5 +641,45 @@ VIEWS = {
         FROM aa.cerf_allocation_extra x
         JOIN aa.cerf_allocation c ON c.application_code = x.application_code
         WHERE x.is_aa_reported IS DISTINCT FROM c.aa_keyword
+    """,
+    # window funding vs the EXPLICIT per-fund total, reconciled under the
+    # version's rollup mode (additive: sum; exclusive: each window can draw the
+    # shared pot, so max; capped: windows sum past the envelope by design)
+    "v_trk_funding_rollup": """
+        CREATE OR REPLACE VIEW aa.v_trk_funding_rollup AS
+        WITH wf AS (
+            SELECT country_iso3, hazard, version, fund_code,
+                   sum(amount_usd) AS window_sum,
+                   max(amount_usd) AS window_max,
+                   count(*) AS n_windows
+            FROM aa.entered_window_funding
+            GROUP BY country_iso3, hazard, version, fund_code
+        )
+        SELECT country_iso3, hazard, version, fund_code,
+               fv.window_rollup,
+               vf.total_usd AS stated_total,
+               wf.window_sum, wf.window_max, wf.n_windows,
+               CASE fv.window_rollup
+                   WHEN 'additive' THEN wf.window_sum
+                   WHEN 'exclusive' THEN wf.window_max
+                   WHEN 'capped' THEN LEAST(wf.window_sum, vf.total_usd)
+               END AS rollup_total,
+               CASE
+                   WHEN vf.total_usd IS NULL THEN 'NO_STATED_TOTAL'
+                   WHEN wf.window_sum IS NULL THEN 'NO_WINDOW_FUNDING'
+                   WHEN fv.window_rollup IS NULL THEN 'NO_ROLLUP_MODE'
+                   WHEN fv.window_rollup = 'additive'
+                        AND abs(wf.window_sum - vf.total_usd)
+                            <= greatest(1000, 0.01 * vf.total_usd) THEN 'OK'
+                   WHEN fv.window_rollup = 'exclusive'
+                        AND abs(wf.window_max - vf.total_usd)
+                            <= greatest(1000, 0.01 * vf.total_usd) THEN 'OK'
+                   WHEN fv.window_rollup = 'capped'
+                        AND wf.window_sum >= vf.total_usd THEN 'OK'
+                   ELSE 'MISMATCH'
+               END AS rollup_check
+        FROM aa.entered_version_funding vf
+        FULL JOIN wf USING (country_iso3, hazard, version, fund_code)
+        LEFT JOIN aa.framework_version fv USING (country_iso3, hazard, version)
     """,
 }
