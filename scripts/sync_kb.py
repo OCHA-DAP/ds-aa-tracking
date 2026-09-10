@@ -7,7 +7,10 @@ deliberately narrow and NON-destructive —
   - UPDATES only kb-lineage fields (kb_framework, kb_status) on existing rows,
     plus fills doc_title / doc_url / valid_until(+source) / supersedes /
     prearranged_usd_doc ONLY where the DB value is NULL — human-entered and
-    admin-page values always win;
+    admin-page values always win. This holds regardless of row source: rows the
+    proxy created (source='entered') keep every non-null value; filling a NULL
+    is not an overwrite, and linking an entered row to its KB page via
+    kb_framework/kb_status is lineage, not content;
   - never deletes anything.
 Field-level changes are audited to aa.entry_audit as entered_by='sync-kb'.
 
