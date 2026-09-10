@@ -399,11 +399,11 @@ def assemble(d, e):
     cur = d["current"].sort_values("country_name")
     ver = pd.read_sql("SELECT * FROM aa.framework_version", e)
     win = pd.read_sql(
-        """SELECT w.kb_framework, w.kb_version, w.country_iso3, w.window_name, w.all_in,
+        """SELECT w.country_iso3, w.hazard, w.version, w.window_name, w.all_in,
                   w.basis, w.allocation_usd, p.n_activations AS sim_activations,
                   p.analysis_years, p.return_period, p.activation_prob
            FROM aa.window w LEFT JOIN aa.v_window_performance p
-             USING (kb_framework, kb_version, country_iso3, window_name)""", e)
+             USING (country_iso3, hazard, version, window_name)""", e)
     fb = pd.read_sql("SELECT * FROM aa.funding_breakdown WHERE amount_usd IS NOT NULL", e)
     psb = pd.read_sql(
         """SELECT country_iso3, hazard, version, window_name, agency, sector, amount_usd
@@ -461,15 +461,15 @@ def assemble(d, e):
             else:
                 months_src = mp.get("source")
             # backtested windows for this version
-            w_v = win[(win["country_iso3"] == c) & (win["kb_framework"] == (kb_fw or "—"))
-                      & kb_key_match(win["kb_version"], v.version)]
+            w_v = win[(win["country_iso3"] == c) & (win["hazard"] == h)
+                      & kb_key_match(win["version"], v.version)]
             windows = [{"name": w.window_name, "basis": _s(w.basis), "all_in": _f(w.all_in),
                         "budget": _num(w.allocation_usd), "rp": _num(w.return_period),
                         "prob": _num(w.activation_prob), "sim": _num(w.sim_activations),
                         "years": _num(w.analysis_years)} for w in w_v.itertuples()]
             # budget breakdown: KB funding_breakdown for this version, else sheet sector budget
-            f_v = fb[(fb["country_iso3"] == c) & (fb["kb_framework"] == (kb_fw or "—"))
-                     & (fb["kb_version"] == v.version)]
+            f_v = fb[(fb["country_iso3"] == c) & (fb["hazard"] == h)
+                     & (fb["version"] == v.version)]
             fund_src = "kb"
             if not len(f_v):
                 p_v = psb[(psb["country_iso3"] == c) & (psb["hazard"] == h)
