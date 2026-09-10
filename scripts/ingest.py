@@ -1,9 +1,16 @@
-"""Parse all tracking workbooks and load the aa.* tracking tables (dev DB).
+"""RETIRED (2026-09-10): the migration-era workbook full-refresh loader.
 
-Full-refresh: every ds-aa-tracking-owned table is truncated and reloaded in one
-transaction. KB-owned and mirror tables are read for crosswalking but never written.
+The dev DB is now the single source of truth — there will never be another
+spreadsheet ingest, and a full refresh would ERASE direct DB edits made through
+the entry/admin pages. This script is kept for archaeology only and refuses to
+run without --i-know-this-wipes-tables.
 
-Usage: uv run python scripts/ingest.py
+The living replacements:
+  scripts/ensure_schema.py   idempotent CREATE IF NOT EXISTS + additive ALTERs + views
+  scripts/sync_kb.py         upsert-only sync of NEW KB framework pages into the registry
+  proxy POST /entry          browser entry -> entered_* (+ synchronous registry merge)
+
+Usage (historical): uv run python scripts/ingest.py --i-know-this-wipes-tables
 """
 
 import os
@@ -401,6 +408,13 @@ def _table_columns(conn, table):
 
 
 def main():
+    if "--i-know-this-wipes-tables" not in sys.argv:
+        sys.exit(
+            "REFUSING: the workbook full-refresh is retired (DB-first, 2026-09-10) —\n"
+            "it would DROP the aa tables and erase direct DB edits.\n"
+            "Use scripts/ensure_schema.py (schema+views) and scripts/sync_kb.py\n"
+            "(new KB pages -> registry). To run anyway: --i-know-this-wipes-tables"
+        )
     print("Parsing workbooks…")
     tables = parse_all()
     hist_ev = historical_activation_events(tables["activation_event"])

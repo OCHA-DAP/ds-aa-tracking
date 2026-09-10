@@ -464,6 +464,15 @@ DURABLE_TABLES = {
         )""",
 }
 
+# ------------------------------------------------------------ additive migrations
+# DB-first era (2026-09-10): the dev DB is the single source of truth — nothing
+# ever DROPs or TRUNCATEs these tables again. Schema evolution happens here as
+# append-only ALTER statements (idempotent: use IF NOT EXISTS / IF EXISTS forms),
+# applied by ensure_schema() after the CREATE IF NOT EXISTS pass.
+ADDITIVE_MIGRATIONS = [
+    # (none yet — the 2026-09-10 shape is the baseline)
+]
+
 INDEXES = [
     "CREATE INDEX IF NOT EXISTS cerf_subgrant_project_idx ON aa.cerf_subgrant (project_code)",
     "CREATE INDEX IF NOT EXISTS cerf_subgrant_app_idx ON aa.cerf_subgrant (application_code)",

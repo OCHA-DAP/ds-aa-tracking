@@ -1128,9 +1128,20 @@ drop.ondrop = e => { e.preventDefault(); drop.style.background='';
   if(e.dataTransfer.files[0]) handle(e.dataTransfer.files[0]); };
 fileEl.onchange = () => fileEl.files[0] && handle(fileEl.files[0]);
 
-function api(path, opts){
-  return fetch(PROXY + path, {...opts,
-    headers: {...(opts && opts.headers || {}), 'x-site-token': SITE_TOKEN}});
+async function api(path, opts){
+  const hdrs = () => {
+    const h = {...(opts && opts.headers || {}), 'x-site-token': SITE_TOKEN};
+    const et = localStorage.getItem('editorToken');
+    if(et) h['x-editor-token'] = et;
+    return h;
+  };
+  let r = await fetch(PROXY + path, {...opts, headers: hdrs()});
+  if(r.status === 401){
+    const et = prompt('Editor token required (ask Tristan) — saved in this browser:');
+    if(et){ localStorage.setItem('editorToken', et.trim());
+            r = await fetch(PROXY + path, {...opts, headers: hdrs()}); }
+  }
+  return r;
 }
 function showSpin(on, txt){
   document.getElementById('spin').style.display = on ? 'flex' : 'none';
@@ -1482,8 +1493,9 @@ async function save(){
       <b>Saved.</b> ${res.changes} field change(s) written to <code>aa.entered_*</code>
       (${res.saved.windows} window(s), ${res.saved.window_funding} window-funding,
       ${res.saved.version_funding} fund-total row(s)), all audited as
-      “${esc(p.entered_by)}”. The registry (<code>aa.framework_version</code>) and this
-      site pick it up on the next ingest — entered values win.</div>`;
+      “${esc(p.entered_by)}”. Entered values merge into the registry
+      (<code>aa.framework_version</code>) — entered wins; this site's static pages
+      show it after the next publish.</div>`;
     const KBHAZ = {storm:'tropical-cyclone', flood:'flood', drought:'drought',
                    cholera:'cholera', plague:'plague', locusts:'locusts'};
     const kbBody = [`country: ${p.country_iso3}`, `hazard: ${KBHAZ[p.hazard]||p.hazard}`,
