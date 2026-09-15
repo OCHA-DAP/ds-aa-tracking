@@ -25,7 +25,7 @@ from ds_aa_tracking.versions import KB_DIR
 
 ROOT = Path(__file__).parents[1]
 OUT = ROOT / "site_build"
-CACHE = ROOT / "data" / "codab"
+CACHE = ROOT / "data" / "fieldmaps"
 
 W, H = 980, 460
 LAT_TOP, LAT_BOT = 75.0, -58.0
@@ -202,17 +202,44 @@ def _strip_desc(s):
 
 
 def load_codab(iso, level):
-    """CODAB layer from the blob cache (cached locally as a pickle)."""
+    """FieldMaps edge-matched COD-AB layer (the team loader's source) for one country,
+    read with a predicate filter from the global GeoParquet and cached as a pickle.
+    Edge-matched: neighbouring countries and nested admin levels share their edges
+    exactly, so a zoomed country fits its neighbours with no slivers."""
     CACHE.mkdir(parents=True, exist_ok=True)
     f = CACHE / f"{iso}_adm{level}.pkl"
     if f.exists():
         return pd.read_pickle(f)
     from ocha_stratus import codab
-    gdf = codab.load_codab_from_blob(iso, admin_level=level, stage="dev")
+    try:
+        gdf = codab.load_codab_from_fieldmaps(iso, admin_level=level)
+    except Exception as ex:  # noqa: BLE001 — network / missing country
+        print(f"  ! fieldmaps {iso} adm{level}: {ex}")
+        gdf = None
     if gdf is None:
         gdf = False
     pd.to_pickle(gdf, f)
     return gdf
+
+
+def neighbours_of(shown_iso):
+    """iso3 -> touching / nearby countries (from the world file), for the zoomed view."""
+    import geopandas as gpd
+    from shapely.geometry import shape
+    gj = json.loads((ROOT / "site_src" / "countries.geo.json").read_text())
+    feats = [("SOM" if f["id"] == "-99" and f["properties"].get("name") == "Somaliland" else f["id"],
+              shape(f["geometry"])) for f in gj["features"] if f["id"] not in ("ATA", "-99")
+             or f["properties"].get("name") == "Somaliland"]
+    g = gpd.GeoDataFrame({"iso": [i for i, _ in feats]}, geometry=[x for _, x in feats],
+                         crs=4326).dissolve("iso")
+    out = {}
+    for iso in shown_iso:
+        if iso not in g.index:
+            out[iso] = []
+            continue
+        near = g.loc[iso].geometry.buffer(0.25)
+        out[iso] = sorted(set(g[g.intersects(near)].index) - {iso})
+    return out
 
 
 class Matcher:
@@ -225,15 +252,14 @@ class Matcher:
             g = load_codab(iso, lv)
             if g is False or g is None or not len(g):
                 continue
-            pcol = f"ADM{lv}_PCODE"
-            # name columns are language-specific (ADM1_EN / _FR / _ES / _PT ...)
-            ncols = [c for c in g.columns if re.fullmatch(rf"ADM{lv}_[A-Z]{{2}}", c)]
-            ncols.sort(key=lambda c: (not c.endswith("_EN"), c))
+            pcol = f"adm{lv}_src"                     # source pcode
+            ncols = [c for c in (f"adm{lv}_name", f"adm{lv}_name1", f"adm{lv}_name2")
+                     if c in g.columns and g[c].notna().any()]
             if not ncols or pcol not in g.columns:
                 continue
             ncol = ncols[0]
             g = g.copy()
-            g["_names"] = g[ncols].astype(str).agg(list, axis=1)
+            g["_names"] = g[ncols].apply(lambda r: [str(x) for x in r if pd.notna(x)], axis=1)
             g["_n"] = g["_names"].map(lambda xs: [_norm(x) for x in xs])
             g["_ns"] = g["_n"].map(lambda xs: [_strip_desc(x) for x in xs])
             self.layers[lv] = (g, ncol, pcol)
@@ -342,42 +368,107 @@ class Matcher:
         return sorted(set(pcodes)), unmatched, national
 
 
-def _rings(geom, tol):
-    """Simplified geometry -> list of rings [[lon,lat],...] with 3-decimal coords."""
+def _rings(geom):
+    """Geometry -> list of rings [[lon,lat],...] (4-decimal coords, slivers dropped)."""
     from shapely.geometry import MultiPolygon, Polygon
-    g = geom.simplify(tol, preserve_topology=True)
-    polys = list(g.geoms) if isinstance(g, MultiPolygon) else [g] if isinstance(g, Polygon) else []
+    polys = (list(geom.geoms) if isinstance(geom, MultiPolygon)
+             else [geom] if isinstance(geom, Polygon) else [])
+    polys = [p for p in polys if not p.is_empty]
     if not polys:
         return []
     amax = max(p.area for p in polys)
     rings = []
     for p in polys:
-        if p.area < amax * 0.002:
+        if p.area < amax * 0.001:
             continue
-        rings.append([[round(x, 3), round(y, 3)] for x, y in p.exterior.coords])
+        rings.append([[round(x, 4), round(y, 4)] for x, y in p.exterior.coords])
         for hole in p.interiors:
-            rings.append([[round(x, 3), round(y, 3)] for x, y in hole.coords])
+            rings.append([[round(x, 4), round(y, 4)] for x, y in hole.coords])
     return rings
 
 
-def write_country_geo(iso, matcher, adm0):
-    """adm-<ISO>.json: country outline, ADM1 mesh, and the matched scope areas."""
-    b = adm0.total_bounds if adm0 is not None else None
-    diag = ((b[2] - b[0]) ** 2 + (b[3] - b[1]) ** 2) ** 0.5 if b is not None else 10
-    tol1, tol2 = diag / 700, diag / 1100
-    out = {"adm0": [], "adm1": [], "areas": {}}
-    if adm0 is not None and len(adm0):
-        out["adm0"] = _rings(adm0.geometry.union_all() if hasattr(adm0.geometry, "union_all")
-                             else adm0.geometry.unary_union, tol1)
+def _union(gs):
+    return gs.union_all() if hasattr(gs, "union_all") else gs.unary_union
+
+
+def write_country_geo(iso, matcher, adm0, neighbours):
+    """adm-<ISO>.json: country outline, ADM1 mesh, matched scope areas and the
+    neighbours' outlines — simplified TOGETHER as one topology (shared arcs), so
+    every edge still matches after simplification."""
+    import hashlib
+
+    import geopandas as gpd
+    import topojson as tp
+    from shapely.geometry import box
+
+    if adm0 is None or adm0 is False or not len(adm0):
+        return None
+    b = adm0.total_bounds
+    diag = ((b[2] - b[0]) ** 2 + (b[3] - b[1]) ** 2) ** 0.5
+    tol = diag / 900
+    pcodes = sorted(matcher.used)
+    sig = hashlib.md5(json.dumps([iso, pcodes, neighbours, round(tol, 6),
+                                  1 in matcher.layers, "viewclip-v2"]).encode()).hexdigest()[:10]
+    cache_f = CACHE / f"topo_{iso}_{sig}.json"
+    if cache_f.exists():
+        (OUT / f"adm-{iso}.json").write_text(cache_f.read_text())
+        return [float(x) for x in b]
+
+    rows = [{"kind": "a0", "n": iso, "p": iso, "l": 0, "geometry": _union(adm0.geometry)}]
     if 1 in matcher.layers:
         g, ncol, pcol = matcher.layers[1]
-        out["adm1"] = [{"n": r[ncol], "p": r[pcol], "r": _rings(r["geometry"], tol1)}
-                       for _, r in g.iterrows()]
+        rows += [{"kind": "a1", "n": r[ncol], "p": r[pcol], "l": 1, "geometry": r["geometry"]}
+                 for _, r in g.iterrows()]
     for pc, rec in matcher.used.items():
-        out["areas"][pc] = {"n": rec["name"], "l": rec["level"],
-                            "r": _rings(rec["geometry"], tol2 if rec["level"] > 1 else tol1)}
-    (OUT / f"adm-{iso}.json").write_text(json.dumps(out, separators=(",", ":")))
-    return b
+        rows.append({"kind": "sc", "n": rec["name"], "p": pc, "l": rec["level"],
+                     "geometry": rec["geometry"]})
+    # neighbours: full-resolution outlines clipped to what the zoomed viewport can show
+    # (same maths as zoomTo in the page: fit the bbox with a 1.3 pad inside the fixed-
+    # aspect view, cos(lat) corrected), plus a 15 % margin so clip edges stay off-screen
+    import math
+    lat0 = (b[1] + b[3]) / 2
+    cosf = max(0.35, math.cos(math.radians(lat0)))
+    bw_u = max((b[2] - b[0]) / 360 * W, 2)
+    bh_u = max((b[3] - b[1]) / (LAT_TOP - LAT_BOT) * H, 2)
+    sc = min(VB_W / (bw_u * cosf * 1.3), VB_H / (bh_u * 1.3), 60)
+    vis_lon = VB_W / (sc * cosf) * 360 / W * 1.15
+    vis_lat = VB_H / sc * (LAT_TOP - LAT_BOT) / H * 1.15
+    cx, cy = (b[0] + b[2]) / 2, lat0
+    view = box(cx - vis_lon / 2, cy - vis_lat / 2, cx + vis_lon / 2, cy + vis_lat / 2)
+    for n in neighbours:
+        gn = load_codab(n, 0)
+        if gn is False or gn is None or not len(gn):
+            continue
+        geom = _union(gn.geometry).intersection(view)
+        if not geom.is_empty:
+            rows.append({"kind": "nb", "n": n, "p": n, "l": 0, "geometry": geom})
+    gdf = gpd.GeoDataFrame(rows, geometry="geometry", crs=4326)
+    try:
+        topo = tp.Topology(gdf, prequantize=200_000, toposimplify=tol,
+                           topoquantize=False, shared_coords=True)
+        simp = topo.to_gdf()
+    except Exception as ex:  # noqa: BLE001 — fall back to per-feature simplification
+        print(f"  ! topology {iso}: {ex}; falling back")
+        simp = gdf.copy()
+        simp["geometry"] = simp.geometry.simplify(tol, preserve_topology=True)
+    out = {"adm0": [], "adm1": [], "areas": {}, "nb": [], "neighbours": neighbours}
+    for _, r in simp.iterrows():
+        rings = _rings(r["geometry"])
+        if r["kind"] == "a0":
+            out["adm0"] = rings
+        elif r["kind"] == "a1":
+            out["adm1"].append({"n": r["n"], "p": r["p"], "r": rings})
+        elif r["kind"] == "sc":
+            out["areas"][r["p"]] = {"n": r["n"], "l": int(r["l"]), "r": rings}
+        else:
+            out["nb"].append({"iso": r["p"], "r": rings})
+    txt = json.dumps(out, separators=(",", ":"))
+    cache_f.write_text(txt)
+    for old in CACHE.glob(f"topo_{iso}_*.json"):
+        if old != cache_f:
+            old.unlink()
+    (OUT / f"adm-{iso}.json").write_text(txt)
+    return [float(x) for x in b]
 
 
 # ---------------------------------------------------------------- data assembly
@@ -622,6 +713,7 @@ def able_to_trigger(latest, hazard, disp):
 
 def geo_pass(countries, bboxes):
     """Match every version's scope to CODAB and write one geometry file per country."""
+    nbs = neighbours_of(list(countries))
     for iso, cd in countries.items():
         levels = [v["admin_level"] for f in cd["fws"] for v in f["versions"]
                   if v["admin_level"]]
@@ -656,7 +748,7 @@ def geo_pass(countries, bboxes):
                 elif sc["pcodes"] or sc["national"]:
                     prev = dict(sc, **{"from": v["v"]})
         if m is not None:
-            b = write_country_geo(iso, m, adm0)
+            b = write_country_geo(iso, m, adm0, nbs.get(iso, []))
             if b is not None:
                 bboxes[iso] = [float(x) for x in b]
         cd["bbox"] = bboxes.get(iso)
@@ -734,7 +826,7 @@ LANDING_CSS = r"""
 .hero { text-align:left; padding:6px 0 2px; }
 .hero p { color:#556; max-width:860px; font-size:13.5px; }
 .tiles { display:flex; gap:14px; flex-wrap:wrap; margin:12px 0; }
-.tile { background:#fff; border:1px solid var(--line); border-radius:8px; padding:12px 18px; min-width:150px; box-shadow:0 1px 3px rgba(0,0,0,.05); }
+.tile { background:#fff; border:1px solid #e6eaef; border-radius:12px; padding:12px 18px; min-width:150px; box-shadow:0 1px 2px rgba(16,24,40,.05); }
 .tile .v { font-size:22px; font-weight:700; } .tile .l { font-size:12px; color:var(--muted); }
 .tile a { color:var(--ocha); }
 /* the sidebar slides in only when a country is selected, so the world view keeps the full width */
@@ -744,34 +836,36 @@ LANDING_CSS = r"""
 .maprow .side { opacity:0; visibility:hidden; transition: opacity .3s; }
 .maprow.open .side { opacity:1; visibility:visible; transition: opacity .4s .25s; }
 @media (max-width: 1000px) { .maprow, .maprow.open { grid-template-columns: 1fr; gap:16px; } }
-.mapbox { background:#fff; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,.08); position:relative; overflow:hidden; }
-#map { width:100%; height:auto; display:block; background:#fff; }
-.cty { fill:#ebedf0; stroke:#d3d7dc; stroke-width:.5; vector-effect:non-scaling-stroke; transition: opacity .5s, fill .5s; }
-.cty.on { fill:#cfe0f2; stroke:#9cc0e3; stroke-width:.8; cursor:pointer; }
-.cty.on:hover { fill:#bcd4ee; }
-#map.zoomed .cty { opacity:.35; } #map.zoomed .cty.on { opacity:.55; } #map.zoomed .cty.sel { opacity:0; }
-.a0 { fill:#fff; stroke:#39506b; stroke-width:1.4; vector-effect:non-scaling-stroke; }
-.a1 { fill:#eef3f9; stroke:#9cc0e3; stroke-width:.8; vector-effect:non-scaling-stroke; }
-.a1:hover { fill:#e0eaf6; }
-.sc { stroke:#fff; stroke-width:.8; vector-effect:non-scaling-stroke; fill-opacity:.8; cursor:pointer; transition: fill-opacity .3s; }
+.mapbox { background:#fff; border-radius:12px; box-shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px -12px rgba(16,24,40,.18); position:relative; overflow:hidden; border:1px solid #e6eaef; }
+#map { width:100%; height:auto; display:block; background:linear-gradient(180deg,#eef3f8 0%,#e9eff5 100%); }
+.cty { fill:#f7f8fa; stroke:#d3d9df; stroke-width:.45; vector-effect:non-scaling-stroke; transition: opacity .5s, fill .3s; }
+.cty.on { fill:#cfe1f3; stroke:#8fb4d9; stroke-width:.7; cursor:pointer; }
+.cty.on:hover { fill:#b9d3ec; }
+#map.zoomed .cty { opacity:.45; } #map.zoomed .cty.on { opacity:.6; } #map.zoomed .cty.sel, #map.zoomed .cty.covered { opacity:0; }
+.nb { fill:#f1f3f6; stroke:#c5ccd5; stroke-width:.6; vector-effect:non-scaling-stroke; }
+.nb:hover { fill:#e9edf2; }
+.a0 { fill:#fff; stroke:#2c3a55; stroke-width:1.25; vector-effect:non-scaling-stroke; stroke-linejoin:round; }
+.a1 { fill:#f5f8fb; stroke:#b3c2d3; stroke-width:.55; vector-effect:non-scaling-stroke; stroke-linejoin:round; transition: fill .15s; }
+.a1:hover { fill:#e6edf5; }
+.sc { stroke:#fff; stroke-width:.7; vector-effect:non-scaling-stroke; fill-opacity:.82; cursor:pointer; transition: fill-opacity .2s; stroke-linejoin:round; }
 .sc:hover { fill-opacity:1; }
-.nat { fill-opacity:.35; pointer-events:none; }
-#adm { opacity:0; transition: opacity .5s ease .35s; } #adm.show { opacity:1; }
+.nat { fill-opacity:.3; pointer-events:none; }
+#adm { opacity:0; transition: opacity .45s ease .3s; } #adm.show { opacity:1; }
 /* callouts (KB style) */
 .labelpane { position:absolute; inset:0; pointer-events:none; transition: opacity .35s; }
 .labelpane.hide { opacity:0; }
 .leadersvg { position:absolute; inset:0; width:100%; height:100%; overflow:visible; }
-.leader { stroke:#8a99a8; stroke-width:1; }
-.cdot { fill:#39506b; stroke:#fff; stroke-width:1.5; }
+.leader { stroke:#94a3b8; stroke-width:1; stroke-linecap:round; }
+.cdot { fill:#334155; stroke:#fff; stroke-width:1.6; }
 .callout { position:absolute; display:flex; flex-direction:column; align-items:flex-start; pointer-events:auto; visibility:hidden; }
-.cname { font-weight:700; font-size:11px; color:#16324f; white-space:nowrap; line-height:1.15; margin-bottom:1px; cursor:pointer; }
+.cname { font-weight:650; font-size:11px; color:#0f2540; white-space:nowrap; line-height:1.15; margin-bottom:1px; cursor:pointer; letter-spacing:.1px; text-shadow:0 0 3px #fff,0 0 3px #fff; }
 .cname:hover { text-decoration:underline; }
 .hrow { display:flex; align-items:center; gap:4px; margin:1px 0; }
-.hlab { font-size:10px; font-weight:400; color:#1c3550; white-space:nowrap; line-height:1.15; }
+.hlab { font-size:10px; font-weight:450; color:#243b55; white-space:nowrap; line-height:1.15; text-shadow:0 0 3px #fff,0 0 3px #fff; }
 .iconbox { position:relative; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;
-  border-radius:6px; border:1.5px solid #fff; box-shadow:0 1px 3px rgba(0,0,0,.4); cursor:pointer; flex:none; }
+  border-radius:7px; border:1.5px solid #fff; box-shadow:0 1px 2px rgba(15,23,42,.28), 0 2px 6px rgba(15,23,42,.14); cursor:pointer; flex:none; transition: transform .15s; }
 .iconbox svg.hz { width:15px; height:15px; display:block; }
-.iconbox:hover { filter:brightness(1.08); }
+.iconbox:hover { transform:scale(1.12); filter:brightness(1.06); }
 @keyframes ablepulse {
   0%   { box-shadow: 0 0 0 2px #f5a300, 0 0 0 0 rgba(245,163,0,.85), 0 1px 3px rgba(0,0,0,.4); }
   65%  { box-shadow: 0 0 0 2px #f5a300, 0 0 0 11px rgba(245,163,0,0), 0 1px 3px rgba(0,0,0,.4); }
@@ -780,17 +874,19 @@ LANDING_CSS = r"""
 .iconbox.able-off { box-shadow:0 0 0 2px #f6c95f, 0 1px 3px rgba(0,0,0,.4); }
 .actdots { position:absolute; top:-5px; right:-4px; display:flex; flex-direction:row-reverse; gap:1px; }
 .actdot { width:7px; height:7px; border-radius:50%; background:#e3322d; border:1.5px solid #fff; display:inline-block; }
-.maplegend { position:absolute; left:10px; bottom:10px; font-size:12px; line-height:1.5; background:#fff; padding:7px 9px;
-  border-radius:6px; box-shadow:0 1px 4px rgba(0,0,0,.2); z-index:3; transition: opacity .3s; }
+.maplegend { position:absolute; left:12px; bottom:12px; font-size:11.5px; line-height:1.55; background:rgba(255,255,255,.86); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); padding:9px 12px;
+  border-radius:10px; box-shadow:0 1px 2px rgba(16,24,40,.08), 0 6px 18px -8px rgba(16,24,40,.25); border:1px solid rgba(226,232,240,.9); z-index:3; color:#334155; transition: opacity .3s; }
+.maplegend b { color:#0f2540; }
 .maplegend .dot { display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:5px; vertical-align:-1px; }
 .maplegend .sq { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
-.backbtn { position:absolute; top:10px; left:10px; z-index:4; padding:5px 12px; border:1px solid #cfd6de;
-  border-radius:16px; background:#fff; cursor:pointer; font-size:12.5px; box-shadow:0 1px 3px rgba(0,0,0,.12); }
-.tip { position:absolute; z-index:5; background:#16324f; color:#fff; font-size:12px; padding:4px 9px;
-  border-radius:5px; pointer-events:none; white-space:nowrap; transform:translate(-50%,-130%); }
+.backbtn { position:absolute; top:12px; left:12px; z-index:4; padding:6px 13px; border:1px solid #dbe2ea;
+  border-radius:18px; background:rgba(255,255,255,.9); backdrop-filter:blur(6px); cursor:pointer; font-size:12.5px; color:#1e293b; box-shadow:0 1px 2px rgba(16,24,40,.08), 0 4px 12px -6px rgba(16,24,40,.25); }
+.backbtn:hover { background:#fff; border-color:#b6c2d1; }
+.tip { position:absolute; z-index:5; background:rgba(15,37,64,.92); color:#fff; font-size:12px; padding:5px 10px;
+  border-radius:6px; pointer-events:none; white-space:nowrap; transform:translate(-50%,-135%); box-shadow:0 4px 12px -4px rgba(0,0,0,.35); }
 /* sidebar (KB info-pop styling) */
-.side { background:#fff; border:1px solid #d4d8de; border-radius:8px; padding:12px 16px 16px;
-  max-height:640px; overflow-y:auto; font-size:12.5px; line-height:1.45; color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.08); }
+.side { background:#fff; border:1px solid #e6eaef; border-radius:12px; padding:12px 16px 16px;
+  max-height:640px; overflow-y:auto; font-size:12.5px; line-height:1.45; color:var(--ink); box-shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px -12px rgba(16,24,40,.18); }
 .side a { color:var(--ocha); }
 .side h3 { margin:2px 0 4px; font-size:17px; color:#16324f; } .side h4 { margin:14px 0 4px; font-size:11.5px;
   text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
@@ -900,8 +996,13 @@ function drawAdmin(iso, fade){
   if(!g) return;
   const c = L[iso];
   let html = '';
+  (g.nb||[]).forEach(n => html += `<path class='nb' data-n='${esc(L[n.iso]?.name || n.iso)}' d='${ringsD(n.r)}'/>`);
   if(g.adm0.length) html += `<path class='a0' d='${ringsD(g.adm0)}'/>`;
   g.adm1.forEach(a => html += `<path class='a1' data-n='${esc(a.n)}' d='${ringsD(a.r)}'/>`);
+  // the coarse world-file shapes of the zoomed country and its neighbours are replaced by
+  // the edge-matched outlines above; hide them so the two sources never show together
+  svg.querySelectorAll('.cty.covered').forEach(x=>x.classList.remove('covered'));
+  [iso, ...(g.neighbours||[])].forEach(i => svg.querySelectorAll(`.cty[data-iso='${i}']`).forEach(x=>x.classList.add('covered')));
   const paint = {}; let national = [];
   const targets = state.hz ? c.fws.filter(f=>f.hazard===state.hz) : c.fws;
   targets.forEach(f => {
@@ -1037,7 +1138,7 @@ svg.addEventListener('mousemove', ev => {
   const t = ev.target; let txt = null;
   if(t.classList.contains('cty') && t.classList.contains('on') && !state.iso){ const c = L[t.dataset.iso]; if(c) txt = `${c.name} · ${c.fws.length} framework${c.fws.length>1?'s':''}`; }
   else if(t.classList.contains('sc')) txt = `${t.dataset.n} · ${t.dataset.hz}`;
-  else if(t.classList.contains('a1')) txt = t.dataset.n;
+  else if(t.classList.contains('a1') || t.classList.contains('nb')) txt = t.dataset.n;
   if(txt) showTip(ev, txt); else tip.hidden = true;
 });
 svg.addEventListener('mouseleave', ()=> tip.hidden = true);
@@ -1054,6 +1155,7 @@ function goWorld(){
   state = { iso:null, hz:null, ver:null };
   document.querySelectorAll('.cty.sel').forEach(x=>x.classList.remove('sel'));
   svg.classList.remove('zoomed'); adm.innerHTML=''; adm.classList.remove('show');
+  svg.querySelectorAll('.cty.covered').forEach(x=>x.classList.remove('covered'));
   resetZoom(); back.hidden = true; worldLegend(); maprow.classList.remove('open');
   setTimeout(()=>{ runLayout(); lpane.classList.remove('hide'); }, 580);   // after the sidebar has closed
   side.innerHTML = `<div class='muted' style='padding:20px 6px'>Select a country or a pin on the map.</div>`;
