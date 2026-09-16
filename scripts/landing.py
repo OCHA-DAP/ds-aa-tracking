@@ -27,15 +27,49 @@ ROOT = Path(__file__).parents[1]
 OUT = ROOT / "site_build"
 CACHE = ROOT / "data" / "fieldmaps"
 
-W, H = 980, 460
-LAT_TOP, LAT_BOT = 75.0, -58.0
-# visible crop of the world (the portfolio spans roughly lon -108..182, lat 50..-40)
-VB_X = (-108 + 180) / 360 * W
-VB_W = (182 + 108) / 360 * W
-VB_Y = (LAT_TOP - 50) / (LAT_TOP - LAT_BOT) * H
-VB_H = (50 + 40) / (LAT_TOP - LAT_BOT) * H
-
 import datetime as _dt
+import math
+
+# ---- projections. World view: Equal Earth (endorsed by UN GA resolution A/80/L.104,
+# 4 Sep 2026), centred on 30°E so the portfolio (Americas → Pacific) sits in frame.
+# Country view: a local equirectangular fit (cos(lat) corrected) — the page morphs
+# between the two. The same constants live in the JS below; keep them in sync.
+EE_A1, EE_A2, EE_A3, EE_A4 = 1.340264, -0.081106, 0.000893, 0.003796
+EE_LAM0 = 30.0
+FRAME = (-112.0, -42.0, 184.0, 52.0)   # lon0, lat0, lon1, lat1 shown in the world view
+VB_W = 980.0
+S_MAX_DEG = 0.8                         # never zoom tighter than this many degrees across
+
+
+def equal_earth(lon, lat):
+    """Equal Earth forward projection (Šavrič, Patterson & Jenny 2018), y up."""
+    lam = math.radians(((lon - EE_LAM0 + 540) % 360) - 180)
+    th = math.asin(math.sqrt(3) / 2 * math.sin(math.radians(lat)))
+    t2 = th * th
+    t6 = t2 * t2 * t2
+    x = 2 * math.sqrt(3) * lam * math.cos(th) / (3 * (9 * EE_A4 * t6 * t2 + 7 * EE_A3 * t6
+                                                      + 3 * EE_A2 * t2 + EE_A1))
+    y = th * (EE_A4 * t6 * t2 * th + EE_A3 * t6 * th + EE_A2 * t2 * th + EE_A1)
+    return x, -y
+
+
+def _frame_bbox():
+    pts = []
+    lon0, lat0, lon1, lat1 = FRAME
+    for i in range(0, 101):
+        f = i / 100
+        pts.append(equal_earth(lon0 + (lon1 - lon0) * f, lat0))
+        pts.append(equal_earth(lon0 + (lon1 - lon0) * f, lat1))
+        pts.append(equal_earth(lon0, lat0 + (lat1 - lat0) * f))
+        pts.append(equal_earth(lon1, lat0 + (lat1 - lat0) * f))
+    xs = [x for x, _ in pts]; ys = [y for _, y in pts]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+EE_BBOX = _frame_bbox()
+VB_H = VB_W * (EE_BBOX[3] - EE_BBOX[1]) / (EE_BBOX[2] - EE_BBOX[0])
+VB_X, VB_Y = 0.0, 0.0
+W, H = VB_W, VB_H                       # kept for callers; the view box is 0 0 VB_W VB_H
 
 # Lifecycle colours, glyphs, callout directions and centroids mirror the KB public map
 # (ds-knowledge-base/scripts/gen_public_site.py) so the two sites read the same.
@@ -122,15 +156,7 @@ DESCRIPTORS = ("region", "province", "district", "state", "governorate", "depart
                "division", "prefecture", "municipality", "palika")
 
 
-# ---------------------------------------------------------------- projection
-def pt(lon, lat):
-    return (lon + 180.0) / 360.0 * W, (LAT_TOP - lat) / (LAT_TOP - LAT_BOT) * H
-
-
-def _ring_d(r):
-    return "M" + "L".join(f"{x:.1f},{y:.1f}" for x, y in (pt(a, b) for a, b in r)) + "Z"
-
-
+# ---------------------------------------------------------------- world base
 WORLD_SRC = ROOT / "data" / "world" / "ne_50m_admin_0_countries.geojson"
 WORLD_URL = ("https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/"
              "geojson/ne_50m_admin_0_countries.geojson")
@@ -168,25 +194,24 @@ def world_simplified():
     return out
 
 
-def svg_world(shown_iso, country_names):
-    """World SVG in the KB style: framework countries light blue, the rest grey."""
+def world_data(shown_iso, country_names):
+    """World base as lon/lat rings per country (the page projects them); plus the
+    largest-polygon bbox per country for framing."""
     from shapely.geometry import MultiPolygon
     g = world_simplified()
-    paths, bboxes = [], {}
+    data, bboxes = {}, {}
     for _, f in g.iterrows():
         iso, geom = f["iso"], f["geometry"]
         polys = list(geom.geoms) if isinstance(geom, MultiPolygon) else [geom]
-        d = "".join(_ring_d(list(ring.coords)) for poly in polys
-                    for ring in [poly.exterior, *poly.interiors])
-        on = iso in shown_iso
-        nm = country_names.get(iso, f["NAME"])
-        paths.append(f"<path class='{'cty on' if on else 'cty'}' data-iso='{iso}' data-name='{nm}' d='{d}'/>")
+        rings = [[[round(x, 3), round(y, 3)] for x, y in ring.coords]
+                 for poly in polys for ring in [poly.exterior, *poly.interiors]]
+        data[iso] = {"n": country_names.get(iso, f["NAME"]), "on": iso in shown_iso, "r": rings}
         big = max(polys, key=lambda p: p.area)
         bboxes[iso] = [float(x) for x in big.bounds]
-    svg = (f"<svg id='map' viewBox='{VB_X:.1f} {VB_Y:.1f} {VB_W:.1f} {VB_H:.1f}' preserveAspectRatio='xMidYMid meet'>"
-           f"<rect id='sea' x='{VB_X-W}' y='{VB_Y-H}' width='{3*W}' height='{3*H}' fill='transparent'/>"
-           f"<g id='world'>{''.join(paths)}<g id='adm'></g></g></svg>")
-    return svg, bboxes
+    svg = (f"<svg id='map' viewBox='0 0 {VB_W:.1f} {VB_H:.1f}' preserveAspectRatio='xMidYMid meet'>"
+           f"<rect id='sea' x='{-VB_W}' y='{-VB_H}' width='{3*VB_W}' height='{3*VB_H}' fill='transparent'/>"
+           f"<g id='world'></g><g id='adm'></g></svg>")
+    return svg, bboxes, data
 
 
 # ---------------------------------------------------------------- KB pages
@@ -251,19 +276,23 @@ def load_codab(iso, level):
     return gdf
 
 
-def viewport_box(b):
-    """Lon/lat box of what the zoomed viewport shows for a country bbox b — the same
-    maths as zoomTo in the page (fit with a 1.3 pad in the fixed-aspect view, cos(lat)
-    corrected) plus a 15 % margin so clip edges stay off-screen."""
-    import math
-    from shapely.geometry import box
+def local_scale(b):
+    """Scale (view-box units per degree of latitude) of the local country projection —
+    identical to `localProj` in the page."""
     lat0 = (b[1] + b[3]) / 2
     cosf = max(0.35, math.cos(math.radians(lat0)))
-    bw_u = max((b[2] - b[0]) / 360 * W, 2)
-    bh_u = max((b[3] - b[1]) / (LAT_TOP - LAT_BOT) * H, 2)
-    sc = min(VB_W / (bw_u * cosf * 1.3), VB_H / (bh_u * 1.3), 60)
-    vis_lon = VB_W / (sc * cosf) * 360 / W * 1.15
-    vis_lat = VB_H / sc * (LAT_TOP - LAT_BOT) / H * 1.15
+    bw = max((b[2] - b[0]) * cosf, 0.01)
+    bh = max(b[3] - b[1], 0.01)
+    return min(VB_W / (bw * 1.3), VB_H / (bh * 1.3), VB_W / S_MAX_DEG), cosf, lat0
+
+
+def viewport_box(b):
+    """Lon/lat box of what the zoomed viewport shows for a country bbox b, plus a 15 %
+    margin so clip edges stay off-screen."""
+    from shapely.geometry import box
+    sc, cosf, lat0 = local_scale(b)
+    vis_lon = VB_W / (sc * cosf) * 1.15
+    vis_lat = VB_H / sc * 1.15
     cx = (b[0] + b[2]) / 2
     return box(cx - vis_lon / 2, lat0 - vis_lat / 2, cx + vis_lon / 2, lat0 + vis_lat / 2)
 
@@ -458,7 +487,7 @@ def write_country_geo(iso, matcher, adm0):
     neighbours = countries_in_view(iso, view)
     pcodes = sorted(matcher.used)
     sig = hashlib.md5(json.dumps([iso, pcodes, neighbours, round(tol, 6),
-                                  1 in matcher.layers, "viewclip-v3"]).encode()).hexdigest()[:10]
+                                  1 in matcher.layers, "viewclip-v4"]).encode()).hexdigest()[:10]
     cache_f = CACHE / f"topo_{iso}_{sig}.json"
     if cache_f.exists():
         (OUT / f"adm-{iso}.json").write_text(cache_f.read_text())
@@ -818,7 +847,7 @@ def build_landing(page, d, e):
     cur = d["current"]
     names = dict(zip(cur["country_iso3"], cur["country_name"]))
     countries = assemble(d, e)
-    svg, bboxes = svg_world(set(countries), names)
+    svg, bboxes, wdata = world_data(set(countries), names)
     for iso, cd in countries.items():
         cd["lbbox"] = bboxes.get(iso)                 # layout box (world file, largest polygon)
         cd["centroid"] = CENTROID.get(iso) or (
@@ -871,8 +900,9 @@ def build_landing(page, d, e):
 <script>window.L = {json.dumps(countries, default=str)};
 window.HAZ = {json.dumps(HAZ_COLOR)}; window.COLOR = {json.dumps(KB_COLOR)};
 window.KBLABEL = {json.dumps(KB_LABEL)}; window.GLYPH = {json.dumps(HAZARD_SVG)};
-window.MAPW={W}; window.MAPH={H}; window.LATT={LAT_TOP}; window.LATB={LAT_BOT};
-window.VB = {{x:{VB_X:.2f}, y:{VB_Y:.2f}, w:{VB_W:.2f}, h:{VB_H:.2f}}};
+window.WORLD = {json.dumps(wdata, separators=(",", ":"))};
+window.VB = {{w:{VB_W:.2f}, h:{VB_H:.2f}}}; window.EEBOX = {json.dumps([round(x, 6) for x in EE_BBOX])};
+window.EE = {{lam0:{EE_LAM0}, smax:{S_MAX_DEG}}};
 window.CURMONTH = {json.dumps(TODAY.strftime("%B %Y"))};</script>
 <script>{LANDING_JS}</script>
 <style>{LANDING_CSS}</style>"""
@@ -899,7 +929,10 @@ LANDING_CSS = r"""
 .cty { fill:#f7f8fa; stroke:#d3d9df; stroke-width:.45; vector-effect:non-scaling-stroke; transition: opacity .5s, fill .3s; }
 .cty.on { fill:#cfe1f3; stroke:#8fb4d9; stroke-width:.7; cursor:pointer; }
 .cty.on:hover { fill:#b9d3ec; }
-#map.zoomed .cty { opacity:0; }
+.cty:not(.on):hover { fill:#eef1f5; }
+#map.zoomed .cty { opacity:0; pointer-events:none; }
+#map.zooming .cty { transition: none; }
+#map.zooming .cty.on { fill:#cfe1f3; }
 .nb { fill:#f3f5f8; stroke:#c5ccd5; stroke-width:.6; vector-effect:non-scaling-stroke; stroke-linejoin:round; }
 .nb:hover { fill:#e9edf2; }
 .a0 { fill:#fff; stroke:#2c3a55; stroke-width:1.25; vector-effect:non-scaling-stroke; stroke-linejoin:round; }
@@ -908,7 +941,7 @@ LANDING_CSS = r"""
 .sc { stroke:#fff; stroke-width:.7; vector-effect:non-scaling-stroke; fill-opacity:.82; cursor:pointer; transition: fill-opacity .2s; stroke-linejoin:round; }
 .sc:hover { fill-opacity:1; }
 .nat { fill-opacity:.3; pointer-events:none; }
-#adm { opacity:0; transition: opacity .45s ease .3s; } #adm.show { opacity:1; }
+#adm { opacity:0; transition: opacity .5s ease; } #adm.show { opacity:1; }
 /* callouts (KB style) */
 .labelpane { position:absolute; inset:0; pointer-events:none; transition: opacity .35s; }
 .labelpane.hide { opacity:0; }
@@ -1009,38 +1042,83 @@ function hzColor(h){ return HAZ[h] || '#7a8699'; }
 function iconHTML(f, extra=''){ return `<span class='iconbox ${f.ring==='now'?'able-now':f.ring==='able'?'able-off':''} ${extra}' style='background:${COLOR[f.disp]}' data-hz='${f.hazard}'>`
   + `<svg viewBox='0 0 24 24' class='hz'>${GLYPH[f.glyph]||GLYPH.other}</svg>`
   + (f.n_act ? `<span class='actdots'>${'<span class="actdot"></span>'.repeat(Math.min(f.n_act,6))}</span>` : '') + `</span>`; }
-function pt(lon, lat){ return [(lon+180)/360*MAPW, (LATT-lat)/(LATT-LATB)*MAPH]; }
-function ringsD(rings){ return rings.map(r=>'M'+r.map(([x,y])=>{const p=pt(x,y);return p[0].toFixed(2)+','+p[1].toFixed(2);}).join('L')+'Z').join(''); }
-function kpx(){ return svg.getBoundingClientRect().width / VB.w; }   // CSS px per map unit
-function toPx(lon, lat){ const [x,y]=pt(lon,lat), k=kpx(); return [(x-VB.x)*k, (y-VB.y)*k]; }
+// ---------- projections
+// World: Equal Earth (UN GA A/80/L.104, Sep 2026), centred on EE.lam0, fitted to the view box.
+// Country: local equirectangular fit (cos-lat corrected). Zooming MORPHS one into the other.
+const EEA = {A1:1.340264, A2:-0.081106, A3:0.000893, A4:0.003796}, SQ3 = Math.sqrt(3), D2R = Math.PI/180;
+const EEK = VB.w / (EEBOX[2]-EEBOX[0]);
+function eeRaw(lon, lat){
+  let lam = ((lon - EE.lam0 + 540) % 360 - 180) * D2R;
+  const th = Math.asin(SQ3/2 * Math.sin(lat*D2R)), t2 = th*th, t6 = t2*t2*t2;
+  const x = 2*SQ3*lam*Math.cos(th) / (3*(9*EEA.A4*t6*t2 + 7*EEA.A3*t6 + 3*EEA.A2*t2 + EEA.A1));
+  const y = th*(EEA.A4*t6*t2*th + EEA.A3*t6*th + EEA.A2*t2*th + EEA.A1);
+  return [x, -y];
+}
+function worldProj(lon, lat){ const [x,y] = eeRaw(lon, lat); return [(x-EEBOX[0])*EEK, (y-EEBOX[1])*EEK]; }
+function localProj(b){
+  const lat0 = (b[1]+b[3])/2, cosf = Math.max(.35, Math.cos(lat0*D2R));
+  const bw = Math.max((b[2]-b[0])*cosf, .01), bh = Math.max(b[3]-b[1], .01);
+  const s = Math.min(VB.w/(bw*1.3), VB.h/(bh*1.3), VB.w/EE.smax), cx = (b[0]+b[2])/2;
+  return (lon, lat) => [VB.w/2 + (((lon-cx+540)%360)-180)*cosf*s, VB.h/2 - (lat-lat0)*s];
+}
+let P = worldProj;                                    // projection the country layers use
+function ringsD(rings, proj=P){ let d=''; for(const r of rings){ let first=true; for(const [x,y] of r){ const q=proj(x,y); d += (first?'M':'L') + q[0].toFixed(1) + ',' + q[1].toFixed(1); first=false; } d+='Z'; } return d; }
+function kpx(){ return svg.getBoundingClientRect().width / VB.w; }
+function toPx(lon, lat){ const [x,y]=worldProj(lon,lat), k=kpx(); return [x*k, y*k]; }
 
-// ---------- zoom (SVG transform attribute animated in user units)
-let T = {tx:0, ty:0, sx:1, sy:1}, animId = null, animSeq = 0;
-function applyT(t){ world.setAttribute('transform', `translate(${t.tx} ${t.ty}) scale(${t.sx} ${t.sy})`); }
-function animateTo(target, ms=800){
-  if(animId) cancelAnimationFrame(animId);
-  if(document.hidden){ T = {...target}; applyT(T); return; }
-  const seq = ++animSeq;
-  setTimeout(()=>{ if(seq===animSeq){ T = {...target}; applyT(T); animId=null; } }, ms+80);
-  const from = {...T}, t0 = performance.now(), ease = x => 1 - Math.pow(1 - x, 3);
-  function step(now){
-    const k = Math.min(1, (now - t0)/ms), e = ease(k);
-    T = { tx: from.tx + (target.tx-from.tx)*e, ty: from.ty + (target.ty-from.ty)*e,
-          sx: from.sx + (target.sx-from.sx)*e, sy: from.sy + (target.sy-from.sy)*e };
-    applyT(T);
-    if(k < 1) animId = requestAnimationFrame(step); else animId = null;
+// ---------- world base: rings projected in the browser; precomputed for morphing
+const WP = {};   // iso -> {el, w: Float64Array (world coords), n: ring lengths}
+function buildWorld(){
+  let html = '';
+  for(const [iso, c] of Object.entries(WORLD)) html += `<path class='cty${c.on?' on':''}' data-iso='${iso}' data-name='${esc(c.n)}' d='${ringsD(c.r, worldProj)}'/>`;
+  world.innerHTML = html;
+  for(const [iso, c] of Object.entries(WORLD)){
+    const n = c.r.reduce((s,r)=>s+r.length, 0), w = new Float64Array(n*2); let k = 0;
+    for(const r of c.r) for(const [lon,lat] of r){ const q = worldProj(lon,lat); w[k++]=q[0]; w[k++]=q[1]; }
+    WP[iso] = { el: world.querySelector(`.cty[data-iso='${iso}']`), w, lens: c.r.map(r=>r.length) };
   }
-  animId = requestAnimationFrame(step);
 }
-function zoomTo(bbox){
-  const [x0,y0] = pt(bbox[0], bbox[3]), [x1,y1] = pt(bbox[2], bbox[1]);
-  const lat0 = (bbox[1]+bbox[3])/2, cosf = Math.max(.35, Math.cos(lat0*Math.PI/180));
-  const bw = Math.max(x1-x0, 2), bh = Math.max(y1-y0, 2), pad = 1.3;
-  let s = Math.min(VB.w/(bw*cosf*pad), VB.h/(bh*pad), 60);
-  const cx = (x0+x1)/2, cy = (y0+y1)/2;
-  animateTo({ tx: VB.x + VB.w/2 - cx*s*cosf, ty: VB.y + VB.h/2 - cy*s, sx: s*cosf, sy: s });
+function pathFrom(coords, lens){ let d='', k=0; for(const n of lens){ for(let i=0;i<n;i++){ d += (i?'L':'M') + coords[k].toFixed(1) + ',' + coords[k+1].toFixed(1); k+=2; } d+='Z'; } return d; }
+// morph the whole base between two projections (t: 0 = from, 1 = to), only for shapes that
+// can be on screen in either state — everything else is parked off-canvas
+function morphWorld(fromP, toP, t){
+  for(const [iso, c] of Object.entries(WORLD)){
+    const wp = WP[iso]; if(!wp) continue;
+    if(!wp.to){ const n = wp.w.length, a = new Float64Array(n); let k=0; for(const r of c.r) for(const [lon,lat] of r){ const q = toP(lon,lat); a[k++]=q[0]; a[k++]=q[1]; } wp.to = a;
+      let minx=1e9,maxx=-1e9,miny=1e9,maxy=-1e9; for(let i=0;i<n;i+=2){ if(a[i]<minx)minx=a[i]; if(a[i]>maxx)maxx=a[i]; if(a[i+1]<miny)miny=a[i+1]; if(a[i+1]>maxy)maxy=a[i+1]; }
+      wp.vis = !(maxx < -VB.w || minx > 2*VB.w || maxy < -VB.h || miny > 2*VB.h); }
+    if(!wp.vis){ wp.el.style.display = 'none'; continue; }
+    wp.el.style.display = '';
+    const a = wp.w, b = wp.to, n = a.length, out = new Float64Array(n);
+    for(let i=0;i<n;i++) out[i] = a[i] + (b[i]-a[i])*t;
+    wp.el.setAttribute('d', pathFrom(out, wp.lens));
+  }
 }
-function resetZoom(){ animateTo({tx:0, ty:0, sx:1, sy:1}, 650); }
+function resetWorld(){ for(const wp of Object.values(WP)){ wp.el.style.display=''; wp.el.setAttribute('d', pathFrom(wp.w, wp.lens)); wp.to = null; } }
+
+// ---------- zoom: a projection morph (world -> local), eased, hidden-tab safe
+let animId = null, animSeq = 0, zoomTarget = null;
+function animate(ms, step, done){
+  if(animId) cancelAnimationFrame(animId);
+  const seq = ++animSeq, t0 = performance.now(), ease = x => x<.5 ? 4*x*x*x : 1 - Math.pow(-2*x+2, 3)/2;
+  if(document.hidden){ step(1); done && done(); return; }
+  function frame(now){ if(seq !== animSeq) return; const k = Math.min(1, (now-t0)/ms); step(ease(k)); if(k<1) animId = requestAnimationFrame(frame); else { animId = null; done && done(); } }
+  animId = requestAnimationFrame(frame);
+  setTimeout(()=>{ if(seq===animSeq && animId){ cancelAnimationFrame(animId); animId=null; step(1); done && done(); } }, ms+120);
+}
+function zoomTo(bbox, done){
+  const to = localProj(bbox); zoomTarget = bbox;
+  for(const wp of Object.values(WP)) wp.to = null;
+  P = to;
+  svg.classList.add('zooming');
+  animate(1050, t => morphWorld(worldProj, to, t), () => { svg.classList.remove('zooming'); svg.classList.add('zoomed'); done && done(); });
+}
+function zoomOut(done){
+  const from = P; if(from === worldProj){ done && done(); return; }
+  svg.classList.remove('zoomed'); svg.classList.add('zooming');
+  // reuse the stored target coords: morph back from local (t=1) to world (t=0)
+  animate(850, t => morphWorld(worldProj, from, 1 - t), () => { resetWorld(); P = worldProj; zoomTarget = null; svg.classList.remove('zooming'); done && done(); });
+}
 
 // ---------- admin layers (country view)
 async function loadGeo(iso){
@@ -1057,10 +1135,7 @@ function drawAdmin(iso, fade){
   (g.nb||[]).forEach(n => html += `<path class='nb' data-n='${esc(L[n.iso]?.name || n.iso)}' d='${ringsD(n.r)}'/>`);
   if(g.adm0.length) html += `<path class='a0' d='${ringsD(g.adm0)}'/>`;
   g.adm1.forEach(a => html += `<path class='a1' data-n='${esc(a.n)}' d='${ringsD(a.r)}'/>`);
-  // the coarse world-file shapes of the zoomed country and its neighbours are replaced by
-  // the edge-matched outlines above; hide them so the two sources never show together
-  svg.querySelectorAll('.cty.covered').forEach(x=>x.classList.remove('covered'));
-  [iso, ...(g.neighbours||[])].forEach(i => svg.querySelectorAll(`.cty[data-iso='${i}']`).forEach(x=>x.classList.add('covered')));
+
   const paint = {}; let national = [];
   const targets = state.hz ? c.fws.filter(f=>f.hazard===state.hz) : c.fws;
   targets.forEach(f => {
@@ -1187,14 +1262,19 @@ function runLayout(){
     Lb.dot.setAttribute('cx', Lb.px); Lb.dot.setAttribute('cy', Lb.py);
   });
 }
-let rto = null; window.addEventListener('resize', () => { clearTimeout(rto); rto = setTimeout(runLayout, 150); });
+// relayout whenever the map's rendered size changes (window resize, sidebar sliding in or
+// out) — callouts are positioned in CSS px, so a stale width puts them off the countries
+let rto = null;
+function scheduleLayout(){ clearTimeout(rto); rto = setTimeout(() => { if(!state.iso){ runLayout(); lpane.classList.remove('hide'); } }, 120); }
+new ResizeObserver(() => scheduleLayout()).observe(svg);
+window.addEventListener('resize', scheduleLayout);
 
 // ---------- tooltips
 function showTip(ev, txt){ const box = mapbox.getBoundingClientRect(); tip.textContent = txt; tip.hidden = false;
   tip.style.left = (ev.clientX-box.left)+'px'; tip.style.top = (ev.clientY-box.top)+'px'; }
 svg.addEventListener('mousemove', ev => {
   const t = ev.target; let txt = null;
-  if(t.classList.contains('cty') && t.classList.contains('on') && !state.iso){ const c = L[t.dataset.iso]; if(c) txt = `${c.name} · ${c.fws.length} framework${c.fws.length>1?'s':''}`; }
+  if(t.classList.contains('cty') && !state.iso){ const c = L[t.dataset.iso]; txt = c ? `${c.name} · ${c.fws.length} framework${c.fws.length>1?'s':''}` : t.dataset.name; }
   else if(t.classList.contains('sc')) txt = `${t.dataset.n} · ${t.dataset.hz}`;
   else if(t.classList.contains('a1') || t.classList.contains('nb')) txt = t.dataset.n;
   if(txt) showTip(ev, txt); else tip.hidden = true;
@@ -1208,14 +1288,14 @@ svg.addEventListener('click', ev => {
   else if(t.id === 'sea' && state.iso) goWorld();
 });
 back.addEventListener('click', goWorld);
+document.addEventListener('keydown', e => { if(e.key === 'Escape' && state.iso) goWorld(); });
 
 function goWorld(){
   state = { iso:null, hz:null, ver:null };
   document.querySelectorAll('.cty.sel').forEach(x=>x.classList.remove('sel'));
-  svg.classList.remove('zoomed'); adm.innerHTML=''; adm.classList.remove('show');
-  svg.querySelectorAll('.cty.covered').forEach(x=>x.classList.remove('covered'));
-  resetZoom(); back.hidden = true; worldLegend(); maprow.classList.remove('open');
-  setTimeout(()=>{ runLayout(); lpane.classList.remove('hide'); }, 580);   // after the sidebar has closed
+  adm.classList.remove('show'); back.hidden = true; worldLegend(); maprow.classList.remove('open');
+  setTimeout(()=>{ adm.innerHTML=''; }, 300);
+  zoomOut(() => scheduleLayout());
   side.innerHTML = `<div class='muted' style='padding:20px 6px'>Select a country or a pin on the map.</div>`;
   history.replaceState(null, '', location.pathname);
 }
@@ -1225,12 +1305,20 @@ async function selectCountry(iso, hz, ver){
   state = { iso, hz: hz || (c.fws.length===1 ? c.fws[0].hazard : null), ver: ver || null };
   document.querySelectorAll('.cty.sel').forEach(x=>x.classList.remove('sel'));
   svg.querySelectorAll(`.cty[data-iso='${iso}']`).forEach(el => el.classList.add('sel'));
-  svg.classList.add('zoomed'); back.hidden = false; lpane.classList.add('hide'); tip.hidden = true; maprow.classList.add('open');
-  if(changed){ adm.innerHTML=''; adm.classList.remove('show'); if(c.bbox) zoomTo(c.bbox); }
+  back.hidden = false; lpane.classList.add('hide'); tip.hidden = true; maprow.classList.add('open');
   renderSide();
-  await loadGeo(iso);
-  if(state.iso === iso) drawAdmin(iso, changed);
   location.hash = [iso, state.hz, state.ver].filter(Boolean).join('/');
+  if(changed){
+    adm.classList.remove('show'); adm.innerHTML='';
+    const geoP = loadGeo(iso);
+    let zoomed = false, geoDone = false;
+    const finish = () => { if(zoomed && geoDone && state.iso === iso) drawAdmin(iso, true); };
+    if(c.bbox) zoomTo(c.bbox, () => { zoomed = true; finish(); }); else { zoomed = true; }
+    await geoP; geoDone = true; finish();
+  } else {
+    await loadGeo(iso);
+    if(state.iso === iso) drawAdmin(iso, false);
+  }
 }
 function selectFramework(hz){ selectCountry(state.iso, hz, null); }
 function selectVersion(v){ state.ver = v; renderSide(); drawAdmin(state.iso, false); location.hash = [state.iso, state.hz, v].join('/'); }
@@ -1381,7 +1469,7 @@ function scopeBlock(v){
 }
 
 // ---------- boot
-worldLegend(); buildCallouts(); runLayout();
+buildWorld(); worldLegend(); buildCallouts(); runLayout();
 setTimeout(runLayout, 300);   // once fonts have settled
 (function(){ const h = location.hash.replace('#','').split('/'); if(h[0] && L[h[0]]) selectCountry(h[0], h[1]||null, h[2]||null); })();
 """
