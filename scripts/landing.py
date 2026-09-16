@@ -736,8 +736,8 @@ def assemble(d, e):
             in_force = latest
         sheet_status = _s(r.get("status"))
         disp = lifecycle(versions[-1] if versions else None, sheet_status, activations)
-        if disp is None:
-            continue                                  # conversation stage: not on the map
+        if disp is None or disp == "retired":
+            continue                                  # conversation stage / retired / dormant: not on the map
         able = able_to_trigger(versions[-1] if versions else None, h, disp)
         months_now = (versions[-1]["months"] if versions else [])
         ring = None
@@ -1086,7 +1086,10 @@ function morphWorld(fromP, toP, t){
     const wp = WP[iso]; if(!wp) continue;
     if(!wp.to){ const n = wp.w.length, a = new Float64Array(n); let k=0; for(const r of c.r) for(const [lon,lat] of r){ const q = toP(lon,lat); a[k++]=q[0]; a[k++]=q[1]; } wp.to = a;
       let minx=1e9,maxx=-1e9,miny=1e9,maxy=-1e9; for(let i=0;i<n;i+=2){ if(a[i]<minx)minx=a[i]; if(a[i]>maxx)maxx=a[i]; if(a[i+1]<miny)miny=a[i+1]; if(a[i+1]>maxy)maxy=a[i+1]; }
-      wp.vis = !(maxx < -VB.w || minx > 2*VB.w || maxy < -VB.h || miny > 2*VB.h); }
+      // shapes that end up far away, or blown up to many times the canvas (a continent-sized
+      // neighbour at island zoom), would sweep across the view as bands: park them instead
+      wp.vis = !(maxx < -VB.w || minx > 2*VB.w || maxy < -VB.h || miny > 2*VB.h)
+            && (maxx-minx) < 2.5*VB.w && (maxy-miny) < 2.5*VB.h; }
     if(!wp.vis){ wp.el.style.display = 'none'; continue; }
     wp.el.style.display = '';
     const a = wp.w, b = wp.to, n = a.length, out = new Float64Array(n);
@@ -1097,27 +1100,32 @@ function morphWorld(fromP, toP, t){
 function resetWorld(){ for(const wp of Object.values(WP)){ wp.el.style.display=''; wp.el.setAttribute('d', pathFrom(wp.w, wp.lens)); wp.to = null; } }
 
 // ---------- zoom: a projection morph (world -> local), eased, hidden-tab safe
-let animId = null, animSeq = 0, zoomTarget = null;
+let animId = null, animSeq = 0, zoomTarget = null, inflight = null;
+function finishInflight(){ if(!inflight) return; const a = inflight; inflight = null; if(animId){ cancelAnimationFrame(animId); animId = null; } a.step(1); a.done && a.done(); }
 function animate(ms, step, done){
-  if(animId) cancelAnimationFrame(animId);
+  finishInflight();                                   // a click mid-animation snaps the old one to its end first
   const seq = ++animSeq, t0 = performance.now(), ease = x => x<.5 ? 4*x*x*x : 1 - Math.pow(-2*x+2, 3)/2;
-  if(document.hidden){ step(1); done && done(); return; }
-  function frame(now){ if(seq !== animSeq) return; const k = Math.min(1, (now-t0)/ms); step(ease(k)); if(k<1) animId = requestAnimationFrame(frame); else { animId = null; done && done(); } }
+  inflight = {step, done};
+  const end = () => { if(inflight && inflight.step === step){ inflight = null; animId = null; done && done(); } };
+  if(document.hidden){ step(1); end(); return; }
+  function frame(now){ if(seq !== animSeq) return; const k = Math.min(1, (now-t0)/ms); step(ease(k)); if(k<1) animId = requestAnimationFrame(frame); else end(); }
   animId = requestAnimationFrame(frame);
-  setTimeout(()=>{ if(seq===animSeq && animId){ cancelAnimationFrame(animId); animId=null; step(1); done && done(); } }, ms+120);
+  setTimeout(()=>{ if(seq===animSeq && animId){ cancelAnimationFrame(animId); animId=null; step(1); end(); } }, ms+120);
 }
 function zoomTo(bbox, done){
   const to = localProj(bbox); zoomTarget = bbox;
   for(const wp of Object.values(WP)) wp.to = null;
   P = to;
   svg.classList.add('zooming');
-  animate(1050, t => morphWorld(worldProj, to, t), () => { svg.classList.remove('zooming'); svg.classList.add('zoomed'); done && done(); });
+  animate(1050, t => { morphWorld(worldProj, to, t); world.style.opacity = 1 - 0.75*t; },
+          () => { svg.classList.remove('zooming'); svg.classList.add('zoomed'); world.style.opacity = ''; done && done(); });
 }
 function zoomOut(done){
   const from = P; if(from === worldProj){ done && done(); return; }
   svg.classList.remove('zoomed'); svg.classList.add('zooming');
   // reuse the stored target coords: morph back from local (t=1) to world (t=0)
-  animate(850, t => morphWorld(worldProj, from, 1 - t), () => { resetWorld(); P = worldProj; zoomTarget = null; svg.classList.remove('zooming'); done && done(); });
+  animate(850, t => { morphWorld(worldProj, from, 1 - t); world.style.opacity = 0.25 + 0.75*t; },
+          () => { resetWorld(); P = worldProj; zoomTarget = null; svg.classList.remove('zooming'); world.style.opacity = ''; done && done(); });
 }
 
 // ---------- admin layers (country view)
@@ -1168,11 +1176,11 @@ function worldLegend(){
     + `<span class='dot' style='background:${COLOR['recently-triggered']}'></span>Recently triggered (${n('recently-triggered')})<br>`
     + `<span class='dot' style='background:${COLOR.expired}'></span>Expired (${n('expired')})<br>`
     + `<span class='dot' style='background:${COLOR.development}'></span>In development (${n('development')})<br>`
-    + `<span class='dot' style='background:${COLOR.retired}'></span>Retired / dormant (${n('retired')})<br>`
     + `<span class='dot' style='background:#e3322d;width:11px;height:11px;border:2px solid #fff'></span>Activated — a dot per activation (${nAct})<br>`
     + `<span class='dot' style='background:#fff;width:12px;height:12px;border:2.5px solid #f5a300'></span>Able to trigger now — in season (${CURMONTH}), pulsing (${nNow})<br>`
     + `<span class='dot' style='background:#fff;width:12px;height:12px;border:2.5px solid #f6c95f'></span>Able to trigger — off-season (${nOff})<br>`
-    + `<span class='dot' style='background:#fff;width:12px;height:12px;border:2.5px solid #e3e6ea'></span>No ring = cannot trigger (activated &amp; spent, expired, or in development)`;
+    + `<span class='dot' style='background:#fff;width:12px;height:12px;border:2.5px solid #e3e6ea'></span>No ring = cannot trigger (activated &amp; spent, expired, or in development)<br>`
+    + `<span class='small' style='color:#64748b'>Retired and dormant frameworks are not shown</span>`;
 }
 
 // ---------- callouts: one per country, laid out clear of every framework country (ported from the KB map)
