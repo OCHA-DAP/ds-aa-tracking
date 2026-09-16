@@ -131,29 +131,58 @@ def _ring_d(r):
     return "M" + "L".join(f"{x:.1f},{y:.1f}" for x, y in (pt(a, b) for a, b in r)) + "Z"
 
 
+WORLD_SRC = ROOT / "data" / "world" / "ne_50m_admin_0_countries.geojson"
+WORLD_URL = ("https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/"
+             "geojson/ne_50m_admin_0_countries.geojson")
+WORLD_TOL = 0.03      # degrees; one topology for all countries -> borders stay shared
+
+
+def world_gdf():
+    """Natural Earth 1:50m countries, one (multi)polygon per ISO3 (Somaliland folded
+    into Somalia), full resolution. Downloaded once into data/world/."""
+    import geopandas as gpd
+    if not WORLD_SRC.exists():
+        import urllib.request
+        WORLD_SRC.parent.mkdir(parents=True, exist_ok=True)
+        urllib.request.urlretrieve(WORLD_URL, WORLD_SRC)
+    g = gpd.read_file(WORLD_SRC)[["ISO_A3", "ADM0_A3", "NAME", "geometry"]]
+    g["iso"] = [a if a != "-99" else b for a, b in zip(g["ISO_A3"], g["ADM0_A3"])]
+    g.loc[g["iso"] == "SOL", "iso"] = "SOM"
+    g = g[g["iso"] != "ATA"]
+    return g.dissolve("iso", as_index=False, aggfunc={"NAME": "first"})
+
+
+def world_simplified():
+    """The world base simplified as ONE topology so shared borders survive (cached)."""
+    import geopandas as gpd
+    cache = WORLD_SRC.parent / f"world_topo_{WORLD_TOL}.geojson"
+    if cache.exists():
+        return gpd.read_file(cache)
+    import topojson as tp
+    g = world_gdf()
+    topo = tp.Topology(g, prequantize=1_000_000, toposimplify=WORLD_TOL,
+                       topoquantize=False, shared_coords=True)
+    out = topo.to_gdf()
+    out = out[["iso", "NAME", "geometry"]]
+    out.to_file(cache, driver="GeoJSON")
+    return out
+
+
 def svg_world(shown_iso, country_names):
     """World SVG in the KB style: framework countries light blue, the rest grey."""
-    gj = json.loads((ROOT / "site_src" / "countries.geo.json").read_text())
+    from shapely.geometry import MultiPolygon
+    g = world_simplified()
     paths, bboxes = [], {}
-    for f in gj["features"]:
-        iso = f.get("id")
-        if iso == "ATA":
-            continue
-        if iso == "-99" and f["properties"].get("name") == "Somaliland":
-            iso = "SOM"                                   # fold into Somalia (KB does the same)
-        geom = f["geometry"]
-        polys = geom["coordinates"] if geom["type"] == "MultiPolygon" else [geom["coordinates"]]
-        d = "".join(_ring_d(r[::2] or r) for poly in polys for r in poly)
+    for _, f in g.iterrows():
+        iso, geom = f["iso"], f["geometry"]
+        polys = list(geom.geoms) if isinstance(geom, MultiPolygon) else [geom]
+        d = "".join(_ring_d(list(ring.coords)) for poly in polys
+                    for ring in [poly.exterior, *poly.interiors])
         on = iso in shown_iso
-        nm = country_names.get(iso, f["properties"].get("name", iso))
+        nm = country_names.get(iso, f["NAME"])
         paths.append(f"<path class='{'cty on' if on else 'cty'}' data-iso='{iso}' data-name='{nm}' d='{d}'/>")
-        big = max(polys, key=lambda p: len(p[0]))
-        xs = [c[0] for c in big[0]]; ys = [c[1] for c in big[0]]
-        b = [min(xs), min(ys), max(xs), max(ys)]
-        if iso in bboxes:                                  # union of folded features
-            o = bboxes[iso]
-            b = [min(o[0], b[0]), min(o[1], b[1]), max(o[2], b[2]), max(o[3], b[3])]
-        bboxes[iso] = b
+        big = max(polys, key=lambda p: p.area)
+        bboxes[iso] = [float(x) for x in big.bounds]
     svg = (f"<svg id='map' viewBox='{VB_X:.1f} {VB_Y:.1f} {VB_W:.1f} {VB_H:.1f}' preserveAspectRatio='xMidYMid meet'>"
            f"<rect id='sea' x='{VB_X-W}' y='{VB_Y-H}' width='{3*W}' height='{3*H}' fill='transparent'/>"
            f"<g id='world'>{''.join(paths)}<g id='adm'></g></g></svg>")
@@ -222,24 +251,38 @@ def load_codab(iso, level):
     return gdf
 
 
-def neighbours_of(shown_iso):
-    """iso3 -> touching / nearby countries (from the world file), for the zoomed view."""
-    import geopandas as gpd
-    from shapely.geometry import shape
-    gj = json.loads((ROOT / "site_src" / "countries.geo.json").read_text())
-    feats = [("SOM" if f["id"] == "-99" and f["properties"].get("name") == "Somaliland" else f["id"],
-              shape(f["geometry"])) for f in gj["features"] if f["id"] not in ("ATA", "-99")
-             or f["properties"].get("name") == "Somaliland"]
-    g = gpd.GeoDataFrame({"iso": [i for i, _ in feats]}, geometry=[x for _, x in feats],
-                         crs=4326).dissolve("iso")
-    out = {}
-    for iso in shown_iso:
-        if iso not in g.index:
-            out[iso] = []
-            continue
-        near = g.loc[iso].geometry.buffer(0.25)
-        out[iso] = sorted(set(g[g.intersects(near)].index) - {iso})
-    return out
+def viewport_box(b):
+    """Lon/lat box of what the zoomed viewport shows for a country bbox b — the same
+    maths as zoomTo in the page (fit with a 1.3 pad in the fixed-aspect view, cos(lat)
+    corrected) plus a 15 % margin so clip edges stay off-screen."""
+    import math
+    from shapely.geometry import box
+    lat0 = (b[1] + b[3]) / 2
+    cosf = max(0.35, math.cos(math.radians(lat0)))
+    bw_u = max((b[2] - b[0]) / 360 * W, 2)
+    bh_u = max((b[3] - b[1]) / (LAT_TOP - LAT_BOT) * H, 2)
+    sc = min(VB_W / (bw_u * cosf * 1.3), VB_H / (bh_u * 1.3), 60)
+    vis_lon = VB_W / (sc * cosf) * 360 / W * 1.15
+    vis_lat = VB_H / sc * (LAT_TOP - LAT_BOT) / H * 1.15
+    cx = (b[0] + b[2]) / 2
+    return box(cx - vis_lon / 2, lat0 - vis_lat / 2, cx + vis_lon / 2, lat0 + vis_lat / 2)
+
+
+_WORLD = {}
+
+
+def countries_in_view(iso, view):
+    """Every other country whose (world-file) shape intersects the zoomed viewport —
+    all drawn from the edge-matched set so no two boundary sources meet on screen."""
+    if "g" not in _WORLD:
+        _WORLD["g"] = world_gdf()
+    g = _WORLD["g"]
+    hit = g[g.intersects(view)].copy()
+    hit = hit[hit["iso"] != iso]
+    if len(hit) > 40:                          # open ocean views: keep what actually shows
+        hit["_a"] = hit.geometry.intersection(view).area
+        hit = hit.sort_values("_a", ascending=False).head(40)
+    return sorted(hit["iso"])
 
 
 class Matcher:
@@ -391,7 +434,7 @@ def _union(gs):
     return gs.union_all() if hasattr(gs, "union_all") else gs.unary_union
 
 
-def write_country_geo(iso, matcher, adm0, neighbours):
+def write_country_geo(iso, matcher, adm0):
     """adm-<ISO>.json: country outline, ADM1 mesh, matched scope areas and the
     neighbours' outlines — simplified TOGETHER as one topology (shared arcs), so
     every edge still matches after simplification."""
@@ -404,11 +447,18 @@ def write_country_geo(iso, matcher, adm0, neighbours):
     if adm0 is None or adm0 is False or not len(adm0):
         return None
     b = adm0.total_bounds
+    if b[2] - b[0] > 180:                      # antimeridian (Fiji): frame the main island group
+        from shapely.geometry import MultiPolygon
+        geom0 = _union(adm0.geometry)
+        parts = list(geom0.geoms) if isinstance(geom0, MultiPolygon) else [geom0]
+        b = max(parts, key=lambda g: g.area).bounds
     diag = ((b[2] - b[0]) ** 2 + (b[3] - b[1]) ** 2) ** 0.5
     tol = diag / 900
+    view = viewport_box(b)
+    neighbours = countries_in_view(iso, view)
     pcodes = sorted(matcher.used)
     sig = hashlib.md5(json.dumps([iso, pcodes, neighbours, round(tol, 6),
-                                  1 in matcher.layers, "viewclip-v2"]).encode()).hexdigest()[:10]
+                                  1 in matcher.layers, "viewclip-v3"]).encode()).hexdigest()[:10]
     cache_f = CACHE / f"topo_{iso}_{sig}.json"
     if cache_f.exists():
         (OUT / f"adm-{iso}.json").write_text(cache_f.read_text())
@@ -422,29 +472,36 @@ def write_country_geo(iso, matcher, adm0, neighbours):
     for pc, rec in matcher.used.items():
         rows.append({"kind": "sc", "n": rec["name"], "p": pc, "l": rec["level"],
                      "geometry": rec["geometry"]})
-    # neighbours: full-resolution outlines clipped to what the zoomed viewport can show
-    # (same maths as zoomTo in the page: fit the bbox with a 1.3 pad inside the fixed-
-    # aspect view, cos(lat) corrected), plus a 15 % margin so clip edges stay off-screen
-    import math
-    lat0 = (b[1] + b[3]) / 2
-    cosf = max(0.35, math.cos(math.radians(lat0)))
-    bw_u = max((b[2] - b[0]) / 360 * W, 2)
-    bh_u = max((b[3] - b[1]) / (LAT_TOP - LAT_BOT) * H, 2)
-    sc = min(VB_W / (bw_u * cosf * 1.3), VB_H / (bh_u * 1.3), 60)
-    vis_lon = VB_W / (sc * cosf) * 360 / W * 1.15
-    vis_lat = VB_H / sc * (LAT_TOP - LAT_BOT) / H * 1.15
-    cx, cy = (b[0] + b[2]) / 2, lat0
-    view = box(cx - vis_lon / 2, cy - vis_lat / 2, cx + vis_lon / 2, cy + vis_lat / 2)
+    # every other country in the viewport: full-resolution outline clipped to the view
+    import gc
+
+    from shapely import clip_by_rect, make_valid
     for n in neighbours:
         gn = load_codab(n, 0)
         if gn is False or gn is None or not len(gn):
             continue
-        geom = _union(gn.geometry).intersection(view)
+        # rectangle-clip each part BEFORE unioning: full OSM outlines (Mexico, China…)
+        # run to millions of vertices and a union of the whole thing costs gigabytes
+        clipped = [make_valid(clip_by_rect(g, *view.bounds)) for g in gn.geometry]
+        clipped = [g for g in clipped if not g.is_empty]
+        del gn
+        if not clipped:
+            continue
+        geom = _union(gpd.GeoSeries(clipped, crs=4326))
         if not geom.is_empty:
             rows.append({"kind": "nb", "n": n, "p": n, "l": 0, "geometry": geom})
+        del clipped
+        gc.collect()
     gdf = gpd.GeoDataFrame(rows, geometry="geometry", crs=4326)
+    # snap every input to one grid first: shared borders snap identically on both sides
+    # (so they stay shared) while OSM-density coastlines collapse to a fraction of their
+    # vertices — the pure-Python topology step below cannot take millions of points
+    import shapely
+    gdf["geometry"] = shapely.set_precision(gdf.geometry.values, grid_size=tol / 3)
+    gdf = gdf[~gdf.geometry.is_empty]
+    print(f"    {iso}: {len(gdf)} features, {int(shapely.get_num_coordinates(gdf.geometry.values).sum()):,} vertices after snapping", flush=True)
     try:
-        topo = tp.Topology(gdf, prequantize=200_000, toposimplify=tol,
+        topo = tp.Topology(gdf, prequantize=False, toposimplify=tol,
                            topoquantize=False, shared_coords=True)
         simp = topo.to_gdf()
     except Exception as ex:  # noqa: BLE001 — fall back to per-feature simplification
@@ -713,7 +770,6 @@ def able_to_trigger(latest, hazard, disp):
 
 def geo_pass(countries, bboxes):
     """Match every version's scope to CODAB and write one geometry file per country."""
-    nbs = neighbours_of(list(countries))
     for iso, cd in countries.items():
         levels = [v["admin_level"] for f in cd["fws"] for v in f["versions"]
                   if v["admin_level"]]
@@ -748,7 +804,9 @@ def geo_pass(countries, bboxes):
                 elif sc["pcodes"] or sc["national"]:
                     prev = dict(sc, **{"from": v["v"]})
         if m is not None:
-            b = write_country_geo(iso, m, adm0, nbs.get(iso, []))
+            import resource
+            print(f"  geo {iso} … rss {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1e9:.1f}GB", flush=True)
+            b = write_country_geo(iso, m, adm0)
             if b is not None:
                 bboxes[iso] = [float(x) for x in b]
         cd["bbox"] = bboxes.get(iso)
@@ -841,8 +899,8 @@ LANDING_CSS = r"""
 .cty { fill:#f7f8fa; stroke:#d3d9df; stroke-width:.45; vector-effect:non-scaling-stroke; transition: opacity .5s, fill .3s; }
 .cty.on { fill:#cfe1f3; stroke:#8fb4d9; stroke-width:.7; cursor:pointer; }
 .cty.on:hover { fill:#b9d3ec; }
-#map.zoomed .cty { opacity:.45; } #map.zoomed .cty.on { opacity:.6; } #map.zoomed .cty.sel, #map.zoomed .cty.covered { opacity:0; }
-.nb { fill:#f1f3f6; stroke:#c5ccd5; stroke-width:.6; vector-effect:non-scaling-stroke; }
+#map.zoomed .cty { opacity:0; }
+.nb { fill:#f3f5f8; stroke:#c5ccd5; stroke-width:.6; vector-effect:non-scaling-stroke; stroke-linejoin:round; }
 .nb:hover { fill:#e9edf2; }
 .a0 { fill:#fff; stroke:#2c3a55; stroke-width:1.25; vector-effect:non-scaling-stroke; stroke-linejoin:round; }
 .a1 { fill:#f5f8fb; stroke:#b3c2d3; stroke-width:.55; vector-effect:non-scaling-stroke; stroke-linejoin:round; transition: fill .15s; }

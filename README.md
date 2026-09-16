@@ -35,7 +35,9 @@ CERF OneGMS mirror (`ds-cerf-supplement`). It adds:
   `/schema` `/rows` `/distinct` `/save` `/delete` for the admin page; every field change is
   audited to `aa.entry_audit`; KB-loader and OneGMS-mirror tables are read-only
 - `scripts/dashboards.py` — dashboards, per-framework pages, explorer, entry forms
-- `scripts/landing.py` — landing map: zoom to a country, subnational scope per framework
+- `scripts/landing.py` — landing map (base: Natural Earth 1:50m simplified as one topology so
+  borders stay shared; zoom: FieldMaps edge-matched COD-AB for every country in view): zoom
+  to a country, subnational scope per framework
   version (KB `geographic_scope` names matched to FieldMaps edge-matched COD-AB boundaries; one
   `adm-<ISO3>.json` per country with its neighbours, simplified as one shared-edge topology; layers cached under `data/fieldmaps/`)
 
