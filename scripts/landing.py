@@ -347,11 +347,14 @@ class Matcher:
 
     def _find(self, name, levels):
         n = _norm(name)
+        all_levels = sorted(self.layers, reverse=True)
         if n in ALIASES:
             out = []
             for alias in ALIASES[n]:
-                out += self._find_one(alias, levels)
+                out += self._find_one(alias, all_levels)
             return out
+        if re.fullmatch(r"[a-z]{2,3}\s?\d+", n):          # a pcode names its level itself
+            return self._find_one(n, all_levels)
         return self._find_one(n, levels)
 
     def _find_one(self, n, levels):
@@ -360,8 +363,16 @@ class Matcher:
             if lv not in self.layers:
                 continue
             g, ncol, pcol = self.layers[lv]
-            if n.upper() in set(g[pcol]):                        # pcode given directly
-                return [self._record(lv, r) for _, r in g[g[pcol] == n.upper()].iterrows()]
+            # pcode given directly — accept the ISO2 (TD18, as in HDX CODs) or ISO3 (TCD18,
+            # FieldMaps) prefix style: compare the part after the country prefix
+            code = n.upper().replace(" ", "")
+            m_pc = re.fullmatch(r"([A-Z]{2,3})(\d+)", code)
+            if m_pc:
+                tail = m_pc.group(2)
+                hit = g[g[pcol].str.upper().str.replace(" ", "").map(
+                    lambda pc: bool(re.fullmatch(r"[A-Z]{2,3}" + re.escape(tail), pc)))]
+                if len(hit) == 1:
+                    return [self._record(lv, r) for _, r in hit.iterrows()]
             hit = g[g["_n"].map(lambda xs: n in xs) | g["_ns"].map(lambda xs: ns in xs)]
             if len(hit):
                 return [self._record(lv, r) for _, r in hit.iterrows()]
@@ -1034,7 +1045,7 @@ let state = { iso:null, hz:null, ver:null };
 
 function money(v){ return v==null ? '—' : v>=1e6 ? '$'+(v/1e6).toFixed(v>=1e7?0:1)+'M' : v>=1e3 ? '$'+Math.round(v/1e3)+'k' : '$'+Math.round(v); }
 function num(v){ return v==null ? '—' : Math.round(v).toLocaleString(); }
-function esc(s){ return s==null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function esc(s){ return s==null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function badge(st, label){ st = st || 'retired'; return `<span class='badge b-${esc(st)}'>${esc(label || KBLABEL[st] || st.replace(/_/g,' '))}</span>`; }
 function verBadge(st){ st=st||''; const m = {endorsed:'endorsed', superseded:'superseded', development:'development', 'pre-development':'pre-development', retired:'retired'};
   return `<span class='badge b-${m[st]||'retired'}'>${esc(st||'?')}</span>`; }
@@ -1135,12 +1146,26 @@ async function loadGeo(iso){
   catch(e){ GEO[iso] = null; }
   return GEO[iso];
 }
+// diagonal stripes alternating the hazard colours of the frameworks that share an area
+function hatchId(hzs){
+  const id = 'hatch-' + hzs.join('-');
+  let defs = svg.querySelector('defs'); if(!defs){ defs = document.createElementNS(NS,'defs'); svg.insertBefore(defs, svg.firstChild); }
+  if(!defs.querySelector('#'+id)){
+    const n = hzs.length, w = 4.5;
+    const pat = document.createElementNS(NS,'pattern');
+    pat.setAttribute('id', id); pat.setAttribute('patternUnits','userSpaceOnUse'); pat.setAttribute('width', w*n); pat.setAttribute('height', w*n);
+    pat.setAttribute('patternTransform','rotate(45)');
+    hzs.forEach((h,i)=>{ const r = document.createElementNS(NS,'rect'); r.setAttribute('x', i*w); r.setAttribute('y', 0); r.setAttribute('width', w); r.setAttribute('height', w*n); r.setAttribute('fill', hzColor(h)); pat.appendChild(r); });
+    defs.appendChild(pat);
+  }
+  return id;
+}
 function drawAdmin(iso, fade){
   const g = GEO[iso]; adm.innerHTML=''; if(fade) adm.classList.remove('show');
   if(!g) return;
   const c = L[iso];
   let html = '';
-  (g.nb||[]).forEach(n => html += `<path class='nb' data-n='${esc(L[n.iso]?.name || n.iso)}' d='${ringsD(n.r)}'/>`);
+  (g.nb||[]).forEach(n => html += `<path class='nb' data-n='${esc(L[n.iso]?.name || WORLD[n.iso]?.n || n.iso)}' d='${ringsD(n.r)}'/>`);
   if(g.adm0.length) html += `<path class='a0' d='${ringsD(g.adm0)}'/>`;
   g.adm1.forEach(a => html += `<path class='a1' data-n='${esc(a.n)}' d='${ringsD(a.r)}'/>`);
 
@@ -1153,15 +1178,20 @@ function drawAdmin(iso, fade){
     v.scope.pcodes.forEach(p => { (paint[p] ??= []).push(f.hazard); });
   });
   national.forEach(h => { if(g.adm0.length) html += `<path class='nat' fill='${hzColor(h)}' d='${ringsD(g.adm0)}'/>`; });
+  let multi = false;
   Object.entries(paint).forEach(([p, hzs]) => {
     const a = g.areas[p]; if(!a) return;
-    html += `<path class='sc' fill='${hzColor(hzs[0])}' data-n='${esc(a.n)}' data-hz='${esc(hzs.map(h=>L[iso].fws.find(f=>f.hazard===h)?.hz_label||h).join(', '))}' d='${ringsD(a.r)}'/>`;
+    const u = [...new Set(hzs)];
+    const fill = u.length > 1 ? `url(#${hatchId(u)})` : hzColor(u[0]);
+    if(u.length > 1) multi = true;
+    html += `<path class='sc' fill='${fill}' data-n='${esc(a.n)}' data-hz='${esc(u.map(h=>L[iso].fws.find(f=>f.hazard===h)?.hz_label||h).join(' + '))}' d='${ringsD(a.r)}'/>`;
   });
   adm.innerHTML = html;
   if(fade) void adm.getBoundingClientRect();
   adm.classList.add('show');
   const hzs = [...new Set(targets.map(f=>f.hazard))];
   legend.innerHTML = `<b>${esc(c.name)}</b><br>` + hzs.map(h=>`<span class='sq' style='background:${hzColor(h)}'></span>${esc(targets.find(f=>f.hazard===h).hz_label)} — scope of the displayed version<br>`).join('')
+    + (multi ? `<span class='sq' style='background:repeating-linear-gradient(135deg,${hzColor(hzs[0])} 0 3px,${hzColor(hzs[1]||hzs[0])} 3px 6px)'></span>striped — covered by several frameworks<br>` : '')
     + `<span class='sq' style='background:#eef3f9;border:1px solid #9cc0e3'></span>admin-1 boundaries`
     + (national.length ? `<br><span class='small'>whole country shaded = national trigger</span>` : '');
 }
