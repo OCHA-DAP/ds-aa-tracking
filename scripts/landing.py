@@ -283,7 +283,8 @@ def local_scale(b):
     cosf = max(0.35, math.cos(math.radians(lat0)))
     bw = max((b[2] - b[0]) * cosf, 0.01)
     bh = max(b[3] - b[1], 0.01)
-    return min(VB_W / (bw * 1.3), VB_H / (bh * 1.3), VB_W / S_MAX_DEG), cosf, lat0
+    S = VB_H                                # the zoomed view is a square of the world height
+    return min(S / (bw * 1.25), S / (bh * 1.25), S / S_MAX_DEG), cosf, lat0
 
 
 def viewport_box(b):
@@ -291,7 +292,7 @@ def viewport_box(b):
     margin so clip edges stay off-screen."""
     from shapely.geometry import box
     sc, cosf, lat0 = local_scale(b)
-    vis_lon = VB_W / (sc * cosf) * 1.15
+    vis_lon = VB_H / (sc * cosf) * 1.15
     vis_lat = VB_H / sc * 1.15
     cx = (b[0] + b[2]) / 2
     return box(cx - vis_lon / 2, lat0 - vis_lat / 2, cx + vis_lon / 2, lat0 + vis_lat / 2)
@@ -345,9 +346,28 @@ class Matcher:
                              "geometry": row["geometry"]}
         return pc
 
+    def _exact_levels(self, name):
+        """Admin levels at which this name (or pcode) matches exactly."""
+        n = _norm(name)
+        if n in ALIASES:
+            return set()
+        ns = _strip_desc(n)
+        code = n.upper().replace(" ", "")
+        m_pc = re.fullmatch(r"([A-Z]{2,3})(\d+)", code)
+        out = set()
+        for lv, (g, ncol, pcol) in self.layers.items():
+            if m_pc:
+                tail = m_pc.group(2)
+                if g[pcol].str.upper().str.replace(" ", "").map(
+                        lambda pc: bool(re.fullmatch(r"[A-Z]{2,3}" + re.escape(tail), pc))).sum() == 1:
+                    out.add(lv)
+            elif (g["_n"].map(lambda xs: n in xs) | g["_ns"].map(lambda xs: ns in xs)).any():
+                out.add(lv)
+        return out
+
     def _find(self, name, levels):
         n = _norm(name)
-        all_levels = sorted(self.layers, reverse=True)
+        all_levels = sorted(self.layers)
         if n in ALIASES:
             out = []
             for alias in ALIASES[n]:
@@ -398,8 +418,18 @@ class Matcher:
     def match(self, items, admin_level, country_name):
         """-> (pcodes, unmatched_names, national_flag)."""
         pcodes, unmatched, national = [], [], False
+        # a name can exist at several levels (Dosso region and Dosso commune; Khulna
+        # division and Khulna district): resolve the whole list at the level where MOST of
+        # its names match, ties going to the coarser unit
         top = max(1, min(admin_level or 3, 3))
-        levels = list(range(top, 0, -1))
+        counts = {}
+        for raw in items or []:
+            for lv in self._exact_levels(str(raw).split(":", 1)[-1].split("(")[0].strip()):
+                counts[lv] = counts.get(lv, 0) + 1
+        dominant = min(counts, key=lambda lv: (-counts[lv], lv)) if counts else 1
+        levels = [dominant] + [lv for lv in range(1, top + 1) if lv != dominant]
+        if dominant > top:
+            levels = [dominant] + list(range(1, top + 1))
         for raw in items or []:
             s = str(raw).strip()
             if not s:
@@ -498,7 +528,7 @@ def write_country_geo(iso, matcher, adm0):
     neighbours = countries_in_view(iso, view)
     pcodes = sorted(matcher.used)
     sig = hashlib.md5(json.dumps([iso, pcodes, neighbours, round(tol, 6),
-                                  1 in matcher.layers, "viewclip-v4"]).encode()).hexdigest()[:10]
+                                  1 in matcher.layers, "viewclip-v5"]).encode()).hexdigest()[:10]
     cache_f = CACHE / f"topo_{iso}_{sig}.json"
     if cache_f.exists():
         (OUT / f"adm-{iso}.json").write_text(cache_f.read_text())
@@ -928,15 +958,29 @@ LANDING_CSS = r"""
 .tile { background:#fff; border:1px solid #e6eaef; border-radius:12px; padding:12px 18px; min-width:150px; box-shadow:0 1px 2px rgba(16,24,40,.05); }
 .tile .v { font-size:22px; font-weight:700; } .tile .l { font-size:12px; color:var(--muted); }
 .tile a { color:var(--ocha); }
-/* the sidebar slides in only when a country is selected, so the world view keeps the full width */
-.maprow { display:grid; grid-template-columns: minmax(0,1fr) 0px; gap:0; align-items:start;
-  transition: grid-template-columns .55s cubic-bezier(.22,.8,.2,1), gap .55s; }
-.maprow.open { grid-template-columns: minmax(0,1fr) 380px; gap:16px; }
-.maprow .side { opacity:0; visibility:hidden; transition: opacity .3s; }
-.maprow.open .side { opacity:1; visibility:visible; transition: opacity .4s .25s; }
-@media (max-width: 1000px) { .maprow, .maprow.open { grid-template-columns: 1fr; gap:16px; } }
-.mapbox { background:#fff; border-radius:12px; box-shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px -12px rgba(16,24,40,.18); position:relative; overflow:hidden; border:1px solid #e6eaef; }
-#map { width:100%; height:auto; display:block; background:linear-gradient(180deg,#eef3f8 0%,#e9eff5 100%); }
+/* the sidebar slides in only when a country is selected: the card keeps the world view's
+   height (--maph, set by the page), the map goes square and the sidebar takes the rest */
+.maprow { --maph: 420px; display:grid; grid-template-columns: minmax(0,1fr) 0px; gap:0; align-items:start;
+  transition: grid-template-columns .9s cubic-bezier(.22,.8,.2,1), gap .9s; }
+.maprow.open { grid-template-columns: var(--maph) minmax(0,1fr); gap:16px; }
+.maprow .side { opacity:0; visibility:hidden; transition: opacity .3s; height:var(--maph); }
+.maprow.open .side { opacity:1; visibility:visible; transition: opacity .4s .35s; }
+@media (max-width: 760px) {
+  .maprow, .maprow.open { grid-template-columns: 1fr; gap:12px; }
+  .maprow .side, .maprow.open .side { height:auto; max-height:none; opacity:1; visibility:visible; }
+  .mapbox.compact .callout, .mapbox.compact .leader { display:none; }
+  .mapbox.compact .cdot { r:2.5; }
+  .mapbox.compact .maplegend { display:none; }
+  .mapbox.compact #map.zoomed ~ .maplegend { display:block; left:8px; bottom:8px; font-size:10.5px; padding:6px 9px; max-width:70%; }
+  .backbtn { top:8px; left:8px; padding:5px 10px; font-size:12px; }
+  .hero p { font-size:13px; }
+  .wl-pins { display:flex; flex-wrap:wrap; gap:6px 14px; margin-top:6px; }
+  .wl-pin { display:inline-flex; align-items:center; gap:5px; }
+  .wl-pin .iconbox { width:20px; height:20px; cursor:default; } .wl-pin .iconbox svg.hz { width:13px; height:13px; }
+  .tiles { gap:8px; } .tile { min-width:0; flex:1 1 40%; padding:10px 12px; } .tile .v { font-size:18px; }
+}
+.mapbox { background:linear-gradient(180deg,#eef3f8 0%,#e9eff5 100%); border-radius:12px; box-shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px -12px rgba(16,24,40,.18); position:relative; overflow:hidden; border:1px solid #e6eaef; height:var(--maph); }
+#map { width:100%; height:100%; display:block; }
 .cty { fill:#f7f8fa; stroke:#d3d9df; stroke-width:.45; vector-effect:non-scaling-stroke; transition: opacity .5s, fill .3s; }
 .cty.on { fill:#cfe1f3; stroke:#8fb4d9; stroke-width:.7; cursor:pointer; }
 .cty.on:hover { fill:#b9d3ec; }
@@ -988,7 +1032,7 @@ LANDING_CSS = r"""
   border-radius:6px; pointer-events:none; white-space:nowrap; transform:translate(-50%,-135%); box-shadow:0 4px 12px -4px rgba(0,0,0,.35); }
 /* sidebar (KB info-pop styling) */
 .side { background:#fff; border:1px solid #e6eaef; border-radius:12px; padding:12px 16px 16px;
-  max-height:640px; overflow-y:auto; font-size:12.5px; line-height:1.45; color:var(--ink); box-shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px -12px rgba(16,24,40,.18); }
+  overflow-y:auto; font-size:12.5px; line-height:1.45; color:var(--ink); box-shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px -12px rgba(16,24,40,.18); box-sizing:border-box; }
 .side a { color:var(--ocha); }
 .side h3 { margin:2px 0 4px; font-size:17px; color:#16324f; } .side h4 { margin:14px 0 4px; font-size:11.5px;
   text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
@@ -1066,11 +1110,33 @@ function eeRaw(lon, lat){
   return [x, -y];
 }
 function worldProj(lon, lat){ const [x,y] = eeRaw(lon, lat); return [(x-EEBOX[0])*EEK, (y-EEBOX[1])*EEK]; }
+// the zoomed view is a SQUARE of the world view's height (the card keeps its height, the
+// sidebar takes the freed width); the local projection fits the country into that square
 function localProj(b){
-  const lat0 = (b[1]+b[3])/2, cosf = Math.max(.35, Math.cos(lat0*D2R));
+  const S = VB.h, lat0 = (b[1]+b[3])/2, cosf = Math.max(.35, Math.cos(lat0*D2R));
   const bw = Math.max((b[2]-b[0])*cosf, .01), bh = Math.max(b[3]-b[1], .01);
-  const s = Math.min(VB.w/(bw*1.3), VB.h/(bh*1.3), VB.w/EE.smax), cx = (b[0]+b[2])/2;
-  return (lon, lat) => [VB.w/2 + (((lon-cx+540)%360)-180)*cosf*s, VB.h/2 - (lat-lat0)*s];
+  const s = Math.min(S/(bw*1.25), S/(bh*1.25), S/EE.smax), cx = (b[0]+b[2])/2;
+  return (lon, lat) => [S/2 + (((lon-cx+540)%360)-180)*cosf*s, S/2 - (lat-lat0)*s];
+}
+function setViewW(w){ svg.setAttribute('viewBox', `0 0 ${w.toFixed(1)} ${VB.h}`); }
+// the card's height is the world view's height for the current width; it never changes
+// while zooming (the map goes square and the sidebar takes the rest)
+const isMobile = () => window.matchMedia('(max-width: 760px)').matches;
+function fixHeight(){
+  const w = maprow.getBoundingClientRect().width;
+  // phones: the map is full width — world view at the world aspect, zoomed view square
+  if(isMobile()){ maprow.style.setProperty('--maph', Math.round(state.iso ? w : w * VB.h / VB.w) + 'px'); return; }
+  if(state.iso) return;
+  maprow.style.setProperty('--maph', Math.round(w * VB.h / VB.w) + 'px');
+}
+// phones: callouts are unusable at 350 px, so the panel lists the countries instead
+function renderWorldList(){
+  const rows = Object.entries(L).sort((a,b)=>a[1].name.localeCompare(b[1].name)).map(([iso,c]) =>
+    `<div class='fcardx wl' style='--hz:${hzColor(c.fws[0].hazard)}' onclick='selectCountry("${iso}")'>
+      <div class='fhead'><b>${esc(c.name)}</b><span class='muted'>${c.fws.length} framework${c.fws.length>1?'s':''}</span></div>
+      <div class='wl-pins'>${c.fws.map(f=>`<span class='wl-pin'>${iconHTML(f)}<span class='hlab'>${esc(f.hz_label)}</span> ${badge(f.disp)}</span>`).join('')}</div>
+    </div>`).join('');
+  side.innerHTML = `<div class='muted' style='margin:2px 0 8px'>Tap a country to zoom in.</div><div class='fwlist'>${rows}</div>`;
 }
 let P = worldProj;                                    // projection the country layers use
 function ringsD(rings, proj=P){ let d=''; for(const r of rings){ let first=true; for(const [x,y] of r){ const q=proj(x,y); d += (first?'M':'L') + q[0].toFixed(1) + ',' + q[1].toFixed(1); first=false; } d+='Z'; } return d; }
@@ -1128,15 +1194,15 @@ function zoomTo(bbox, done){
   for(const wp of Object.values(WP)) wp.to = null;
   P = to;
   svg.classList.add('zooming');
-  animate(1050, t => { morphWorld(worldProj, to, t); world.style.opacity = 1 - 0.75*t; },
-          () => { svg.classList.remove('zooming'); svg.classList.add('zoomed'); world.style.opacity = ''; done && done(); });
+  animate(1050, t => { morphWorld(worldProj, to, t); world.style.opacity = 1 - 0.75*t; setViewW(VB.w + (VB.h - VB.w)*t); },
+          () => { svg.classList.remove('zooming'); svg.classList.add('zoomed'); world.style.opacity = ''; setViewW(VB.h); done && done(); });
 }
 function zoomOut(done){
   const from = P; if(from === worldProj){ done && done(); return; }
   svg.classList.remove('zoomed'); svg.classList.add('zooming');
   // reuse the stored target coords: morph back from local (t=1) to world (t=0)
-  animate(850, t => { morphWorld(worldProj, from, 1 - t); world.style.opacity = 0.25 + 0.75*t; },
-          () => { resetWorld(); P = worldProj; zoomTarget = null; svg.classList.remove('zooming'); world.style.opacity = ''; done && done(); });
+  animate(850, t => { morphWorld(worldProj, from, 1 - t); world.style.opacity = 0.25 + 0.75*t; setViewW(VB.h + (VB.w - VB.h)*t); },
+          () => { resetWorld(); P = worldProj; zoomTarget = null; svg.classList.remove('zooming'); world.style.opacity = ''; setViewW(VB.w); done && done(); });
 }
 
 // ---------- admin layers (country view)
@@ -1232,7 +1298,7 @@ function buildCallouts(){
     labels.push({iso, lat:c.centroid[0], lon:c.centroid[1], dir:c.dir, el, ln, dot, bbox:c.lbbox});
   });
 }
-const PAD = 8, GAP = 4; let ALLRECTS = [];
+let PAD = 8, GAP = 4; let ALLRECTS = [];
 function rectOf(bbox){ if(!bbox || bbox[2]-bbox[0] > 170) return null;
   const [x1,y1] = toPx(bbox[0], bbox[3]), [x2,y2] = toPx(bbox[2], bbox[1]);
   return {x1:Math.min(x1,x2), y1:Math.min(y1,y2), x2:Math.max(x1,x2), y2:Math.max(y1,y2)}; }
@@ -1273,6 +1339,8 @@ function separate(iters, W, H){
 function runLayout(){
   const r = svg.getBoundingClientRect(), W = r.width, H = r.height;
   if(!W) return;
+  const mobile = window.matchMedia('(max-width: 760px)').matches;
+  mapbox.classList.toggle('compact', mobile); PAD = mobile ? 3 : 8; GAP = mobile ? 2 : 4;
   ALLRECTS = labels.map(Lb => rectOf(Lb.bbox)).filter(Boolean);
   const lr = legend.getBoundingClientRect(), mr = mapbox.getBoundingClientRect();
   if(lr.width) ALLRECTS.push({x1:lr.left-mr.left-6, y1:lr.top-mr.top-6, x2:lr.right-mr.left+6, y2:lr.bottom-mr.top+6});
@@ -1303,7 +1371,11 @@ function runLayout(){
 // relayout whenever the map's rendered size changes (window resize, sidebar sliding in or
 // out) — callouts are positioned in CSS px, so a stale width puts them off the countries
 let rto = null;
-function scheduleLayout(){ clearTimeout(rto); rto = setTimeout(() => { if(!state.iso){ runLayout(); lpane.classList.remove('hide'); } }, 120); }
+let lastLayoutW = 0;
+function scheduleLayout(){ clearTimeout(rto); rto = setTimeout(() => { if(!state.iso){ fixHeight(); runLayout(); lpane.classList.remove('hide'); if(isMobile()){ maprow.classList.add('open'); if(!side.querySelector('.wl')) renderWorldList(); }
+  lastLayoutW = svg.getBoundingClientRect().width;
+  // a resize can land while this tab is throttled: re-check once the dust settles
+  setTimeout(() => { if(!state.iso && Math.abs(svg.getBoundingClientRect().width - lastLayoutW) > 1) scheduleLayout(); }, 600); } }, 120); }
 new ResizeObserver(() => scheduleLayout()).observe(svg);
 window.addEventListener('resize', scheduleLayout);
 
@@ -1331,10 +1403,10 @@ document.addEventListener('keydown', e => { if(e.key === 'Escape' && state.iso) 
 function goWorld(){
   state = { iso:null, hz:null, ver:null };
   document.querySelectorAll('.cty.sel').forEach(x=>x.classList.remove('sel'));
-  adm.classList.remove('show'); back.hidden = true; worldLegend(); maprow.classList.remove('open');
+  adm.classList.remove('show'); back.hidden = true; worldLegend();
+  if(isMobile()){ renderWorldList(); fixHeight(); } else { maprow.classList.remove('open'); side.innerHTML = `<div class='muted' style='padding:20px 6px'>Select a country or a pin on the map.</div>`; }
   setTimeout(()=>{ adm.innerHTML=''; }, 300);
   zoomOut(() => scheduleLayout());
-  side.innerHTML = `<div class='muted' style='padding:20px 6px'>Select a country or a pin on the map.</div>`;
   history.replaceState(null, '', location.pathname);
 }
 async function selectCountry(iso, hz, ver){
@@ -1345,6 +1417,7 @@ async function selectCountry(iso, hz, ver){
   svg.querySelectorAll(`.cty[data-iso='${iso}']`).forEach(el => el.classList.add('sel'));
   back.hidden = false; lpane.classList.add('hide'); tip.hidden = true; maprow.classList.add('open');
   renderSide();
+  if(isMobile()){ fixHeight(); setTimeout(() => window.scrollTo({top: side.getBoundingClientRect().top + window.scrollY - 8, behavior:'smooth'}), 1150); }
   location.hash = [iso, state.hz, state.ver].filter(Boolean).join('/');
   if(changed){
     adm.classList.remove('show'); adm.innerHTML='';
@@ -1507,7 +1580,8 @@ function scopeBlock(v){
 }
 
 // ---------- boot
-buildWorld(); worldLegend(); buildCallouts(); runLayout();
+fixHeight(); buildWorld(); worldLegend(); buildCallouts(); runLayout();
+if(isMobile()){ maprow.classList.add('open'); renderWorldList(); }
 setTimeout(runLayout, 300);   // once fonts have settled
 (function(){ const h = location.hash.replace('#','').split('/'); if(h[0] && L[h[0]]) selectCountry(h[0], h[1]||null, h[2]||null); })();
 """
