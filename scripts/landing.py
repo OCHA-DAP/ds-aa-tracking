@@ -964,7 +964,7 @@ LANDING_CSS = r"""
   transition: grid-template-columns .9s cubic-bezier(.22,.8,.2,1), gap .9s; }
 .maprow.open { grid-template-columns: var(--maph) minmax(0,1fr); gap:16px; }
 .maprow .side { opacity:0; visibility:hidden; transition: opacity .3s; height:var(--maph); }
-.maprow.open .side { opacity:1; visibility:visible; transition: opacity .4s .35s; }
+.maprow.open .side { opacity:1; visibility:visible; transition: opacity .4s .5s; }
 @media (max-width: 760px) {
   .maprow, .maprow.open { grid-template-columns: 1fr; gap:12px; }
   .maprow .side, .maprow.open .side { height:auto; max-height:none; opacity:1; visibility:visible; }
@@ -1189,20 +1189,32 @@ function animate(ms, step, done){
   animId = requestAnimationFrame(frame);
   setTimeout(()=>{ if(seq===animSeq && animId){ cancelAnimationFrame(animId); animId=null; step(1); end(); } }, ms+120);
 }
+// the map column and the view box shrink together from the SAME eased value: because the
+// card height equals width x VB.h/VB.w, their ratio — the on-screen scale — stays constant
+// for the whole animation, so nothing lurches while the sidebar opens
+function colAt(t){
+  if(isMobile()) return;
+  const w0 = maprow._w0, h = parseFloat(getComputedStyle(maprow).getPropertyValue('--maph'));
+  maprow.style.transition = 'none';
+  maprow.style.gridTemplateColumns = `${(w0 + (h - w0)*t).toFixed(1)}px minmax(0,1fr)`;
+  maprow.style.gap = `${(16*t).toFixed(1)}px`;
+}
+function colDone(){ maprow.style.transition = ''; maprow.style.gridTemplateColumns = ''; maprow.style.gap = ''; }
 function zoomTo(bbox, done){
   const to = localProj(bbox); zoomTarget = bbox;
   for(const wp of Object.values(WP)) wp.to = null;
   P = to;
+  if(!maprow.classList.contains('open') || !maprow._w0) maprow._w0 = maprow.getBoundingClientRect().width;
   svg.classList.add('zooming');
-  animate(1050, t => { morphWorld(worldProj, to, t); world.style.opacity = 1 - 0.75*t; setViewW(VB.w + (VB.h - VB.w)*t); },
-          () => { svg.classList.remove('zooming'); svg.classList.add('zoomed'); world.style.opacity = ''; setViewW(VB.h); done && done(); });
+  animate(1050, t => { morphWorld(worldProj, to, t); world.style.opacity = 1 - 0.75*t; setViewW(VB.w + (VB.h - VB.w)*t); colAt(t); },
+          () => { svg.classList.remove('zooming'); svg.classList.add('zoomed'); world.style.opacity = ''; setViewW(VB.h); colDone(); done && done(); });
 }
 function zoomOut(done){
   const from = P; if(from === worldProj){ done && done(); return; }
   svg.classList.remove('zoomed'); svg.classList.add('zooming');
   // reuse the stored target coords: morph back from local (t=1) to world (t=0)
-  animate(850, t => { morphWorld(worldProj, from, 1 - t); world.style.opacity = 0.25 + 0.75*t; setViewW(VB.h + (VB.w - VB.h)*t); },
-          () => { resetWorld(); P = worldProj; zoomTarget = null; svg.classList.remove('zooming'); world.style.opacity = ''; setViewW(VB.w); done && done(); });
+  animate(850, t => { morphWorld(worldProj, from, 1 - t); world.style.opacity = 0.25 + 0.75*t; setViewW(VB.h + (VB.w - VB.h)*t); colAt(1 - t); },
+          () => { resetWorld(); P = worldProj; zoomTarget = null; svg.classList.remove('zooming'); world.style.opacity = ''; setViewW(VB.w); colDone(); maprow.classList.remove('open'); done && done(); });
 }
 
 // ---------- admin layers (country view)
@@ -1404,7 +1416,7 @@ function goWorld(){
   state = { iso:null, hz:null, ver:null };
   document.querySelectorAll('.cty.sel').forEach(x=>x.classList.remove('sel'));
   adm.classList.remove('show'); back.hidden = true; worldLegend();
-  if(isMobile()){ renderWorldList(); fixHeight(); } else { maprow.classList.remove('open'); side.innerHTML = `<div class='muted' style='padding:20px 6px'>Select a country or a pin on the map.</div>`; }
+  if(isMobile()){ renderWorldList(); fixHeight(); } else { side.innerHTML = `<div class='muted' style='padding:20px 6px'>Select a country or a pin on the map.</div>`; side.style.opacity = '0'; setTimeout(()=>{ side.style.opacity=''; }, 900); }
   setTimeout(()=>{ adm.innerHTML=''; }, 300);
   zoomOut(() => scheduleLayout());
   history.replaceState(null, '', location.pathname);
