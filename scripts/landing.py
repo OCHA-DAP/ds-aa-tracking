@@ -238,8 +238,57 @@ def _kb_pages():
                     if len(cells) != len(hdr) or all(not c or c.startswith("e.g.") for c in cells):
                         continue
                     trig.append({h: re.sub(r"\*\*(.*?)\*\*", r"\1", c) for h, c in zip(hdr, cells)})
-        out[(fm.get("framework"), str(fm.get("version")))] = {"fm": fm, "triggers": trig}
+        out[(fm.get("framework"), str(fm.get("version")))] = {
+            "fm": fm, "triggers": trig, "tiers": _scope_tiers(m.group(1))}
     return out
+
+
+REST_RE = re.compile(r"all other|non-endemic|rest of|remaining|elsewhere", re.I)
+
+
+def _scope_tiers(front):
+    """Tiers inside a block-form geographic_scope: a comment line on its own names a tier
+    for the items that follow ('# riverine window — …'); an item such as 'Non-endemic
+    provinces (all other)' is a REST tier covering everything not named. -> list of
+    {label, items, rest}, or [] when the scope has no tiers."""
+    m = re.search(r"^geographic_scope:[ \t]*\n((?:[ \t]+.*\n?)*)", front, re.M)
+    if not m:
+        return []
+    tiers, cur = [], {"label": None, "items": [], "rest": False}
+    for line in m.group(1).splitlines():
+        st = line.strip()
+        if not st:
+            continue
+        if st.startswith("#"):
+            if cur["label"] is not None and not cur["items"]:
+                continue                        # a header comment wrapped onto a second line
+            label = re.split(r"\s+[—–-]{1,2}\s+|:", st.lstrip("# ").strip(), 1)[0].strip()
+            if cur["items"] or cur["rest"]:
+                tiers.append(cur)
+            cur = {"label": label, "items": [], "rest": False}
+            continue
+        if not st.startswith("-"):
+            continue
+        item = st[1:].split("#", 1)[0].strip().strip("\"'")
+        if REST_RE.search(item):
+            if cur["items"]:
+                tiers.append(cur)
+                cur = {"label": None, "items": [], "rest": False}
+            lab = re.sub(r"\s*\(all other\)\s*", "", item, flags=re.I).strip()
+            tiers.append({"label": lab, "items": [], "rest": True})
+            continue
+        cur["items"].append(item)
+    if cur["items"] or cur["rest"]:
+        tiers.append(cur)
+    if len(tiers) < 2:
+        return []
+    # an unlabelled tier next to a 'non-X' rest tier is the 'X' tier
+    for t in tiers:
+        if t["label"] is None:
+            rest = next((r for r in tiers if r["rest"] and r["label"]), None)
+            t["label"] = (re.sub(r"^non-?\s*", "", rest["label"], flags=re.I) if rest
+                          and re.match(r"non-?", rest["label"], re.I) else "named areas")
+    return tiers
 
 
 # ---------------------------------------------------------------- CODAB + scope matching
@@ -543,7 +592,7 @@ def write_country_geo(iso, matcher, adm0):
     neighbours = countries_in_view(iso, view)
     pcodes = sorted(matcher.used)
     sig = hashlib.md5(json.dumps([iso, pcodes, neighbours, round(tol, 6),
-                                  1 in matcher.layers, "viewclip-v6"]).encode()).hexdigest()[:10]
+                                  1 in matcher.layers, "viewclip-v7"]).encode()).hexdigest()[:10]
     cache_f = CACHE / f"topo_{iso}_{sig}.json"
     if cache_f.exists():
         (OUT / f"adm-{iso}.json").write_text(cache_f.read_text())
@@ -756,6 +805,7 @@ def assemble(d, e):
                 },
                 "admin_level": fm.get("admin_level") if isinstance(fm.get("admin_level"), int) else None,
                 "scope_raw": [str(x) for x in scope_raw],
+                "scope_tiers_raw": (pg["tiers"] if pg else []) if not regional else [],
                 "scope": None,      # filled by the geo pass
                 "kb_page": bool(pg), "source": _s(v.source), "note": _s(v.note),
             })
@@ -877,7 +927,20 @@ def geo_pass(countries, bboxes):
                 pcodes, unmatched, national = m.match(v["scope_raw"], v["admin_level"], cd["name"])
                 if not v["scope_raw"] and v["admin_level"] == 0:
                     national = True
-                v["scope"] = {"pcodes": pcodes, "unmatched": unmatched, "national": national}
+                tiers = []
+                for t in v.get("scope_tiers_raw") or []:
+                    if t["rest"]:
+                        tiers.append({"label": t["label"], "pcodes": [], "rest": True})
+                        national = True
+                    else:
+                        pc, um, _ = m.match(t["items"], v["admin_level"], cd["name"])
+                        tiers.append({"label": t["label"], "pcodes": pc, "rest": False})
+                        unmatched += um
+                if tiers:
+                    pcodes = sorted({pc for t in tiers for pc in t["pcodes"]})
+                    unmatched = sorted(set(unmatched))
+                v["scope"] = {"pcodes": pcodes, "unmatched": unmatched, "national": national,
+                              "tiers": tiers}
                 if unmatched:
                     print(f"  ? {iso} {f['hazard']} {v['v']}: unmatched scope {unmatched}")
         for f in cd["fws"]:
@@ -1243,16 +1306,19 @@ async function loadGeo(iso){
   catch(e){ GEO[iso] = null; }
   return GEO[iso];
 }
-// diagonal stripes alternating the hazard colours of the frameworks that share an area
-function hatchId(hzs){
-  const id = 'hatch-' + hzs.join('-');
+// lighter shades of a hazard colour for the tiers of one framework (t: 0 = full, 1 = lightest)
+function shade(hex, t){ const n = parseInt(hex.slice(1),16), r=n>>16, g=(n>>8)&255, b=n&255, k = 0.55*t;
+  return '#' + [r,g,b].map(v => Math.round(v + (255-v)*k).toString(16).padStart(2,'0')).join(''); }
+// diagonal stripes alternating the colours of the tiers that share an area
+function hatchId(cols){
+  const id = 'hatch-' + cols.map(c=>c.slice(1)).join('-'); const hzs = cols;
   let defs = svg.querySelector('defs'); if(!defs){ defs = document.createElementNS(NS,'defs'); svg.insertBefore(defs, svg.firstChild); }
   if(!defs.querySelector('#'+id)){
     const n = hzs.length, w = 4.5;
     const pat = document.createElementNS(NS,'pattern');
     pat.setAttribute('id', id); pat.setAttribute('patternUnits','userSpaceOnUse'); pat.setAttribute('width', w*n); pat.setAttribute('height', w*n);
     pat.setAttribute('patternTransform','rotate(45)');
-    hzs.forEach((h,i)=>{ const r = document.createElementNS(NS,'rect'); r.setAttribute('x', i*w); r.setAttribute('y', 0); r.setAttribute('width', w); r.setAttribute('height', w*n); r.setAttribute('fill', hzColor(h)); pat.appendChild(r); });
+    hzs.forEach((h,i)=>{ const r = document.createElementNS(NS,'rect'); r.setAttribute('x', i*w); r.setAttribute('y', 0); r.setAttribute('width', w); r.setAttribute('height', w*n); r.setAttribute('fill', h); pat.appendChild(r); });
     defs.appendChild(pat);
   }
   return id;
@@ -1266,31 +1332,38 @@ function drawAdmin(iso, fade){
   if(g.adm0.length) html += `<path class='a0' d='${ringsD(g.adm0)}'/>`;
   g.adm1.forEach(a => html += `<path class='a1' data-n='${esc(a.n)}' d='${ringsD(a.r)}'/>`);
 
-  const paint = {}; let national = [];
+  // one entry per framework tier: {hz, label, color, pcodes, rest}
   const targets = state.hz ? c.fws.filter(f=>f.hazard===state.hz) : c.fws;
+  const tiers = [];
   targets.forEach(f => {
     const v = f.versions.find(x => x.v === (state.hz && state.ver ? state.ver : f.current));
     if(!v || !v.scope) return;
-    if(v.scope.national) national.push(f.hazard);
-    v.scope.pcodes.forEach(p => { (paint[p] ??= []).push(f.hazard); });
+    const ts = (v.scope.tiers && v.scope.tiers.length) ? v.scope.tiers
+             : [{label:null, pcodes:v.scope.pcodes, rest:!!v.scope.national}];
+    ts.forEach((t, i) => tiers.push({hz:f.hazard, hzl:f.hz_label, label:t.label, pcodes:t.pcodes||[], rest:!!t.rest,
+      color: shade(hzColor(f.hazard), ts.length > 1 ? i/(ts.length-1) : 0)}));
   });
-  national.forEach(h => { if(g.adm0.length) html += `<path class='nat' fill='${hzColor(h)}' d='${ringsD(g.adm0)}'/>`; });
+  // country-wide tiers (national trigger, 'all other provinces', unmapped zone): a wash under everything
+  const rests = tiers.filter(t => t.rest);
+  rests.forEach(t => { if(g.adm0.length) html += `<path class='nat' fill='${t.color}' d='${ringsD(g.adm0)}'/>`; });
+  // areas: collect every tier covering each admin area; a national tier covers them all
+  const paint = {};
+  tiers.filter(t => !t.rest).forEach(t => t.pcodes.forEach(p => (paint[p] ??= []).push(t)));
   let multi = false;
-  Object.entries(paint).forEach(([p, hzs]) => {
+  Object.entries(paint).forEach(([p, ts]) => {
     const a = g.areas[p]; if(!a) return;
-    const u = [...new Set(hzs)];
-    const fill = u.length > 1 ? `url(#${hatchId(u)})` : hzColor(u[0]);
-    if(u.length > 1) multi = true;
-    html += `<path class='sc' fill='${fill}' data-n='${esc(a.n)}' data-hz='${esc(u.map(h=>L[iso].fws.find(f=>f.hazard===h)?.hz_label||h).join(' + '))}' d='${ringsD(a.r)}'/>`;
+    const cover = [...ts, ...rests.filter(r => !ts.some(t => t.hz === r.hz))];   // other hazards' national tiers
+    const fill = cover.length > 1 ? `url(#${hatchId(cover.map(t=>t.color))})` : cover[0].color;
+    if(cover.length > 1) multi = true;
+    html += `<path class='sc' fill='${fill}' data-n='${esc(a.n)}' data-hz='${esc(cover.map(t=>t.hzl + (t.label?` (${t.label})`:'')).join(' + '))}' d='${ringsD(a.r)}'/>`;
   });
   adm.innerHTML = html;
   if(fade) void adm.getBoundingClientRect();
   adm.classList.add('show');
-  const hzs = [...new Set(targets.map(f=>f.hazard))];
-  legend.innerHTML = `<b>${esc(c.name)}</b><br>` + hzs.map(h=>`<span class='sq' style='background:${hzColor(h)}'></span>${esc(targets.find(f=>f.hazard===h).hz_label)} — scope of the displayed version<br>`).join('')
-    + (multi ? `<span class='sq' style='background:repeating-linear-gradient(135deg,${hzColor(hzs[0])} 0 3px,${hzColor(hzs[1]||hzs[0])} 3px 6px)'></span>striped — covered by several frameworks<br>` : '')
-    + `<span class='sq' style='background:#eef3f9;border:1px solid #9cc0e3'></span>admin-1 boundaries`
-    + (national.length ? `<br><span class='small'>whole country shaded = national trigger</span>` : '');
+  legend.innerHTML = `<b>${esc(c.name)}</b><br>` + tiers.map(t =>
+      `<span class='sq' style='background:${t.color}${t.rest?';opacity:.45':''}'></span>${esc(t.hzl)}${t.label?` — ${esc(t.label)}`:''}${t.rest?' (whole country)':''}<br>`).join('')
+    + (multi ? `<span class='sq' style='background:repeating-linear-gradient(135deg,${tiers[0].color} 0 3px,${(tiers[1]||tiers[0]).color} 3px 6px)'></span>striped — covered by several frameworks<br>` : '')
+    + `<span class='sq' style='background:#eef3f9;border:1px solid #9cc0e3'></span>admin-1 boundaries`;
 }
 
 // ---------- world legend (KB style)
@@ -1604,8 +1677,10 @@ function scopeBlock(v){
   let html = `<h4>Geographic scope${v.admin_level!=null?` <span class='muted' style='text-transform:none'>(trigger at admin ${v.admin_level})</span>`:''}</h4>`;
   if(s.inherited_from) html += `<div class='warnbox'>Scope not yet extracted for this version — the map shows the ${esc(s.inherited_from)} scope.</div>`;
   if(s.approx) html += `<div class='warnbox'>The framework's zone could not be mapped to admin areas${s.unmatched.length?` (${esc(s.unmatched.join('; '))})`:''} — the whole country is shown.</div>`;
-  if(s.national) html += `<div class='scopelist'>National trigger — whole country shaded.</div>`;
-  if(v.scope_raw.length) html += `<div class='scopelist'>${v.scope_raw.map(x=>esc(x)).join(' · ')}</div>`;
+  if(s.tiers && s.tiers.length){
+    html += s.tiers.map((t,i)=>`<div class='scopelist'><span class='sq' style='display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px;background:${shade(hzColor(state.hz), s.tiers.length>1?i/(s.tiers.length-1):0)}'></span><b>${esc(t.label||'named areas')}</b>${t.rest?' — everywhere not named above':` — ${t.pcodes.length} area${t.pcodes.length===1?'':'s'}`}</div>`).join('');
+  } else if(s.national && !s.approx) html += `<div class='scopelist'>National trigger — whole country shaded.</div>`;
+  if(v.scope_raw.length) html += `<div class='scopelist muted' style='margin-top:4px'>${v.scope_raw.map(x=>esc(x)).join(' · ')}</div>`;
   if(!s.national && !v.scope_raw.length && !s.inherited_from) html += `<div class='muted'>Scope not extracted for this version yet.</div>`;
   if(s.unmatched.length && !s.approx) html += `<div class='small' style='margin-top:4px;color:#8a5c0a'>Not on the map (no boundary match): ${s.unmatched.map(esc).join('; ')}</div>`;
   return html;

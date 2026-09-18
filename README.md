@@ -40,6 +40,9 @@ CERF OneGMS mirror (`ds-cerf-supplement`). It adds:
   to a country, subnational scope per framework
   version (KB `geographic_scope` names matched to FieldMaps edge-matched COD-AB boundaries; one
   `adm-<ISO3>.json` per country with its neighbours, simplified as one shared-edge topology; layers cached under `data/fieldmaps/`)
+  Scope tiers: inside a block-form `geographic_scope`, a comment line on its own names a tier
+  for the items below it (`# riverine window — …`), and an item like `Non-endemic provinces
+  (all other)` is a rest-of-country tier; tiers render as shades of the hazard colour
 
 ## Running
 
