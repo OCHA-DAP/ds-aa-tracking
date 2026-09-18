@@ -307,7 +307,8 @@ def countries_in_view(iso, view):
     if "g" not in _WORLD:
         _WORLD["g"] = world_gdf()
     g = _WORLD["g"]
-    hit = g[g.intersects(view)].copy()
+    from shapely.affinity import translate
+    hit = g[g.intersects(view) | g.intersects(translate(view, xoff=-360))].copy()   # frames past 180°
     hit = hit[hit["iso"] != iso]
     if len(hit) > 40:                          # open ocean views: keep what actually shows
         hit["_a"] = hit.geometry.intersection(view).area
@@ -517,18 +518,32 @@ def write_country_geo(iso, matcher, adm0):
     if adm0 is None or adm0 is False or not len(adm0):
         return None
     b = adm0.total_bounds
-    if b[2] - b[0] > 180:                      # antimeridian (Fiji): frame the main island group
+    if b[2] - b[0] > 180:                      # antimeridian (Fiji): a contiguous frame past 180°
         from shapely.geometry import MultiPolygon
         geom0 = _union(adm0.geometry)
-        parts = list(geom0.geoms) if isinstance(geom0, MultiPolygon) else [geom0]
-        b = max(parts, key=lambda g: g.area).bounds
+        parts = sorted((list(geom0.geoms) if isinstance(geom0, MultiPolygon) else [geom0]),
+                       key=lambda g: -g.area)
+        tot = sum(g.area for g in parts)
+        keep, cum = [], 0.0
+        for g in parts:                          # the islands that make up 90 % of the land
+            keep.append(g)
+            cum += g.area
+            if cum >= 0.90 * tot:
+                break
+        xs, ys = [], []
+        for g in keep:
+            x0, y0, x1, y1 = g.bounds
+            if x1 < 0:                           # western side of the line -> shift past 180
+                x0, x1 = x0 + 360, x1 + 360
+            xs += [x0, x1]; ys += [y0, y1]
+        b = [min(xs), min(ys), max(xs), max(ys)]
     diag = ((b[2] - b[0]) ** 2 + (b[3] - b[1]) ** 2) ** 0.5
     tol = diag / 900
     view = viewport_box(b)
     neighbours = countries_in_view(iso, view)
     pcodes = sorted(matcher.used)
     sig = hashlib.md5(json.dumps([iso, pcodes, neighbours, round(tol, 6),
-                                  1 in matcher.layers, "viewclip-v5"]).encode()).hexdigest()[:10]
+                                  1 in matcher.layers, "viewclip-v6"]).encode()).hexdigest()[:10]
     cache_f = CACHE / f"topo_{iso}_{sig}.json"
     if cache_f.exists():
         (OUT / f"adm-{iso}.json").write_text(cache_f.read_text())
@@ -873,6 +888,10 @@ def geo_pass(countries, bboxes):
                     v["scope"] = dict(prev, inherited_from=prev["from"])
                 elif sc["pcodes"] or sc["national"]:
                     prev = dict(sc, **{"from": v["v"]})
+                elif not sc["pcodes"]:
+                    # zone unknown or not mappable (a zone south of 17°N, communes without
+                    # names…): show the whole country rather than nothing, and say so
+                    v["scope"] = dict(sc, national=True, approx=True)
         if m is not None:
             import resource
             print(f"  geo {iso} … rss {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1e9:.1f}GB", flush=True)
@@ -1584,10 +1603,11 @@ function scopeBlock(v){
   const s = v.scope; if(!s) return '';
   let html = `<h4>Geographic scope${v.admin_level!=null?` <span class='muted' style='text-transform:none'>(trigger at admin ${v.admin_level})</span>`:''}</h4>`;
   if(s.inherited_from) html += `<div class='warnbox'>Scope not yet extracted for this version — the map shows the ${esc(s.inherited_from)} scope.</div>`;
+  if(s.approx) html += `<div class='warnbox'>The framework's zone could not be mapped to admin areas${s.unmatched.length?` (${esc(s.unmatched.join('; '))})`:''} — the whole country is shown.</div>`;
   if(s.national) html += `<div class='scopelist'>National trigger — whole country shaded.</div>`;
   if(v.scope_raw.length) html += `<div class='scopelist'>${v.scope_raw.map(x=>esc(x)).join(' · ')}</div>`;
   if(!s.national && !v.scope_raw.length && !s.inherited_from) html += `<div class='muted'>Scope not extracted for this version yet.</div>`;
-  if(s.unmatched.length) html += `<div class='small' style='margin-top:4px;color:#8a5c0a'>Not on the map (no boundary match): ${s.unmatched.map(esc).join('; ')}</div>`;
+  if(s.unmatched.length && !s.approx) html += `<div class='small' style='margin-top:4px;color:#8a5c0a'>Not on the map (no boundary match): ${s.unmatched.map(esc).join('; ')}</div>`;
   return html;
 }
 
