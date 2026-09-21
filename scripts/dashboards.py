@@ -103,12 +103,12 @@ def _fetch(e):
     d = {}
     d["current"] = pd.read_sql(
         """SELECT c.*, r.region FROM aa.v_trk_framework_current c
-           LEFT JOIN aa.framework_registry r USING (country_iso3, hazard)""", e)
+           LEFT JOIN aa.country_hazard r USING (country_iso3, hazard)""", e)
     d["current"] = d["current"].loc[:, ~d["current"].columns.duplicated()]
     pre = pd.read_sql(
         """SELECT country_iso3, hazard, year, kind, fund_code, financier,
                   amount_usd, source FROM aa.prearranged_funding
-           WHERE amount_usd IS NOT NULL""", e)
+           WHERE amount_usd IS NOT NULL AND year IS NOT NULL""", e)   # annual series: dated rows only
     pre = canonical(pre, ["country_iso3", "hazard", "year", "kind", "fund_code",
                           "financier"])
     # drop 'all' totals when component rows exist for the same framework-year
@@ -126,7 +126,7 @@ def _fetch(e):
            FROM aa.activation_funding f
            JOIN aa.activation a USING (country_iso3, hazard, event_date,
                                        window_name, event_label, event_type)
-           LEFT JOIN aa.framework_registry r USING (country_iso3, hazard)""", e)
+           LEFT JOIN aa.country_hazard r USING (country_iso3, hazard)""", e)
     d["versions"] = pd.read_sql(
         """SELECT country_iso3, hazard, version, kb_status, valid_from, source,
                   doc_url, analysis_ref, prearranged_usd_doc
@@ -169,8 +169,9 @@ def _fetch(e):
            WHERE c.aa_keyword""", e)
     d["pre_sector"] = pd.read_sql(
         """SELECT country_iso3, hazard, window_name, agency, sector, amount_usd,
-                  year_label FROM aa.prearranged_sector_budget
-           WHERE amount_usd IS NOT NULL""", e)
+                  coalesce(year::text, 'Prearranged') AS year_label
+           FROM aa.window_funding
+           WHERE amount_usd IS NOT NULL AND (agency IS NOT NULL OR sector IS NOT NULL)""", e)
     d["cva"] = pd.read_sql(
         """SELECT year, country_iso3, agency, emergency_type, cva_usd,
                   people_receiving_cash FROM aa.cerf_cva_history
@@ -795,7 +796,8 @@ def build_hierarchy(page, d, e):
            FROM aa.entered_window w
            LEFT JOIN (SELECT country_iso3, hazard, version, window_name,
                              sum(amount_usd) AS amount_usd
-                      FROM aa.entered_window_funding
+                      FROM aa.window_funding
+                      WHERE agency IS NULL AND sector IS NULL AND kind = 'prearranged'
                       GROUP BY country_iso3, hazard, version, window_name) f
              USING (country_iso3, hazard, version, window_name)""", e)
     if len(ew):

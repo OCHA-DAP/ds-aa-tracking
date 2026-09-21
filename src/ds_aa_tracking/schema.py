@@ -14,8 +14,13 @@ Conventions (shared with the existing `aa` writers):
 
 TABLES = {
     # ------------------------------------------------ framework-level tracking
-    "framework_registry": """
-        CREATE TABLE IF NOT EXISTS aa.framework_registry (
+    # the (country, hazard) pair — the identity everything hangs off. Not a registry of
+    # frameworks: a pair may have no version yet (pipeline) or several over time.
+    # Hierarchy: country_hazard -> framework_version -> window -> {window_activation,
+    # simulated_activation, window_funding}; ad hoc / early-action allocations attach to
+    # the pair directly (adhoc_activation), never to a version.
+    "country_hazard": """
+        CREATE TABLE IF NOT EXISTS aa.country_hazard (
             country_iso3 text NOT NULL,
             hazard text NOT NULL,
             country_name text NOT NULL,
@@ -103,45 +108,35 @@ TABLES = {
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard, month, phase, as_of)
         )""",
-    "prearranged_funding": """
-        CREATE TABLE IF NOT EXISTS aa.prearranged_funding (
+    # ALL framework funding hangs off the WINDOW: pre-arranged envelopes, co-financing,
+    # and the agency x sector split. window_name is one of the version's windows, or the
+    # sentinels 'single' (a one-window framework whose window is not named) and
+    # 'unattributed' (the source stated a version-level figure for a multi-window
+    # framework — a curation queue, never silently attached to a window).
+    # Envelope rows have agency AND sector NULL; split rows carry agency and/or sector.
+    # Never sum envelope and split rows together.
+    "window_funding": """
+        CREATE TABLE IF NOT EXISTS aa.window_funding (
             country_iso3 text NOT NULL,
             hazard text NOT NULL,
-            year smallint NOT NULL,
+            version text NOT NULL,
+            window_name text NOT NULL,     -- window | 'single' | 'unattributed'
             kind text NOT NULL,            -- prearranged | cofinancing | non_aa_mobilised
-            fund_code text,                -- references aa.fund ('all' = source stated
-                                           -- only a total; cbpf-unspecified until curated);
-                                           -- NULL exactly for non-OCHA money (see CHECK)
+            fund_code text,                -- references aa.fund; NULL for non-OCHA money
             financier text,                -- who co-finances (agency etc.) — free text
+            agency text,                   -- split rows only
+            sector text,                   -- split rows only
             amount_usd numeric,
-            identified boolean,            -- cofinancing identified? (Y/N/TBC sheets)
-            funding_change text,           -- new | extended | renewed
-            remarks text,
-            version text,                  -- attributed framework version (see framework_version)
-            version_match text,            -- kb-activation | auto-interval | auto-post-validity
+            year smallint,                 -- commitment / calendar year where the source
+                                           -- gave one (sheet-era annual commitments)
+            provenance text NOT NULL,      -- doc-stated | kb | sheet | entered | window-unattributed
             source text NOT NULL,
+            note text,
             updated_at timestamptz NOT NULL DEFAULT now(),
             CHECK ((fund_code IS NULL) = (kind IN ('cofinancing', 'non_aa_mobilised'))),
             UNIQUE NULLS NOT DISTINCT
-                (country_iso3, hazard, year, kind, fund_code, financier, source)
-        )""",
-    "prearranged_sector_budget": """
-        CREATE TABLE IF NOT EXISTS aa.prearranged_sector_budget (
-            country_iso3 text NOT NULL,
-            hazard text NOT NULL,
-            window_name text,              -- e.g. Jamuna / Padma — sheet 'subunits'
-                                           -- are windows of the framework
-            agency text NOT NULL,
-            sector text NOT NULL,
-            amount_usd numeric,
-            year_label text,               -- 'Prearranged' | '2025' | '2026' (raw)
-            status text,
-            version text,                  -- attributed framework version (see framework_version)
-            version_match text,            -- kb-activation | auto-interval | auto-post-validity
-            source text NOT NULL,
-            updated_at timestamptz NOT NULL DEFAULT now(),
-            UNIQUE NULLS NOT DISTINCT
-                (country_iso3, hazard, window_name, agency, sector, year_label)
+                (country_iso3, hazard, version, window_name, kind, fund_code, financier,
+                 agency, sector, year, source)
         )""",
     "people_covered": """
         CREATE TABLE IF NOT EXISTS aa.people_covered (
@@ -167,31 +162,42 @@ TABLES = {
             pf_id integer,                 -- source id in aa.cbpf_fund / OneGMS
             updated_at timestamptz NOT NULL DEFAULT now()
         )""",
-    "activation": """
-        CREATE TABLE IF NOT EXISTS aa.activation (
+    # a FRAMEWORK activation is a window firing: keyed to the window. window_name must be
+    # one of the version's windows (aa.window / entered_window) — 'unspecified' stays
+    # allowed for sheet-era rows until curated. Ad hoc / early-action allocations live in
+    # adhoc_activation, off the (country, hazard) pair.
+    "window_activation": """
+        CREATE TABLE IF NOT EXISTS aa.window_activation (
             country_iso3 text NOT NULL,
             hazard text NOT NULL,
-            event_type text NOT NULL,      -- framework_aa | adhoc_aa | early_action
-            event_date text NOT NULL,      -- partial ISO, as specific as known:
-                                           -- YYYY | YYYY-MM | YYYY-MM-DD | YYYY-MM-DDTHH:MM
-            window_name text,              -- NOT NULL for framework activations
-                                           -- ('unspecified' until curated); NULL for adhoc/EA
-            event_label text NOT NULL DEFAULT '',  -- last-resort tie-breaker
-                                           -- (storm name | admin area | phase-N)
-            version text,
-            version_match text,
-            kb_framework text,
-            kb_event_date text,
+            version text NOT NULL,
+            window_name text NOT NULL,
+            event_date text NOT NULL,      -- partial ISO, as specific as known
+            event_label text NOT NULL DEFAULT '',
+            full_activation boolean,       -- false = partial window trigger
+            people_targeted bigint,
+            url text,                      -- announcement / allocation link
+            reported_to_ahub text,
+            kb_event_date text,            -- KB actual_activation crosswalk
+            comments text,
+            source text NOT NULL,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (country_iso3, hazard, version, window_name, event_date, event_label)
+        )""",
+    "adhoc_activation": """
+        CREATE TABLE IF NOT EXISTS aa.adhoc_activation (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            event_type text NOT NULL,      -- adhoc_aa | early_action
+            event_date text NOT NULL,
+            event_label text NOT NULL DEFAULT '',
             people_targeted bigint,
             reported_to_ahub text,
             comments text,
             source text NOT NULL,
             updated_at timestamptz NOT NULL DEFAULT now(),
-            CHECK ((event_type = 'framework_aa') = (window_name IS NOT NULL)),
-            -- event_type included beyond the design key: an adhoc-AA and an EA can
-            -- legitimately share a month at sheet-era date precision
-            UNIQUE NULLS NOT DISTINCT
-                (country_iso3, hazard, event_date, window_name, event_label, event_type)
+            CHECK (event_type IN ('adhoc_aa', 'early_action')),
+            PRIMARY KEY (country_iso3, hazard, event_type, event_date, event_label)
         )""",
     "activation_funding": """
         CREATE TABLE IF NOT EXISTS aa.activation_funding (
@@ -439,18 +445,6 @@ DURABLE_TABLES = {
             entered_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard, version, window_name, fund_code)
         )""",
-    "entered_version_funding": """
-        CREATE TABLE IF NOT EXISTS aa.entered_version_funding (
-            country_iso3 text NOT NULL,
-            hazard text NOT NULL,
-            version text NOT NULL,
-            fund_code text NOT NULL,
-            financier text,
-            total_usd numeric NOT NULL,    -- EXPLICIT total per fund, entered not derived
-            entered_by text NOT NULL,
-            entered_at timestamptz NOT NULL DEFAULT now(),
-            PRIMARY KEY (country_iso3, hazard, version, fund_code)
-        )""",
     "entry_audit": """
         CREATE TABLE IF NOT EXISTS aa.entry_audit (
             id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -480,8 +474,78 @@ INDEXES = [
        (project_code, partner_name, COALESCE(subgrant_usd, -1), source)""",
 ]
 
+LEGACY_TABLES = [   # renamed zz_legacy_<name> by the window-first migration; read-only history
+    "framework_registry", "activation", "prearranged_funding", "prearranged_sector_budget",
+    "entered_version_funding",
+]
+
 VIEWS = {
-    # one row per (country, hazard): registry + latest status + latest funding/coverage
+    # ---- compatibility names (one release): the old table names as views
+    "framework_registry": """
+        CREATE OR REPLACE VIEW aa.framework_registry AS SELECT * FROM aa.country_hazard
+    """,
+    "activation": """
+        CREATE OR REPLACE VIEW aa.activation AS
+        SELECT country_iso3, hazard, 'framework_aa'::text AS event_type, event_date,
+               window_name, event_label, version, NULL::text AS version_match,
+               ch.kb_framework, kb_event_date, people_targeted, reported_to_ahub, comments,
+               w.source, w.updated_at
+        FROM aa.window_activation w
+        LEFT JOIN aa.country_hazard ch USING (country_iso3, hazard)
+        UNION ALL
+        SELECT country_iso3, hazard, event_type, event_date, NULL, event_label, NULL, NULL,
+               ch.kb_framework, NULL, people_targeted, reported_to_ahub, comments,
+               a.source, a.updated_at
+        FROM aa.adhoc_activation a
+        LEFT JOIN aa.country_hazard ch USING (country_iso3, hazard)
+    """,
+    "prearranged_funding": """
+        CREATE OR REPLACE VIEW aa.prearranged_funding AS
+        SELECT country_iso3, hazard, year, kind, fund_code, financier, amount_usd,
+               NULL::boolean AS identified, NULL::text AS funding_change, note AS remarks,
+               version, provenance AS version_match, source, updated_at, window_name
+        FROM aa.window_funding
+        WHERE agency IS NULL AND sector IS NULL
+    """,
+    # ---- version funding derived from the windows under the version's rollup mode
+    "v_version_funding": """
+        CREATE OR REPLACE VIEW aa.v_version_funding AS
+        WITH ranked AS (   -- ONE amount per window: latest year, best provenance
+            SELECT DISTINCT ON (country_iso3, hazard, version, kind, fund_code, financier, window_name)
+                   country_iso3, hazard, version, kind, fund_code, financier, window_name,
+                   amount_usd
+            FROM aa.window_funding
+            WHERE agency IS NULL AND sector IS NULL AND amount_usd IS NOT NULL
+            ORDER BY country_iso3, hazard, version, kind, fund_code, financier, window_name,
+                     year DESC NULLS LAST,
+                     CASE provenance WHEN 'entered' THEN 0 WHEN 'doc-stated' THEN 1
+                                     WHEN 'kb' THEN 2 WHEN 'sheet' THEN 3 ELSE 4 END,
+                     amount_usd DESC
+        ),
+        named AS (      -- versions that have envelope rows on NAMED windows
+            SELECT DISTINCT country_iso3, hazard, version, kind, fund_code, financier
+            FROM ranked WHERE window_name NOT IN ('single', 'unattributed')
+        ),
+        usable AS (     -- version-level leftovers only count when no named window carries the fund
+            SELECT r.* FROM ranked r
+            LEFT JOIN named n USING (country_iso3, hazard, version, kind, fund_code, financier)
+            WHERE r.window_name NOT IN ('single', 'unattributed') OR n.version IS NULL
+        ),
+        w AS (
+            SELECT country_iso3, hazard, version, kind, fund_code, financier,
+                   sum(amount_usd) AS window_sum, max(amount_usd) AS window_max,
+                   count(DISTINCT window_name) AS n_windows,
+                   bool_or(window_name = 'unattributed') AS has_unattributed
+            FROM usable
+            GROUP BY 1, 2, 3, 4, 5, 6
+        )
+        SELECT w.country_iso3, w.hazard, w.version, w.kind, w.fund_code, w.financier,
+               fv.window_rollup, w.n_windows, w.has_unattributed,
+               CASE WHEN fv.window_rollup = 'exclusive' OR w.has_unattributed THEN w.window_max
+                    ELSE w.window_sum END AS total_usd
+        FROM w LEFT JOIN aa.framework_version fv USING (country_iso3, hazard, version)
+    """,
+    # one row per (country, hazard): pair + latest status + current version's funding/coverage
     "v_trk_framework_current": """
         CREATE OR REPLACE VIEW aa.v_trk_framework_current AS
         WITH latest_status AS (
@@ -489,14 +553,6 @@ VIEWS = {
                 country_iso3, hazard, status, status_raw, as_of, source
             FROM aa.framework_status
             ORDER BY country_iso3, hazard, as_of DESC
-        ),
-        latest_prearranged AS (
-            SELECT DISTINCT ON (country_iso3, hazard)
-                country_iso3, hazard, amount_usd, year, source
-            FROM aa.prearranged_funding
-            WHERE kind = 'prearranged' AND fund_code = 'cerf'
-            ORDER BY country_iso3, hazard, year DESC,
-                     (source = 'yakubu-prearranged-jun2026') DESC
         ),
         latest_covered AS (
             SELECT DISTINCT ON (country_iso3, hazard)
@@ -513,15 +569,19 @@ VIEWS = {
               AND (kb_status IS NULL OR kb_status NOT IN ('development'))
             ORDER BY country_iso3, hazard,
                      (kb_status = 'endorsed') DESC, valid_from DESC
+        ),
+        cerf AS (   -- the current version's CERF envelope, from its windows
+            SELECT vf.country_iso3, vf.hazard, vf.version, vf.total_usd,
+                   (SELECT max(year) FROM aa.window_funding f
+                     WHERE f.country_iso3 = vf.country_iso3 AND f.hazard = vf.hazard
+                       AND f.version = vf.version AND f.kind = 'prearranged'
+                       AND f.fund_code = 'cerf') AS year
+            FROM aa.v_version_funding vf
+            WHERE vf.kind = 'prearranged' AND vf.fund_code = 'cerf'
         )
         SELECT r.country_iso3, r.hazard, r.country_name, r.region, r.kb_framework,
                r.in_kb, r.language, r.us_prio,
                v.version AS current_version, v.version_status, v.valid_until,
-               -- resolved status: the version registry is authoritative for
-               -- endorsement state (a version IS an endorsed document; sheet
-               -- snapshot dates are approximate) — an endorsed version in validity
-               -- overrides stale pre-endorsement statuses; richer observed states
-               -- (activated_implementing) are kept
                CASE WHEN v.version_status = 'endorsed'
                          AND (v.valid_until IS NULL OR v.valid_until >= CURRENT_DATE)
                          AND s.status IN ('under_revision', 'under_development',
@@ -536,51 +596,52 @@ VIEWS = {
                END AS status,
                s.status AS observed_status,
                s.status_raw, s.as_of AS status_as_of, s.source AS status_source,
-               p.amount_usd AS cerf_prearranged_usd, p.year AS prearranged_year,
+               p.total_usd AS cerf_prearranged_usd, p.year AS prearranged_year,
                c.people_covered
-        FROM aa.framework_registry r
+        FROM aa.country_hazard r
         LEFT JOIN current_version v USING (country_iso3, hazard)
         LEFT JOIN latest_status s USING (country_iso3, hazard)
-        LEFT JOIN latest_prearranged p USING (country_iso3, hazard)
         LEFT JOIN latest_covered c USING (country_iso3, hazard)
+        LEFT JOIN cerf p ON p.country_iso3 = r.country_iso3 AND p.hazard = r.hazard
+                        AND p.version = v.version
     """,
-    # version-attribution health: how much of each version-level table is attributed
-    "v_trk_version_attribution": """
-        CREATE OR REPLACE VIEW aa.v_trk_version_attribution AS
-        SELECT t.table_name, t.version_match, count(*) AS n_rows
-        FROM (
-            SELECT 'framework_status' AS table_name, version_match FROM aa.framework_status
-            UNION ALL SELECT 'framework_calendar', version_match FROM aa.framework_calendar
-            UNION ALL SELECT 'prearranged_funding', version_match FROM aa.prearranged_funding
-            UNION ALL SELECT 'prearranged_sector_budget', version_match FROM aa.prearranged_sector_budget
-            UNION ALL SELECT 'people_covered', version_match FROM aa.people_covered
-            UNION ALL SELECT 'activation', version_match FROM aa.activation
-            UNION ALL SELECT 'framework_focal_point', version_match FROM aa.framework_focal_point
-            UNION ALL SELECT 'report_channel_inclusion', version_match FROM aa.report_channel_inclusion
-        ) t
-        GROUP BY t.table_name, t.version_match
-        ORDER BY t.table_name, t.version_match
-    """,
-    # version-level rollup: what each version's tracked budget/coverage looks like
+    # version-level rollup: budget from the windows, coverage, activation count
     "v_trk_version_summary": """
         CREATE OR REPLACE VIEW aa.v_trk_version_summary AS
         SELECT fv.country_iso3, fv.hazard, fv.version, fv.kb_framework, fv.kb_status,
                fv.valid_from, fv.valid_until, fv.source,
                fv.prearranged_usd_doc,
-               (SELECT max(pf.amount_usd) FROM aa.prearranged_funding pf
-                 WHERE pf.country_iso3 = fv.country_iso3 AND pf.hazard = fv.hazard
-                   AND pf.version = fv.version AND pf.kind = 'prearranged'
-                   AND pf.fund_code IN ('cerf', 'all')) AS prearranged_usd_tracked,
+               (SELECT vf.total_usd FROM aa.v_version_funding vf
+                 WHERE vf.country_iso3 = fv.country_iso3 AND vf.hazard = fv.hazard
+                   AND vf.version = fv.version AND vf.kind = 'prearranged'
+                   AND vf.fund_code = 'cerf') AS prearranged_usd_tracked,
                (SELECT max(pc.people_covered) FROM aa.people_covered pc
                  WHERE pc.country_iso3 = fv.country_iso3 AND pc.hazard = fv.hazard
                    AND pc.version = fv.version) AS people_covered,
-               (SELECT count(*) FROM aa.activation e
+               (SELECT count(*) FROM aa.window_activation e
                  WHERE e.country_iso3 = fv.country_iso3 AND e.hazard = fv.hazard
                    AND e.version = fv.version) AS n_activations
         FROM aa.framework_version fv
         ORDER BY fv.country_iso3, fv.hazard, fv.valid_from
     """,
-    # sheet activation events vs KB actual_activation: matches + conflicts
+    # window activations whose window is not in the window registry — the curation queue
+    "v_trk_activation_window_check": """
+        CREATE OR REPLACE VIEW aa.v_trk_activation_window_check AS
+        SELECT a.country_iso3, a.hazard, a.version, a.window_name, a.event_date,
+               (w.window_name IS NOT NULL) AS in_kb_windows,
+               (ew.window_name IS NOT NULL) AS in_entered_windows,
+               (SELECT string_agg(x.window_name, ' | ') FROM (
+                   SELECT window_name FROM aa.window w2
+                    WHERE w2.country_iso3 = a.country_iso3 AND w2.hazard = a.hazard
+                      AND w2.version = a.version
+                   UNION SELECT window_name FROM aa.entered_window e2
+                    WHERE e2.country_iso3 = a.country_iso3 AND e2.hazard = a.hazard
+                      AND e2.version = a.version) x) AS registry_windows
+        FROM aa.window_activation a
+        LEFT JOIN aa.window w USING (country_iso3, hazard, version, window_name)
+        LEFT JOIN aa.entered_window ew USING (country_iso3, hazard, version, window_name)
+    """,
+    # activation events vs KB actual_activation: matches + conflicts
     "v_trk_activation_reconciliation": """
         CREATE OR REPLACE VIEW aa.v_trk_activation_reconciliation AS
         WITH funding AS (
@@ -594,7 +655,7 @@ VIEWS = {
             GROUP BY 1, 2, 3, 4, 5, 6
         )
         SELECT act.country_iso3, act.hazard, act.event_date, act.window_name,
-               act.event_label, act.event_type, act.version, act.version_match,
+               act.event_label, act.event_type, act.version,
                act.people_targeted, act.source,
                f.total_usd AS sheet_total_usd, f.funds, f.n_funding_rows,
                act.kb_framework, act.kb_event_date,
@@ -604,8 +665,6 @@ VIEWS = {
                        THEN 'UNVERIFIED_EVIDENCE'
                    WHEN act.event_type = 'early_action' THEN 'EARLY_ACTION'
                    WHEN act.event_type = 'adhoc_aa' THEN 'ADHOC_AA'
-                   -- sheets are assumed correct where the KB is silent: not a
-                   -- conflict, a KB-backfill queue
                    WHEN act.kb_framework IS NULL THEN 'KB_BACKFILL'
                    WHEN a.released_usd IS NOT NULL AND f.total_usd IS NOT NULL
                         AND abs(a.released_usd - f.total_usd) > 1000
@@ -619,7 +678,7 @@ VIEWS = {
                ON a.kb_framework = act.kb_framework
               AND a.event_date = act.kb_event_date
     """,
-    # KB activations with no counterpart in the sheet list
+    # KB activations with no counterpart in the window activations
     "v_trk_activation_kb_only": """
         CREATE OR REPLACE VIEW aa.v_trk_activation_kb_only AS
         SELECT a.kb_framework, a.event_date, a.country_iso3, a.window_name,
@@ -631,7 +690,6 @@ VIEWS = {
               AND e.kb_event_date = a.event_date
         )
     """,
-    # localization rollup on the curated AA subgrants
     "v_trk_aa_localization": """
         CREATE OR REPLACE VIEW aa.v_trk_aa_localization AS
         SELECT year, localization,
@@ -642,7 +700,6 @@ VIEWS = {
         GROUP BY year, localization
         ORDER BY year, localization
     """,
-    # sheet-reported AA flag vs the mirror's title-keyword heuristic
     "v_trk_aa_flag_reconciliation": """
         CREATE OR REPLACE VIEW aa.v_trk_aa_flag_reconciliation AS
         SELECT x.application_code, x.is_aa_reported, c.aa_keyword,
@@ -651,44 +708,22 @@ VIEWS = {
         JOIN aa.cerf_allocation c ON c.application_code = x.application_code
         WHERE x.is_aa_reported IS DISTINCT FROM c.aa_keyword
     """,
-    # window funding vs the EXPLICIT per-fund total, reconciled under the
-    # version's rollup mode (additive: sum; exclusive: each window can draw the
-    # shared pot, so max; capped: windows sum past the envelope by design)
+    # window envelopes vs the document's stated total under the version's rollup mode
     "v_trk_funding_rollup": """
         CREATE OR REPLACE VIEW aa.v_trk_funding_rollup AS
-        WITH wf AS (
-            SELECT country_iso3, hazard, version, fund_code,
-                   sum(amount_usd) AS window_sum,
-                   max(amount_usd) AS window_max,
-                   count(*) AS n_windows
-            FROM aa.entered_window_funding
-            GROUP BY country_iso3, hazard, version, fund_code
-        )
-        SELECT country_iso3, hazard, version, fund_code,
-               fv.window_rollup,
-               vf.total_usd AS stated_total,
-               wf.window_sum, wf.window_max, wf.n_windows,
-               CASE fv.window_rollup
-                   WHEN 'additive' THEN wf.window_sum
-                   WHEN 'exclusive' THEN wf.window_max
-                   WHEN 'capped' THEN LEAST(wf.window_sum, vf.total_usd)
-               END AS rollup_total,
+        SELECT vf.country_iso3, vf.hazard, vf.version, vf.fund_code, vf.window_rollup,
+               fv.prearranged_usd_doc AS stated_total,
+               vf.total_usd AS rollup_total, vf.n_windows, vf.has_unattributed,
                CASE
-                   WHEN vf.total_usd IS NULL THEN 'NO_STATED_TOTAL'
-                   WHEN wf.window_sum IS NULL THEN 'NO_WINDOW_FUNDING'
-                   WHEN fv.window_rollup IS NULL THEN 'NO_ROLLUP_MODE'
-                   WHEN fv.window_rollup = 'additive'
-                        AND abs(wf.window_sum - vf.total_usd)
-                            <= greatest(1000, 0.01 * vf.total_usd) THEN 'OK'
-                   WHEN fv.window_rollup = 'exclusive'
-                        AND abs(wf.window_max - vf.total_usd)
-                            <= greatest(1000, 0.01 * vf.total_usd) THEN 'OK'
-                   WHEN fv.window_rollup = 'capped'
-                        AND wf.window_sum >= vf.total_usd THEN 'OK'
+                   WHEN fv.prearranged_usd_doc IS NULL THEN 'NO_STATED_TOTAL'
+                   WHEN vf.has_unattributed THEN 'WINDOW_UNATTRIBUTED'
+                   WHEN fv.window_rollup IS NULL AND vf.n_windows > 1 THEN 'NO_ROLLUP_MODE'
+                   WHEN abs(vf.total_usd - fv.prearranged_usd_doc)
+                        <= greatest(1000, 0.01 * fv.prearranged_usd_doc) THEN 'OK'
                    ELSE 'MISMATCH'
                END AS rollup_check
-        FROM aa.entered_version_funding vf
-        FULL JOIN wf USING (country_iso3, hazard, version, fund_code)
-        LEFT JOIN aa.framework_version fv USING (country_iso3, hazard, version)
+        FROM aa.v_version_funding vf
+        JOIN aa.framework_version fv USING (country_iso3, hazard, version)
+        WHERE vf.kind = 'prearranged' AND vf.fund_code = 'cerf'
     """,
 }

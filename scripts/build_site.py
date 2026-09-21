@@ -141,16 +141,16 @@ def tbl(df, max_rows=8000, name="data"):
 
 # per-table reviewer notes
 NOTES = {
-    "framework_registry": "Identity ONLY: one row per (country, hazard), incl. pipeline entries with no version anywhere yet, plus descriptive attributes that aren't approved per version (region, language, coordination group). Everything fact-like attaches to <code>framework_version</code> instead.",
+    "country_hazard": "The (country, hazard) pair — the identity everything hangs off: pipeline entries with no version yet, plus descriptive attributes that aren't approved per version (region, language, coordination group). Hierarchy: country_hazard → framework_version → window → {window_activation, simulated_activation, window_funding}; ad hoc / early-action allocations attach to the pair (adhoc_activation).",
     "framework_version": "The unit that actually gets approved: one row per framework version, seeded from KB page frontmatter (incl. superseded/retired versions), the historical sweep of the OCHA AA web page and the pa-anticipatory-action monorepo (<code>source='ocha-web'/'pa-monorepo'</code>, with <code>doc_url</code>/<code>analysis_ref</code>), plus sheet-reported revision dates with no KB page (<code>source='sheet-revision'</code> — a KB completeness gap). Version-specific facts (budgets, sector budgets, coverage, calendar, activations, status) carry a <code>version</code> attribution: direct from the KB for matched activations, otherwise inferred from the version in force at the fact's date (<code>version_match</code>; NULL = no version exists to attribute to). Caveat: figures reported mid-revision may belong to the upcoming version — interval inference can't see that; overrides are a curation pass.",
     "framework_status": "Operational lifecycle snapshots from every source sheet, kept side by side (PK includes <code>source</code>). Canonical <code>status</code> vocabulary; raw spelling preserved. This is deliberately distinct from the KB page-status vocabulary.",
     "framework_focal_point": "Focal points by role from the 2026 planning sheet, attributed to the version in force at the snapshot date.",
     "framework_calendar": "Monthly markers recovered from cell <em>colors</em> in the planning sheet: green = trigger window, orange = framework finalization, red = proposal development; 'F' = finalization deadline.",
-    "prearranged_funding": "Pre-arranged/co-financing amounts per (framework, year, fund), one row per source sheet — conflicts intentionally preserved (see Reconciliation). <code>fund_code</code> references <code>aa.fund</code> ('all' = source stated only a total; *-unspecified until curated); co-financing rows have NULL fund_code + free-text financier — not OCHA money.",
-    "prearranged_sector_budget": "Pre-arranged budgets per framework × agency × sector (Yakubu, Jun 2026). <code>window_name</code> captures what the sheet calls sub-frameworks (Bangladesh Jamuna/Padma) — those are windows.",
+    "window_funding": "ALL framework funding, off the WINDOW: pre-arranged envelopes, co-financing and the agency × sector split (envelope rows have agency and sector NULL; never sum the two kinds together). <code>window_name</code> is one of the version's windows or a sentinel — <code>single</code> (one-window framework, window not named) / <code>unattributed</code> (a version-level figure for a multi-window framework: a curation queue, see <code>v_trk_funding_rollup</code>). Version totals are derived by <code>v_version_funding</code> under the version's rollup mode. Seeded from the sheets, KB pages and browser entries; <code>provenance</code> says which.",
     "people_covered": "People covered per framework, per source; includes double-activation assessment for cyclone frameworks.",
     "fund": "OCHA pooled funds only (CERF, CBPFs, regional funds) — the fund dimension every funding row references. Agency co-financing is deliberately NOT here (free-text financier on commitments instead). Seeded from the CBPF mirror's fund registry.",
-    "activation": "One row per real-world activation event (Julia + historical sweep, allocation rows grouped). <code>event_date</code> is partial ISO at the source's precision (month for sheet-era rows; date/datetime for future entries). Every framework activation has a window ('unspecified' until curated); adhoc/EA have none. <code>event_type</code>: framework_aa | adhoc_aa | early_action.",
+    "window_activation": "A framework activation is a WINDOW firing: keyed (country, hazard, version, window, date). <code>window_name</code> should be one of the version's windows — sheet-era rows carry the KB's free-text window until curated (<code>v_trk_activation_window_check</code> lists the ones not in the window registry). <code>event_date</code> is partial ISO at the source's precision.",
+    "adhoc_activation": "Ad hoc AA and early-action allocations, off the (country, hazard) pair — no version, no window.",
     "activation_funding": "One row per activation × fund allocation — the multi-fund reality (e.g. Nigeria floods Sep 2025 = CERF $5.0M + NHF $2.0M under one activation). <code>allocation_code</code> resolves through <code>aa.v_allocation</code> (CERF application codes and CBPF codes alike).",
     "report_channel_inclusion": "Which frameworks/countries count toward which external reports per year (A-Hub, UK BCs, SG, CERF/OCHA annual reports, SF KPI, CPC), attributed to the version in force during the report year.",
     "plan_inclusion": "GHO/HNRP plan inclusion + AA feasibility flags per country-year, per source.",
@@ -366,9 +366,9 @@ the DB becomes the single authoritative source and the sheets can be retired.
 <div class='card'>
 <b>Ownership map</b> (single writer per table, schema <code>aa</code>):<br>
 <span class='badge b-new'>ds-aa-tracking (this repo, 22 tables + 7 views)</span>
-framework_registry · framework_version · framework_status · framework_focal_point ·
+country_hazard · framework_version · framework_status · framework_focal_point ·
 framework_calendar · fund ·
-prearranged_funding · prearranged_sector_budget · people_covered · activation ·
+window_funding · window_funding · people_covered · activation ·
 activation_funding · report_channel_inclusion · plan_inclusion · start_network · cirv · cerf_subgrant ·
 cerf_application_people · cerf_application_report · cerf_allocation_extra ·
 cerf_project_supplement · cerf_cva_history · emergency_type_override<br>
@@ -405,7 +405,7 @@ def _latest_status_pivot(e, since="2025-12-01"):
 def _prearranged_pivot(e):
     pre = pd.read_sql(
         """SELECT country_iso3, hazard, year, source, amount_usd
-           FROM aa.prearranged_funding
+           FROM aa.zz_legacy_prearranged_funding
            WHERE kind = 'prearranged' AND fund_code = 'cerf'""",
         e,
     )
@@ -448,7 +448,7 @@ def _version_issues(e, person):
                            "people_covered::text AS detail"),
         "prearranged_funding": ("year::text AS fact_date",
                                 "kind || ' ' || COALESCE(fund_code, financier, 'cofinancing') || ' $' || COALESCE(amount_usd::text,'?') AS detail"),
-        "prearranged_sector_budget": ("year_label AS fact_date",
+        "zz_legacy_prearranged_sector_budget": ("year_label AS fact_date",
                                       "agency || ' / ' || sector || ' $' || COALESCE(amount_usd::text,'?') AS detail"),
         "activation": ("event_date AS fact_date",
                        "event_type || ' / window ' || COALESCE(window_name,'-') AS detail"),
@@ -596,7 +596,7 @@ def build_person_pages(e):
                 "checking).</p>" + tbl(retag)
             )
             sect = pd.read_sql(
-                """SELECT * FROM aa.prearranged_sector_budget
+                """SELECT * FROM aa.zz_legacy_prearranged_sector_budget
                    WHERE year_label IS NULL
                       OR year_label NOT IN ('Prearranged', '2025', '2026')""",
                 e,
@@ -637,12 +637,12 @@ TARGET_STYLE = {
 
 TARGET_NODES = [
     ("fund", "new", "fund_code — OCHA pooled funds only"),
-    ("framework_registry", "new", "country_iso3 · hazard (identity only)"),
+    ("country_hazard", "new", "country_iso3 · hazard (identity only)"),
     ("framework_version", "new", "+ version — THE unified registry"),
     ("version_performance_reported", "kb", "gsheet_tab · excel_fv · *_reported"),
     ("window", "kb", "+ window_name · basis · trigger_statement"),
     ("v_version_funding", "future", "window × fund_code × agency × sector"),
-    ("activation", "new", "+ event_date (partial ISO → datetime) · event_label"),
+    ("window_activation", "new", "+ event_date (partial ISO → datetime) · event_label"),
     ("activation_funding", "new", "+ fund_code · allocation_code · amount"),
     ("cerf_allocation", "mirror", "application_code"),
     ("cbpf_allocation", "mirror", "pooled_fund_id · allocation_type_id"),
@@ -650,13 +650,13 @@ TARGET_NODES = [
 ]
 
 TARGET_EDGES = [
-    ("framework_version", "framework_registry", "", "many", "one", False),
+    ("framework_version", "country_hazard", "", "many", "one", False),
     ("version_performance_reported", "framework_version", "", "one0", "one", False),
     ("window", "framework_version", "min 1 per version (single-window explicit)", "many", "one", False),
     ("v_version_funding", "window", "window x fund x agency x sector", "many", "one", False),
     ("v_version_funding", "fund", "fund_code", "many", "one", False),
-    ("activation", "window", "NOT NULL for framework_aa; null for adhoc/EA", "many0", "one0", False),
-    ("activation_funding", "activation", "", "many", "one", False),
+    ("window_activation", "window", "NOT NULL for framework_aa; null for adhoc/EA", "many0", "one0", False),
+    ("activation_funding", "window_activation", "", "many", "one", False),
     ("activation_funding", "fund", "fund_code", "many", "one", False),
     ("activation_funding", "v_allocation", "allocation_code", "many0", "one0", False),
     ("cerf_allocation", "v_allocation", "", "one0", "one", False),
@@ -666,19 +666,19 @@ TARGET_EDGES = [
 
 TARGET_FULL_NODES = [
     ("fund", "new", "fund_code — OCHA pooled funds only"),
-    ("framework_registry", "new", "country_iso3 · hazard (identity only)"),
+    ("country_hazard", "new", "country_iso3 · hazard (identity only)"),
     ("framework_version", "new", "+ version = an ENDORSED doc · endorsed_by"),
     ("version_performance_reported", "kb", "gsheet_tab · excel_fv · *_reported"),
     ("window", "kb", "+ window_name · basis · trigger_statement"),
     ("window_month", "future", "+ month (monitoring period)"),
     ("version_funding", "future", "window × fund × agency × sector · provenance"),
-    ("prearranged_commitment", "new", "= prearranged_funding (fund_code/financier built)"),
+    ("prearranged_commitment", "new", "= window_funding (fund_code/financier built)"),
     ("people_covered", "new", "window-attached · as_of · source"),
     ("simulated_activation", "kb", "+ window_name · event_year"),
     ("framework_status", "new", "observed snapshots (vs v_expected_status)"),
     ("framework_focal_point", "new", "+ role · person · as_of"),
     ("report_channel_inclusion", "new", "report_year · channel"),
-    ("activation", "new", "built — KB-table unification pending (phase 6)"),
+    ("window_activation", "new", "built — KB-table unification pending (phase 6)"),
     ("activation_funding", "new", "+ fund_code · allocation_code · amount"),
     ("cerf_allocation", "mirror", "application_code"),
     ("cbpf_allocation", "mirror", "pooled_fund_id · allocation_type_id"),
@@ -703,7 +703,7 @@ TARGET_FULL_NODES = [
 ]
 
 TARGET_FULL_EDGES = [
-    ("framework_version", "framework_registry", "", "many", "one", False),
+    ("framework_version", "country_hazard", "", "many", "one", False),
     ("version_performance_reported", "framework_version", "", "one0", "one", False),
     ("window", "framework_version", "", "many", "one", False),
     ("window_month", "window", "", "many", "one", False),
@@ -716,8 +716,8 @@ TARGET_FULL_EDGES = [
     ("framework_status", "framework_version", "", "many0", "one0", False),
     ("framework_focal_point", "framework_version", "", "many0", "one0", False),
     ("report_channel_inclusion", "framework_version", "", "many0", "one0", False),
-    ("activation", "window", "NOT NULL for framework_aa; null for adhoc/EA", "many0", "one0", False),
-    ("activation_funding", "activation", "", "many", "one", False),
+    ("window_activation", "window", "NOT NULL for framework_aa; null for adhoc/EA", "many0", "one0", False),
+    ("activation_funding", "window_activation", "", "many", "one", False),
     ("activation_funding", "fund", "", "many", "one", False),
     ("activation_funding", "v_allocation", "", "many0", "one0", False),
     ("cerf_allocation", "v_allocation", "", "one0", "one", False),
@@ -885,16 +885,15 @@ ERD_STYLE = {
 
 # (name, owner, key-line) — key columns only, to keep the diagram readable
 ERD_NODES = [
-    ("framework_registry", "new", "country_iso3 · hazard"),
+    ("country_hazard", "new", "country_iso3 · hazard"),
     ("framework_version", "new", "+ version (the approved unit)"),
     ("framework_status", "new", "+ as_of · source"),
     ("framework_focal_point", "new", "+ role · person · as_of"),
     ("framework_calendar", "new", "+ month · phase"),
-    ("prearranged_funding", "new", "+ year · kind · fund_code/financier · source"),
-    ("prearranged_sector_budget", "new", "+ window_name · agency · sector"),
+    ("window_funding", "new", "+ year · kind · fund_code/financier · source"),
     ("people_covered", "new", "+ as_of · source"),
     ("fund", "new", "fund_code — OCHA pooled funds only"),
-    ("activation", "new", "+ event_type · event_date · window"),
+    ("window_activation", "new", "+ event_type · event_date · window"),
     ("activation_funding", "new", "+ fund_code · allocation_code"),
     ("report_channel_inclusion", "new", "report_year · channel + …"),
     ("cerf_subgrant", "new", "project_code · partner_name"),
@@ -938,15 +937,14 @@ HEAD = {"one": "teetee", "one0": "teeodot"}
 
 # (child, parent, label, child_card, parent_card, declared_fk)
 ERD_EDGES = [
-    ("framework_version", "framework_registry", "country+hazard", "many", "one", False),
+    ("framework_version", "country_hazard", "country+hazard", "many", "one", False),
     ("framework_status", "framework_version", "", "many0", "one0", False),
     ("framework_focal_point", "framework_version", "", "many0", "one0", False),
     ("framework_calendar", "framework_version", "", "many0", "one0", False),
-    ("prearranged_funding", "framework_version", "", "many0", "one0", False),
-    ("prearranged_sector_budget", "framework_version", "", "many0", "one0", False),
+    ("window_funding", "framework_version", "", "many0", "one0", False),
     ("people_covered", "framework_version", "", "many0", "one0", False),
-    ("activation", "framework_version", "version (null for adhoc/EA)", "many0", "one0", False),
-    ("activation_funding", "activation", "", "many", "one", False),
+    ("window_activation", "framework_version", "version (null for adhoc/EA)", "many0", "one0", False),
+    ("activation_funding", "window_activation", "", "many", "one", False),
     ("activation_funding", "fund", "fund_code", "many", "one", False),
     ("report_channel_inclusion", "framework_version", "", "many0", "one0", False),
     ("version_performance_reported", "framework_version", "country_iso3 · hazard · version", "one0", "one0", False),
@@ -954,7 +952,7 @@ ERD_EDGES = [
     ("simulated_activation", "window", "", "many", "one", False),
     ("funding_breakdown", "framework_version", "", "many", "one", False),
     ("actual_activation", "framework_version", "country_iso3 · hazard · version", "many0", "one0", False),
-    ("activation", "actual_activation", "kb_framework+event_date+window", "many0", "one0", False),
+    ("window_activation", "actual_activation", "kb_framework+event_date+window", "many0", "one0", False),
     ("activation_funding", "v_allocation", "allocation_code", "many0", "one0", False),
     ("activation_allocation", "actual_activation", "FK", "many0", "one0", True),
     ("activation_allocation", "cerf_allocation", "FK", "many0", "one0", True),
@@ -1257,7 +1255,7 @@ the coordination-group column appears row-shifted in the source for some countri
 <h2>julia/AA reports_counting frameworks and countries.xlsx</h2>
 <ul class='tight'>
 <li><b>2024 / 2025 AA reporting</b> → framework_status, report_channel_inclusion,
-prearranged_funding (2025+2026), people_covered, plan_inclusion.</li>
+window_funding (2025+2026), people_covered, plan_inclusion.</li>
 <li><b>2026 GHO</b> → status, funding, GHO inclusion.</li>
 </ul>
 <h2>julia/OCHA_AA_activations_2020-2026.xlsb</h2>
@@ -1297,8 +1295,8 @@ curated rows winning.</li>
 sheet has no project codes).</li>
 <li><b>People covered / Double activations / Co-financing / Pre-arranged /
 New-Extended Frameworks / Sector Data - Pre-arranged / 2026 Portfolio for
-Insurance</b> → people_covered, prearranged_funding, framework_status,
-prearranged_sector_budget.</li>
+Insurance</b> → people_covered, window_funding, framework_status,
+window_funding.</li>
 <li><b>ProjectSearch / Regular Data / Sector Data Jun 2026</b> — skipped: project-level
 sector splits, dates and targeting are already in the mirror
 (<code>aa.cerf_project</code>/<code>_sector</code>), which covers 2006→present;

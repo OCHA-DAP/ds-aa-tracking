@@ -22,22 +22,26 @@ os.environ.setdefault("PGSSLMODE", "require")
 
 import ocha_stratus as stratus  # noqa: E402
 
-from ds_aa_tracking import schema  # noqa: E402
+from ds_aa_tracking import migrations, schema  # noqa: E402
 
 
 def ensure_schema(engine):
     with engine.begin() as conn:
         conn.execute(sa.text("CREATE SCHEMA IF NOT EXISTS aa"))
+        renamed = migrations.rename_legacy(conn)          # window-first: renames (once)
         for name, ddl in {**schema.TABLES, **schema.DURABLE_TABLES}.items():
             conn.execute(sa.text(ddl))
         for stmt in schema.ADDITIVE_MIGRATIONS:
             conn.execute(sa.text(stmt))
+        seeded = migrations.seed_from_legacy(conn)        # window-first: seeds (once)
         for idx in schema.INDEXES:
             conn.execute(sa.text(idx))
         for name in schema.VIEWS:
             conn.execute(sa.text(f"DROP VIEW IF EXISTS aa.{name} CASCADE"))
         for name, ddl in schema.VIEWS.items():
             conn.execute(sa.text(ddl))
+    for line in renamed + seeded:
+        print("  migration:", line)
     print(f"ensured {len(schema.TABLES) + len(schema.DURABLE_TABLES)} tables, "
           f"{len(schema.ADDITIVE_MIGRATIONS)} migrations, {len(schema.VIEWS)} views")
 

@@ -273,6 +273,35 @@ calendar year — the annual renewal/extension record) stays separate from
 different questions; the invariant `sum(structural split per fund) = committed amount
 per fund` becomes a load-time check, not a merge.
 
+## Window-first (implemented 2026-09-21)
+
+The hierarchy is now enforced in the schema, not just described:
+
+```
+aa.country_hazard            the (country, hazard) pair — identity, no versions needed
+  └─ aa.framework_version     an endorsed document
+       └─ window (aa.window from the KB loaders ∪ aa.entered_window)
+            ├─ aa.window_activation      a window firing (real activations)
+            ├─ aa.simulated_activation   backtest: would have fired (KB)
+            └─ aa.window_funding         envelopes, co-financing, agency × sector split
+aa.adhoc_activation           ad hoc AA / early-action allocations, off the pair
+aa.activation_funding         one row per activation × fund, either kind of activation
+```
+
+- `framework_registry` was renamed `country_hazard` (it is the pair, not a registry).
+- `activation` split into `window_activation` (version + window required) and
+  `adhoc_activation`; `prearranged_funding`, `prearranged_sector_budget` and
+  `entered_version_funding` folded into `window_funding`. The retired tables live on as
+  `zz_legacy_*` (read-only history) and the old names are compatibility VIEWS for one
+  release (`framework_registry`, `activation`, `prearranged_funding`).
+- Version-level figures from the sheets/KB were attributed to the window when the version
+  has exactly one (`single` when it has none named) and parked on the `unattributed`
+  sentinel otherwise — `v_trk_funding_rollup` and `v_trk_activation_window_check` are the
+  curation queues. Version totals are derived (`v_version_funding`) under the version's
+  `window_rollup` mode, never stored.
+- The migration is `ds_aa_tracking.migrations`, run by `scripts/ensure_schema.py`,
+  idempotent and non-destructive.
+
 ## Migration phases
 
 | # | What | Where | Breaks anything? |

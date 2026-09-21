@@ -25,7 +25,10 @@ CERF OneGMS mirror (`ds-cerf-supplement`). It adds:
 
 - `src/ds_aa_tracking/normalize.py` — canonical country/hazard/status vocabularies
 - `src/ds_aa_tracking/parsers.py` — one parser per source workbook
-- `src/ds_aa_tracking/schema.py` — DDL (tables + views), all in schema `aa`
+- `src/ds_aa_tracking/schema.py` — DDL (tables + views), all in schema `aa`; hierarchy
+  country_hazard → framework_version → window → {window_activation, simulated_activation,
+  window_funding}; ad hoc / early-action allocations off the pair (adhoc_activation)
+- `src/ds_aa_tracking/migrations.py` — the idempotent window-first migration (run by ensure_schema)
 - `scripts/ingest.py` — parse → crosswalk to KB → full-refresh load (dev DB)
 - `scripts/build_site.py` — render the password-protected GH Pages review site
 - `scripts/admin_page.py` — `admin.html`: Django-admin-style CRUD over every `aa` table,

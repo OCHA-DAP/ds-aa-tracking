@@ -687,13 +687,18 @@ def assemble(d, e):
                   p.return_period, p.activation_prob
            FROM aa.window w LEFT JOIN aa.v_window_performance p
              USING (country_iso3, hazard, version, window_name)""", e)
-    fb = pd.read_sql("SELECT * FROM aa.funding_breakdown WHERE amount_usd IS NOT NULL", e)
+    # the agency x sector split of each version's funding, per window (KB pages, sheets,
+    # entered) — window_funding split rows; fund_source = pooled fund or financier
+    fb = pd.read_sql(
+        """SELECT country_iso3, hazard, version, window_name,
+                  coalesce(fund_code, financier, 'unspecified') AS fund_source,
+                  agency, sector, amount_usd, provenance
+           FROM aa.window_funding
+           WHERE amount_usd IS NOT NULL AND (agency IS NOT NULL OR sector IS NOT NULL)""", e)
     sim = pd.read_sql(
         """SELECT country_iso3, hazard, version, window_name, event_year, event_label
            FROM aa.simulated_activation ORDER BY event_year DESC""", e)
-    psb = pd.read_sql(
-        """SELECT country_iso3, hazard, version, window_name, agency, sector, amount_usd
-           FROM aa.prearranged_sector_budget WHERE amount_usd IS NOT NULL""", e)
+    psb = fb.iloc[0:0]                                    # folded into window_funding
     acts = pd.read_sql(
         """SELECT a.country_iso3, a.hazard, a.event_type, a.event_date, a.window_name,
                   a.event_label, a.version, a.kb_framework, a.kb_event_date,

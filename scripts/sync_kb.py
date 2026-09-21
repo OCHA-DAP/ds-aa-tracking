@@ -52,7 +52,7 @@ def main():
            FROM aa.framework_version""", engine)
     db_keys = {(r.country_iso3, r.hazard, r.version) for r in db.itertuples()}
     db_by_key = {(r.country_iso3, r.hazard, r.version): r for r in db.itertuples()}
-    reg = pd.read_sql("SELECT country_iso3, hazard FROM aa.framework_registry", engine)
+    reg = pd.read_sql("SELECT country_iso3, hazard FROM aa.country_hazard", engine)
     reg_keys = set(zip(reg["country_iso3"], reg["hazard"]))
 
     inserts, updates, audits, new_reg = [], [], [], []
@@ -113,7 +113,7 @@ def main():
     with engine.begin() as conn:
         for r in new_reg:
             conn.execute(sa.text(
-                """INSERT INTO aa.framework_registry
+                """INSERT INTO aa.country_hazard
                        (country_iso3, hazard, country_name, kb_framework, in_kb)
                    VALUES (:country_iso3, :hazard, :country_name, :kb_framework, :in_kb)
                    ON CONFLICT (country_iso3, hazard) DO NOTHING"""), r)

@@ -8,8 +8,8 @@
  *                    structured-output tool) -> registry fields + windows
  *   GET  /framework  ?iso3=&hazard= -> live version rows + windows + funding
  *                    (what the page diffs extracted values against)
- *   POST /entry      upsert aa.entered_version / entered_window /
- *                    entered_window_funding / entered_version_funding for one
+ *   POST /entry      upsert aa.entered_version / entered_window / aa.window_funding
+ *                    (entered rows; version totals attributed to the window) for one
  *                    (country, hazard, version); every field change is written
  *                    to aa.entry_audit (old, new, who, when). Replace-set
  *                    semantics per version: the posted windows/funding ARE the
@@ -56,8 +56,9 @@ const READONLY_TABLES = new Set([
   "cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country",
   "cerf_allocation_storm", "cerf_supplement",
 ]);
-const READONLY_PREFIXES = ["cbpf_"];
+const READONLY_PREFIXES = ["cbpf_", "zz_legacy_"];
 const TABLE_OWNER = (t) =>
+  t.startsWith("zz_legacy_") ? "retired" :
   READONLY_PREFIXES.some((p) => t.startsWith(p)) || t.startsWith("cerf_allocation_storm") ||
   ["cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country", "cerf_supplement"].includes(t)
     ? "ds-cerf-supplement"
@@ -286,11 +287,15 @@ async function framework(req, res, q) {
          FROM aa.entered_window WHERE country_iso3=$1 AND hazard=$2
          ORDER BY version, window_name`, key),
       pool.query(
-        `SELECT version, window_name, fund_code, financier, amount_usd
-         FROM aa.entered_window_funding WHERE country_iso3=$1 AND hazard=$2`, key),
+        `SELECT version, window_name, coalesce(fund_code, 'cofinancing') AS fund_code, financier,
+                amount_usd, provenance
+         FROM aa.window_funding
+         WHERE country_iso3=$1 AND hazard=$2 AND agency IS NULL AND sector IS NULL
+           AND window_name NOT IN ('single','unattributed')`, key),
       pool.query(
-        `SELECT version, fund_code, financier, total_usd
-         FROM aa.entered_version_funding WHERE country_iso3=$1 AND hazard=$2`, key),
+        `SELECT version, coalesce(fund_code, 'cofinancing') AS fund_code, financier,
+                total_usd
+         FROM aa.v_version_funding WHERE country_iso3=$1 AND hazard=$2`, key),
       pool.query(
         `SELECT version, doc_title, doc_url, endorsed_by, valid_until::text,
                 valid_until_source, window_rollup, supersedes, note, entered_by,
@@ -431,54 +436,45 @@ async function entry(req, res) {
         [...key, w.window_name, w.basis || null, w.trigger_statement || null,
          w.monitoring_period || null, w.note || null, by]);
 
-    // --- window funding: replace-set
+    // --- funding: ALL of it hangs off the window (aa.window_funding). The page's rows
+    //     for this version with provenance 'entered' are a replace-set. Per-fund version
+    //     totals are attributed to the single window when there is one, else parked on
+    //     the 'unattributed' sentinel (a curation queue) — never stored as version rows.
+    const fundKind = (fc) => (fc === "cofinancing" || fc === "other") ? "cofinancing" : "prearranged";
     const oldWF = (await client.query(
-      `SELECT * FROM aa.entered_window_funding
-       WHERE country_iso3=$1 AND hazard=$2 AND version=$3`, key)).rows;
-    const newWF = cleanFunding(p.window_funding, true)
-      .filter((f) => newNames.has(f.window_name));
-    const wfKey = (f) => `${f.window_name}|${f.fund_code}`;
-    const oldWFBy = Object.fromEntries(oldWF.map((f) => [wfKey(f), f]));
-    const newWFKeys = new Set(newWF.map(wfKey));
-    for (const f of oldWF)
-      if (!newWFKeys.has(wfKey(f)))
-        audit("entered_window_funding", `${rowKey}/${f.window_name}/${f.fund_code}`,
-          "amount_usd", f.amount_usd, null);
-    for (const f of newWF)
-      audit("entered_window_funding", `${rowKey}/${f.window_name}/${f.fund_code}`,
-        "amount_usd", (oldWFBy[wfKey(f)] || {}).amount_usd, f.amount);
+      `SELECT * FROM aa.window_funding
+       WHERE country_iso3=$1 AND hazard=$2 AND version=$3 AND provenance='entered'
+         AND agency IS NULL AND sector IS NULL`, key)).rows;
+    const newWF = cleanFunding(p.window_funding, true).filter((f) => newNames.has(f.window_name));
+    const single = newWin.length === 1 ? newWin[0].window_name : (newWin.length === 0 ? "single" : "unattributed");
+    const newVF = cleanFunding(p.version_funding, false)
+      .filter((f) => !newWF.some((w) => w.fund_code === f.fund_code))   // window rows win
+      .map((f) => ({ ...f, window_name: single }));
+    const all = [...newWF, ...newVF];
+    const wfKey = (f) => `${f.window_name}|${f.fund_code}|${f.financier || ""}`;
+    const oldBy = Object.fromEntries(oldWF.map((f) => [wfKey({window_name: f.window_name, fund_code: f.fund_code || "cofinancing", financier: f.financier}), f]));
+    const newKeys = new Set(all.map(wfKey));
+    for (const f of oldWF) {
+      const k = wfKey({window_name: f.window_name, fund_code: f.fund_code || "cofinancing", financier: f.financier});
+      if (!newKeys.has(k)) audit("window_funding", `${rowKey}/${f.window_name}/${f.fund_code || "cofinancing"}`, "amount_usd", f.amount_usd, null);
+    }
+    for (const f of all)
+      audit("window_funding", `${rowKey}/${f.window_name}/${f.fund_code}`, "amount_usd",
+        (oldBy[wfKey(f)] || {}).amount_usd, f.amount);
     await client.query(
-      `DELETE FROM aa.entered_window_funding
-       WHERE country_iso3=$1 AND hazard=$2 AND version=$3`, key);
-    for (const f of newWF)
+      `DELETE FROM aa.window_funding
+       WHERE country_iso3=$1 AND hazard=$2 AND version=$3 AND provenance='entered'
+         AND agency IS NULL AND sector IS NULL`, key);
+    for (const f of all) {
+      const kind = fundKind(f.fund_code);
       await client.query(
-        `INSERT INTO aa.entered_window_funding (country_iso3, hazard, version,
-            window_name, fund_code, financier, amount_usd, entered_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [...key, f.window_name, f.fund_code, f.financier, f.amount, by]);
-
-    // --- version funding (explicit per-fund totals): replace-set
-    const oldVF = (await client.query(
-      `SELECT * FROM aa.entered_version_funding
-       WHERE country_iso3=$1 AND hazard=$2 AND version=$3`, key)).rows;
-    const newVF = cleanFunding(p.version_funding, false);
-    const oldVFBy = Object.fromEntries(oldVF.map((f) => [f.fund_code, f]));
-    const newVFKeys = new Set(newVF.map((f) => f.fund_code));
-    for (const f of oldVF)
-      if (!newVFKeys.has(f.fund_code))
-        audit("entered_version_funding", `${rowKey}/${f.fund_code}`, "total_usd", f.total_usd, null);
-    for (const f of newVF)
-      audit("entered_version_funding", `${rowKey}/${f.fund_code}`, "total_usd",
-        (oldVFBy[f.fund_code] || {}).total_usd, f.amount);
-    await client.query(
-      `DELETE FROM aa.entered_version_funding
-       WHERE country_iso3=$1 AND hazard=$2 AND version=$3`, key);
-    for (const f of newVF)
-      await client.query(
-        `INSERT INTO aa.entered_version_funding (country_iso3, hazard, version,
-            fund_code, financier, total_usd, entered_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-        [...key, f.fund_code, f.financier, f.amount, by]);
+        `INSERT INTO aa.window_funding (country_iso3, hazard, version, window_name, kind,
+            fund_code, financier, amount_usd, provenance, source)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'entered',$9)
+         ON CONFLICT DO NOTHING`,
+        [...key, f.window_name, kind, kind === "cofinancing" ? null : f.fund_code,
+         f.financier, f.amount, `entered:${by}`]);
+    }
 
     for (const a of audits)
       await client.query(
@@ -486,7 +482,7 @@ async function entry(req, res) {
          VALUES ($1,$2,$3,$4,$5,$6)`, a);
     await client.query("COMMIT");
     send(res, 200, { ok: true, changes: audits.length,
-      saved: { windows: newWin.length, window_funding: newWF.length, version_funding: newVF.length } });
+      saved: { windows: newWin.length, window_funding: newWF.length, version_funding: newVF.length, unattributed: newVF.filter((f) => f.window_name === 'unattributed').length } });
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});
     send(res, 502, { error: String(e.message || e) });
