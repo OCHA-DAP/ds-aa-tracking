@@ -683,10 +683,14 @@ def assemble(d, e):
     win = pd.read_sql(
         """SELECT w.country_iso3, w.hazard, w.version, w.window_name, w.all_in,
                   w.basis, w.allocation_usd, p.n_activations AS sim_activations,
-                  p.analysis_years, p.return_period, p.activation_prob
+                  p.analysis_years, p.analysis_start, p.analysis_end,
+                  p.return_period, p.activation_prob
            FROM aa.window w LEFT JOIN aa.v_window_performance p
              USING (country_iso3, hazard, version, window_name)""", e)
     fb = pd.read_sql("SELECT * FROM aa.funding_breakdown WHERE amount_usd IS NOT NULL", e)
+    sim = pd.read_sql(
+        """SELECT country_iso3, hazard, version, window_name, event_year, event_label
+           FROM aa.simulated_activation ORDER BY event_year DESC""", e)
     psb = pd.read_sql(
         """SELECT country_iso3, hazard, version, window_name, agency, sector, amount_usd
            FROM aa.prearranged_sector_budget WHERE amount_usd IS NOT NULL""", e)
@@ -749,6 +753,25 @@ def assemble(d, e):
                         "budget": _num(w.allocation_usd), "rp": _num(w.return_period),
                         "prob": _num(w.activation_prob), "sim": _num(w.sim_activations),
                         "years": _num(w.analysis_years)} for w in w_v.itertuples()]
+            # backtest: which window would have fired in which year (or storm)
+            s_v = sim[(sim["country_iso3"] == c) & (sim["hazard"] == h)
+                      & kb_key_match(sim["version"], v.version)]
+            backtest = None
+            if len(s_v):
+                wins_bt = [w.window_name for w in w_v.itertuples()] or sorted(s_v["window_name"].unique())
+                per_event = bool(s_v["event_label"].notna().any())   # numpy bool -> str under default=str
+                rows = {}
+                for sr in s_v.itertuples():
+                    key = (int(sr.event_year), _s(sr.event_label) if per_event else None)
+                    rows.setdefault(key, set()).add(sr.window_name)
+                yrs = [int(x) for x in w_v["analysis_start"].dropna()] + [int(x) for x in w_v["analysis_end"].dropna()]
+                y0, y1 = (min(yrs), max(yrs)) if yrs else (int(s_v["event_year"].min()), int(s_v["event_year"].max()))
+                if not per_event:
+                    for y in range(y0, y1 + 1):
+                        rows.setdefault((y, None), set())
+                backtest = {"windows": wins_bt, "per_event": per_event, "start": y0, "end": y1,
+                            "rows": [{"year": k[0], "label": k[1], "fired": sorted(ws)}
+                                     for k, ws in sorted(rows.items(), key=lambda kv: (-kv[0][0], str(kv[0][1])))]}
             # budget breakdown: KB funding_breakdown for this version, else sheet sector budget
             f_v = fb[(fb["country_iso3"] == c) & (fb["hazard"] == h)
                      & (fb["version"] == v.version)]
@@ -793,7 +816,7 @@ def assemble(d, e):
                 "indicators": tf.get("indicators") or [],
                 "data_sources": fm.get("data_sources") or [],
                 "triggers": pg["triggers"] if pg else [],
-                "windows": windows,
+                "windows": windows, "backtest": backtest,
                 "funding": {
                     "src": fund_src,
                     "agency": [{"agency": _s(x.agency), "fund": _s(x.fund_source) or "unspecified",
@@ -956,8 +979,7 @@ def geo_pass(countries, bboxes):
                     # names…): show the whole country rather than nothing, and say so
                     v["scope"] = dict(sc, national=True, approx=True)
         if m is not None:
-            import resource
-            print(f"  geo {iso} … rss {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1e9:.1f}GB", flush=True)
+            cd["area_names"] = {pc: rec["name"] for pc, rec in m.used.items()}
             b = write_country_geo(iso, m, adm0)
             if b is not None:
                 bboxes[iso] = [float(x) for x in b]
@@ -1077,7 +1099,7 @@ LANDING_CSS = r"""
 .a1:hover { fill:#e6edf5; }
 .sc { stroke:#fff; stroke-width:.7; vector-effect:non-scaling-stroke; fill-opacity:.82; cursor:pointer; transition: fill-opacity .2s; stroke-linejoin:round; }
 .sc:hover { fill-opacity:1; }
-.nat { fill-opacity:.3; pointer-events:none; }
+.nat { fill-opacity:.82; pointer-events:none; }
 #adm { opacity:0; transition: opacity .5s ease; } #adm.show { opacity:1; }
 /* callouts (KB style) */
 .labelpane { position:absolute; inset:0; pointer-events:none; transition: opacity .35s; }
@@ -1155,7 +1177,10 @@ table.mini td.num { text-align:right; white-space:nowrap; font-variant-numeric:t
 .vtag { display:inline-block; font-size:10.5px; padding:0 6px; border-radius:8px; background:#eceff5; color:#4a5670; margin-left:6px; font-family:ui-monospace,monospace; }
 .vtag.other { background:#fdf1dc; color:#8a5c0a; }
 .chips span { display:inline-block; background:#f0f2f5; border-radius:9px; padding:0 7px; font-size:11px; margin:2px 3px 2px 0; }
-.scopelist { font-size:12px; color:#334; line-height:1.5; }
+.scopelist { font-size:12px; color:#334; line-height:1.5; margin:3px 0; }
+table.bt th { position:sticky; top:0; } table.bt td { padding:2px 6px; } table.bt tr.bt-on td { background:#fbfcfe; }
+table.bt .bt-c { text-align:center; } table.bt td.lbl { width:70px; }
+.bt-dot { display:inline-block; width:9px; height:9px; border-radius:50%; }
 """
 
 LANDING_JS = r"""
@@ -1361,9 +1386,7 @@ function drawAdmin(iso, fade){
   if(fade) void adm.getBoundingClientRect();
   adm.classList.add('show');
   legend.innerHTML = `<b>${esc(c.name)}</b><br>` + tiers.map(t =>
-      `<span class='sq' style='background:${t.color}${t.rest?';opacity:.45':''}'></span>${esc(t.hzl)}${t.label?` — ${esc(t.label)}`:''}${t.rest?' (whole country)':''}<br>`).join('')
-    + (multi ? `<span class='sq' style='background:repeating-linear-gradient(135deg,${tiers[0].color} 0 3px,${(tiers[1]||tiers[0]).color} 3px 6px)'></span>striped — covered by several frameworks<br>` : '')
-    + `<span class='sq' style='background:#eef3f9;border:1px solid #9cc0e3'></span>admin-1 boundaries`;
+      `<span class='sq' style='background:${t.color}'></span>${esc(t.hzl)}${t.label?` — ${esc(t.label)}`:''}${t.rest?' (whole country)':''}<br>`).join('');
 }
 
 // ---------- world legend (KB style)
@@ -1570,7 +1593,7 @@ function renderSide(){
   const isCur = v.v === f.current;
   side.innerHTML = crumb + fwHeader(c, f) + versionBar(f, v, isCur) +
     (isCur ? '' : `<div class='warnbox'>Viewing an older version (${esc(v.status||'past')}). The map shows this version's scope. Most recent: <a onclick='selectVersion("${f.current}")' style='cursor:pointer'>${f.current}</a>.</div>`) +
-    factsBlock(f, v) + triggersBlock(v) + fundingBlock(v) + activationsBlock(f, v) + scopeBlock(v) +
+    factsBlock(f, v) + triggersBlock(v) + fundingBlock(v) + activationsBlock(f, v) + scopeBlock(v) + backtestBlock(f, v) +
     `<p class='small' style='margin-top:12px'><a href='${f.page}'>full framework page →</a> · <a href='hierarchy.html'>explorer</a></p>`;
 }
 function fwHeader(c, f){
@@ -1674,16 +1697,33 @@ function activationsBlock(f, v){
 }
 function scopeBlock(v){
   const s = v.scope; if(!s) return '';
+  const names = (L[state.iso].area_names) || {};
+  const nm = pcs => pcs.map(p => names[p] || p).sort((a,b)=>a.localeCompare(b));
   let html = `<h4>Geographic scope${v.admin_level!=null?` <span class='muted' style='text-transform:none'>(trigger at admin ${v.admin_level})</span>`:''}</h4>`;
   if(s.inherited_from) html += `<div class='warnbox'>Scope not yet extracted for this version — the map shows the ${esc(s.inherited_from)} scope.</div>`;
   if(s.approx) html += `<div class='warnbox'>The framework's zone could not be mapped to admin areas${s.unmatched.length?` (${esc(s.unmatched.join('; '))})`:''} — the whole country is shown.</div>`;
-  if(s.tiers && s.tiers.length){
-    html += s.tiers.map((t,i)=>`<div class='scopelist'><span class='sq' style='display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px;background:${shade(hzColor(state.hz), s.tiers.length>1?i/(s.tiers.length-1):0)}'></span><b>${esc(t.label||'named areas')}</b>${t.rest?' — everywhere not named above':` — ${t.pcodes.length} area${t.pcodes.length===1?'':'s'}`}</div>`).join('');
-  } else if(s.national && !s.approx) html += `<div class='scopelist'>National trigger — whole country shaded.</div>`;
-  if(v.scope_raw.length) html += `<div class='scopelist muted' style='margin-top:4px'>${v.scope_raw.map(x=>esc(x)).join(' · ')}</div>`;
-  if(!s.national && !v.scope_raw.length && !s.inherited_from) html += `<div class='muted'>Scope not extracted for this version yet.</div>`;
+  const nt = (s.tiers||[]).length;
+  if(nt){
+    html += s.tiers.map((t,i)=>`<div class='scopelist'><span class='sq' style='display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px;background:${shade(hzColor(state.hz), nt>1?i/(nt-1):0)}'></span><b>${esc(t.label||'named areas')}</b>${t.rest ? ' — everywhere not named above' : `: ${nm(t.pcodes).map(esc).join(', ')}`}</div>`).join('');
+  } else if(s.national && !s.approx) html += `<div class='scopelist'>National trigger — whole country.</div>`;
+  else if(s.pcodes.length) html += `<div class='scopelist'>${nm(s.pcodes).map(esc).join(', ')}</div>`;
+  if(!s.national && !s.pcodes.length && !s.inherited_from) html += `<div class='muted'>Scope not extracted for this version yet.</div>`;
   if(s.unmatched.length && !s.approx) html += `<div class='small' style='margin-top:4px;color:#8a5c0a'>Not on the map (no boundary match): ${s.unmatched.map(esc).join('; ')}</div>`;
   return html;
+}
+// backtest table: one row per year (or storm), newest first, one column per trigger window
+function backtestBlock(f, v){
+  const bt = v.backtest; if(!bt) return '';
+  const trigName = w => { const t = v.triggers.find(t => sameWin(w, t.window || t.trigger || Object.values(t)[0])); const n = t ? (t.window || t.trigger || Object.values(t)[0]) : null; return n && n.toLowerCase() !== w.toLowerCase() ? `${esc(n)} <span class='muted'>(${esc(w)})</span>` : esc(w); };
+  const realByYear = {};
+  f.activations.filter(a => a.type === 'framework_aa').forEach(a => { const y = +String(a.date).slice(0,4); (realByYear[y] ??= []).push(a); });
+  let html = `<h4>Historical activations — backtest ${bt.start}–${bt.end}</h4>
+    <div class='small' style='margin-bottom:4px'>Whether each trigger of this version would have fired${bt.per_event?' for each storm':' each year'} (KB trigger-performance analysis). ● = would have fired; the last column marks real activations of this framework.</div>
+    <div style='max-height:320px;overflow:auto;border:1px solid #eef1f5;border-radius:6px'><table class='mini bt'><thead><tr><th>${bt.per_event?'storm':'year'}</th>${bt.windows.map(w=>`<th class='bt-c'>${trigName(w)}</th>`).join('')}<th class='bt-c'>real activation</th></tr></thead><tbody>`;
+  html += bt.rows.map(r => {
+    const any = r.fired.length > 0, real = realByYear[r.year];
+    return `<tr class='${any?'bt-on':''}'><td class='lbl'>${r.year}${r.label?` ${esc(r.label)}`:''}</td>${bt.windows.map(w=>`<td class='bt-c'>${r.fired.includes(w)?'<span class="bt-dot" style="background:'+hzColor(f.hazard)+'"></span>':''}</td>`).join('')}<td class='bt-c'>${real && !r.label ? real.map(a=>`<span class='vtag ${a.version===v.v?'':'other'}' title='${esc(a.window||'')}'>${a.version===v.v?'this version':'under '+a.version}</span>`).join(' ') : ''}</td></tr>`; }).join('');
+  return html + `</tbody></table></div>`;
 }
 
 // ---------- boot
