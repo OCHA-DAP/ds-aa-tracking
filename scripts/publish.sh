@@ -29,8 +29,10 @@ git worktree add -q -B gh-pages "$WT" origin/gh-pages
 trap 'git worktree remove --force "$WT" 2>/dev/null || true' EXIT
 
 cp site_encrypted/*.html "$WT"/
+# committed copies of the vendored assets (main locally; the checked-out ref in CI)
+REF=main; git rev-parse -q --verify main >/dev/null 2>&1 || REF=HEAD
 for a in chart.umd.js pdf.min.js pdf.worker.min.js; do
-  git show "main:site_src/$a" > "$WT/$a"
+  git show "$REF:site_src/$a" > "$WT/$a"
 done
 # per-country admin geometry for the landing map (public CODAB data, not encrypted)
 rm -f "$WT"/adm-*.json

@@ -94,7 +94,7 @@ const VOCAB = {
 };
 const VOCAB_LABEL = {development: 'in development', 'pre-development': 'pre-development'};
 // boolean columns that read better with domain words than yes/no
-const BOOL_LABEL = {'window_status.triggered': ['triggered', 'not triggered'], 'country_hazard.retired': ['retired', 'not retired']};
+const BOOL_LABEL = {'window_status.triggered': ['triggered', 'not triggered'], 'country_hazard.retired': ['retired', 'not retired'], 'country_hazard.technical_support': ['technical support (no funding commitment)', 'no']};
 function vocabFor(t, c){ return VOCAB[`${t.name}.${c.name}`] || VOCAB[`*.${c.name}`] || null; }
 let SCHEMA = null, ROLE = null, BY_TABLE = {};
 

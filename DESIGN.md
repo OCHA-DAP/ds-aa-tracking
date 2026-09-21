@@ -296,7 +296,22 @@ aa.activation_funding         one row per activation × fund, either kind of act
   flag cannot live there); a version is *fully triggered* when every window fired (any
   window for all-in / exclusive rollups). The map's framework status is then: **active** =
   latest version endorsed, in validity, not fully triggered; **in development / revision**
-  otherwise.
+  otherwise — split into **being updated** (an endorsed framework: fully triggered,
+  expired, or a new version in the works; the active colour, hatched) and **in
+  development** (no endorsed version yet; the light colour). `aa.v_framework_lifecycle`
+  is the single rule; the map, headline counts and dashboards all read it.
+- Funding conventions (2026-09-21): pre-arranged money stays pre-arranged until the
+  framework is *retired* — a framework being updated keeps its latest version's envelope
+  (`v_version_funding` joined to the lifecycle view). CBPF / regional-fund allocations are
+  made up front, so an AA-tagged allocation in the OneGMS mirror counts as pre-arranged
+  until an activation draws on it (a hand-entered `activation_funding` row), then as
+  disbursed. `country_hazard.technical_support` marks frameworks OCHA supported without a
+  funding commitment.
+- Public site (2026-09-21): nav = Map · Funding · Model · Plan · Learning (the building
+  blocks of AA) with everything internal behind one menu; the framework sidebar leads
+  with the same three blocks (+ Learning when there is material). Publishing is automated
+  by `.github/workflows/publish.yml` (nightly, on push, by hand, on `repository_dispatch`
+  from the knowledge base).
 - `activation` split into `window_activation` (version + window required) and
   `adhoc_activation`; `prearranged_funding`, `prearranged_sector_budget` and
   `entered_version_funding` folded into `window_funding`. The retired tables live on as

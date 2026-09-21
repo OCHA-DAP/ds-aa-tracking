@@ -28,6 +28,11 @@ CERF OneGMS mirror (`ds-cerf-supplement`). It adds:
 - `src/ds_aa_tracking/schema.py` — DDL (tables + views), all in schema `aa`; hierarchy
   country_hazard → framework_version → window → {window_activation, simulated_activation,
   window_funding}; ad hoc / early-action allocations off the pair (adhoc_activation)
+- publishing: `.github/workflows/publish.yml` rebuilds and publishes nightly, on pushes to
+  main, by hand (workflow_dispatch) and on `repository_dispatch` events `kb-updated` /
+  `data-updated` (the knowledge base sends one when framework pages change). Needs the
+  org DB secrets plus repo secrets `EXTRACT_TOKEN` (the proxy site token) and
+  `SITE_PASSWORD` (staticrypt).
 - statuses: version = endorsed | development | pre-development (superseded is inferred);
   retired = a flag on country_hazard; per-window triggered flags in window_status
 - `src/ds_aa_tracking/migrations.py` — the idempotent window-first migration (run by ensure_schema)

@@ -34,6 +34,9 @@ TABLES = {
             retired boolean NOT NULL DEFAULT false,   -- manual: framework retired (hidden
                                                       -- from the map, whatever its versions say)
             retired_note text,
+            technical_support boolean NOT NULL DEFAULT false,  -- OCHA supported the
+                                                      -- framework technically, no funding
+            technical_support_note text,
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard)
         )""",
@@ -489,6 +492,9 @@ ADDITIVE_MIGRATIONS = [
     # 2026-09-21: retirement is a manual flag on the pair (framework level)
     "ALTER TABLE aa.country_hazard ADD COLUMN IF NOT EXISTS retired boolean NOT NULL DEFAULT false",
     "ALTER TABLE aa.country_hazard ADD COLUMN IF NOT EXISTS retired_note text",
+    # 2026-09-21: technical support without a funding commitment, at framework level
+    "ALTER TABLE aa.country_hazard ADD COLUMN IF NOT EXISTS technical_support boolean NOT NULL DEFAULT false",
+    "ALTER TABLE aa.country_hazard ADD COLUMN IF NOT EXISTS technical_support_note text",
 ]
 
 INDEXES = [
@@ -569,6 +575,91 @@ VIEWS = {
                     ELSE w.window_sum END AS total_usd
         FROM w LEFT JOIN aa.framework_version fv USING (country_iso3, hazard, version)
     """,
+    # THE framework status, one row per (country, hazard) — the single rule every page
+    # uses (map, headline counts, dashboards):
+    #   active       latest version endorsed, in validity, not fully triggered
+    #   updating     "being updated": an endorsed framework whose latest version is in
+    #                (pre-)development, or whose latest version fully triggered / expired
+    #   development  no endorsed version yet (all versions in development, or sheet-only)
+    #   retired      manual flag on the pair (hidden from the map)
+    #   pipeline     conversation stage only (hidden from the map)
+    # "fully triggered" comes from the curated window_status flags: any window for all-in /
+    # exclusive rollups, every window otherwise; a version with no windows registered falls
+    # back to its activations (any not marked partial).
+    "v_framework_lifecycle": """
+        CREATE OR REPLACE VIEW aa.v_framework_lifecycle AS
+        WITH latest AS (
+            SELECT DISTINCT ON (country_iso3, hazard)
+                country_iso3, hazard, version, kb_status, valid_from, valid_until, window_rollup
+            FROM aa.framework_version
+            ORDER BY country_iso3, hazard, valid_from DESC NULLS LAST, version DESC
+        ),
+        endorsed AS (
+            SELECT country_iso3, hazard, bool_or(kb_status = 'endorsed') AS has_endorsed
+            FROM aa.framework_version GROUP BY 1, 2
+        ),
+        wins AS (
+            SELECT w.country_iso3, w.hazard, w.version,
+                   count(*) AS n_windows,
+                   count(*) FILTER (WHERE s.triggered) AS n_triggered,
+                   bool_or(coalesce(k.all_in, false)) AS any_all_in
+            FROM (SELECT country_iso3, hazard, version, window_name FROM aa.window
+                  UNION
+                  SELECT country_iso3, hazard, version, window_name FROM aa.entered_window) w
+            LEFT JOIN aa.window k ON k.country_iso3 = w.country_iso3 AND k.hazard = w.hazard
+                                 AND k.version = w.version AND k.window_name = w.window_name
+            LEFT JOIN aa.window_status s ON s.country_iso3 = w.country_iso3
+                                 AND s.hazard = w.hazard AND s.version = w.version
+                                 AND s.window_name = w.window_name
+            GROUP BY 1, 2, 3
+        ),
+        acts AS (
+            SELECT country_iso3, hazard, version,
+                   bool_or(full_activation IS DISTINCT FROM false) AS any_full
+            FROM aa.window_activation GROUP BY 1, 2, 3
+        ),
+        sheet AS (
+            SELECT DISTINCT ON (country_iso3, hazard) country_iso3, hazard, status
+            FROM aa.framework_status ORDER BY country_iso3, hazard, as_of DESC
+        ),
+        x AS (
+            SELECT r.country_iso3, r.hazard, r.retired, r.technical_support,
+                   l.version AS latest_version, l.kb_status AS latest_status,
+                   l.valid_from AS latest_valid_from, l.valid_until AS latest_valid_until,
+                   coalesce(e.has_endorsed, false) AS has_endorsed,
+                   coalesce(w.n_windows, 0) AS n_windows,
+                   coalesce(w.n_triggered, 0) AS n_triggered,
+                   CASE WHEN coalesce(w.n_windows, 0) = 0 THEN coalesce(a.any_full, false)
+                        WHEN w.any_all_in OR l.window_rollup = 'exclusive' THEN w.n_triggered > 0
+                        ELSE w.n_triggered = w.n_windows END AS fully_triggered,
+                   (l.valid_until IS NOT NULL
+                    AND l.valid_until < date_trunc('month', CURRENT_DATE)::date) AS expired,
+                   s.status AS sheet_status
+            FROM aa.country_hazard r
+            LEFT JOIN latest l ON l.country_iso3 = r.country_iso3 AND l.hazard = r.hazard
+            LEFT JOIN endorsed e ON e.country_iso3 = r.country_iso3 AND e.hazard = r.hazard
+            LEFT JOIN wins w ON w.country_iso3 = l.country_iso3 AND w.hazard = l.hazard
+                             AND w.version = l.version
+            LEFT JOIN acts a ON a.country_iso3 = l.country_iso3 AND a.hazard = l.hazard
+                             AND a.version = l.version
+            LEFT JOIN sheet s ON s.country_iso3 = r.country_iso3 AND s.hazard = r.hazard
+        )
+        SELECT x.*,
+               CASE WHEN retired THEN 'retired'
+                    WHEN latest_version IS NULL THEN
+                         CASE WHEN sheet_status IN ('active', 'activated_implementing',
+                                                    'monitoring') THEN 'active'
+                              WHEN sheet_status IN ('under_revision', 'expired') THEN 'updating'
+                              WHEN sheet_status IN ('under_development',
+                                                    'project_finalization') THEN 'development'
+                              WHEN sheet_status IN ('dormant', 'retired') THEN 'retired'
+                              ELSE 'pipeline' END
+                    WHEN latest_status IN ('development', 'pre-development') THEN
+                         CASE WHEN has_endorsed THEN 'updating' ELSE 'development' END
+                    WHEN fully_triggered OR expired THEN 'updating'
+                    ELSE 'active' END AS lifecycle
+        FROM x
+    """,
     # one row per (country, hazard): pair + latest status + current version's funding/coverage
     "v_trk_framework_current": """
         CREATE OR REPLACE VIEW aa.v_trk_framework_current AS
@@ -604,7 +695,9 @@ VIEWS = {
             WHERE vf.kind = 'prearranged' AND vf.fund_code = 'cerf'
         )
         SELECT r.country_iso3, r.hazard, r.country_name, r.region, r.kb_framework,
-               r.in_kb, r.language, r.us_prio, r.retired,
+               r.in_kb, r.language, r.us_prio, r.retired, r.technical_support,
+               lc.lifecycle, lc.fully_triggered, lc.expired, lc.n_windows, lc.n_triggered,
+               lc.latest_version, lc.latest_status,
                v.version AS current_version, v.version_status, v.valid_until,
                CASE WHEN r.retired THEN 'retired'
                     WHEN v.version_status = 'endorsed'
@@ -624,9 +717,11 @@ VIEWS = {
                p.total_usd AS cerf_prearranged_usd, p.year AS prearranged_year,
                c.people_covered
         FROM aa.country_hazard r
-        LEFT JOIN current_version v USING (country_iso3, hazard)
-        LEFT JOIN latest_status s USING (country_iso3, hazard)
-        LEFT JOIN latest_covered c USING (country_iso3, hazard)
+        LEFT JOIN aa.v_framework_lifecycle lc ON lc.country_iso3 = r.country_iso3
+                                              AND lc.hazard = r.hazard
+        LEFT JOIN current_version v ON v.country_iso3 = r.country_iso3 AND v.hazard = r.hazard
+        LEFT JOIN latest_status s ON s.country_iso3 = r.country_iso3 AND s.hazard = r.hazard
+        LEFT JOIN latest_covered c ON c.country_iso3 = r.country_iso3 AND c.hazard = r.hazard
         LEFT JOIN cerf p ON p.country_iso3 = r.country_iso3 AND p.hazard = r.hazard
                         AND p.version = v.version
     """,

@@ -32,9 +32,17 @@ CSS = """
 * { box-sizing:border-box; }
 body { font-family:-apple-system,'Segoe UI',Roboto,sans-serif; margin:0; color:#1a1a1a;
        background:#fafafa; }
-header { background:#1f2a44; color:#fff; padding:14px 28px; }
+header { background:#1f2a44; color:#fff; padding:12px 28px; display:flex; align-items:center; flex-wrap:wrap; gap:4px 0; }
 header a { color:#9ec5f0; text-decoration:none; margin-right:18px; }
 header .t { font-weight:700; font-size:17px; margin-right:26px; }
+header nav.pub a { color:#fff; font-weight:600; font-size:14px; padding:4px 0; border-bottom:2px solid transparent; }
+header nav.pub a:hover { border-bottom-color:#9ec5f0; }
+header .intnav { margin-left:auto; position:relative; }
+header .intnav summary { cursor:pointer; color:#9ec5f0; font-size:13px; list-style:none; padding:4px 0; }
+header .intnav summary::-webkit-details-marker { display:none; }
+header .intnav > div { position:absolute; right:0; top:30px; background:#1f2a44; padding:10px 14px; border-radius:8px; display:flex; flex-direction:column; gap:7px; z-index:50; min-width:180px; box-shadow:0 6px 18px rgba(0,0,0,.25); }
+header .intnav > div a { margin:0; font-size:13px; }
+@media (max-width:759px){ header { padding:10px 16px; } header .t { margin-right:14px; } header nav.pub a { margin-right:12px; } }
 main { max-width:1500px; margin:0 auto; padding:22px 28px 80px; }
 h1 { font-size:24px; } h2 { font-size:19px; margin-top:34px; }
 p.meta { color:var(--muted); font-size:13px; }
@@ -77,21 +85,32 @@ function dlcsv(id, name) {
 }
 """
 
+# public-facing nav: the map, then the building blocks of AA (funding · model · plan) and
+# learning; everything internal sits behind one menu on the right
 NAV = """
 <header>
-  <span class="t"><a href="index.html" style="color:#fff;text-decoration:none">AA tracking</a></span>
-  <a href="overview.html">Overview</a>
-  <a href="dashboards.html">Dashboards</a>
-  <a href="hierarchy.html">Explorer</a>
-  <a href="entry.html">Data entry</a>
-  <a href="admin.html">Admin</a>
-  <a href="schema.html">DB schema</a>
-  <a href="reconciliation.html">Reconciliation</a>
-  <a href="review-julia.html">Julia</a>
-  <a href="review-yakubu.html">Yakubu</a>
-  <a href="cerf-mirror.html">OneGMS mirrors</a>
-  <a href="roadmap.html">Roadmap</a>
-  <a href="decisions.html">Source decisions</a>
+  <span class="t"><a href="index.html" style="color:#fff;text-decoration:none">Anticipatory action</a></span>
+  <nav class="pub">
+   <a href="index.html">Map</a>
+   <a href="dash-funding.html">Funding</a>
+   <a href="pillar-model.html">Model</a>
+   <a href="pillar-plan.html">Plan</a>
+   <a href="pillar-learning.html">Learning</a>
+  </nav>
+  <details class="intnav"><summary>Internal ▾</summary><div>
+   <a href="overview.html">Overview</a>
+   <a href="dashboards.html">Dashboards</a>
+   <a href="hierarchy.html">Explorer</a>
+   <a href="entry.html">Data entry</a>
+   <a href="admin.html">Admin</a>
+   <a href="schema.html">DB schema</a>
+   <a href="reconciliation.html">Reconciliation</a>
+   <a href="review-julia.html">Julia</a>
+   <a href="review-yakubu.html">Yakubu</a>
+   <a href="cerf-mirror.html">OneGMS mirrors</a>
+   <a href="roadmap.html">Roadmap</a>
+   <a href="decisions.html">Source decisions</a>
+  </div></details>
 </header>
 """
 
@@ -141,7 +160,7 @@ def tbl(df, max_rows=8000, name="data"):
 
 # per-table reviewer notes
 NOTES = {
-    "country_hazard": "The (country, hazard) pair — the identity everything hangs off: pipeline entries with no version yet, plus descriptive attributes that aren't approved per version (region, language, coordination group) and the manual <code>retired</code> flag (a retired framework is hidden from the map whatever its versions say). Hierarchy: country_hazard → framework_version → window → {window_activation, simulated_activation, window_funding}; ad hoc / early-action allocations attach to the pair (adhoc_activation).",
+    "country_hazard": "The (country, hazard) pair — the identity everything hangs off: pipeline entries with no version yet, plus descriptive attributes that aren't approved per version (region, language, coordination group) the manual <code>retired</code> flag (a retired framework is hidden from the map whatever its versions say) and <code>technical_support</code> (OCHA supported the framework technically, without a funding commitment). The framework status everyone shows comes from <code>v_framework_lifecycle</code>. Hierarchy: country_hazard → framework_version → window → {window_activation, simulated_activation, window_funding}; ad hoc / early-action allocations attach to the pair (adhoc_activation).",
     "framework_version": "The unit that actually gets approved: one row per framework version, seeded from KB page frontmatter (incl. superseded/retired versions), the historical sweep of the OCHA AA web page and the pa-anticipatory-action monorepo (<code>source='ocha-web'/'pa-monorepo'</code>, with <code>doc_url</code>/<code>analysis_ref</code>), plus sheet-reported revision dates with no KB page (<code>source='sheet-revision'</code> — a KB completeness gap). Version-specific facts (budgets, sector budgets, coverage, calendar, activations, status) carry a <code>version</code> attribution: direct from the KB for matched activations, otherwise inferred from the version in force at the fact's date (<code>version_match</code>; NULL = no version exists to attribute to). Caveat: figures reported mid-revision may belong to the upcoming version — interval inference can't see that; overrides are a curation pass.",
     "framework_status": "Operational lifecycle snapshots from every source sheet, kept side by side (PK includes <code>source</code>). Canonical <code>status</code> vocabulary; raw spelling preserved. This is deliberately distinct from the KB page-status vocabulary.",
     "framework_focal_point": "Focal points by role from the 2026 planning sheet, attributed to the version in force at the snapshot date.",
@@ -353,9 +372,7 @@ def main():
 
     # ---------- index
     reg = pd.read_sql("SELECT * FROM aa.v_trk_framework_current ORDER BY country_name", e)
-    n_active = (reg["status"] == "active").sum() + (
-        reg["status"] == "activated_implementing"
-    ).sum()
+    n_active = int((reg["lifecycle"] == "active").sum())   # aa.v_framework_lifecycle
     idx = f"""
 <div class='card'>
 <b>What this is.</b> The expanded <code>aa</code> schema in the dev DB now covers all
@@ -380,7 +397,7 @@ actual_activation · activation_allocation<br>
 cerf_allocation · cerf_project · cerf_project_sector · cerf_project_country ·
 cerf_allocation_storm · cerf_supplement
 </div>
-<h2>Portfolio at a glance ({n_active} active of {len(reg)} tracked frameworks)</h2>
+<h2>Portfolio at a glance ({n_active} active · {int((reg["lifecycle"] == "updating").sum())} being updated · {int((reg["lifecycle"] == "development").sum())} in development, of {len(reg)} tracked pairs)</h2>
 {tbl(reg)}
 """
     page("overview.html", "AA tracking — schema & data review", idx)

@@ -73,8 +73,9 @@ W, H = VB_W, VB_H                       # kept for callers; the view box is 0 0 
 
 # Lifecycle colours, glyphs, callout directions and centroids mirror the KB public map
 # (ds-knowledge-base/scripts/gen_public_site.py) so the two sites read the same.
-KB_COLOR = {"active": "#2171b5", "development": "#9ecae1"}
-KB_LABEL = {"active": "Active", "development": "In development / revision"}
+# framework status (aa.v_framework_lifecycle): 'updating' shares the active colour, hatched
+KB_COLOR = {"active": "#2171b5", "updating": "#2171b5", "development": "#9ecae1"}
+KB_LABEL = {"active": "Active", "updating": "Being updated", "development": "In development"}
 HAZ_COLOR = {"flood": "#2a78d6", "drought": "#eb6834", "storm": "#8e5bd9",
              "cholera": "#1baf7a", "plague": "#b8860b"}
 HAZ_LABEL = {"storm": "Trop. cyclones", "flood": "Floods", "drought": "Drought",
@@ -128,10 +129,6 @@ DIRECTIONS = {   # preferred callout direction (screen vector, +y down)
 }
 # tracking-sheet statuses for frameworks without a KB version -> KB lifecycle bucket;
 # conversation stages are not frameworks yet and stay off the map
-SHEET_BUCKET = {"active": "endorsed", "activated_implementing": "endorsed",
-                "monitoring": "endorsed", "under_development": "development",
-                "under_revision": "development", "project_finalization": "development",
-                "dormant": "retired", "expired": "expired", "retired": "retired"}
 TODAY = _dt.date.today()
 
 # scope-name aliases the generic matcher cannot resolve (normalized KB name -> one or
@@ -834,6 +831,8 @@ def assemble(d, e):
                 "indicators": tf.get("indicators") or [],
                 "data_sources": fm.get("data_sources") or [],
                 "triggers": pg["triggers"] if pg else [],
+                "learning": [x for x in (fm.get("learning") or fm.get("lessons_learned") or [])
+                             if isinstance(x, dict)],
                 "windows": windows, "backtest": backtest,
                 "funding": {
                     "src": fund_src,
@@ -886,16 +885,16 @@ def assemble(d, e):
         if in_force not in {x["v"] for x in versions}:
             in_force = latest
         sheet_status = _s(r.get("status"))
-        disp = lifecycle(versions[-1] if versions else None, sheet_status, activations,
-                         bool(r.get("retired")))
-        if disp is None:
-            continue                                  # conversation stage / retired / dormant: not on the map
+        disp = _s(r.get("lifecycle"))                 # aa.v_framework_lifecycle — the one rule
+        if disp not in KB_LABEL:
+            continue                                  # retired / conversation stage: not on the map
         months_now = (versions[-1]["months"] if versions else [])
         ring = "now" if disp == "active" and TODAY.month in months_now else None   # currently monitored
         n_fw_act = sum(1 for a in activations if a["type"] == "framework_aa")
         countries[c]["fws"].append({
             "hazard": h, "status": sheet_status, "kb": kb_fw,
             "disp": disp, "disp_label": KB_LABEL[disp], "ring": ring, "n_act": n_fw_act,
+            "tech": bool(r.get("technical_support")),
             "hz_label": HAZ_LABEL.get(h, h.replace("_", " ").capitalize()),
             "glyph": HAZ_GLYPH.get(h, "other"),
             "latest": latest, "in_force": in_force,
@@ -919,39 +918,17 @@ def _expired(valid_until):
 
 
 def fully_triggered(v, activations):
-    """Did this version fire in full? Inferred from its windows' curated trigger state
-    (aa.window_status): any window for an all-in / exclusive framework, every window for
-    independent ones. A version with no windows in the registry falls back to its
-    activations (any activation not marked partial)."""
+    """Did this version fire in full? Same rule as aa.v_framework_lifecycle (which decides
+    the framework status): from the windows' curated trigger state (aa.window_status) — any
+    window for an all-in / exclusive framework, every window for independent ones; a version
+    with no windows registered falls back to its activations (any not marked partial)."""
     wins = v["windows"]
     if not wins:
         return any(a["version"] == v["v"] and a["type"] == "framework_aa"
                    and a["full"] is not False for a in activations)
     fired = [w["triggered"] is True for w in wins]
-    any_mode = (v["all_in"] is True or v["rollup"] == "exclusive"
-                or any(w["all_in"] is True for w in wins))
+    any_mode = v["rollup"] == "exclusive" or any(w["all_in"] is True for w in wins)
     return any(fired) if any_mode else all(fired)
-
-
-def lifecycle(latest, sheet_status, activations, retired=False):
-    """Framework status, inferred from the most recent version:
-      active      — the most recent version is endorsed, in validity, and has not fully triggered
-      development — the most recent version is in (pre-)development, or it fully triggered /
-                    its validity ended and no new version exists yet
-      None        — retired (manual flag on the pair) or conversation stage: not on the map"""
-    if retired:
-        return None
-    if latest is None:
-        if sheet_status in (None, "early_conversations", "advanced_conversations"):
-            return None
-        b = SHEET_BUCKET.get(sheet_status, "development")
-        return None if b == "retired" else ("active" if b == "endorsed" else "development")
-    st = latest["status"] or ""
-    if st in ("development", "pre-development"):
-        return "development"
-    if fully_triggered(latest, activations) or _expired(latest["valid_until"]):
-        return "development"
-    return "active"
 
 
 def geo_pass(countries, bboxes):
@@ -1030,10 +1007,16 @@ def build_landing(page, d, e):
     geo_pass(countries, bboxes)
 
     act = d["activation"]
-    n_active = int(cur["status"].isin(["active", "activated_implementing"]).sum())
-    pre = d["prearranged"]
-    total_pre = pre.loc[(pre["kind"] == "prearranged") & (pre["year"] == 2026)
-                        & (pre["fund_code"] != "all"), "amount_usd"].sum()
+    # the same numbers as everywhere else: status from aa.v_framework_lifecycle, pre-arranged
+    # = the latest version's envelope of every non-retired framework (see dashboards)
+    n_active = int((cur["lifecycle"] == "active").sum())
+    n_upd = int((cur["lifecycle"] == "updating").sum())
+    vf = d["vfund"]
+    has_comp = set(map(tuple, vf.loc[vf["fund_code"] != "all",
+                                     ["country_iso3", "hazard", "version"]].values))
+    total_pre = vf.loc[~((vf["fund_code"] == "all")
+                         & vf.apply(lambda r: (r["country_iso3"], r["hazard"], r["version"])
+                                    in has_comp, axis=1)), "total_usd"].sum()
     n_act_all = act["event_date"].nunique()
     covered = d["covered"]["people_covered"].sum()
     n_shown = sum(len(cd["fws"]) for cd in countries.values())
@@ -1045,8 +1028,8 @@ def build_landing(page, d, e):
  the most recent version; each red dot = one past activation; a pulsing ring = monitored this month. <b>Click a country or a pin</b>
  to zoom in and see the areas each framework covers.</p>
  <div class='tiles'>
-  <div class='tile'><div class='v'>{n_active}</div><div class='l'>active frameworks ({n_shown} on the map, {len(cur)} tracked)</div></div>
-  <div class='tile'><div class='v'>${total_pre/1e6:,.0f}M</div><div class='l'>pre-arranged (2026)</div></div>
+  <div class='tile'><div class='v'>{n_active}</div><div class='l'>active frameworks · {n_upd} being updated ({n_shown} on the map)</div></div>
+  <div class='tile'><div class='v'>${total_pre/1e6:,.0f}M</div><div class='l'>pre-arranged now (CERF + CBPF)</div></div>
   <div class='tile'><div class='v'>{n_act_all}</div><div class='l'>activations since 2020</div></div>
   <div class='tile'><div class='v'>{covered/1e6:,.1f}M</div><div class='l'>people covered</div></div>
  </div>
@@ -1066,8 +1049,8 @@ def build_landing(page, d, e):
 </div>
 <details id='statushelp' class='statushelp'><summary>How statuses work — version lifecycle and the framework status inferred from it</summary>
  <div class='sh-grid'>
-  <svg viewBox='0 0 780 330' class='sh-svg' role='img' aria-label='Status diagram'>
-   <defs><marker id='arr' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' markerHeight='7' orient='auto-start-reverse'><path d='M0,0 L10,5 L0,10 z' fill='#64748b'/></marker></defs>
+  <svg viewBox='0 0 780 362' class='sh-svg' role='img' aria-label='Status diagram'>
+   <defs><pattern id='shhatch' patternUnits='userSpaceOnUse' width='6' height='6' patternTransform='rotate(45)'><rect width='6' height='6' fill='#dbe9f7'/><rect width='2.5' height='6' fill='#9ecae1'/></pattern><marker id='arr' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' markerHeight='7' orient='auto-start-reverse'><path d='M0,0 L10,5 L0,10 z' fill='#64748b'/></marker></defs>
    <text x='10' y='22' class='sh-h'>Framework VERSION status (stored: one of three, set in the admin)</text>
    <g class='sh-box'><rect x='10' y='40' width='120' height='40' rx='8'/><text x='70' y='65'>pre-development</text></g>
    <g class='sh-box'><rect x='170' y='40' width='120' height='40' rx='8'/><text x='230' y='65'>in development</text></g>
@@ -1081,15 +1064,17 @@ def build_landing(page, d, e):
    <text x='500' y='118' class='sh-note'>inferred, not stored: each window is marked triggered / not triggered; the version is</text>
    <text x='500' y='132' class='sh-note'>fully triggered when every window fired (any window if all-in). Superseded = a newer</text>
    <text x='500' y='146' class='sh-note'>endorsed version exists. The next version starts in development.</text>
-   <text x='10' y='176' class='sh-h'>FRAMEWORK status (inferred from the most recent version)</text>
-   <g class='sh-box sh-on'><rect x='10' y='192' width='220' height='36' rx='8'/><text x='120' y='215'>Active</text></g>
-   <text x='240' y='207' class='sh-note'>most recent version is endorsed, in validity and has not fully triggered</text>
-   <text x='240' y='222' class='sh-note'>(partial triggers of independent windows keep it active) · pulsing ring = monitored this month</text>
-   <g class='sh-box sh-dev'><rect x='10' y='238' width='220' height='36' rx='8'/><text x='120' y='261'>In development / revision</text></g>
-   <text x='240' y='253' class='sh-note'>most recent version is in (pre-)development, or it fully triggered / its validity ended</text>
-   <text x='240' y='268' class='sh-note'>and no new version exists yet</text>
-   <g class='sh-box sh-off'><rect x='10' y='284' width='220' height='36' rx='8'/><text x='120' y='307'>Retired (not on the map)</text></g>
-   <text x='240' y='299' class='sh-note'>a manual flag on the framework (country × hazard) in the admin — overrides everything above</text>
+   <text x='10' y='176' class='sh-h'>FRAMEWORK status (inferred from the most recent version — aa.v_framework_lifecycle)</text>
+   <g class='sh-box sh-on'><rect x='10' y='192' width='220' height='34' rx='8'/><text x='120' y='214'>Active</text></g>
+   <text x='240' y='206' class='sh-note'>most recent version is endorsed, in validity and has not fully triggered</text>
+   <text x='240' y='220' class='sh-note'>(partial triggers of independent windows keep it active) · pulsing ring = monitored this month</text>
+   <g class='sh-box sh-upd'><rect x='10' y='234' width='220' height='34' rx='8'/><text x='120' y='256'>Being updated</text></g>
+   <text x='240' y='248' class='sh-note'>an endorsed framework whose most recent version fully triggered or reached the end of its</text>
+   <text x='240' y='262' class='sh-note'>validity, or whose next version is already in development — the framework stands, a new version is coming</text>
+   <g class='sh-box sh-dev'><rect x='10' y='276' width='220' height='34' rx='8'/><text x='120' y='298'>In development</text></g>
+   <text x='240' y='290' class='sh-note'>no endorsed version yet — the framework is being built for the first time</text>
+   <g class='sh-box sh-off'><rect x='10' y='318' width='220' height='34' rx='8'/><text x='120' y='340'>Retired (not on the map)</text></g>
+   <text x='240' y='332' class='sh-note'>a manual flag on the framework (country × hazard) in the admin — overrides everything above</text>
   </svg>
  </div>
 </details>
@@ -1121,6 +1106,7 @@ LANDING_CSS = r"""
 .sh-box rect { fill:#f1f5f9; stroke:#cbd5e1; } .sh-box text { font-size:11px; fill:#1e293b; text-anchor:middle; font-weight:600; }
 .sh-box.sh-on rect { fill:#dbeafe; stroke:#2171b5; } .sh-box.sh-dev rect { fill:#e8f1f8; stroke:#9ecae1; }
 .sh-box.sh-ev rect { fill:#fef3c7; stroke:#f59e0b; } .sh-box.sh-off rect { fill:#f1f5f9; stroke:#94a3b8; }
+.sh-box.sh-upd rect { fill:url(#shhatch); stroke:#2171b5; }
 .sh-arr { stroke:#64748b; stroke-width:1.4; marker-end:url(#arr); }
 .hero p { color:#556; max-width:860px; font-size:13.5px; }
 .tiles { display:flex; gap:14px; flex-wrap:wrap; margin:12px 0; }
@@ -1216,6 +1202,16 @@ LANDING_CSS = r"""
 .badge { display:inline-block; padding:1px 7px; border-radius:9px; font-size:11px; font-weight:600; white-space:nowrap; }
 .b-endorsed { background:#e2f3e6; color:#1e7a37; } .b-recently-triggered { background:#fce4cd; color:#b5650a; }
 .b-expired { background:#f1ead0; color:#7d6b1a; } .b-development { background:#fdf0d5; color:#9a6d0a; }
+.b-updating { background:repeating-linear-gradient(135deg,#dbe9f7 0 4px,#fff 4px 7px); color:#1a5fa0; border:1px solid #b7d0ea; }
+.b-tech { background:#f3e8ff; color:#6b21a8; }
+.pillars { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:12px 0 8px; }
+.pillars.four { grid-template-columns:repeat(4,1fr); }
+.pillar { border:1px solid #dfe6ee; border-radius:10px; padding:8px 10px; cursor:pointer; background:#fff; transition:border-color .15s, background .15s; }
+.pillar:hover { border-color:#9ecae1; } .pillar.on { border-color:var(--ocha); background:#eef5fc; box-shadow:inset 0 -3px 0 var(--ocha); }
+.pillar .pk { font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:#64748b; }
+.pillar .pv { font-size:15px; font-weight:700; color:#0f2540; margin-top:2px; line-height:1.2; }
+.pillar .ps { font-size:11px; color:#475569; margin-top:2px; }
+@media (max-width:759px){ .pillars, .pillars.four { grid-template-columns:repeat(2,1fr); } }
 .b-retired, .b-superseded { background:#e8e8e8; color:#666; } .b-pre-development { background:#e5eefb; color:#15c; }
 table.mini { border-collapse:collapse; font-size:12px; width:100%; }
 table.mini td, table.mini th { padding:3px 6px; border-bottom:1px solid #eef1f5; vertical-align:top; text-align:left; }
@@ -1257,17 +1253,19 @@ const svg = document.getElementById('map'), world = document.getElementById('wor
       leaders = document.getElementById('leaders'), mapbox = document.getElementById('mapbox'),
       maprow = document.getElementById('maprow');
 const GEO = {};
-let state = { iso:null, hz:null, ver:null };
+let state = { iso:null, hz:null, ver:null, pillar:'funding' };
 
 function money(v){ return v==null ? '—' : v>=1e6 ? '$'+(v/1e6).toFixed(v>=1e7?0:1)+'M' : v>=1e3 ? '$'+Math.round(v/1e3)+'k' : '$'+Math.round(v); }
 function num(v){ return v==null ? '—' : Math.round(v).toLocaleString(); }
 function esc(s){ return s==null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
-function badge(st, label){ st = st || 'development'; const cls = st==='active' ? 'endorsed' : 'development'; return `<span class='badge b-${cls}'>${esc(label || KBLABEL[st] || st.replace(/_/g,' '))}</span>`; }
+const HATCH = 'repeating-linear-gradient(135deg,#2171b5 0 3px,#c4d9ee 3px 5px)';   // 'being updated': the active colour, hatched
+function bgFor(st){ return st==='updating' ? HATCH : COLOR[st]; }
+function badge(st, label){ st = st || 'development'; const cls = st==='active' ? 'endorsed' : st==='updating' ? 'updating' : 'development'; return `<span class='badge b-${cls}'>${esc(label || KBLABEL[st] || st.replace(/_/g,' '))}</span>`; }
 function verBadge(st){ st=st||''; const m = {endorsed:'endorsed', superseded:'superseded', development:'development', 'pre-development':'pre-development', retired:'retired'};
   const lbl = {development:'in development', 'pre-development':'pre-development'}[st] || st || '?';
   return `<span class='badge b-${m[st]||'retired'}'>${esc(lbl)}</span>`; }
 function hzColor(h){ return HAZ[h] || '#7a8699'; }
-function iconHTML(f, extra=''){ return `<span class='iconbox ${f.ring==='now'?'able-now':''} ${extra}' style='background:${COLOR[f.disp]}' data-hz='${f.hazard}'>`
+function iconHTML(f, extra=''){ return `<span class='iconbox ${f.ring==='now'?'able-now':''} ${extra}' style='background:${bgFor(f.disp)}' data-hz='${f.hazard}'>`
   + `<svg viewBox='0 0 24 24' class='hz'>${GLYPH[f.glyph]||GLYPH.other}</svg>`
   + (f.n_act ? `<span class='actdots'>${'<span class="actdot"></span>'.repeat(Math.min(f.n_act,6))}</span>` : '') + `</span>`; }
 // ---------- projections
@@ -1462,7 +1460,8 @@ function worldLegend(){
   const nAct = fws.reduce((s,f)=>s+f.n_act,0), nNow = fws.filter(f=>f.ring==='now').length;
   legend.innerHTML = `<b>Framework</b><br>`
     + `<span class='dot' style='background:${COLOR.active}'></span>Active (${n('active')}) — latest version endorsed, not fully triggered<br>`
-    + `<span class='dot' style='background:${COLOR.development}'></span>In development / revision (${n('development')})<br>`
+    + `<span class='dot' style='background:${HATCH}'></span>Being updated (${n('updating')}) — endorsed framework: fully triggered, expired, or a new version in the works<br>`
+    + `<span class='dot' style='background:${COLOR.development}'></span>In development (${n('development')}) — no endorsed version yet<br>`
     + `<span class='dot' style='background:#e3322d;width:11px;height:11px;border:2px solid #fff'></span>Activated — a dot per activation (${nAct})<br>`
     + `<span class='dot' style='background:#fff;width:12px;height:12px;border:2.5px solid #f5a300'></span>Currently monitored — in season (${CURMONTH}), pulsing (${nNow})<br>`
     + `<span class='small' style='color:#64748b'>Retired frameworks are not shown · <a onclick='document.getElementById("statushelp").open=true;document.getElementById("statushelp").scrollIntoView({behavior:"smooth"})'>how statuses work</a></span>`;
@@ -1634,7 +1633,7 @@ function renderSide(){
       `<div class='fwlist'>` + c.fws.map(f => {
         const v = f.versions.find(x=>x.v===f.current);
         return `<div class='fcardx' style='--hz:${hzColor(f.hazard)}' onclick='selectFramework("${f.hazard}")'>
-          <div class='fhead'><b>${iconHTML(f)}${esc(f.hz_label)}</b>${badge(f.disp)}</div>
+          <div class='fhead'><b>${iconHTML(f)}${esc(f.hz_label)}</b>${badge(f.disp)}${f.tech?` <span class='badge b-tech'>technical support</span>`:''}</div>
           <table class='mini'>
            <tr><td class='lbl'>Latest version</td><td>${f.current ? `<code>${f.current}</code> <span class='muted'>(${f.versions.length} total)</span>` : '<span class="muted">none in the KB yet</span>'}</td></tr>
            <tr><td class='lbl'>Pre-arranged</td><td>${money(f.prearranged)}${f.prearranged_year?` <span class='muted'>(${f.prearranged_year})</span>`:''}</td></tr>
@@ -1655,12 +1654,62 @@ function renderSide(){
   const isCur = v.v === f.current;
   side.innerHTML = crumb + fwHeader(c, f) + versionBar(f, v, isCur) +
     (isCur ? '' : `<div class='warnbox'>Viewing an older version (${esc(v.superseded?'superseded':(v.status||'past'))}). The map shows this version's scope. Most recent: <a onclick='selectVersion("${f.current}")' style='cursor:pointer'>${f.current}</a>.</div>`) +
-    factsBlock(f, v) + triggersBlock(v) + fundingBlock(v) + activationsBlock(f, v) + scopeBlock(v) + backtestBlock(f, v) +
+    factsBlock(f, v) + pillarsBar(f, v) + `<div id='pillarbody'>${pillarBody(f, v)}</div>` +
     `<p class='small' style='margin-top:12px'><a href='${f.page}'>full framework page →</a> · <a href='hierarchy.html'>explorer</a></p>`;
 }
+// ---------- the building blocks of AA: funding · model · plan (+ learning when there is any)
+function hasLearning(f, v){ return (v.learning||[]).length > 0 || f.activations.length > 0; }
+function pillarsBar(f, v){
+  const F = v.funding, funds = [...new Set(F.fund.map(x=>x.fund))].filter(x=>x!=='unspecified');
+  const nTrig = v.triggers.length || v.windows.length || v.n_windows || 0;
+  const boxes = [
+    ['funding', 'Funding', money(v.prearranged_doc), v.prearranged_doc ? `pre-arranged${funds.length?' · '+funds.map(x=>x.toUpperCase().replace('CBPF-','CBPF ')).join(', '):''}` : (f.tech ? 'technical support only' : 'no figure yet')],
+    ['model', 'Model', nTrig ? `${nTrig} trigger window${nTrig>1?'s':''}` : (v.basis ? esc(v.basis) : '—'), [v.basis, v.months.length ? `${v.months.length} months monitored` : null].filter(Boolean).join(' · ')],
+    ['plan', 'Plan', v.agencies.length ? `${v.agencies.length} agenc${v.agencies.length>1?'ies':'y'}` : (F.agency.length ? `${new Set(F.agency.map(x=>x.agency)).size} agencies` : '—'), v.target_people ? `${num(v.target_people)} people targeted` : (f.covered ? `${num(f.covered)} people covered` : '')],
+  ];
+  if(hasLearning(f, v)) boxes.push(['learning', 'Learning', f.activations.length ? `${f.activations.length} activation${f.activations.length>1?'s':''}` : `${v.learning.length} document${v.learning.length>1?'s':''}`, v.learning.length ? `${v.learning.length} learning doc${v.learning.length>1?'s':''}` : 'activation records']);
+  if(!boxes.some(b=>b[0]===state.pillar)) state.pillar = 'funding';
+  return `<div class='pillars ${boxes.length===4?'four':''}'>` + boxes.map(([k, name, val, sub]) =>
+    `<div class='pillar ${state.pillar===k?'on':''}' onclick='selectPillar("${k}")'><div class='pk'>${name}</div><div class='pv'>${val}</div><div class='ps'>${sub||''}</div></div>`).join('') + `</div>`;
+}
+function selectPillar(k){ state.pillar = k; const c = L[state.iso], f = c.fws.find(x=>x.hazard===state.hz); const v = f.versions.find(x=>x.v===state.ver) || f.versions[f.versions.length-1];
+  document.querySelectorAll('.pillar').forEach(el=>el.classList.toggle('on', el.getAttribute('onclick').includes(`"${k}"`)));
+  document.getElementById('pillarbody').innerHTML = pillarBody(f, v); }
+function pillarBody(f, v){
+  const rows = [];
+  if(state.pillar==='funding'){
+    rows.push(['Pre-arranged', `${money(v.prearranged_doc)}${v.regional?` <span class='muted'>· regional document total (all countries)</span>`:''}${v.all_in===false?` <span class='muted'>· split budget per window</span>`:v.all_in===true?` <span class='muted'>· all-in</span>`:''}`]);
+    if(v.cofin) rows.push(['Co-financing', `${money(v.cofin)}${v.cofin_sources.length?` <span class='muted'>${esc(v.cofin_sources.join(', '))}</span>`:''}`]);
+    if(f.tech) rows.push(['OCHA role', `<span class='badge b-tech'>technical support</span> <span class='muted'>no funding commitment</span>`]);
+    return miniTable(rows) + fundingBlock(v) + (v.windows.length && v.windows.some(w=>w.budget) ? '' : '');
+  }
+  if(state.pillar==='model'){
+    rows.push(['Monitored', `${monthStrip(v.months)}${v.months_src?` <span class='muted'>${esc(v.months_src)}</span>`:''}${v.months_note?`<div class='small' style='margin-top:3px'>${esc(v.months_note)}</div>`:''}`]);
+    if(v.basis||v.indicators.length) rows.push(['Trigger basis', `${esc(v.basis||'')}${v.calibration?` · ${esc(v.calibration)}`:''}${v.indicators.length?`<div class='chips'>${v.indicators.map(i=>`<span>${esc(i)}</span>`).join('')}</div>`:''}`]);
+    if(v.data_sources.length) rows.push(['Data sources', esc(v.data_sources.map(d=>typeof d==='string'?d:(d.name||d.source||JSON.stringify(d))).join(', '))]);
+    return miniTable(rows) + triggersBlock(v) + scopeBlock(v) + backtestBlock(f, v);
+  }
+  if(state.pillar==='plan'){
+    if(v.agencies.length) rows.push(['Agencies', esc(v.agencies.join(', '))]);
+    if(v.target_people) rows.push(['People targeted', num(v.target_people)]);
+    if(f.covered && f.current===v.v) rows.push(['People covered', `${num(f.covered)} <span class='muted'>(tracking sheet)</span>`]);
+    return miniTable(rows) + sectorBlock(v);
+  }
+  let html = '';
+  if((v.learning||[]).length) html += `<h4>Learning documents</h4><ul class='small'>` + v.learning.map(d=>`<li>${d.url?`<a href='${esc(d.url)}' target='_blank' rel='noopener'>${esc(d.title||d.url)}</a>`:esc(d.title||'')}${d.date?` <span class='muted'>(${esc(d.date)})</span>`:''}</li>`).join('') + `</ul>`;
+  return html + activationsBlock(f, v);
+}
+function miniTable(rows){ return rows.length ? `<table class='mini' style='margin-top:4px'>${rows.map(([k,val])=>`<tr><td class='lbl'>${k}</td><td>${val}</td></tr>`).join('')}</table>` : ''; }
+function sectorBlock(v){
+  const F = v.funding; if(!F.sector.length) return '';
+  const tot = groupBy(F.sector, x=>x.sector, x=>x.usd);
+  const keys = Object.keys(tot).sort((a,b)=>tot[b]-tot[a]);
+  return `<h4>Budget by sector</h4><table class='mini'><tr><th>sector</th><th class='num'>USD</th></tr>` + keys.map(k=>`<tr><td>${esc(k)}</td><td class='num'>${money(tot[k])}</td></tr>`).join('') + `</table>`;
+}
+function groupBy(rows, kf, vf){ const m = {}; rows.forEach(r=>{ const k = kf(r); m[k] = (m[k]||0) + (vf(r)||0); }); return m; }
 function fwHeader(c, f){
   return `<h3 style='display:flex;align-items:center;gap:8px'>${iconHTML(f)}<span>${esc(c.name)} — ${esc(f.hz_label)}</span></h3>
-   <div>${badge(f.disp)} ${f.ring ? `<span class='small' style='color:#c8860a'>&bull; currently monitored (in season)</span>` : ''}
+   <div>${badge(f.disp)}${f.tech?` <span class='badge b-tech'>OCHA technical support</span>`:''} ${f.ring ? `<span class='small' style='color:#c8860a'>&bull; currently monitored (in season)</span>` : ''}
    ${f.kb?` <span class='muted'>· KB <code>${f.kb}</code></span>`:''}${f.in_force && f.in_force!==f.current ? ` <span class='muted'>· tracking view in force: ${f.in_force}</span>` : ''}</div>`;
 }
 function versionBar(f, v, isCur){
@@ -1675,13 +1724,6 @@ function factsBlock(f, v){
     rows.push(['Triggered', `${n?`<b>${n}</b> of ${v.windows.length} window${v.windows.length>1?'s':''}`:`none of ${v.windows.length} window${v.windows.length>1?'s':''}`}${v.fully_triggered?` <span class='badge b-endorsed'>fully triggered</span>`:''}${n&&!v.fully_triggered?` <span class='muted'>· partial (independent windows)</span>`:''}`]); }
   rows.push(['Valid', `${v.valid_from||'?'} → ${v.valid_until||'<span class="muted">open</span>'}${v.valid_until_source?` <span class='muted'>(${esc(v.valid_until_source)})</span>`:''}`]);
   if(v.doc_title) rows.push(['Document', `${esc(v.doc_title)}${v.doc_date?` <span class='muted'>(${v.doc_date})</span>`:''}`]);
-  rows.push(['Pre-arranged', `${money(v.prearranged_doc)}${v.regional?` <span class='muted'>· regional document total (all countries)</span>`:''}${v.all_in===false?` <span class='muted'>· split budget per window</span>`:v.all_in===true?` <span class='muted'>· all-in</span>`:''}`]);
-  if(v.cofin) rows.push(['Co-financing', `${money(v.cofin)}${v.cofin_sources.length?` <span class='muted'>${esc(v.cofin_sources.join(', '))}</span>`:''}`]);
-  if(v.target_people) rows.push(['People targeted', num(v.target_people)]);
-  if(f.covered && f.current===v.v) rows.push(['People covered', `${num(f.covered)} <span class='muted'>(tracking sheet)</span>`]);
-  rows.push(['Monitored', `${monthStrip(v.months)}${v.months_src?` <span class='muted'>${esc(v.months_src)}</span>`:''}${v.months_note?`<div class='small' style='margin-top:3px'>${esc(v.months_note)}</div>`:''}`]);
-  if(v.basis||v.indicators.length) rows.push(['Trigger basis', `${esc(v.basis||'')}${v.calibration?` · ${esc(v.calibration)}`:''}${v.indicators.length?`<div class='chips'>${v.indicators.map(i=>`<span>${esc(i)}</span>`).join('')}</div>`:''}`]);
-  if(v.agencies.length) rows.push(['Agencies', esc(v.agencies.join(', '))]);
   if(v.supersedes) rows.push(['Supersedes', `<a onclick='selectVersion("${esc(v.supersedes)}")' style='cursor:pointer'>${esc(v.supersedes)}</a>`]);
   return `<table class='mini' style='margin-top:6px'>${rows.map(([k,val])=>`<tr><td class='lbl'>${k}</td><td>${val}</td></tr>`).join('')}</table>`;
 }

@@ -1,0 +1,65 @@
+# Rebuild and publish the site so it never drifts from the database and the knowledge base.
+# Runs nightly, on every push to main that touches the build, by hand, and whenever the
+# knowledge base tells us it changed (repository_dispatch from ds-knowledge-base).
+name: Publish site
+
+on:
+  schedule:
+    - cron: "17 4 * * *"          # daily, 04:17 UTC
+  workflow_dispatch:
+  repository_dispatch:
+    types: [kb-updated, data-updated]
+  push:
+    branches: [main]
+    paths: ["scripts/**", "src/**", "site_src/**", ".github/workflows/publish.yml"]
+
+concurrency:
+  group: publish-site
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check out the knowledge base (framework pages)
+        uses: actions/checkout@v4
+        with:
+          repository: OCHA-DAP/ds-knowledge-base
+          path: kb
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Restore boundary caches (FieldMaps COD-AB, Natural Earth)
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/fieldmaps
+            data/world
+          key: geo-${{ github.run_id }}
+          restore-keys: geo-
+      - run: uv sync
+      - name: Build, encrypt and publish
+        env:
+          KB_DIR: ${{ github.workspace }}/kb
+          PGSSLMODE: require
+          DSCI_AZ_DB_DEV_HOST: ${{ secrets.DSCI_AZ_DB_DEV_HOST }}
+          DSCI_AZ_DB_DEV_UID: ${{ secrets.DSCI_AZ_DB_DEV_UID }}
+          DSCI_AZ_DB_DEV_PW: ${{ secrets.DSCI_AZ_DB_DEV_PW }}
+          EXTRACT_TOKEN: ${{ secrets.EXTRACT_TOKEN }}
+          SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
+        run: |
+          # never publish pages without the proxy token: the data-entry and admin pages would go dark
+          test -n "$EXTRACT_TOKEN" || { echo "::error::EXTRACT_TOKEN secret is not set"; exit 1; }
+          test -n "$SITE_PASSWORD" || { echo "::error::SITE_PASSWORD secret is not set"; exit 1; }
+          test -n "$DSCI_AZ_DB_DEV_PW" || { echo "::error::DSCI_AZ_DB_DEV_* org secrets are not visible to this repo"; exit 1; }
+          git config user.name "aa-tracking-bot"
+          git config user.email "aa-tracking-bot@users.noreply.github.com"
+          bash scripts/publish.sh
