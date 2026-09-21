@@ -73,10 +73,8 @@ W, H = VB_W, VB_H                       # kept for callers; the view box is 0 0 
 
 # Lifecycle colours, glyphs, callout directions and centroids mirror the KB public map
 # (ds-knowledge-base/scripts/gen_public_site.py) so the two sites read the same.
-KB_COLOR = {"endorsed": "#2171b5", "recently-triggered": "#e0706a", "expired": "#b2a56e",
-            "development": "#9ecae1", "retired": "#b6bcc4"}
-KB_LABEL = {"endorsed": "Active", "recently-triggered": "Recently triggered", "expired": "Expired",
-            "development": "In development", "retired": "Retired / dormant"}
+KB_COLOR = {"active": "#2171b5", "development": "#9ecae1"}
+KB_LABEL = {"active": "Active", "development": "In development / revision"}
 HAZ_COLOR = {"flood": "#2a78d6", "drought": "#eb6834", "storm": "#8e5bd9",
              "cholera": "#1baf7a", "plague": "#b8860b"}
 HAZ_LABEL = {"storm": "Trop. cyclones", "flood": "Floods", "drought": "Drought",
@@ -870,13 +868,10 @@ def assemble(d, e):
             in_force = latest
         sheet_status = _s(r.get("status"))
         disp = lifecycle(versions[-1] if versions else None, sheet_status, activations)
-        if disp is None or disp == "retired":
+        if disp is None:
             continue                                  # conversation stage / retired / dormant: not on the map
-        able = able_to_trigger(versions[-1] if versions else None, h, disp)
         months_now = (versions[-1]["months"] if versions else [])
-        ring = None
-        if able:
-            ring = "now" if TODAY.month in months_now else "able"
+        ring = "now" if disp == "active" and TODAY.month in months_now else None   # currently monitored
         n_fw_act = sum(1 for a in activations if a["type"] == "framework_aa")
         countries[c]["fws"].append({
             "hazard": h, "status": sheet_status, "kb": kb_fw,
@@ -903,32 +898,41 @@ def _expired(valid_until):
     return (int(m.group(1)), mo) < (TODAY.year, TODAY.month)
 
 
+def fully_triggered(latest, activations):
+    """Did the latest version fire in full? An all-in framework spends its envelope on any
+    activation; a split framework (independent windows) only when an activation is marked
+    full, or every window has fired."""
+    acts = [a for a in activations if a["version"] == latest["v"] and a["type"] == "framework_aa"]
+    if not acts:
+        return False
+    if latest["all_in"] is not False:
+        return any(a["full"] is not False for a in acts)
+    if any(a["full"] is True for a in acts):
+        return True
+    wins = {w["name"] for w in latest["windows"]}
+    fired = {a["window"] for a in acts if a["window"]}
+    return bool(wins) and wins <= fired
+
+
 def lifecycle(latest, sheet_status, activations):
-    """KB display status of the most recent version (None = not shown on the map)."""
+    """Framework status, inferred from the most recent version:
+      active      — the most recent version is endorsed, in validity, and has not fully triggered
+      development — the most recent version is in (pre-)development, or it fully triggered /
+                    its validity ended and no new version exists yet
+      None        — retired / dormant / conversation stage: not on the map"""
     if latest is None:
         if sheet_status in (None, "early_conversations", "advanced_conversations"):
             return None
-        return SHEET_BUCKET.get(sheet_status, "development")
+        b = SHEET_BUCKET.get(sheet_status, "development")
+        return None if b == "retired" else ("active" if b == "endorsed" else "development")
     st = latest["status"] or ""
     if st in ("development", "pre-development"):
         return "development"
     if st in ("retired", "superseded"):
-        return "retired"
-    if any(a["version"] == latest["v"] and a["type"] == "framework_aa" for a in activations):
-        return "recently-triggered"
-    if _expired(latest["valid_until"]):
-        return "expired"
-    return "endorsed"
-
-
-def able_to_trigger(latest, hazard, disp):
-    if disp not in ("endorsed", "recently-triggered"):
-        return False
-    if disp == "recently-triggered":
-        cholera = hazard == "cholera"
-        split = latest is not None and (latest["n_windows"] or 0) > 1 and latest["all_in"] is False
-        return cholera or split
-    return True
+        return None
+    if fully_triggered(latest, activations) or _expired(latest["valid_until"]):
+        return "development"
+    return "active"
 
 
 def geo_pass(countries, bboxes):
@@ -1018,8 +1022,8 @@ def build_landing(page, d, e):
     body = f"""
 <div class='hero'>
  <p>Published triggers, windows, pre-arranged financing and activations across the AA
- portfolio — CERF, country-based and regional pooled funds. Pin colour = lifecycle status of
- the most recent version; each red dot = one past activation. <b>Click a country or a pin</b>
+ portfolio — CERF, country-based and regional pooled funds. Pin colour = framework status, inferred from
+ the most recent version; each red dot = one past activation; a pulsing ring = monitored this month. <b>Click a country or a pin</b>
  to zoom in and see the areas each framework covers.</p>
  <div class='tiles'>
   <div class='tile'><div class='v'>{n_active}</div><div class='l'>active frameworks ({n_shown} on the map, {len(cur)} tracked)</div></div>
@@ -1041,6 +1045,31 @@ def build_landing(page, d, e):
   frameworks — status, funding, monitoring window, triggers, versions and activations.</div>
  </div>
 </div>
+<details id='statushelp' class='statushelp'><summary>How statuses work — version lifecycle and the framework status inferred from it</summary>
+ <div class='sh-grid'>
+  <svg viewBox='0 0 780 285' class='sh-svg' role='img' aria-label='Status diagram'>
+   <defs><marker id='arr' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' markerHeight='7' orient='auto-start-reverse'><path d='M0,0 L10,5 L0,10 z' fill='#64748b'/></marker></defs>
+   <text x='10' y='22' class='sh-h'>Framework VERSION status (stored, one per endorsed document)</text>
+   <g class='sh-box'><rect x='10' y='40' width='120' height='40' rx='8'/><text x='70' y='65'>pre-development</text></g>
+   <g class='sh-box'><rect x='170' y='40' width='120' height='40' rx='8'/><text x='230' y='65'>in development</text></g>
+   <g class='sh-box sh-on'><rect x='330' y='40' width='120' height='40' rx='8'/><text x='390' y='65'>endorsed</text></g>
+   <g class='sh-box sh-ev'><rect x='500' y='20' width='120' height='34' rx='8'/><text x='560' y='42'>fully triggered</text></g>
+   <g class='sh-box sh-ev'><rect x='500' y='66' width='120' height='34' rx='8'/><text x='560' y='88'>validity ended</text></g>
+   <g class='sh-box sh-off'><rect x='660' y='40' width='90' height='40' rx='8'/><text x='705' y='65'>superseded</text></g>
+   <line x1='130' y1='60' x2='168' y2='60' class='sh-arr'/><line x1='290' y1='60' x2='328' y2='60' class='sh-arr'/>
+   <line x1='450' y1='55' x2='498' y2='40' class='sh-arr'/><line x1='450' y1='65' x2='498' y2='80' class='sh-arr'/>
+   <line x1='620' y1='45' x2='658' y2='56' class='sh-arr'/><line x1='620' y1='78' x2='658' y2='66' class='sh-arr'/>
+   <text x='430' y='122' class='sh-note'>then a new version is created → it starts in development</text>
+   <text x='10' y='160' class='sh-h'>FRAMEWORK status (inferred from the most recent version)</text>
+   <g class='sh-box sh-on'><rect x='10' y='178' width='220' height='40' rx='8'/><text x='120' y='203'>Active</text></g>
+   <text x='240' y='195' class='sh-note'>most recent version is endorsed, in validity and has not fully triggered</text>
+   <text x='240' y='211' class='sh-note'>(partial triggers of independent windows keep it active) · pulsing ring = monitored this month</text>
+   <g class='sh-box sh-dev'><rect x='10' y='228' width='220' height='40' rx='8'/><text x='120' y='253'>In development / revision</text></g>
+   <text x='240' y='246' class='sh-note'>most recent version is in (pre-)development, or it fully triggered / its validity</text>
+   <text x='240' y='262' class='sh-note'>ended and no new version exists yet</text>
+  </svg>
+ </div>
+</details>
 <div class='tiles' style='margin-top:18px'>
  <div class='tile'><a href='dashboards.html'><b>Dashboards</b></a><div class='l'>funding · allocations · delivery</div></div>
  <div class='tile'><a href='hierarchy.html'><b>Portfolio explorer</b></a><div class='l'>framework › version › window › activation</div></div>
@@ -1062,6 +1091,14 @@ window.CURMONTH = {json.dumps(TODAY.strftime("%B %Y"))};</script>
 LANDING_CSS = r"""
 :root { --ocha:#1a6bb5; --ink:#222; --muted:#777; --line:#e3e6ea; }
 .hero { text-align:left; padding:6px 0 2px; }
+.statushelp { margin-top:14px; background:#fff; border:1px solid #e6eaef; border-radius:12px; padding:8px 16px; }
+.statushelp summary { cursor:pointer; color:var(--ocha); font-size:13px; }
+.sh-grid { overflow-x:auto; padding:8px 0 4px; } .sh-svg { width:100%; max-width:820px; height:auto; display:block; font-family:-apple-system,'Segoe UI',Roboto,sans-serif; }
+.sh-h { font-size:12px; font-weight:700; fill:#0f2540; } .sh-note { font-size:10.5px; fill:#475569; }
+.sh-box rect { fill:#f1f5f9; stroke:#cbd5e1; } .sh-box text { font-size:11px; fill:#1e293b; text-anchor:middle; font-weight:600; }
+.sh-box.sh-on rect { fill:#dbeafe; stroke:#2171b5; } .sh-box.sh-dev rect { fill:#e8f1f8; stroke:#9ecae1; }
+.sh-box.sh-ev rect { fill:#fef3c7; stroke:#f59e0b; } .sh-box.sh-off rect { fill:#f1f5f9; stroke:#94a3b8; }
+.sh-arr { stroke:#64748b; stroke-width:1.4; marker-end:url(#arr); }
 .hero p { color:#556; max-width:860px; font-size:13.5px; }
 .tiles { display:flex; gap:14px; flex-wrap:wrap; margin:12px 0; }
 .tile { background:#fff; border:1px solid #e6eaef; border-radius:12px; padding:12px 18px; min-width:150px; box-shadow:0 1px 2px rgba(16,24,40,.05); }
@@ -1202,11 +1239,12 @@ let state = { iso:null, hz:null, ver:null };
 function money(v){ return v==null ? '—' : v>=1e6 ? '$'+(v/1e6).toFixed(v>=1e7?0:1)+'M' : v>=1e3 ? '$'+Math.round(v/1e3)+'k' : '$'+Math.round(v); }
 function num(v){ return v==null ? '—' : Math.round(v).toLocaleString(); }
 function esc(s){ return s==null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
-function badge(st, label){ st = st || 'retired'; return `<span class='badge b-${esc(st)}'>${esc(label || KBLABEL[st] || st.replace(/_/g,' '))}</span>`; }
+function badge(st, label){ st = st || 'development'; const cls = st==='active' ? 'endorsed' : 'development'; return `<span class='badge b-${cls}'>${esc(label || KBLABEL[st] || st.replace(/_/g,' '))}</span>`; }
 function verBadge(st){ st=st||''; const m = {endorsed:'endorsed', superseded:'superseded', development:'development', 'pre-development':'pre-development', retired:'retired'};
-  return `<span class='badge b-${m[st]||'retired'}'>${esc(st||'?')}</span>`; }
+  const lbl = {development:'in development', 'pre-development':'pre-development'}[st] || st || '?';
+  return `<span class='badge b-${m[st]||'retired'}'>${esc(lbl)}</span>`; }
 function hzColor(h){ return HAZ[h] || '#7a8699'; }
-function iconHTML(f, extra=''){ return `<span class='iconbox ${f.ring==='now'?'able-now':f.ring==='able'?'able-off':''} ${extra}' style='background:${COLOR[f.disp]}' data-hz='${f.hazard}'>`
+function iconHTML(f, extra=''){ return `<span class='iconbox ${f.ring==='now'?'able-now':''} ${extra}' style='background:${COLOR[f.disp]}' data-hz='${f.hazard}'>`
   + `<svg viewBox='0 0 24 24' class='hz'>${GLYPH[f.glyph]||GLYPH.other}</svg>`
   + (f.n_act ? `<span class='actdots'>${'<span class="actdot"></span>'.repeat(Math.min(f.n_act,6))}</span>` : '') + `</span>`; }
 // ---------- projections
@@ -1398,17 +1436,13 @@ function drawAdmin(iso, fade){
 function worldLegend(){
   const fws = Object.values(L).flatMap(c=>c.fws);
   const n = k => fws.filter(f=>f.disp===k).length;
-  const nAct = fws.reduce((s,f)=>s+f.n_act,0), nNow = fws.filter(f=>f.ring==='now').length, nOff = fws.filter(f=>f.ring==='able').length;
+  const nAct = fws.reduce((s,f)=>s+f.n_act,0), nNow = fws.filter(f=>f.ring==='now').length;
   legend.innerHTML = `<b>Framework</b><br>`
-    + `<span class='dot' style='background:${COLOR.endorsed}'></span>Active (${n('endorsed')})<br>`
-    + `<span class='dot' style='background:${COLOR['recently-triggered']}'></span>Recently triggered (${n('recently-triggered')})<br>`
-    + `<span class='dot' style='background:${COLOR.expired}'></span>Expired (${n('expired')})<br>`
-    + `<span class='dot' style='background:${COLOR.development}'></span>In development (${n('development')})<br>`
+    + `<span class='dot' style='background:${COLOR.active}'></span>Active (${n('active')}) — latest version endorsed, not fully triggered<br>`
+    + `<span class='dot' style='background:${COLOR.development}'></span>In development / revision (${n('development')})<br>`
     + `<span class='dot' style='background:#e3322d;width:11px;height:11px;border:2px solid #fff'></span>Activated — a dot per activation (${nAct})<br>`
-    + `<span class='dot' style='background:#fff;width:12px;height:12px;border:2.5px solid #f5a300'></span>Able to trigger now — in season (${CURMONTH}), pulsing (${nNow})<br>`
-    + `<span class='dot' style='background:#fff;width:12px;height:12px;border:2.5px solid #f6c95f'></span>Able to trigger — off-season (${nOff})<br>`
-    + `<span class='dot' style='background:#fff;width:12px;height:12px;border:2.5px solid #e3e6ea'></span>No ring = cannot trigger (activated &amp; spent, expired, or in development)<br>`
-    + `<span class='small' style='color:#64748b'>Retired and dormant frameworks are not shown</span>`;
+    + `<span class='dot' style='background:#fff;width:12px;height:12px;border:2.5px solid #f5a300'></span>Currently monitored — in season (${CURMONTH}), pulsing (${nNow})<br>`
+    + `<span class='small' style='color:#64748b'>Retired and dormant frameworks are not shown · <a onclick='document.getElementById("statushelp").open=true;document.getElementById("statushelp").scrollIntoView({behavior:"smooth"})'>how statuses work</a></span>`;
 }
 
 // ---------- callouts: one per country, laid out clear of every framework country (ported from the KB map)
@@ -1603,7 +1637,7 @@ function renderSide(){
 }
 function fwHeader(c, f){
   return `<h3 style='display:flex;align-items:center;gap:8px'>${iconHTML(f)}<span>${esc(c.name)} — ${esc(f.hz_label)}</span></h3>
-   <div>${badge(f.disp)} ${f.ring ? `<span class='small' style='color:#c8860a'>&bull; able to trigger${f.ring==='now'?' now (in season)':' (off-season)'}</span>` : (f.disp==='recently-triggered' ? `<span class='small' style='color:#999'>&bull; not able to trigger now (spent)</span>` : '')}
+   <div>${badge(f.disp)} ${f.ring ? `<span class='small' style='color:#c8860a'>&bull; currently monitored (in season)</span>` : ''}
    ${f.kb?` <span class='muted'>· KB <code>${f.kb}</code></span>`:''}${f.in_force && f.in_force!==f.current ? ` <span class='muted'>· tracking view in force: ${f.in_force}</span>` : ''}</div>`;
 }
 function versionBar(f, v, isCur){

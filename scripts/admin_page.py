@@ -76,6 +76,23 @@ window.PROXY = new URLSearchParams(location.search).get('proxy') || '__PROXY__';
 window.SITE_TOKEN = '__TOKEN__';
 const GROUPS = __GROUPS__, LONG_TEXT = __LONGTEXT__;
 const PAGE = 100;
+// controlled vocabularies: rendered as dropdowns in the change form
+const VOCAB = {
+  'framework_version.kb_status': ['endorsed', 'development', 'pre-development', 'superseded', 'retired'],
+  'framework_version.endorsed_by': ['erc', 'cerf_secretariat'],
+  'framework_version.valid_until_source': ['doc-stated', 'convention', 'inherited'],
+  'framework_version.window_rollup': ['additive', 'exclusive', 'capped'],
+  'entered_version.endorsed_by': ['erc', 'cerf_secretariat'],
+  'entered_version.window_rollup': ['additive', 'exclusive', 'capped'],
+  'entered_window.basis': ['forecast', 'observational', 'mixed'],
+  'window_funding.kind': ['prearranged', 'cofinancing', 'non_aa_mobilised'],
+  'window_funding.provenance': ['doc-stated', 'kb', 'sheet', 'entered', 'window-unattributed'],
+  'adhoc_activation.event_type': ['adhoc_aa', 'early_action'],
+  'framework_status.status': ['active', 'activated_implementing', 'under_revision', 'under_development', 'project_finalization', 'advanced_conversations', 'early_conversations', 'dormant', 'expired', 'other'],
+  '*.hazard': ['drought', 'flood', 'storm', 'cholera', 'plague', 'locusts', 'food_insecurity', 'other'],
+};
+const VOCAB_LABEL = {development: 'in development', 'pre-development': 'pre-development'};
+function vocabFor(t, c){ return VOCAB[`${t.name}.${c.name}`] || VOCAB[`*.${c.name}`] || null; }
 let SCHEMA = null, ROLE = null, BY_TABLE = {};
 
 // ---------- api
@@ -106,7 +123,7 @@ function msg(text, kind='ok'){ const m = document.getElementById('msg'); m.textC
 function crumbs(parts){ document.getElementById('crumbs').innerHTML = [`<a href='#'>Home</a>`, ...parts].join(' › '); }
 function editorName(){ let n = localStorage.getItem('editorName'); if(!n){ n = prompt('Your name (recorded in the audit trail):'); if(n){ localStorage.setItem('editorName', n.trim()); } } return n; }
 function keyOf(t, row){ return Object.fromEntries((t.key||[]).map(k=>[k, row[k]])); }
-function keyQS(t, row){ return (t.key||[]).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(row[k]==null?'':row[k])).join('&'); }
+function keyQS(t, row){ return (t.key||[]).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(row[k]==null?'∅':row[k])).join('&'); }
 function groupOf(name){ for(const [g] of GROUPS){ const grp = GROUPS.find(x=>x[0]===g); if(grp[2].includes(name)) return g; } return null; }
 
 // ---------- header / role
@@ -226,7 +243,7 @@ async function renderForm(t, key){
   const canEdit = t.writable && ROLE==='editor';
   let row = {};
   if(!adding){
-    try { const j = await getJSON(`/rows?table=${t.name}&limit=2&${(t.key||[]).map(k=>`f.${k}=${encodeURIComponent(key[k]===''?'∅':key[k])}`).join('&')}`);
+    try { const j = await getJSON(`/rows?table=${t.name}&limit=2&${(t.key||[]).map(k=>`f.${k}=${encodeURIComponent(key[k])}`).join('&')}`);
       if(!j.rows.length){ v.innerHTML = `<div class='dj-warn'>Row not found.</div>`; return; } row = j.rows[0]; }
     catch(e){ v.innerHTML = `<div class='dj-warn'>${esc(e.message)}</div>`; return; }
   }
@@ -236,6 +253,8 @@ async function renderForm(t, key){
     let input;
     if(ro) input = `<div class='dj-rovalue'>${val==null ? '<span class="dj-null">—</span>' : esc(val)}</div>`;
     else if(c.type==='boolean') input = `<select name='${c.name}'><option value='' ${val==null?'selected':''}>—</option><option value='true' ${val===true?'selected':''}>yes</option><option value='false' ${val===false?'selected':''}>no</option></select>`;
+    else if(vocabFor(t, c)){ const opts = vocabFor(t, c); const extra = val!=null && !opts.includes(val) ? [val] : [];
+      input = `<select name='${c.name}'><option value='' ${val==null?'selected':''}>—</option>${[...opts, ...extra].map(o=>`<option value='${esc(o)}' ${val===o?'selected':''}>${esc(VOCAB_LABEL[o]||o)}</option>`).join('')}</select>`; }
     else if(c.type==='date') input = `<input type='date' name='${c.name}' value='${esc(val||'')}'>`;
     else if(isNum(c)) input = `<input type='number' step='any' name='${c.name}' value='${esc(val==null?'':val)}'>`;
     else if(c.type==='text' && (LONG_TEXT.some(w=>c.name.includes(w)) || String(val||'').length > 120)) input = `<textarea name='${c.name}' rows='3'>${esc(val||'')}</textarea>`;
@@ -271,7 +290,8 @@ async function saveRow(tname, adding, after){
   const rowVals = {};
   for(const c of t.columns){ const el = f.elements[c.name]; if(!el) continue; rowVals[c.name] = el.value; }
   try {
-    const j = await postJSON('/save', {table: tname, key: adding ? null : v._key, row: rowVals, by});
+    const key = adding ? null : Object.fromEntries(Object.entries(v._key).map(([k,x])=>[k, x==='∅' ? null : x]));
+    const j = await postJSON('/save', {table: tname, key, row: rowVals, by});
     msg(adding ? `Added ${title(tname).toLowerCase()} ${Object.values(j.key).join(' / ')}.` : `Saved ${j.changes} change${j.changes===1?'':'s'}.`);
     if(after === 'add') location.hash = `#${tname}/add`;
     else if(after === 'stay') { location.hash = `#${tname}/change?${keyQS(t, j.row)}`; route(); }
@@ -283,7 +303,8 @@ async function delRow(tname){
   const t = BY_TABLE[tname], v = document.getElementById('view');
   if(!confirm(`Delete this ${title(tname).toLowerCase()} row? This cannot be undone (the deleted values are kept in the audit trail).`)) return;
   const by = editorName(); if(!by) return;
-  try { await postJSON('/delete', {table: tname, key: v._key, by}); msg('Row deleted.'); location.hash = `#${tname}`; schemaCountsDirty = true; }
+  const key = Object.fromEntries(Object.entries(v._key).map(([k,x])=>[k, x==='∅' ? null : x]));
+  try { await postJSON('/delete', {table: tname, key, by}); msg('Row deleted.'); location.hash = `#${tname}`; schemaCountsDirty = true; }
   catch(e){ msg(e.message, 'err'); }
 }
 let schemaCountsDirty = false;
