@@ -679,11 +679,22 @@ def assemble(d, e):
     cur = d["current"].sort_values("country_name")
     ver = pd.read_sql("SELECT * FROM aa.framework_version", e)
     win = pd.read_sql(
-        """SELECT w.country_iso3, w.hazard, w.version, w.window_name, w.all_in,
-                  w.basis, w.allocation_usd, p.n_activations AS sim_activations,
+        """WITH w AS (
+             SELECT country_iso3, hazard, version, window_name, all_in, basis, allocation_usd
+             FROM aa.window
+             UNION ALL
+             SELECT e.country_iso3, e.hazard, e.version, e.window_name, NULL, e.basis, NULL
+             FROM aa.entered_window e
+             WHERE NOT EXISTS (SELECT 1 FROM aa.window k
+                               WHERE (k.country_iso3, k.hazard, k.version, k.window_name)
+                                   = (e.country_iso3, e.hazard, e.version, e.window_name)))
+           SELECT w.*, p.n_activations AS sim_activations,
                   p.analysis_years, p.analysis_start, p.analysis_end,
-                  p.return_period, p.activation_prob
-           FROM aa.window w LEFT JOIN aa.v_window_performance p
+                  p.return_period, p.activation_prob,
+                  s.triggered, s.triggered_on
+           FROM w LEFT JOIN aa.v_window_performance p
+             USING (country_iso3, hazard, version, window_name)
+           LEFT JOIN aa.window_status s
              USING (country_iso3, hazard, version, window_name)""", e)
     # the agency x sector split of each version's funding, per window (KB pages, sheets,
     # entered) — window_funding split rows; fund_source = pooled fund or financier
@@ -755,7 +766,10 @@ def assemble(d, e):
             windows = [{"name": w.window_name, "basis": _s(w.basis), "all_in": _f(w.all_in),
                         "budget": _num(w.allocation_usd), "rp": _num(w.return_period),
                         "prob": _num(w.activation_prob), "sim": _num(w.sim_activations),
-                        "years": _num(w.analysis_years)} for w in w_v.itertuples()]
+                        "years": _num(w.analysis_years),
+                        "triggered": (None if w.triggered is None or pd.isna(w.triggered)
+                                      else bool(w.triggered)),
+                        "triggered_on": _s(w.triggered_on)} for w in w_v.itertuples()]
             # backtest: which window would have fired in which year (or storm)
             s_v = sim[(sim["country_iso3"] == c) & (sim["hazard"] == h)
                       & kb_key_match(sim["version"], v.version)]
@@ -813,6 +827,7 @@ def assemble(d, e):
                 "agencies": fm.get("implementing_agencies") or [],
                 "target_people": _num(fm.get("target_people")),
                 "all_in": fm.get("all_in", None),
+                "rollup": _s(v.window_rollup),
                 "n_windows": tf.get("n_windows") if isinstance(tf.get("n_windows"), int) else None,
                 "months": months, "months_src": months_src, "months_note": _s(mp.get("note")),
                 "basis": _s(tf.get("basis")), "calibration": _s(tf.get("calibration")),
@@ -862,12 +877,17 @@ def assemble(d, e):
 
         # the map and the sidebar default to the MOST RECENT version (as the KB map does);
         # the tracking view's in-force version is kept for reference
+        for i, x in enumerate(versions):          # inferred: a newer endorsed version exists
+            x["superseded"] = (x["status"] == "endorsed"
+                               and any(y["status"] == "endorsed" for y in versions[i + 1:]))
+            x["fully_triggered"] = fully_triggered(x, activations)
         latest = versions[-1]["v"] if versions else None
         in_force = _s(r.get("current_version"))
         if in_force not in {x["v"] for x in versions}:
             in_force = latest
         sheet_status = _s(r.get("status"))
-        disp = lifecycle(versions[-1] if versions else None, sheet_status, activations)
+        disp = lifecycle(versions[-1] if versions else None, sheet_status, activations,
+                         bool(r.get("retired")))
         if disp is None:
             continue                                  # conversation stage / retired / dormant: not on the map
         months_now = (versions[-1]["months"] if versions else [])
@@ -898,28 +918,29 @@ def _expired(valid_until):
     return (int(m.group(1)), mo) < (TODAY.year, TODAY.month)
 
 
-def fully_triggered(latest, activations):
-    """Did the latest version fire in full? An all-in framework spends its envelope on any
-    activation; a split framework (independent windows) only when an activation is marked
-    full, or every window has fired."""
-    acts = [a for a in activations if a["version"] == latest["v"] and a["type"] == "framework_aa"]
-    if not acts:
-        return False
-    if latest["all_in"] is not False:
-        return any(a["full"] is not False for a in acts)
-    if any(a["full"] is True for a in acts):
-        return True
-    wins = {w["name"] for w in latest["windows"]}
-    fired = {a["window"] for a in acts if a["window"]}
-    return bool(wins) and wins <= fired
+def fully_triggered(v, activations):
+    """Did this version fire in full? Inferred from its windows' curated trigger state
+    (aa.window_status): any window for an all-in / exclusive framework, every window for
+    independent ones. A version with no windows in the registry falls back to its
+    activations (any activation not marked partial)."""
+    wins = v["windows"]
+    if not wins:
+        return any(a["version"] == v["v"] and a["type"] == "framework_aa"
+                   and a["full"] is not False for a in activations)
+    fired = [w["triggered"] is True for w in wins]
+    any_mode = (v["all_in"] is True or v["rollup"] == "exclusive"
+                or any(w["all_in"] is True for w in wins))
+    return any(fired) if any_mode else all(fired)
 
 
-def lifecycle(latest, sheet_status, activations):
+def lifecycle(latest, sheet_status, activations, retired=False):
     """Framework status, inferred from the most recent version:
       active      — the most recent version is endorsed, in validity, and has not fully triggered
       development — the most recent version is in (pre-)development, or it fully triggered /
                     its validity ended and no new version exists yet
-      None        — retired / dormant / conversation stage: not on the map"""
+      None        — retired (manual flag on the pair) or conversation stage: not on the map"""
+    if retired:
+        return None
     if latest is None:
         if sheet_status in (None, "early_conversations", "advanced_conversations"):
             return None
@@ -928,8 +949,6 @@ def lifecycle(latest, sheet_status, activations):
     st = latest["status"] or ""
     if st in ("development", "pre-development"):
         return "development"
-    if st in ("retired", "superseded"):
-        return None
     if fully_triggered(latest, activations) or _expired(latest["valid_until"]):
         return "development"
     return "active"
@@ -1047,26 +1066,30 @@ def build_landing(page, d, e):
 </div>
 <details id='statushelp' class='statushelp'><summary>How statuses work — version lifecycle and the framework status inferred from it</summary>
  <div class='sh-grid'>
-  <svg viewBox='0 0 780 285' class='sh-svg' role='img' aria-label='Status diagram'>
+  <svg viewBox='0 0 780 330' class='sh-svg' role='img' aria-label='Status diagram'>
    <defs><marker id='arr' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' markerHeight='7' orient='auto-start-reverse'><path d='M0,0 L10,5 L0,10 z' fill='#64748b'/></marker></defs>
-   <text x='10' y='22' class='sh-h'>Framework VERSION status (stored, one per endorsed document)</text>
+   <text x='10' y='22' class='sh-h'>Framework VERSION status (stored: one of three, set in the admin)</text>
    <g class='sh-box'><rect x='10' y='40' width='120' height='40' rx='8'/><text x='70' y='65'>pre-development</text></g>
    <g class='sh-box'><rect x='170' y='40' width='120' height='40' rx='8'/><text x='230' y='65'>in development</text></g>
    <g class='sh-box sh-on'><rect x='330' y='40' width='120' height='40' rx='8'/><text x='390' y='65'>endorsed</text></g>
-   <g class='sh-box sh-ev'><rect x='500' y='20' width='120' height='34' rx='8'/><text x='560' y='42'>fully triggered</text></g>
-   <g class='sh-box sh-ev'><rect x='500' y='66' width='120' height='34' rx='8'/><text x='560' y='88'>validity ended</text></g>
-   <g class='sh-box sh-off'><rect x='660' y='40' width='90' height='40' rx='8'/><text x='705' y='65'>superseded</text></g>
+   <g class='sh-box sh-ev'><rect x='500' y='20' width='130' height='34' rx='8'/><text x='565' y='42'>windows triggered</text></g>
+   <g class='sh-box sh-ev'><rect x='500' y='66' width='130' height='34' rx='8'/><text x='565' y='88'>validity ended</text></g>
+   <g class='sh-box sh-off'><rect x='670' y='40' width='100' height='40' rx='8'/><text x='720' y='65'>superseded</text></g>
    <line x1='130' y1='60' x2='168' y2='60' class='sh-arr'/><line x1='290' y1='60' x2='328' y2='60' class='sh-arr'/>
    <line x1='450' y1='55' x2='498' y2='40' class='sh-arr'/><line x1='450' y1='65' x2='498' y2='80' class='sh-arr'/>
-   <line x1='620' y1='45' x2='658' y2='56' class='sh-arr'/><line x1='620' y1='78' x2='658' y2='66' class='sh-arr'/>
-   <text x='430' y='122' class='sh-note'>then a new version is created → it starts in development</text>
-   <text x='10' y='160' class='sh-h'>FRAMEWORK status (inferred from the most recent version)</text>
-   <g class='sh-box sh-on'><rect x='10' y='178' width='220' height='40' rx='8'/><text x='120' y='203'>Active</text></g>
-   <text x='240' y='195' class='sh-note'>most recent version is endorsed, in validity and has not fully triggered</text>
-   <text x='240' y='211' class='sh-note'>(partial triggers of independent windows keep it active) · pulsing ring = monitored this month</text>
-   <g class='sh-box sh-dev'><rect x='10' y='228' width='220' height='40' rx='8'/><text x='120' y='253'>In development / revision</text></g>
-   <text x='240' y='246' class='sh-note'>most recent version is in (pre-)development, or it fully triggered / its validity</text>
-   <text x='240' y='262' class='sh-note'>ended and no new version exists yet</text>
+   <line x1='630' y1='45' x2='668' y2='56' class='sh-arr'/><line x1='630' y1='78' x2='668' y2='66' class='sh-arr'/>
+   <text x='500' y='118' class='sh-note'>inferred, not stored: each window is marked triggered / not triggered; the version is</text>
+   <text x='500' y='132' class='sh-note'>fully triggered when every window fired (any window if all-in). Superseded = a newer</text>
+   <text x='500' y='146' class='sh-note'>endorsed version exists. The next version starts in development.</text>
+   <text x='10' y='176' class='sh-h'>FRAMEWORK status (inferred from the most recent version)</text>
+   <g class='sh-box sh-on'><rect x='10' y='192' width='220' height='36' rx='8'/><text x='120' y='215'>Active</text></g>
+   <text x='240' y='207' class='sh-note'>most recent version is endorsed, in validity and has not fully triggered</text>
+   <text x='240' y='222' class='sh-note'>(partial triggers of independent windows keep it active) · pulsing ring = monitored this month</text>
+   <g class='sh-box sh-dev'><rect x='10' y='238' width='220' height='36' rx='8'/><text x='120' y='261'>In development / revision</text></g>
+   <text x='240' y='253' class='sh-note'>most recent version is in (pre-)development, or it fully triggered / its validity ended</text>
+   <text x='240' y='268' class='sh-note'>and no new version exists yet</text>
+   <g class='sh-box sh-off'><rect x='10' y='284' width='220' height='36' rx='8'/><text x='120' y='307'>Retired (not on the map)</text></g>
+   <text x='240' y='299' class='sh-note'>a manual flag on the framework (country × hazard) in the admin — overrides everything above</text>
   </svg>
  </div>
 </details>
@@ -1442,7 +1465,7 @@ function worldLegend(){
     + `<span class='dot' style='background:${COLOR.development}'></span>In development / revision (${n('development')})<br>`
     + `<span class='dot' style='background:#e3322d;width:11px;height:11px;border:2px solid #fff'></span>Activated — a dot per activation (${nAct})<br>`
     + `<span class='dot' style='background:#fff;width:12px;height:12px;border:2.5px solid #f5a300'></span>Currently monitored — in season (${CURMONTH}), pulsing (${nNow})<br>`
-    + `<span class='small' style='color:#64748b'>Retired and dormant frameworks are not shown · <a onclick='document.getElementById("statushelp").open=true;document.getElementById("statushelp").scrollIntoView({behavior:"smooth"})'>how statuses work</a></span>`;
+    + `<span class='small' style='color:#64748b'>Retired frameworks are not shown · <a onclick='document.getElementById("statushelp").open=true;document.getElementById("statushelp").scrollIntoView({behavior:"smooth"})'>how statuses work</a></span>`;
 }
 
 // ---------- callouts: one per country, laid out clear of every framework country (ported from the KB map)
@@ -1631,7 +1654,7 @@ function renderSide(){
   const v = f.versions.find(x=>x.v===ver) || f.versions[f.versions.length-1];
   const isCur = v.v === f.current;
   side.innerHTML = crumb + fwHeader(c, f) + versionBar(f, v, isCur) +
-    (isCur ? '' : `<div class='warnbox'>Viewing an older version (${esc(v.status||'past')}). The map shows this version's scope. Most recent: <a onclick='selectVersion("${f.current}")' style='cursor:pointer'>${f.current}</a>.</div>`) +
+    (isCur ? '' : `<div class='warnbox'>Viewing an older version (${esc(v.superseded?'superseded':(v.status||'past'))}). The map shows this version's scope. Most recent: <a onclick='selectVersion("${f.current}")' style='cursor:pointer'>${f.current}</a>.</div>`) +
     factsBlock(f, v) + triggersBlock(v) + fundingBlock(v) + activationsBlock(f, v) + scopeBlock(v) + backtestBlock(f, v) +
     `<p class='small' style='margin-top:12px'><a href='${f.page}'>full framework page →</a> · <a href='hierarchy.html'>explorer</a></p>`;
 }
@@ -1641,13 +1664,15 @@ function fwHeader(c, f){
    ${f.kb?` <span class='muted'>· KB <code>${f.kb}</code></span>`:''}${f.in_force && f.in_force!==f.current ? ` <span class='muted'>· tracking view in force: ${f.in_force}</span>` : ''}</div>`;
 }
 function versionBar(f, v, isCur){
-  const opts = [...f.versions].reverse().map(x=>`<option value='${x.v}' ${x.v===v.v?'selected':''}>${x.v}${x.v===f.current?' (latest)':''} — ${x.status||'?'}</option>`).join('');
+  const opts = [...f.versions].reverse().map(x=>`<option value='${x.v}' ${x.v===v.v?'selected':''}>${x.v}${x.v===f.current?' (latest)':''} — ${x.superseded?'superseded':(x.status||'?')}</option>`).join('');
   return `<div class='verbar'><label class='small'>Version</label><select onchange='selectVersion(this.value)'>${opts}</select>
     ${v.doc_url ? `<a class='docbtn' href='${esc(v.doc_url)}' target='_blank' rel='noopener' title='${esc(v.doc_title||'')}'>Framework doc ↗</a>` : `<span class='badge b-retired'>no document link</span>`}</div>`;
 }
 function factsBlock(f, v){
   const rows = [];
-  rows.push(['Status', `${verBadge(v.status)}${v.endorsed_by?` <span class='muted'>endorsed by ${esc(v.endorsed_by)}</span>`:''}`]);
+  rows.push(['Status', `${verBadge(v.superseded?'superseded':v.status)}${v.endorsed_by?` <span class='muted'>endorsed by ${esc(v.endorsed_by)}</span>`:''}${v.superseded?` <span class='muted'>· a newer endorsed version exists</span>`:''}`]);
+  if(v.windows.length){ const n = v.windows.filter(w=>w.triggered===true).length;
+    rows.push(['Triggered', `${n?`<b>${n}</b> of ${v.windows.length} window${v.windows.length>1?'s':''}`:`none of ${v.windows.length} window${v.windows.length>1?'s':''}`}${v.fully_triggered?` <span class='badge b-endorsed'>fully triggered</span>`:''}${n&&!v.fully_triggered?` <span class='muted'>· partial (independent windows)</span>`:''}`]); }
   rows.push(['Valid', `${v.valid_from||'?'} → ${v.valid_until||'<span class="muted">open</span>'}${v.valid_until_source?` <span class='muted'>(${esc(v.valid_until_source)})</span>`:''}`]);
   if(v.doc_title) rows.push(['Document', `${esc(v.doc_title)}${v.doc_date?` <span class='muted'>(${v.doc_date})</span>`:''}`]);
   rows.push(['Pre-arranged', `${money(v.prearranged_doc)}${v.regional?` <span class='muted'>· regional document total (all countries)</span>`:''}${v.all_in===false?` <span class='muted'>· split budget per window</span>`:v.all_in===true?` <span class='muted'>· all-in</span>`:''}`]);
@@ -1676,14 +1701,14 @@ function triggersBlock(v){
       html += `<div class='trig'><div class='tn'>${esc(name)}${sub?` <span class='muted'>· ${esc(sub)}</span>`:''}</div>
         <div class='tt'>${esc(ind)}${ind&&thr?' — ':''}<b>${esc(thr)}</b></div>
         ${meta.length?`<div class='tm'>${esc(meta.join(' · '))}</div>`:''}
-        ${bt?`<div class='tm'>backtest: ${bt.rp?`1-in-${bt.rp.toFixed(1)} yr`:''}${bt.prob?` · ${(bt.prob*100).toFixed(0)}%/yr`:''}${bt.sim!=null?` · ${bt.sim} in ${bt.years} yrs`:''}${bt.budget?` · budget ${money(bt.budget)}`:''}</div>`:''}
+        ${bt?`<div class='tm'>${bt.triggered===true?`<b style='color:#b45309'>triggered${bt.triggered_on?' '+bt.triggered_on:''}</b> · `:''}backtest: ${bt.rp?`1-in-${bt.rp.toFixed(1)} yr`:''}${bt.prob?` · ${(bt.prob*100).toFixed(0)}%/yr`:''}${bt.sim!=null?` · ${bt.sim} in ${bt.years} yrs`:''}${bt.budget?` · budget ${money(bt.budget)}`:''}</div>`:''}
       </div>`;
     });
   }
   const extra = v.windows.filter(w => !v.triggers.some(t => sameWin(w.name, t.window || t.trigger || Object.values(t)[0])));
   if(extra.length){
-    html += `<h4>${v.triggers.length?'Other backtested windows':'Windows (backtest registry)'}</h4><table class='mini'><tr><th>window</th><th>basis</th><th>budget</th><th>return period</th><th>annual prob</th></tr>` +
-      extra.map(w=>`<tr><td>${esc(w.name)}</td><td>${esc(w.basis||'')}${w.all_in===true?' · all-in':''}</td><td class='num'>${money(w.budget)}</td><td class='num'>${w.rp?w.rp.toFixed(1)+' yr':''}</td><td class='num'>${w.prob?(w.prob*100).toFixed(0)+'%':''}</td></tr>`).join('') + `</table>`;
+    html += `<h4>${v.triggers.length?'Other backtested windows':'Windows (backtest registry)'}</h4><table class='mini'><tr><th>window</th><th>basis</th><th>state</th><th>budget</th><th>return period</th><th>annual prob</th></tr>` +
+      extra.map(w=>`<tr><td>${esc(w.name)}</td><td>${esc(w.basis||'')}${w.all_in===true?' · all-in':''}</td><td>${w.triggered===true?`<b style='color:#b45309'>triggered</b>${w.triggered_on?` <span class='muted'>${w.triggered_on}</span>`:''}`:w.triggered===false?'<span class="muted">not triggered</span>':''}</td><td class='num'>${money(w.budget)}</td><td class='num'>${w.rp?w.rp.toFixed(1)+' yr':''}</td><td class='num'>${w.prob?(w.prob*100).toFixed(0)+'%':''}</td></tr>`).join('') + `</table>`;
   }
   if(!html) html = `<h4>Triggers</h4><div class='muted'>No structured trigger information for this version yet — see the framework document.</div>`;
   return html;

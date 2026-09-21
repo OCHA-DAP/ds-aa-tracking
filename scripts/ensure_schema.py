@@ -34,6 +34,7 @@ def ensure_schema(engine):
         for stmt in schema.ADDITIVE_MIGRATIONS:
             conn.execute(sa.text(stmt))
         seeded = migrations.seed_from_legacy(conn)        # window-first: seeds (once)
+        seeded += migrations.collapse_statuses(conn)      # status collapse + window_status seed
         for idx in schema.INDEXES:
             conn.execute(sa.text(idx))
         for name in schema.VIEWS:

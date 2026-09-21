@@ -289,6 +289,14 @@ aa.activation_funding         one row per activation × fund, either kind of act
 ```
 
 - `framework_registry` was renamed `country_hazard` (it is the pair, not a registry).
+- Statuses (2026-09-21): `framework_version.kb_status` is one of `endorsed | development |
+  pre-development`. *Superseded* is inferred (a newer endorsed version exists) and *retired*
+  is a manual flag on `country_hazard` (framework level: hidden from the map). Each window has
+  a curated `aa.window_status.triggered` flag (the KB loader truncates `aa.window`, so the
+  flag cannot live there); a version is *fully triggered* when every window fired (any
+  window for all-in / exclusive rollups). The map's framework status is then: **active** =
+  latest version endorsed, in validity, not fully triggered; **in development / revision**
+  otherwise.
 - `activation` split into `window_activation` (version + window required) and
   `adhoc_activation`; `prearranged_funding`, `prearranged_sector_budget` and
   `entered_version_funding` folded into `window_funding`. The retired tables live on as

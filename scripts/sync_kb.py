@@ -42,6 +42,9 @@ FILL_IF_NULL = ["doc_title", "doc_url", "valid_until", "supersedes",
 def main():
     dry = "--dry-run" in sys.argv
     kb = kb_versions()
+    # version statuses are endorsed | development | pre-development only: 'superseded' is
+    # inferred (a newer endorsed version exists) and retirement is a flag on country_hazard
+    kb["kb_status"] = kb["kb_status"].replace({"superseded": "endorsed", "retired": "endorsed"})
     if kb.empty:
         sys.exit("no KB pages found — is the ds-knowledge-base clone present?")
     engine = stratus.get_engine(stage="dev", write=True)

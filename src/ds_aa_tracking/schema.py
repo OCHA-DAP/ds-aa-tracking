@@ -31,6 +31,9 @@ TABLES = {
             us_prio boolean,
             coordination_group text,
             in_kb boolean NOT NULL DEFAULT false,
+            retired boolean NOT NULL DEFAULT false,   -- manual: framework retired (hidden
+                                                      -- from the map, whatever its versions say)
+            retired_note text,
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard)
         )""",
@@ -40,7 +43,10 @@ TABLES = {
             hazard text NOT NULL,
             version text NOT NULL,         -- date label matching KB page (YYYY[-MM[-DD]])
             kb_framework text,
-            kb_status text,                -- endorsed | superseded | retired | development
+            kb_status text,                -- endorsed | development | pre-development.
+                                           -- 'superseded' is INFERRED (a newer endorsed
+                                           -- version exists); retirement is a flag on
+                                           -- country_hazard, not a version status
             valid_from date,
             valid_until date,
             valid_until_source text,       -- doc-stated | convention | inherited
@@ -445,6 +451,22 @@ DURABLE_TABLES = {
             entered_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard, version, window_name, fund_code)
         )""",
+    # per-window trigger state, curated by hand (aa.window is truncated by the KB loader,
+    # so the flag lives here). A version's "fully triggered" state is inferred from these:
+    # any window for all-in / exclusive frameworks, every window for independent ones.
+    "window_status": """
+        CREATE TABLE IF NOT EXISTS aa.window_status (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,
+            window_name text NOT NULL,
+            triggered boolean NOT NULL DEFAULT false,
+            triggered_on date,
+            note text,
+            updated_by text,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (country_iso3, hazard, version, window_name)
+        )""",
     "entry_audit": """
         CREATE TABLE IF NOT EXISTS aa.entry_audit (
             id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -464,7 +486,9 @@ DURABLE_TABLES = {
 # append-only ALTER statements (idempotent: use IF NOT EXISTS / IF EXISTS forms),
 # applied by ensure_schema() after the CREATE IF NOT EXISTS pass.
 ADDITIVE_MIGRATIONS = [
-    # (none yet — the 2026-09-10 shape is the baseline)
+    # 2026-09-21: retirement is a manual flag on the pair (framework level)
+    "ALTER TABLE aa.country_hazard ADD COLUMN IF NOT EXISTS retired boolean NOT NULL DEFAULT false",
+    "ALTER TABLE aa.country_hazard ADD COLUMN IF NOT EXISTS retired_note text",
 ]
 
 INDEXES = [
@@ -580,9 +604,10 @@ VIEWS = {
             WHERE vf.kind = 'prearranged' AND vf.fund_code = 'cerf'
         )
         SELECT r.country_iso3, r.hazard, r.country_name, r.region, r.kb_framework,
-               r.in_kb, r.language, r.us_prio,
+               r.in_kb, r.language, r.us_prio, r.retired,
                v.version AS current_version, v.version_status, v.valid_until,
-               CASE WHEN v.version_status = 'endorsed'
+               CASE WHEN r.retired THEN 'retired'
+                    WHEN v.version_status = 'endorsed'
                          AND (v.valid_until IS NULL OR v.valid_until >= CURRENT_DATE)
                          AND s.status IN ('under_revision', 'under_development',
                                           'project_finalization',

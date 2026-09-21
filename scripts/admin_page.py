@@ -24,7 +24,8 @@ PROXY_URL = "https://chd-ds-aa-extract.azurewebsites.net"
 GROUPS = [
     ("Frameworks & tracking", "ds-aa-tracking", [
         "country_hazard", "framework_version", "framework_status", "framework_focal_point",
-        "framework_calendar", "fund", "window_funding", "window_activation", "adhoc_activation",
+        "framework_calendar", "fund", "window_status", "window_funding", "window_activation",
+        "adhoc_activation",
         "activation_funding", "people_covered", "plan_inclusion", "report_channel_inclusion",
         "start_network", "cirv", "emergency_type_override",
         "cerf_allocation_extra", "cerf_application_people", "cerf_application_report",
@@ -78,7 +79,7 @@ const GROUPS = __GROUPS__, LONG_TEXT = __LONGTEXT__;
 const PAGE = 100;
 // controlled vocabularies: rendered as dropdowns in the change form
 const VOCAB = {
-  'framework_version.kb_status': ['endorsed', 'development', 'pre-development', 'superseded', 'retired'],
+  'framework_version.kb_status': ['endorsed', 'development', 'pre-development'],   // superseded is inferred; retired lives on country_hazard
   'framework_version.endorsed_by': ['erc', 'cerf_secretariat'],
   'framework_version.valid_until_source': ['doc-stated', 'convention', 'inherited'],
   'framework_version.window_rollup': ['additive', 'exclusive', 'capped'],
@@ -92,6 +93,8 @@ const VOCAB = {
   '*.hazard': ['drought', 'flood', 'storm', 'cholera', 'plague', 'locusts', 'food_insecurity', 'other'],
 };
 const VOCAB_LABEL = {development: 'in development', 'pre-development': 'pre-development'};
+// boolean columns that read better with domain words than yes/no
+const BOOL_LABEL = {'window_status.triggered': ['triggered', 'not triggered'], 'country_hazard.retired': ['retired', 'not retired']};
 function vocabFor(t, c){ return VOCAB[`${t.name}.${c.name}`] || VOCAB[`*.${c.name}`] || null; }
 let SCHEMA = null, ROLE = null, BY_TABLE = {};
 
@@ -252,7 +255,8 @@ async function renderForm(t, key){
     const val = row[c.name];
     let input;
     if(ro) input = `<div class='dj-rovalue'>${val==null ? '<span class="dj-null">—</span>' : esc(val)}</div>`;
-    else if(c.type==='boolean') input = `<select name='${c.name}'><option value='' ${val==null?'selected':''}>—</option><option value='true' ${val===true?'selected':''}>yes</option><option value='false' ${val===false?'selected':''}>no</option></select>`;
+    else if(c.type==='boolean'){ const [y, n] = BOOL_LABEL[`${t.name}.${c.name}`] || ['yes', 'no'];
+      input = `<select name='${c.name}'><option value='' ${val==null?'selected':''}>—</option><option value='true' ${val===true?'selected':''}>${y}</option><option value='false' ${val===false?'selected':''}>${n}</option></select>`; }
     else if(vocabFor(t, c)){ const opts = vocabFor(t, c); const extra = val!=null && !opts.includes(val) ? [val] : [];
       input = `<select name='${c.name}'><option value='' ${val==null?'selected':''}>—</option>${[...opts, ...extra].map(o=>`<option value='${esc(o)}' ${val===o?'selected':''}>${esc(VOCAB_LABEL[o]||o)}</option>`).join('')}</select>`; }
     else if(c.type==='date') input = `<input type='date' name='${c.name}' value='${esc(val||'')}'>`;

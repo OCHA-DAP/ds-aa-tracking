@@ -141,7 +141,7 @@ def tbl(df, max_rows=8000, name="data"):
 
 # per-table reviewer notes
 NOTES = {
-    "country_hazard": "The (country, hazard) pair — the identity everything hangs off: pipeline entries with no version yet, plus descriptive attributes that aren't approved per version (region, language, coordination group). Hierarchy: country_hazard → framework_version → window → {window_activation, simulated_activation, window_funding}; ad hoc / early-action allocations attach to the pair (adhoc_activation).",
+    "country_hazard": "The (country, hazard) pair — the identity everything hangs off: pipeline entries with no version yet, plus descriptive attributes that aren't approved per version (region, language, coordination group) and the manual <code>retired</code> flag (a retired framework is hidden from the map whatever its versions say). Hierarchy: country_hazard → framework_version → window → {window_activation, simulated_activation, window_funding}; ad hoc / early-action allocations attach to the pair (adhoc_activation).",
     "framework_version": "The unit that actually gets approved: one row per framework version, seeded from KB page frontmatter (incl. superseded/retired versions), the historical sweep of the OCHA AA web page and the pa-anticipatory-action monorepo (<code>source='ocha-web'/'pa-monorepo'</code>, with <code>doc_url</code>/<code>analysis_ref</code>), plus sheet-reported revision dates with no KB page (<code>source='sheet-revision'</code> — a KB completeness gap). Version-specific facts (budgets, sector budgets, coverage, calendar, activations, status) carry a <code>version</code> attribution: direct from the KB for matched activations, otherwise inferred from the version in force at the fact's date (<code>version_match</code>; NULL = no version exists to attribute to). Caveat: figures reported mid-revision may belong to the upcoming version — interval inference can't see that; overrides are a curation pass.",
     "framework_status": "Operational lifecycle snapshots from every source sheet, kept side by side (PK includes <code>source</code>). Canonical <code>status</code> vocabulary; raw spelling preserved. This is deliberately distinct from the KB page-status vocabulary.",
     "framework_focal_point": "Focal points by role from the 2026 planning sheet, attributed to the version in force at the snapshot date.",
@@ -151,6 +151,7 @@ NOTES = {
     "fund": "OCHA pooled funds only (CERF, CBPFs, regional funds) — the fund dimension every funding row references. Agency co-financing is deliberately NOT here (free-text financier on commitments instead). Seeded from the CBPF mirror's fund registry.",
     "window_activation": "A framework activation is a WINDOW firing: keyed (country, hazard, version, window, date). <code>window_name</code> should be one of the version's windows — sheet-era rows carry the KB's free-text window until curated (<code>v_trk_activation_window_check</code> lists the ones not in the window registry). <code>event_date</code> is partial ISO at the source's precision.",
     "adhoc_activation": "Ad hoc AA and early-action allocations, off the (country, hazard) pair — no version, no window.",
+    "window_status": "Curated trigger state per window: <code>triggered</code> yes/no (+ date, note). The KB loader truncates <code>window</code>, so the flag lives here. A version is <i>fully triggered</i> when any window fired (all-in / exclusive rollup) or every window fired (independent windows); that, with validity, drives the framework status on the map. Seeded once from <code>window_activation</code> — a window is flagged when an activation names it, the version has a single window, or an activation is marked full.",
     "activation_funding": "One row per activation × fund allocation — the multi-fund reality (e.g. Nigeria floods Sep 2025 = CERF $5.0M + NHF $2.0M under one activation). <code>allocation_code</code> resolves through <code>aa.v_allocation</code> (CERF application codes and CBPF codes alike).",
     "report_channel_inclusion": "Which frameworks/countries count toward which external reports per year (A-Hub, UK BCs, SG, CERF/OCHA annual reports, SF KPI, CPC), attributed to the version in force during the report year.",
     "plan_inclusion": "GHO/HNRP plan inclusion + AA feasibility flags per country-year, per source.",
@@ -890,6 +891,7 @@ ERD_NODES = [
     ("framework_status", "new", "+ as_of · source"),
     ("framework_focal_point", "new", "+ role · person · as_of"),
     ("framework_calendar", "new", "+ month · phase"),
+    ("window_status", "new", "+ window_name · triggered · triggered_on"),
     ("window_funding", "new", "+ window_name · kind · fund_code/financier · agency/sector"),
     ("people_covered", "new", "+ as_of · source"),
     ("fund", "new", "fund_code — OCHA pooled funds only"),
@@ -942,6 +944,7 @@ ERD_EDGES = [
     ("framework_status", "framework_version", "", "many0", "one0", False),
     ("framework_focal_point", "framework_version", "", "many0", "one0", False),
     ("framework_calendar", "framework_version", "", "many0", "one0", False),
+    ("window_status", "window", "country · hazard · version · window_name", "one0", "one", False),
     ("window_funding", "window", "country · hazard · version · window_name", "many", "one", False),
     ("people_covered", "framework_version", "", "many0", "one0", False),
     ("window_activation", "window", "country · hazard · version · window_name", "many", "one", False),
