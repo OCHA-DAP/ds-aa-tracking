@@ -1050,7 +1050,7 @@ def build_landing(page, d, e):
 <details id='statushelp' class='statushelp'><summary>How statuses work — version lifecycle and the framework status inferred from it</summary>
  <div class='sh-grid'>
   <svg viewBox='0 0 780 362' class='sh-svg' role='img' aria-label='Status diagram'>
-   <defs><pattern id='shhatch' patternUnits='userSpaceOnUse' width='6' height='6' patternTransform='rotate(45)'><rect width='6' height='6' fill='#dbe9f7'/><rect width='2.5' height='6' fill='#9ecae1'/></pattern><marker id='arr' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' markerHeight='7' orient='auto-start-reverse'><path d='M0,0 L10,5 L0,10 z' fill='#64748b'/></marker></defs>
+   <defs><linearGradient id='shsplit' x1='0' y1='0' x2='1' y2='1'><stop offset='50%' stop-color='#dbeafe'/><stop offset='50%' stop-color='#e8f1f8'/></linearGradient><marker id='arr' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' markerHeight='7' orient='auto-start-reverse'><path d='M0,0 L10,5 L0,10 z' fill='#64748b'/></marker></defs>
    <text x='10' y='22' class='sh-h'>Framework VERSION status (stored: one of three, set in the admin)</text>
    <g class='sh-box'><rect x='10' y='40' width='120' height='40' rx='8'/><text x='70' y='65'>pre-development</text></g>
    <g class='sh-box'><rect x='170' y='40' width='120' height='40' rx='8'/><text x='230' y='65'>in development</text></g>
@@ -1106,7 +1106,7 @@ LANDING_CSS = r"""
 .sh-box rect { fill:#f1f5f9; stroke:#cbd5e1; } .sh-box text { font-size:11px; fill:#1e293b; text-anchor:middle; font-weight:600; }
 .sh-box.sh-on rect { fill:#dbeafe; stroke:#2171b5; } .sh-box.sh-dev rect { fill:#e8f1f8; stroke:#9ecae1; }
 .sh-box.sh-ev rect { fill:#fef3c7; stroke:#f59e0b; } .sh-box.sh-off rect { fill:#f1f5f9; stroke:#94a3b8; }
-.sh-box.sh-upd rect { fill:#dbeafe; stroke:#2171b5; stroke-dasharray:5 3; }
+.sh-box.sh-upd rect { fill:url(#shsplit); stroke:#2171b5; }
 .sh-arr { stroke:#64748b; stroke-width:1.4; marker-end:url(#arr); }
 .hero p { color:#556; max-width:860px; font-size:13.5px; }
 .tiles { display:flex; gap:14px; flex-wrap:wrap; margin:12px 0; }
@@ -1166,9 +1166,7 @@ LANDING_CSS = r"""
 .iconbox { position:relative; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;
   border-radius:7px; border:1.5px solid #fff; box-shadow:0 1px 2px rgba(15,23,42,.28), 0 2px 6px rgba(15,23,42,.14); cursor:pointer; flex:none; transition: transform .15s; }
 .iconbox svg.hz { width:15px; height:15px; display:block; }
-/* 'being updated': solid icon, a small refresh badge at the corner (hatching hid the glyph) */
-.iconbox.upd::after, .maplegend .dot.upd::after { content:"\21bb"; position:absolute; right:-6px; bottom:-6px; width:12px; height:12px; border-radius:50%; background:#fff; color:#2171b5; font-size:9.5px; line-height:12px; text-align:center; font-weight:800; box-shadow:0 0 0 1.2px #2171b5; }
-.maplegend .dot.upd { position:relative; } .maplegend .dot.upd::after { right:-5px; bottom:-4px; width:10px; height:10px; font-size:8px; line-height:10px; }
+/* 'being updated': a diagonal two-tone fill (active on one half, development on the other) */
 .iconbox:hover { transform:scale(1.12); filter:brightness(1.06); }
 @keyframes ablepulse {
   0%   { box-shadow: 0 0 0 2px #f5a300, 0 0 0 0 rgba(245,163,0,.85), 0 1px 3px rgba(0,0,0,.4); }
@@ -1205,7 +1203,7 @@ LANDING_CSS = r"""
 .badge { display:inline-block; padding:1px 7px; border-radius:9px; font-size:11px; font-weight:600; white-space:nowrap; }
 .b-endorsed { background:#e2f3e6; color:#1e7a37; } .b-recently-triggered { background:#fce4cd; color:#b5650a; }
 .b-expired { background:#f1ead0; color:#7d6b1a; } .b-development { background:#fdf0d5; color:#9a6d0a; }
-.b-updating { background:#e2edf8; color:#1a5fa0; border:1px dashed #2171b5; }
+.b-updating { background:linear-gradient(135deg,#dbeafe 0 50%,#eef4fa 50% 100%); color:#1a5fa0; border:1px solid #9ecae1; }
 .b-tech { background:#f3e8ff; color:#6b21a8; }
 .pillars { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:12px 0 8px; }
 .pillars.four { grid-template-columns:repeat(4,1fr); }
@@ -1261,7 +1259,8 @@ let state = { iso:null, hz:null, ver:null, pillar:'funding' };
 function money(v){ return v==null ? '—' : v>=1e6 ? '$'+(v/1e6).toFixed(v>=1e7?0:1)+'M' : v>=1e3 ? '$'+Math.round(v/1e3)+'k' : '$'+Math.round(v); }
 function num(v){ return v==null ? '—' : Math.round(v).toLocaleString(); }
 function esc(s){ return s==null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
-function bgFor(st){ return COLOR[st]; }   // 'being updated' shares the active colour; a dashed outline marks it (class upd)
+const SPLIT = `linear-gradient(135deg,${'#2171b5'} 0 50%,${'#9ecae1'} 50% 100%)`;   // 'being updated': half active, half development
+function bgFor(st){ return st==='updating' ? SPLIT : COLOR[st]; }
 function badge(st, label){ st = st || 'development'; const cls = st==='active' ? 'endorsed' : st==='updating' ? 'updating' : 'development'; return `<span class='badge b-${cls}'>${esc(label || KBLABEL[st] || st.replace(/_/g,' '))}</span>`; }
 function verBadge(st){ st=st||''; const m = {endorsed:'endorsed', superseded:'superseded', development:'development', 'pre-development':'pre-development', retired:'retired'};
   const lbl = {development:'in development', 'pre-development':'pre-development'}[st] || st || '?';
@@ -1462,7 +1461,7 @@ function worldLegend(){
   const nAct = fws.reduce((s,f)=>s+f.n_act,0), nNow = fws.filter(f=>f.ring==='now').length;
   legend.innerHTML = `<b>Framework</b><br>`
     + `<span class='dot' style='background:${COLOR.active}'></span>Active (${n('active')}) — latest version endorsed, not fully triggered<br>`
-    + `<span class='dot upd' style='background:${COLOR.updating};margin-right:9px'></span>Being updated (${n('updating')}) — endorsed framework: fully triggered, expired, or a new version in the works<br>`
+    + `<span class='dot' style='background:${SPLIT}'></span>Being updated (${n('updating')}) — endorsed framework: fully triggered, expired, or a new version in the works<br>`
     + `<span class='dot' style='background:${COLOR.development}'></span>In development (${n('development')}) — no endorsed version yet<br>`
     + `<span class='dot' style='background:#e3322d;width:11px;height:11px;border:2px solid #fff'></span>Activated — a dot per activation (${nAct})<br>`
     + `<span class='dot' style='background:#fff;width:12px;height:12px;border:2.5px solid #f5a300'></span>Currently monitored — in season (${CURMONTH}), pulsing (${nNow})<br>`
