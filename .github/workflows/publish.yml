@@ -1,12 +1,22 @@
 # Rebuild and publish the site so it never drifts from the database and the knowledge base.
 # Runs nightly, on every push to main that touches the build, by hand, and whenever the
 # knowledge base tells us it changed (repository_dispatch from ds-knowledge-base).
+#
+# Data path (2026-09-24): the dev DB is losing public network access, so this job never
+# talks to it. The Databricks job `AA Tracking Nightly` (databricks.yml, 03:30 UTC)
+# snapshots the whole `aa` schema to the dev blob; this workflow restores that snapshot
+# into a throwaway Postgres service container and builds against localhost. The build
+# scripts are unchanged — the stratus env vars just point at the container.
 name: Publish site
 
 on:
   schedule:
-    - cron: "17 4 * * *"          # daily, 04:17 UTC
+    - cron: "17 4 * * *"          # daily, 04:17 UTC (snapshot lands 03:30 UTC)
   workflow_dispatch:
+    inputs:
+      snapshot:
+        description: "Snapshot to build from: latest or YYYY-MM-DD"
+        default: latest
   repository_dispatch:
     types: [kb-updated, data-updated]
   push:
@@ -24,6 +34,22 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 150
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      # the throwaway Postgres above, through the usual stratus variables
+      DSCI_AZ_DB_DEV_HOST: localhost
+      DSCI_AZ_DB_DEV_UID: postgres
+      DSCI_AZ_DB_DEV_PW: postgres
+      DSCI_AZ_DB_DEV_UID_WRITE: postgres
+      DSCI_AZ_DB_DEV_PW_WRITE: postgres
+      PGSSLMODE: disable
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,20 +72,21 @@ jobs:
           key: geo-${{ github.run_id }}
           restore-keys: geo-
       - run: uv sync
+      - name: Restore the aa schema from the blob snapshot
+        env:
+          DSCI_AZ_BLOB_DEV_SAS: ${{ secrets.DSCI_AZ_BLOB_DEV_SAS }}
+        run: |
+          test -n "$DSCI_AZ_BLOB_DEV_SAS" || { echo "::error::DSCI_AZ_BLOB_DEV_SAS org secret is not visible to this repo"; exit 1; }
+          uv run python scripts/restore_snapshot.py --snapshot "${{ github.event.inputs.snapshot || 'latest' }}"
       - name: Build, encrypt and publish
         env:
           KB_DIR: ${{ github.workspace }}/kb
-          PGSSLMODE: require
-          DSCI_AZ_DB_DEV_HOST: ${{ secrets.DSCI_AZ_DB_DEV_HOST }}
-          DSCI_AZ_DB_DEV_UID: ${{ secrets.DSCI_AZ_DB_DEV_UID }}
-          DSCI_AZ_DB_DEV_PW: ${{ secrets.DSCI_AZ_DB_DEV_PW }}
           EXTRACT_TOKEN: ${{ secrets.EXTRACT_TOKEN }}
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
         run: |
           # never publish pages without the proxy token: the data-entry and admin pages would go dark
           test -n "$EXTRACT_TOKEN" || { echo "::error::EXTRACT_TOKEN secret is not set"; exit 1; }
           test -n "$SITE_PASSWORD" || { echo "::error::SITE_PASSWORD secret is not set"; exit 1; }
-          test -n "$DSCI_AZ_DB_DEV_PW" || { echo "::error::DSCI_AZ_DB_DEV_* org secrets are not visible to this repo"; exit 1; }
           git config user.name "aa-tracking-bot"
           git config user.email "aa-tracking-bot@users.noreply.github.com"
           bash scripts/publish.sh

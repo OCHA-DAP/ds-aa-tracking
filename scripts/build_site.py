@@ -10,6 +10,7 @@ README) — nothing in site_build/ is committed or served unencrypted.
 """
 
 import html
+import json
 import os
 import sys
 from datetime import date
@@ -26,6 +27,15 @@ from ds_aa_tracking import schema as trk_schema  # noqa: E402
 
 OUT = Path(__file__).parents[1] / "site_build"
 OUT.mkdir(exist_ok=True)
+
+# When the build runs from a restored blob snapshot (restore_snapshot.py), the manifest
+# says when the data was taken; against the live DB there is none and the stamp is
+# "live". SNAPSHOT_MANIFEST overrides the default location.
+_MANIFEST = Path(os.environ.get("SNAPSHOT_MANIFEST",
+                                Path(__file__).parents[1] / "data" / "snapshot_manifest.json"))
+SNAPSHOT_AT = (json.loads(_MANIFEST.read_text()).get("snapshot_at", "")[:16].replace("T", " ")
+               if _MANIFEST.exists() else "")
+DATA_STAMP = (f"data snapshot {SNAPSHOT_AT} UTC" if SNAPSHOT_AT else "live dev DB")
 
 CSS = """
 :root { --accent:#007ce0; --muted:#666; }
@@ -122,7 +132,7 @@ def page(name, title, body):
 <script>{FILTER_JS}</script></head><body>
 {NAV}<main><h1>{html.escape(title)}</h1>
 <p class="meta">Generated {date.today().isoformat()} from the dev <code>aa</code> schema
-· internal review only</p>
+({DATA_STAMP}) · internal review only</p>
 {body}</main></body></html>"""
     (OUT / name).write_text(doc)
     print(f"  {name}")
