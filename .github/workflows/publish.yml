@@ -72,6 +72,8 @@ jobs:
           key: geo-${{ github.run_id }}
           restore-keys: geo-
       - run: uv sync
+      - name: Install graphviz (schema ERD)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz >/dev/null
       - name: Restore the aa schema from the blob snapshot
         env:
           DSCI_AZ_BLOB_DEV_SAS: ${{ secrets.DSCI_AZ_BLOB_DEV_SAS }}
