@@ -30,11 +30,22 @@ KB_REPO = "https://github.com/OCHA-DAP/ds-knowledge-base.git"
 
 
 def _checkout_root() -> Path:
-    """spark_python_task's exec context doesn't always define __file__."""
+    """The repo checkout: walk up from every hint (spark_python_task's exec context
+    doesn't reliably define __file__, and its value isn't always the script path)
+    until a directory holding both src/ and scripts/ appears."""
+    hints = []
     try:
-        return Path(__file__).resolve().parents[1]  # noqa: F821
+        hints.append(Path(__file__).resolve())  # noqa: F821
     except NameError:
-        return Path.cwd()
+        pass
+    if sys.argv and sys.argv[0]:
+        hints.append(Path(sys.argv[0]).resolve())
+    hints.append(Path.cwd())
+    for h in hints:
+        for d in [h, *h.parents]:
+            if (d / "src").is_dir() and (d / "scripts").is_dir():
+                return d
+    raise SystemExit(f"cannot find the repo root from {[str(h) for h in hints]}")
 
 
 # Under `source: GIT` the checkout lives on the workspace filesystem (wsfs), whose
