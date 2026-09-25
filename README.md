@@ -11,7 +11,10 @@ CERF OneGMS mirror (`ds-cerf-supplement`). It adds:
   pipeline (early conversations → active → dormant/expired), status snapshots over time,
   focal points, trigger-window calendar
 - **funding**: pre-arranged amounts per year and fund source, co-financing,
-  sector-level pre-arranged budgets
+  sector-level pre-arranged budgets; donor shares (`dash-donors.html`, `scripts/donors.py`):
+  each donor's share of a fund's income per fiscal year (`aa.v_contribution`, the
+  ds-cerf-supplement contribution mirrors) × the AA that fund released / pre-arranged that
+  year, plus hand-entered build earmarks (`aa.build_contribution`)
 - **activations**: the full activation-event record 2020→ (framework + ad-hoc, AA + EA,
   CERF + country/regional funds), crosswalked to KB `actual_activation` and the CERF
   mirror, with a reconciliation view for conflicts
@@ -57,6 +60,8 @@ CERF OneGMS mirror (`ds-cerf-supplement`). It adds:
   `/schema` `/rows` `/distinct` `/save` `/delete` for the admin page; every field change is
   audited to `aa.entry_audit`; KB-loader and OneGMS-mirror tables are read-only
 - `scripts/dashboards.py` — dashboards, per-framework pages, explorer, entry forms
+- `scripts/donors.py` — the donor-shares page (reads `dashboards.funding_series`, so its
+  released / pre-arranged totals are the Funding page's)
 - `scripts/landing.py` — landing map (base: Natural Earth 1:50m simplified as one topology so
   borders stay shared; zoom: FieldMaps edge-matched COD-AB for every country in view): zoom
   to a country, subnational scope per framework

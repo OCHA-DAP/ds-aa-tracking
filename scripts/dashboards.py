@@ -78,7 +78,7 @@ function mkChart(id, type, labels, datasets, opts={}){
   if(el._chart) el._chart.destroy();
   const horiz = opts.extra && opts.extra.indexAxis === 'y';
   const valAxis = {stacked:!!opts.stacked, ticks:{callback:v=>opts.count?v:money(v)}, grid:{color:'#f0f0f0'}};
-  const catAxis = {stacked:!!opts.stacked, grid:{display:false}};
+  const catAxis = {stacked:!!opts.stacked, grid:{display:false}, ticks:{autoSkip:!opts.allLabels}};
   el._chart = new Chart(el, { type, data:{labels, datasets}, options:{
     responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
     scales: opts.noscale?{}:(horiz ? {x:valAxis, y:catAxis} : {x:catAxis, y:valAxis}),
@@ -211,7 +211,7 @@ def _fetch(e):
     # draws on it (= a row in activation_funding, entered by hand), then it is disbursed.
     d["cbpf_aa"] = pd.read_sql(
         """SELECT v.allocation_code, v.fund_type, v.fund_name, v.year, v.amount_usd,
-                  fu.country_iso3, (af.allocation_code IS NOT NULL) AS linked,
+                  fu.country_iso3, fu.fund_code, (af.allocation_code IS NOT NULL) AS linked,
                   left(v.title, 120) AS title
            FROM aa.v_allocation v
            LEFT JOIN aa.fund fu
@@ -263,6 +263,25 @@ def _fetch(e):
     d["act_url"] = pd.read_sql(
         """SELECT country_iso3, hazard, event_date, window_name, url
            FROM aa.window_activation WHERE url IS NOT NULL""", e)
+    # donor contributions to the funds (OneGMS mirrors, ds-cerf-supplement) and donor
+    # earmarks to the OCHA AA project (hand-entered) — the donor-shares page. Tolerant of
+    # a snapshot taken before the mirror existed: the page then says so.
+    try:
+        d["contrib"] = pd.read_sql(
+            """SELECT v.fund_type, v.fund_name, v.donor, v.donor_type, v.year,
+                      v.paid_usd, v.pledged_usd,
+                      CASE WHEN v.fund_type = 'cerf' THEN 'cerf' ELSE fu.fund_code END
+                          AS fund_code
+               FROM aa.v_contribution v
+               LEFT JOIN aa.fund fu ON fu.pf_id = v.pooled_fund_id
+               WHERE v.year >= 2020""", e)
+        d["build"] = pd.read_sql(
+            "SELECT donor, year, amount_usd, purpose, source FROM aa.build_contribution", e)
+    except Exception as exc:  # missing view/table in an older snapshot
+        print(f"  donor shares: contribution tables unavailable ({exc.__class__.__name__})")
+        d["contrib"] = pd.DataFrame(columns=["fund_type", "fund_name", "donor", "donor_type",
+                                             "year", "paid_usd", "pledged_usd", "fund_code"])
+        d["build"] = pd.DataFrame(columns=["donor", "year", "amount_usd", "purpose", "source"])
     return d
 
 
@@ -282,8 +301,11 @@ def _records(df, cols=None):
     return json.dumps(json.loads(df.to_json(orient="records")), default=str)
 
 
-# ------------------------------------------------------------------ funding
-def build_funding(page, d):
+def funding_series(d):
+    """The annual series the Funding page charts — and the donor-shares page attributes.
+    pre: pre-arranged rows per framework-year (sheets/KB/entries, canonical) plus
+    AA-tagged CBPF/RhPF allocations from the OneGMS mirror (specific fund_code where
+    aa.fund knows the pooled fund). act: allocation drawn per activation × fund."""
     pre = d["prearranged"].copy()
     pre["hz"] = pre["hazard"].map(haz)
     cur = d["current"]
@@ -293,8 +315,6 @@ def build_funding(page, d):
                      zip(pre["country_iso3"], pre["hazard"])]
     act = d["activation"].copy()
     act["hz"] = act["hazard"].map(haz)
-    ver = d["versions"].copy()
-    ver["year"] = pd.to_datetime(ver["valid_from"]).dt.year
     gho = d["gho"]
     gho_set = set(map(tuple, gho.loc[gho["in_gho"], ["country_iso3", "year"]].values))
     pre["in_gho"] = [
@@ -315,7 +335,8 @@ def build_funding(page, d):
     cb["region"] = cb["country_iso3"].map(
         dict(zip(cur["country_iso3"], cur["region"]))).fillna("?")
     cb["kind"] = "prearranged"
-    cb["fund_code"] = cb["fund_type"].map({"regional_fund": "rhpf"}).fillna("cbpf")
+    cb["fund_code"] = cb["fund_code"].fillna(
+        cb["fund_type"].map({"regional_fund": "rhpf"}).fillna("cbpf"))
     cb["financier"] = cb["fund_name"]
     cb["source"] = "onegms-mirror"
     cb["in_gho"] = [(c, y) in gho_set for c, y in zip(cb["country_iso3"], cb["year"])]
@@ -324,6 +345,15 @@ def build_funding(page, d):
                 & pd.Series([(c, y) in mirror_cy for c, y in
                              zip(pre["country_iso3"], pre["year"])], index=pre.index))]
     pre = pd.concat([pre, cb[pre.columns]], ignore_index=True)
+    return pre, act
+
+
+# ------------------------------------------------------------------ funding
+def build_funding(page, d):
+    pre, act = funding_series(d)
+    cur = d["current"]
+    ver = d["versions"].copy()
+    ver["year"] = pd.to_datetime(ver["valid_from"]).dt.year
 
     # pre-arranged NOW under the convention: every non-retired framework keeps its latest
     # version's envelope ('all' totals dropped where the fund split exists)
@@ -422,8 +452,9 @@ draw();"""
     _dash_page(page, "dash-funding.html", "Funding",
                "<b>The funding block of anticipatory action.</b> Pre-arranged and "
                "disbursed AA money across CERF, CBPFs and regional funds — filter by "
-               "hazard, region, GHO context; toggle cumulative. Donor contributions to "
-               "the funds are the next addition. Internal: "
+               "hazard, region, GHO context; toggle cumulative. "
+               "<a href='dash-donors.html'>Donor shares</a> attribute this money to the "
+               "donors of each fund. Internal: "
                "<a href='dash-allocations.html'>allocation explorer</a> · "
                "<a href='questions.html'>coverage of the CERF key data points</a>.",
                panels, json.dumps(data, default=str), js)
@@ -966,6 +997,7 @@ def build_hub(page, d, fw_links):
 built to the CERF key-data-points list (<a href='questions.html'>coverage map</a>).
 <div class='tiles'>
 <div class='tile'><a href='dash-funding.html'><b>Funding</b></a><div class='l'>pre-arranged & disbursed, by year/hazard/region/fund, GHO, cumulative</div></div>
+<div class='tile'><a href='dash-donors.html'><b>Donor shares</b></a><div class='l'>each donor's share of AA released / pre-arranged, via their contributions to CERF and the CBPFs; build earmarks</div></div>
 <div class='tile'><a href='dash-allocations.html'><b>Allocation explorer</b></a><div class='l'>query every CERF + CBPF allocation 2006→; complementarity; timeliness</div></div>
 <div class='tile'><a href='dash-delivery.html'><b>Delivery & people</b></a><div class='l'>subgrants, localization, agencies, sectors, CVA, people reached</div></div>
 </div></div>
@@ -1947,6 +1979,8 @@ def build_all(e, page, tbl):
     build_learning(page, d)
     build_allocations(page, d)
     build_delivery(page, d)
+    import donors
+    donors.build_donors(page, d)
     build_questions(page)
     links = build_framework_pages(page, tbl, d)
     build_hub(page, d, links)

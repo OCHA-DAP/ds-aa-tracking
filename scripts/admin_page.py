@@ -24,7 +24,8 @@ PROXY_URL = "https://chd-ds-aa-extract.azurewebsites.net"
 GROUPS = [
     ("Frameworks & tracking", "ds-aa-tracking", [
         "country_hazard", "framework_version", "framework_status", "framework_focal_point",
-        "framework_calendar", "fund", "window_status", "window_funding", "window_activation",
+        "framework_calendar", "fund", "build_contribution", "window_status", "window_funding",
+        "window_activation",
         "adhoc_activation",
         "activation_funding", "people_covered", "plan_inclusion", "report_channel_inclusion",
         "start_network", "cirv", "emergency_type_override",
@@ -38,7 +39,8 @@ GROUPS = [
     ("OneGMS mirrors (read-only)", "ds-cerf-supplement", [
         "cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country",
         "cerf_allocation_storm", "cerf_supplement", "cbpf_fund", "cbpf_allocation",
-        "cbpf_project", "cbpf_project_cluster", "cbpf_project_subip"]),
+        "cbpf_project", "cbpf_project_cluster", "cbpf_project_subip",
+        "cerf_contribution", "cbpf_contribution"]),
     ("Legacy — pre window-first (read-only history)", "retired", [
         "zz_legacy_activation", "zz_legacy_prearranged_funding",
         "zz_legacy_prearranged_sector_budget", "zz_legacy_entered_version_funding"]),

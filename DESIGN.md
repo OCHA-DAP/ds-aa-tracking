@@ -307,6 +307,15 @@ aa.activation_funding         one row per activation × fund, either kind of act
   until an activation draws on it (a hand-entered `activation_funding` row), then as
   disbursed. `country_hazard.technical_support` marks frameworks OCHA supported without a
   funding commitment.
+- Donor shares (2026-09-25): contributions per fund × donor × fiscal year come from the
+  OneGMS mirrors (`aa.cerf_contribution`, `aa.cbpf_contribution`, union `aa.v_contribution`,
+  ds-cerf-supplement PR #129). A donor's share of a fund-year = paid ÷ fund income that year
+  (cash basis, pledges excluded); applied to the Funding page's own annual released and
+  pre-arranged series (`dashboards.funding_series`), so the totals agree by construction.
+  AA money on a fund-year with no contribution rows (e.g. `cbpf-unspecified`) is reported as
+  unattributable, never spread. Build earmarks to the OCHA AA project are hand-entered
+  (`aa.build_contribution`) and shown directly. Computed client-side on `dash-donors.html`;
+  a SQL view (`v_donor_aa_share`) is the natural next step once the series are stored.
 - Public site (2026-09-21): nav = Map · Funding · Model · Plan · Learning (the building
   blocks of AA) with everything internal behind one menu; the framework sidebar leads
   with the same three blocks (+ Learning when there is material). Publishing is automated

@@ -54,13 +54,13 @@ const READONLY_TABLES = new Set([
   "activation_allocation", "version_performance_reported",
   // ds-cerf-supplement OneGMS mirrors
   "cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country",
-  "cerf_allocation_storm", "cerf_supplement",
+  "cerf_allocation_storm", "cerf_supplement", "cerf_contribution",
 ]);
 const READONLY_PREFIXES = ["cbpf_", "zz_legacy_"];
 const TABLE_OWNER = (t) =>
   t.startsWith("zz_legacy_") ? "retired" :
   READONLY_PREFIXES.some((p) => t.startsWith(p)) || t.startsWith("cerf_allocation_storm") ||
-  ["cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country", "cerf_supplement"].includes(t)
+  ["cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country", "cerf_supplement", "cerf_contribution"].includes(t)
     ? "ds-cerf-supplement"
     : ["window", "simulated_activation", "funding_breakdown", "actual_activation",
        "activation_allocation", "version_performance_reported"].includes(t)

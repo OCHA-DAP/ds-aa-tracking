@@ -175,6 +175,21 @@ TABLES = {
     # one of the version's windows (aa.window / entered_window) — 'unspecified' stays
     # allowed for sheet-era rows until curated. Ad hoc / early-action allocations live in
     # adhoc_activation, off the (country, hazard) pair.
+    # donor earmarks to the OCHA AA project itself ("build" money) — not pooled-fund
+    # income, so not in the contribution mirrors; a handful of rows a year, hand-entered
+    # (admin page). Donor names follow aa.v_contribution.donor so the donor dashboard
+    # can line them up with the pooled-fund shares.
+    "build_contribution": """
+        CREATE TABLE IF NOT EXISTS aa.build_contribution (
+            donor text NOT NULL,
+            year smallint NOT NULL,
+            amount_usd numeric,
+            purpose text NOT NULL DEFAULT 'OCHA AA project',
+            source text NOT NULL,
+            note text,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            UNIQUE NULLS NOT DISTINCT (donor, year, purpose, source)
+        )""",
     "window_activation": """
         CREATE TABLE IF NOT EXISTS aa.window_activation (
             country_iso3 text NOT NULL,
