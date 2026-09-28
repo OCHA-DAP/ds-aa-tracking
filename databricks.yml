@@ -33,10 +33,7 @@ resources:
   jobs:
     aa_tracking_nightly:
       name: AA Tracking Nightly (KB sync + aa snapshot)
-      description: >-
-        Upserts new knowledge-base framework pages into aa.framework_version, then
-        snapshots the whole dev `aa` schema (parquet + DDL) to the dev blob under
-        projects/ds-aa-tracking/snapshot/ for the GitHub Actions site build.
+      description: "Sync knowledge base framework versions into the aa schema and snapshot it to blob"
       permissions:
         - group_name: dsci
           level: CAN_MANAGE
@@ -52,7 +49,8 @@ resources:
       max_concurrent_runs: 1
       tags:
         databricks: job
-        type: aa-tracking
+        type: schema-owner
+        kb: aa-tracking
         output_schema: aa.framework_version,aa.country_hazard,aa.entry_audit
         output_blob: projects/ds-aa-tracking/snapshot
       email_notifications:
