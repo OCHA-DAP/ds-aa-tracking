@@ -195,6 +195,21 @@ def _backfill_years(pre, e, first_year=2020):
            WHERE r.retired GROUP BY 1, 2""", e)
     last_live = {(r.country_iso3, r.hazard): r.last_live for r in ret.itertuples()}
     fund_of = {"cerf": "cerf", "cbpf": "cbpf-unspecified", "rhpf": "rhpf"}
+    # frontmatter names pooled funds by acronym (AHF, NHF, YHF; FHRAOC = the West & Central
+    # Africa regional fund): resolve to the country's fund in aa.fund
+    reg = pd.read_sql("SELECT fund_code, fund_type, country_iso3 FROM aa.fund", e)
+    cbpf_by_c = {r.country_iso3: r.fund_code for r in reg.itertuples() if r.fund_type == "cbpf" and r.country_iso3}
+    rhpf_by_c = {r.country_iso3: r.fund_code for r in reg.itertuples() if r.fund_type == "regional_fund" and r.country_iso3}
+
+    def resolve(key, c):
+        k = str(key).strip().lower()
+        if k in fund_of:
+            return fund_of[k]
+        if k in ("fhraoc", "rhpf-wca", "rhpf") or k.startswith(("rhpf", "fhr")):
+            return rhpf_by_c.get(c, "rhpf")
+        if k.endswith("hf") or "cbpf" in k:
+            return cbpf_by_c.get(c, "cbpf-unspecified")
+        return k
     have = set(zip(pre["country_iso3"], pre["hazard"], pre["year"].astype(int)))
     today = dt.date.today()
     rows = []
@@ -221,7 +236,7 @@ def _backfill_years(pre, e, first_year=2020):
             if len(e_v):
                 amounts = [(x.fund_code, float(x.total_usd)) for x in e_v.itertuples()]
             elif isinstance(by_source, dict) and by_source:
-                amounts = [(fund_of.get(str(k).lower(), str(k).lower()), float(a))
+                amounts = [(resolve(k, c), float(a))
                            for k, a in by_source.items() if a is not None]
             elif pd.notna(v["prearranged_usd_doc"]):
                 amounts = [("cerf", float(v["prearranged_usd_doc"]))]
@@ -501,6 +516,7 @@ def _fetch(e):
                         LEFT JOIN aa.fund fu ON fu.pf_id = p.pooled_fund_id
                         WHERE a.aa_keyword AND p.budget IS NOT NULL GROUP BY 1, 2, 3""",
          ["year", "fund_code", "org_type", "usd"])
+    d["fund_names"] = pd.read_sql("SELECT fund_code, fund_type, name FROM aa.fund", e)
     return d
 
 
@@ -643,9 +659,20 @@ def _money_flows(d, pre, act):
                 continue
             for (_, _, grp), v in o.items():
                 add(y, "f", fid, "a:CBPF grantees: " + grp, v / osum * total)
+    import re as _re
+    reg = d.get("fund_names")
     for fc in {f for f, _ in tot.index}:
-        if fc not in names and str(fc).startswith("rhpf-"):
+        if fc in names:
+            continue
+        hit = reg[reg["fund_code"] == fc] if reg is not None else None
+        if hit is not None and len(hit):
+            nm = str(hit["name"].iloc[0])
+            names[fc] = nm if hit["fund_type"].iloc[0] != "cbpf" or "hpf" in nm.lower() else f"{nm} CBPF"
+        elif str(fc).startswith("rhpf-"):
             names[fc] = "Regional fund " + str(fc)[5:].upper()
+        else:
+            names[fc] = str(fc).upper()
+    names = {k: _re.sub(r"rhpf", "RhPF", v, flags=_re.I) for k, v in names.items()}   # one spelling
     years = sorted({r["y"] for r in rows})
     done =[y for y in years if y <= _dt.date.today().year - 1]
     default = done[-1] if done else (years[-1] if years else None)
