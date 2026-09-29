@@ -702,8 +702,12 @@ def assemble(d, e):
                   a.people_targeted, a.comments
            FROM aa.activation a ORDER BY a.event_date DESC""", e)
     actf = pd.read_sql(
-        """SELECT country_iso3, hazard, event_date, window_name, event_label, event_type,
-                  fund_code, allocation_code, amount_usd FROM aa.activation_funding""", e)
+        """SELECT f.country_iso3, f.hazard, f.event_date, f.window_name, f.event_label,
+                  f.event_type, f.fund_code, f.allocation_code, f.amount_usd, c.year AS alloc_year
+           FROM aa.activation_funding f
+           LEFT JOIN (SELECT DISTINCT ON (application_code) application_code, year
+                      FROM aa.cerf_allocation ORDER BY application_code, year) c
+             ON c.application_code = f.allocation_code""", e)
     aurl = pd.read_sql(
         """SELECT kb_framework, event_date, country_iso3, url, released_usd, full_activation, note
            FROM aa.actual_activation""", e)
@@ -813,7 +817,7 @@ def assemble(d, e):
                       & kb_key_match(sim["version"], v.version)]
             backtest = None
             if len(s_v):
-                wins_bt = [w.window_name for w in w_v.itertuples()] or sorted(s_v["window_name"].unique())
+                wins_bt = list(dict.fromkeys(w.window_name for w in w_v.itertuples())) or sorted(s_v["window_name"].unique())
                 per_event = bool(s_v["event_label"].notna().any())   # numpy bool -> str under default=str
                 rows = {}
                 for sr in s_v.itertuples():
@@ -843,6 +847,9 @@ def assemble(d, e):
                          .groupby(["sector", "fund_source"], dropna=False)["amount_usd"].sum()
                          .reset_index()) if len(f_v) else pd.DataFrame()
             by_fund = (f_v.groupby("fund_source", dropna=False)["amount_usd"].sum()
+                       .reset_index()) if len(f_v) else pd.DataFrame()
+            by_pair = (f_v.dropna(subset=["agency", "sector"])
+                       .groupby(["agency", "sector"])["amount_usd"].sum()
                        .reset_index()) if len(f_v) else pd.DataFrame()
             scope_raw = fm.get("geographic_scope") or []
             if isinstance(scope_raw, str):
@@ -883,6 +890,8 @@ def assemble(d, e):
                                 "usd": float(x.amount_usd)} for x in by_sector.itertuples()],
                     "fund": [{"fund": _s(x.fund_source) or "unspecified", "usd": float(x.amount_usd)}
                              for x in by_fund.itertuples()],
+                    "pair": [{"agency": _s(x.agency), "sector": _s(x.sector), "usd": float(x.amount_usd)}
+                             for x in by_pair.itertuples()],
                 },
                 "admin_level": fm.get("admin_level") if isinstance(fm.get("admin_level"), int) else None,
                 "scope_raw": [str(x) for x in scope_raw],
@@ -926,7 +935,13 @@ def assemble(d, e):
                 "released": _num(u["released_usd"]) if u is not None else None,
                 "full": _f(u["full_activation"]) if u is not None else None,
                 "funding": [{"fund": x.fund_code, "code": _s(x.allocation_code),
-                             "usd": _num(x.amount_usd)} for x in fr.itertuples()],
+                             "usd": _num(x.amount_usd),
+                             # the allocation's public CERF page (year = allocation year)
+                             "cerf_url": (f"https://cerf.un.org/what-we-do/allocation/"
+                                          f"{int(x.alloc_year)}/summary/{x.allocation_code}"
+                                          if x.fund_code == "cerf" and _s(x.allocation_code)
+                                          and pd.notna(x.alloc_year) else None)}
+                            for x in fr.itertuples()],
             })
 
         # the map and the sidebar default to the MOST RECENT version (as the KB map does);
@@ -1200,6 +1215,7 @@ window.WORLD = {json.dumps(wdata, separators=(",", ":"))};
 window.VB = {{w:{VB_W:.2f}, h:{VB_H:.2f}}}; window.EEBOX = {json.dumps([round(x, 6) for x in EE_BBOX])};
 window.EE = {{lam0:{EE_LAM0}, smax:{S_MAX_DEG}}};
 window.CURMONTH = {json.dumps(TODAY.strftime("%B %Y"))};</script>
+<script src="sankey.js"></script>
 <script>{LANDING_JS}</script>
 <style>{LANDING_CSS}</style>"""
     page("index.html", "OCHA Anticipatory Action — portfolio", body)
@@ -1283,7 +1299,15 @@ LANDING_CSS = r"""
   100% { box-shadow: 0 0 0 2px #f5a300, 0 0 0 11px rgba(245,163,0,0), 0 1px 3px rgba(0,0,0,.4); } }
 .iconbox.able-now { box-shadow:0 0 0 2px #f5a300, 0 1px 3px rgba(0,0,0,.4); animation:ablepulse 1.1s ease-out infinite; }
 .iconbox.able-off { box-shadow:0 0 0 2px #f6c95f, 0 1px 3px rgba(0,0,0,.4); }
-.actdots { position:absolute; top:-5px; right:-4px; display:flex; flex-direction:row-reverse; gap:1px; }
+.actdots { position:absolute; right:-4px; bottom:calc(100% - 5px); width:31px; display:flex; flex-direction:row-reverse; flex-wrap:wrap-reverse; gap:1px; pointer-events:none; }
+.rm { display:inline-block; width:9px; height:9px; border-radius:50%; background:#e3322d; box-shadow:0 0 0 1.5px #fff, 0 0 0 2.5px #e3322d; margin:0 3px; vertical-align:-1px; }
+.rm.old { background:#fff; box-shadow:none; border:2px solid #e3322d; width:6px; height:6px; }
+a.rm:hover { transform:scale(1.3); }
+table.bt { table-layout:fixed; width:100%; } table.bt th.bt-c { font-size:10.5px; line-height:1.2; white-space:normal; }
+.bt-key { margin:4px 0 8px; color:#64748b; }
+table.acttbl { table-layout:fixed; width:100%; } table.acttbl td, table.acttbl th { overflow-wrap:anywhere; vertical-align:top; }
+table.acttbl tr.oldv td { background:#f8fafc; }
+.fhead .actdots, .wl-pin .actdots { display:none; }
 .actdot { width:7px; height:7px; border-radius:50%; background:#e3322d; border:1.5px solid #fff; display:inline-block; }
 .maplegend { position:absolute; left:12px; bottom:12px; font-size:11.5px; line-height:1.55; background:rgba(255,255,255,.86); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); padding:9px 12px;
   border-radius:10px; box-shadow:0 1px 2px rgba(16,24,40,.08), 0 6px 18px -8px rgba(16,24,40,.25); border:1px solid rgba(226,232,240,.9); z-index:3; color:#334155; transition: opacity .3s; }
@@ -1437,7 +1461,7 @@ function verBadge(st){ st=st||''; const m = {endorsed:'endorsed', superseded:'su
 function hzColor(h){ return HAZ[h] || '#7a8699'; }
 function iconHTML(f, extra=''){ const ps = pinStyle(f); return `<span class='iconbox ${f.ring==='now'?'able-now':''} ${ps.cls} ${extra}' style='background:${ps.bg}' data-hz='${f.hazard}'>`
   + `<svg viewBox='0 0 24 24' class='hz'>${GLYPH[f.glyph]||GLYPH.other}</svg>`
-  + (f.n_act ? `<span class='actdots'>${'<span class="actdot"></span>'.repeat(Math.min(f.n_act,6))}</span>` : '') + `</span>`; }
+  + (f.n_act ? `<span class='actdots' title='${f.n_act} activation${f.n_act>1?'s':''}'>${'<span class="actdot"></span>'.repeat(Math.min(f.n_act,16))}</span>` : '') + `</span>`; }
 // ---------- projections
 // World: Equal Earth (UN GA A/80/L.104, Sep 2026), centred on EE.lam0, fitted to the view box.
 // Country: local equirectangular fit (cos-lat corrected). Zooming MORPHS one into the other.
@@ -1637,7 +1661,7 @@ function worldLegend(){
     + `<span><span class='dot' style='background:${SPLIT}'></span>Being updated <span class='cnt'>${n('updating')}</span></span>`
     + `<span><span class='dot' style='background:${COLOR.development}'></span>In development <span class='cnt'>${n('development')}</span></span></div>`;
   legend.innerHTML = `<div class='layerctl' role='group' aria-label='Map layers'>` + row('framework') + st + row('adhoc') + row('retired') + row('tech') + `</div>`
-    + `<div class='lsub'><span><span class='dot' style='background:#e3322d'></span>Activated <span class='cnt'>${nAct}</span></span>`
+    + `<div class='lsub'><span><span class='dot' style='background:#e3322d'></span>Activations <span class='cnt'>${nAct}</span></span>`
     + `<span><span class='dot' style='background:#fff;border:2.5px solid #f5a300;box-sizing:border-box'></span>Monitored now <span class='cnt'>${nNow}</span></span></div>`;
 }
 // what a list of map entries is called: frameworks, unless some are ad hoc allocations or technical support
@@ -1683,7 +1707,8 @@ function buildCallouts(){
     if(!c.centroid || !fws.length) return;
     const el = document.createElement('div'); el.className = 'callout';
     el.innerHTML = `<span class='cname' data-iso='${iso}'>${esc(c.name)}</span>` +
-      fws.map(f => `<span class='hrow'>${iconHTML(f)}<span class='hlab'>${esc(f.hz_label)}</span></span>`).join('');
+      fws.map(f => { const extra = Math.ceil(Math.min(f.n_act||0,16)/4) - 1;   // stacked activation-dot rows need head room
+        return `<span class='hrow'${extra>0?` style='margin-top:${extra*11}px'`:''}>${iconHTML(f)}<span class='hlab'>${esc(f.hz_label)}</span></span>`; }).join('');
     el.querySelector('.cname').onclick = e => { e.stopPropagation(); selectCountry(iso); };
     el.querySelectorAll('.iconbox').forEach(ib => { ib.onclick = e => { e.stopPropagation(); selectCountry(iso, ib.dataset.hz); };
       ib.onmouseenter = ev => { const f = c.fws.find(x=>x.hazard===ib.dataset.hz); const nA = f.n_act_all; showTip(ev, `${c.name} — ${f.hz_label}: ${f.disp_label}${f.tech?' · technical support':''}${nA?` · ${nA} activation${nA>1?'s':''}`:''}`); };
@@ -1732,6 +1757,50 @@ function separate(iters, W, H){
   }
   return false;
 }
+// leader-line tidy-up: a leader should not cross another leader nor run through another
+// label. Swap the positions of two labels whenever that lowers the total count, then let
+// the overlap pass settle; stop when a full sweep changes nothing.
+function anchorOf(Lb){ return [Lb.cx-Lb.w/2+Lb.iox, Lb.cy-Lb.h/2+Lb.ioy]; }
+function segCross(p1, p2, p3, p4){
+  const d = (a,b,c) => (c[0]-a[0])*(b[1]-a[1]) - (b[0]-a[0])*(c[1]-a[1]);
+  const d1 = d(p3,p4,p1), d2 = d(p3,p4,p2), d3 = d(p1,p2,p3), d4 = d(p1,p2,p4);
+  return ((d1>0&&d2<0)||(d1<0&&d2>0)) && ((d3>0&&d4<0)||(d3<0&&d4>0)); }
+function segHitsBox(p, q, Lb){
+  const x1 = Lb.cx-Lb.w/2, y1 = Lb.cy-Lb.h/2, x2 = x1+Lb.w, y2 = y1+Lb.h;
+  if(Math.max(p[0],q[0]) < x1 || Math.min(p[0],q[0]) > x2 || Math.max(p[1],q[1]) < y1 || Math.min(p[1],q[1]) > y2) return false;
+  const c = [[x1,y1],[x2,y1],[x2,y2],[x1,y2]];
+  for(let i=0;i<4;i++) if(segCross(p, q, c[i], c[(i+1)%4])) return true;
+  return false; }
+function badness(){
+  let n = 0; const A = labels.map(anchorOf);
+  for(let i=0;i<labels.length;i++){ const pi = [labels[i].px, labels[i].py];
+    for(let j=0;j<labels.length;j++){ if(i===j) continue;
+      if(j>i && segCross(pi, A[i], [labels[j].px, labels[j].py], A[j])) n += 2;
+      if(segHitsBox(pi, A[i], labels[j])) n += 1; } }
+  return n; }
+function overlaps(){ let n = 0;
+  for(let i=0;i<labels.length;i++) for(let j=i+1;j<labels.length;j++){ const a = labels[i], b = labels[j];
+    if(Math.abs(a.cx-b.cx)*2 < a.w+b.w+PAD && Math.abs(a.cy-b.cy)*2 < a.h+b.h+PAD) n++; }
+  return n; }
+function layoutScore(){ return badness() + 10*overlaps(); }
+function uncross(W, H){
+  for(let pass=0; pass<6; pass++){
+    let changed = false;
+    // candidate pairs: leaders that cross, or a leader running through the other label
+    const A = labels.map(anchorOf), cands = [];
+    for(let i=0;i<labels.length;i++) for(let j=i+1;j<labels.length;j++){
+      const a = labels[i], b = labels[j], pa = [a.px,a.py], pb = [b.px,b.py];
+      if(segCross(pa, A[i], pb, A[j]) || segHitsBox(pa, A[i], b) || segHitsBox(pb, A[j], a)) cands.push([a, b]); }
+    for(const [a, b] of cands){
+      const snap = labels.map(l => [l.cx, l.cy]), cur = layoutScore();
+      const sa = [a.cx, a.cy]; a.cx = b.cx; a.cy = b.cy; b.cx = sa[0]; b.cy = sa[1];
+      separate(300, W, H);
+      if(layoutScore() < cur) changed = true;
+      else labels.forEach((l, k) => { l.cx = snap[k][0]; l.cy = snap[k][1]; });   // keep only improvements
+    }
+    if(!changed) break;
+  }
+}
 function runLayout(){
   const r = svg.getBoundingClientRect(), W = r.width, H = r.height;
   if(!W) return;
@@ -1757,6 +1826,7 @@ function runLayout(){
     separate(10, W, H);
   }
   separate(700, W, H);
+  uncross(W, H);
   labels.forEach(Lb => {
     Lb.el.style.visibility = 'visible'; Lb.el.style.left = (Lb.cx-Lb.w/2)+'px'; Lb.el.style.top = (Lb.cy-Lb.h/2)+'px';
     Lb.ln.setAttribute('x1', Lb.px); Lb.ln.setAttribute('y1', Lb.py);
@@ -1898,10 +1968,10 @@ function pillarsBar(f, v){
   const nDocs = (f.learning_docs||[]).length + (v.learning||[]).length;
   const nPart = (v.partners||[]).length;
   const boxes = [
-    ['model', 'Model', nTrig ? `${nTrig} trigger window${nTrig>1?'s':''}` : (v.basis ? esc(v.basis) : '—'), [v.basis, v.months.length ? `${v.months.length} months monitored` : null].filter(Boolean).join(' · ')],
+    ['model', 'Model', nTrig ? `${nTrig} trigger window${nTrig>1?'s':''}` : (v.basis ? esc(v.basis) : '—'), [v.basis, v.months.length ? `${v.months.length} months monitored` : null, f.activations.length ? `${f.activations.length} activation${f.activations.length>1?'s':''}` : 'never activated'].filter(Boolean).join(' · ')],
     ['plan', 'Plan', v.agencies.length ? `${v.agencies.length} agenc${v.agencies.length>1?'ies':'y'}` : (F.agency.length ? `${new Set(F.agency.map(x=>x.agency)).size} agencies` : (nPart ? `${nPart} partner${nPart>1?'s':''}` : '—')), [v.target_people ? `${num(v.target_people)} people targeted` : (f.covered ? `${num(f.covered)} people covered` : null), nPart && (v.agencies.length || F.agency.length) ? `${nPart} partner${nPart>1?'s':''}` : null].filter(Boolean).join(' · ')],
     ['funding', 'Funding', money(v.prearranged_doc ?? v.envelope), (v.prearranged_doc ?? v.envelope) ? `pre-arranged${funds.length?' · '+funds.map(x=>x.toUpperCase().replace('CBPF-','CBPF ')).join(', '):''}` : (f.tech ? 'technical support only' : 'no figure yet')],
-    ['learning', 'Learning', nDocs ? `${nDocs} document${nDocs>1?'s':''}` : 'no documents yet', f.activations.length ? `${f.activations.length} activation record${f.activations.length>1?'s':''}` : 'never activated'],
+    ['learning', 'Learning', nDocs ? `${nDocs} document${nDocs>1?'s':''}` : 'no documents yet', 'evaluations, reviews, reports'],
   ];
   if(!PILLARS.includes(state.pillar)) state.pillar = 'model';
   return `<div class='pillars four'>` + boxes.map(([k, name, val, sub]) =>
@@ -1924,8 +1994,9 @@ function pillarBody(f, v){
     rows.push(['Monitored', `${monthStrip(v.months)}${v.months_src?` <span class='muted'>${esc(v.months_src)}</span>`:''}${v.months_note?`<div class='small' style='margin-top:3px'>${esc(v.months_note)}</div>`:''}`]);
     if(v.basis||v.indicators.length) rows.push(['Trigger basis', `${esc(v.basis||'')}${v.calibration?` · ${esc(v.calibration)}`:''}${v.indicators.length?`<div class='chips'>${v.indicators.map(i=>`<span>${esc(i)}</span>`).join('')}</div>`:''}`]);
     if(v.data_sources.length) rows.push(['Data sources', esc(v.data_sources.map(d=>typeof d==='string'?d:(d.name||d.source||JSON.stringify(d))).join(', '))]);
-    // historical activations / backtest first, then the trigger design, then the docs
-    return backtestBlock(f, v) + miniTable(rows) + triggersBlock(v) + scopeBlock(v) + techDocsBlock(v);
+    // trigger design, then (at the bottom of the trigger section) the historical activations
+    // simulation with the real ones marked in, the table of real activations, scope, docs
+    return miniTable(rows) + triggersBlock(v) + backtestBlock(f, v) + actualBlock(f, v) + scopeBlock(v) + techDocsBlock(v);
   }
   if(state.pillar==='plan'){
     if(v.agencies.length) rows.push(['Agencies', esc(v.agencies.join(', '))]);
@@ -1933,7 +2004,7 @@ function pillarBody(f, v){
     if(f.covered && f.current===v.v) rows.push(['People covered', `${num(f.covered)} <span class='muted'>(tracking sheet)</span>`]);
     return miniTable(rows) + partnersBlock(c, f, v) + sectorBlock(v);
   }
-  return learningBlock(f, v) + activationsBlock(f, v);
+  return learningBlock(f, v);
 }
 // Learning: curated documents (aa.learning_document, country scope, hazard-matched or
 // hazard-less, public only) + the version page's learning links; then the activations
@@ -2039,53 +2110,22 @@ function triggersBlock(v){
 }
 function fundingBlock(v){
   const F = v.funding; if(!F.agency.length && !F.sector.length && !F.fund.length) return '';
-  const funds = [...new Set(F.fund.map(x=>x.fund))];
   // budget sanity: the split rows (one source per version, v_window_funding_split) must not
   // add up to more than the version's envelope — a flag here is a genuine data problem
   const splitTot = F.fund.reduce((s,x)=>s+x.usd,0), env = v.envelope ?? v.prearranged_doc;
   const over = env != null && splitTot > env * 1.01;
-  let html = `<h4>Budget by agency ${F.src==='sheet'?'<span class="muted" style="text-transform:none">(tracking sheet)</span>':''}</h4>
-    <div class='small' style='margin-bottom:4px'>Split total <b>${money(splitTot)}</b>${env!=null?` of a ${money(env)} envelope`:' — no envelope recorded'}${over?`<span class='warntag' title='the agency × sector split adds up to more than the version envelope'>split exceeds envelope</span>`:''}</div>`;
-  if(F.agency.length){
-    const ags = [...new Set(F.agency.map(x=>x.agency))];
-    const cell = (a,fd) => F.agency.filter(x=>x.agency===a&&x.fund===fd).reduce((s,x)=>s+x.usd,0);
-    const tot = a => F.agency.filter(x=>x.agency===a).reduce((s,x)=>s+x.usd,0);
-    ags.sort((a,b)=>tot(b)-tot(a));
-    html += `<table class='mini'><tr><th>agency</th>${funds.length>1?funds.map(fd=>`<th class='num'>${esc(fd)}</th>`).join(''):''}<th class='num'>total</th></tr>` +
-      ags.map(a=>`<tr><td>${esc(a)}</td>${funds.length>1?funds.map(fd=>`<td class='num'>${cell(a,fd)?money(cell(a,fd)):''}</td>`).join(''):''}<td class='num'><b>${money(tot(a))}</b></td></tr>`).join('') +
-      `<tr><td class='lbl'>total</td>${funds.length>1?funds.map(fd=>`<td class='num'>${money(F.fund.find(x=>x.fund===fd)?.usd)}</td>`).join(''):''}<td class='num'><b>${money(F.agency.reduce((s,x)=>s+x.usd,0))}</b></td></tr></table>`;
-    const noAgency = F.fund.reduce((s,x)=>s+x.usd,0) - F.agency.reduce((s,x)=>s+x.usd,0);
-    if(noAgency > 1000) html += `<div class='small'>+ ${money(noAgency)} not attributed to an agency (${F.fund.filter(fd=>!F.agency.some(a=>a.fund===fd.fund)).map(fd=>esc(fd.fund)).join(', ')||'see sectors'})</div>`;
-  } else if(F.fund.length){
-    html += `<table class='mini'>${F.fund.map(x=>`<tr><td>${esc(x.fund)}</td><td class='num'>${money(x.usd)}</td></tr>`).join('')}</table>`;
+  let html = `<div class='small' style='margin:8px 0 4px'>Split total <b>${money(splitTot)}</b>${env!=null?` of a ${money(env)} envelope`:' — no envelope recorded'}${F.src==='sheet'?' <span class="muted">(tracking sheet)</span>':''}${over?`<span class='warntag' title='the agency × sector split adds up to more than the version envelope'>split exceeds envelope</span>`:''}</div>`;
+  if(F.fund.length > 1) html += `<div class='small muted'>By fund: ${F.fund.map(x=>`${esc(x.fund)} ${money(x.usd)}`).join(' · ')}</div>`;
+  const CW = Math.max(280, Math.min(560, (side.clientWidth || 420) - 36));
+  const bars = (rows, label) => { const m = groupBy(rows, x=>x[label], x=>x.usd);
+    return hbarsSVG(Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([k,u])=>({label:k, v:u})), {width:CW, fmt:money, label:`budget by ${label}`}); };
+  if(F.agency.length) html += `<h4>Budget by agency</h4>` + bars(F.agency, 'agency');
+  if(F.sector.length) html += `<h4>Budget by sector</h4>` + bars(F.sector, 'sector');
+  if((F.pair||[]).length > 1){
+    const ag = [...new Set(F.pair.map(x=>x.agency))], se = [...new Set(F.pair.map(x=>x.sector))];
+    html += `<h4>Which agency, which sector</h4>` + sankeySVG({columns:[ag.map(a=>({id:'a:'+a, label:a})), se.map(x=>({id:'s:'+x, label:x}))],
+      links: F.pair.map(x=>({s:'a:'+x.agency, t:'s:'+x.sector, v:x.usd})), width:CW, fmt:money, labelW:110, label:'agency to sector'});
   }
-  if(F.sector.length){
-    const secs = {}; F.sector.forEach(x=>secs[x.sector]=(secs[x.sector]||0)+x.usd);
-    html += `<details style='margin-top:6px'><summary class='small' style='cursor:pointer;color:var(--ocha)'>by sector</summary><table class='mini'>` +
-      Object.entries(secs).sort((a,b)=>b[1]-a[1]).map(([s,u])=>`<tr><td>${esc(s)}</td><td class='num'>${money(u)}</td></tr>`).join('') + `</table></details>`;
-  }
-  return html;
-}
-function activationsBlock(f, v){
-  const A = f.activations;
-  let html = `<h4>Activations — all versions (${A.length})</h4>`;
-  if(!A.length) return html + `<div class='muted'>Never activated.</div>`;
-  const byWin = {};
-  A.forEach(a => { if(v && a.version===v.v) (byWin[a.window||'unspecified window'] ??= []).push(a); });
-  if(v && Object.keys(byWin).length){
-    html += `<div class='small' style='margin-bottom:4px'>Under this version, by trigger: ` +
-      Object.entries(byWin).map(([w,as])=>`<b>${esc(w)}</b> ×${as.length}`).join(' · ') + `</div>`;
-  }
-  html += A.map(a => {
-    const other = v ? (a.version !== v.v) : false;
-    const funding = a.funding.filter(x=>x.usd!=null||x.code).map(x=>`${esc(x.fund)}: ${money(x.usd)}${x.code?` <span class='muted'>(${esc(x.code)})</span>`:''}`).join('<br>');
-    const dateHtml = a.url ? `<a href='${esc(a.url)}' target='_blank' rel='noopener'>${a.date}↗</a>` : a.date;
-    return `<div class='actrow' ${other?"style='opacity:.85'":''}>
-      <div class='ah'><span class='ad'>${dateHtml}${a.type!=='framework_aa'?` <span class='badge b-retired'>${esc(a.type.replace(/_/g,' '))}</span>`:''}${a.full===false?` <span class='badge b-development'>partial</span>`:''}</span>
-        ${a.version ? `<span class='vtag ${other?'other':''}' title='${other?'fired under a different version than the one displayed':'fired under the displayed version'}'>${other?'under ':''}${a.version}</span>` : `<span class='vtag other'>no version</span>`}</div>
-      <div class='small'>${a.window?esc(a.window):'<span class="muted">window not recorded</span>'}</div>
-      <div class='small'>${funding||(a.released?`released ${money(a.released)}`:'<span class="muted">funding not recorded</span>')}${a.people?` · ${num(a.people)} people targeted`:''}</div>
-    </div>`; }).join('');
   return html;
 }
 function scopeBlock(v){
@@ -2104,19 +2144,56 @@ function scopeBlock(v){
   if(s.unmatched.length && !s.approx) html += `<div class='small' style='margin-top:4px;color:#8a5c0a'>Not on the map (no boundary match): ${s.unmatched.map(esc).join('; ')}</div>`;
   return html;
 }
-// backtest table: one row per year (or storm), newest first, one column per trigger window
+// the link for a real activation: its announcement, else its CERF allocation page
+function actLinks(a){
+  const out = [];
+  if(a.url) out.push(`<a href='${esc(a.url)}' target='_blank' rel='noopener'>announcement↗</a>`);
+  (a.funding||[]).forEach(x => { if(x.cerf_url) out.push(`<a href='${esc(x.cerf_url)}' target='_blank' rel='noopener'>CERF allocation↗</a>`); });
+  return [...new Set(out)];
+}
+function actMoney(a){ return (a.funding||[]).filter(x=>x.usd!=null).map(x=>`${String(x.fund).toUpperCase()} ${money(x.usd)}`).join(' + ') || (a.released ? money(a.released) : ''); }
+function realMark(a, v){
+  const old = !!(v && a.version && a.version !== v.v && !String(a.version).startsWith(v.v) && !String(v.v).startsWith(a.version));
+  const title = `${a.date} · ${a.window||'window not recorded'}${actMoney(a)?' · '+actMoney(a):''}${old?` · under version ${a.version}`:''}${a.full===false?' · partial':''}`;
+  const href = a.url || ((a.funding||[]).find(x=>x.cerf_url)||{}).cerf_url;
+  return href ? `<a class='rm ${old?'old':''}' href='${esc(href)}' target='_blank' rel='noopener' title='${esc(title)}'></a>`
+              : `<span class='rm ${old?'old':''}' title='${esc(title)}'></span>`;
+}
+// historical activations: the simulation of this version's triggers (one row per year or storm,
+// one column per window), with every REAL activation of the framework marked into the grid
 function backtestBlock(f, v){
   const bt = v.backtest; if(!bt) return '';
-  const trigName = w => { const t = v.triggers.find(t => sameWin(w, t.window || t.trigger || Object.values(t)[0])); const n = t ? (t.window || t.trigger || Object.values(t)[0]) : null; return n && n.toLowerCase() !== w.toLowerCase() ? `${esc(n)} <span class='muted'>(${esc(w)})</span>` : esc(w); };
-  const realByYear = {};
-  f.activations.filter(a => a.type === 'framework_aa').forEach(a => { const y = +String(a.date).slice(0,4); (realByYear[y] ??= []).push(a); });
-  let html = `<h4>Historical activations — backtest ${bt.start}–${bt.end}</h4>
-    <div class='small' style='margin-bottom:4px'>Whether each trigger of this version would have fired${bt.per_event?' for each storm':' each year'} (KB trigger-performance analysis). ● = would have fired; the last column marks real activations of this framework.</div>
-    <div style='max-height:320px;overflow:auto;border:1px solid #eef1f5;border-radius:6px'><table class='mini bt'><thead><tr><th>${bt.per_event?'storm':'year'}</th>${bt.windows.map(w=>`<th class='bt-c'>${trigName(w)}</th>`).join('')}<th class='bt-c'>real activation</th></tr></thead><tbody>`;
-  html += bt.rows.map(r => {
-    const any = r.fired.length > 0, real = realByYear[r.year];
-    return `<tr class='${any?'bt-on':''}'><td class='lbl'>${r.year}${r.label?` ${esc(r.label)}`:''}</td>${bt.windows.map(w=>`<td class='bt-c'>${r.fired.includes(w)?'<span class="bt-dot" style="background:'+hzColor(f.hazard)+'"></span>':''}</td>`).join('')}<td class='bt-c'>${real && !r.label ? real.map(a=>`<span class='vtag ${a.version===v.v?'':'other'}' title='${esc(a.window||'')}'>${a.version===v.v?'this version':'under '+a.version}</span>`).join(' ') : ''}</td></tr>`; }).join('');
-  return html + `</tbody></table></div>`;
+  const trigName = w => { const t = v.triggers.find(t => sameWin(w, t.window || t.trigger || Object.values(t)[0])); const n = t ? (t.window || t.trigger || Object.values(t)[0]) : null; return n && n.toLowerCase() !== w.toLowerCase() ? `${esc(n)}` : esc(w); };
+  const rows = bt.rows.map(r => ({...r, real:{}, realYear:[]}));
+  f.activations.filter(a => a.type === 'framework_aa').forEach(a => {
+    const y = +String(a.date).slice(0,4), col = bt.windows.find(w => sameWin(w, a.window));
+    if(!y) return;
+    let r = bt.per_event ? null : rows.find(x => x.year === y && !x.label);
+    if(!r){ r = {year:y, label: bt.per_event ? 'activation' : null, fired:[], real:{}, realYear:[], extra:true}; rows.push(r); }
+    if(col) (r.real[col] ??= []).push(a); else r.realYear.push(a);
+  });
+  rows.sort((a,b) => b.year - a.year || String(a.label||'').localeCompare(String(b.label||'')));
+  const dot = `<span class='bt-dot' style='background:${hzColor(f.hazard)}' title='would have fired (simulation)'></span>`;
+  let html = `<h4>Historical activations</h4>
+    <div class='small' style='margin-bottom:4px'>Simulation ${bt.start}–${bt.end}: would each trigger of this version have fired${bt.per_event?' for each storm':' each year'}? Real activations are marked in, linked to their announcement.</div>
+    <table class='mini bt'><thead><tr><th>${bt.per_event?'storm':'year'}</th>${bt.windows.map(w=>`<th class='bt-c'>${trigName(w)}</th>`).join('')}</tr></thead><tbody>`;
+  html += rows.map(r => `<tr class='${r.fired.length?'bt-on':''}'><td class='lbl'>${r.year}${r.label?` <span class='muted'>${esc(r.label)}</span>`:''}${r.realYear.map(a=>realMark(a, v)).join('')}</td>`
+    + bt.windows.map(w => `<td class='bt-c'>${r.fired.includes(w)?dot:''}${(r.real[w]||[]).map(a=>realMark(a, v)).join('')}</td>`).join('') + `</tr>`).join('');
+  return html + `</tbody></table><div class='small bt-key'>${dot} would have fired (simulation) · <span class='rm'></span> activated, money released · <span class='rm old'></span> activated under an earlier version</div>`;
+}
+// the real activations of the framework, all versions: when, which window, how much, links
+function actualBlock(f, v){
+  const A = f.activations;
+  let html = `<h4>Actual activations (${A.length})</h4>`;
+  if(!A.length) return html + `<div class='muted'>Never activated.</div>`;
+  return html + `<table class='mini acttbl'><colgroup><col style='width:22%'><col style='width:30%'><col style='width:22%'><col style='width:26%'></colgroup>
+    <tr><th>date</th><th>window</th><th>funding</th><th>links</th></tr>` + A.map(a => {
+      const old = !!(v && a.version && a.version !== v.v && !String(a.version).startsWith(v.v) && !String(v.v).startsWith(a.version));
+      const tags = (a.type!=='framework_aa'?` <span class='badge b-retired'>${esc(a.type.replace(/_/g,' '))}</span>`:'')
+        + (a.full===false?` <span class='badge b-development'>partial</span>`:'')
+        + (old?` <span class='vtag other' title='fired under an earlier version of the framework'>v ${esc(a.version)}</span>`:'');
+      return `<tr${old?" class='oldv'":''}><td>${esc(a.date)}${tags}</td><td>${a.window?esc(a.window):'<span class="muted">not recorded</span>'}${a.people?`<div class='muted'>${num(a.people)} people</div>`:''}</td><td>${actMoney(a)||'<span class="muted">—</span>'}</td><td>${actLinks(a).join('<br>')||'<span class="muted">—</span>'}</td></tr>`;
+    }).join('') + `</table>`;
 }
 
 // ---------- plain-language help: ⓘ after the first use of a term, <abbr> around the first
@@ -2145,7 +2222,7 @@ function annotate(root, scope){
   const doneHelp = new Set([...scope.querySelectorAll('.info[data-term]')].map(e=>e.dataset.term));
   const doneAbbr = new Set([...scope.querySelectorAll('abbr[data-ab]')].map(e=>e.dataset.ab));
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: n => {
-    for(let p = n.parentNode; p && p !== root.parentNode; p = p.parentNode){ if(p.nodeType===1 && (SKIP.has(p.tagName) || p.classList.contains('info'))) return NodeFilter.FILTER_REJECT; }
+    for(let p = n.parentNode; p && p !== root.parentNode; p = p.parentNode){ if(p.nodeType===1 && (SKIP.has(p.tagName) || p.namespaceURI === NS || (p.classList && p.classList.contains('info')))) return NodeFilter.FILTER_REJECT; }
     return n.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP; } });
   const nodes = []; for(let n; (n = walker.nextNode());) nodes.push(n);
   for(let node of nodes){

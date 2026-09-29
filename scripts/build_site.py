@@ -380,7 +380,7 @@ def main():
     dashboards.build_all(e, page, tbl)
     import admin_page
     admin_page.build_admin(page)
-    for asset in ("chart.umd.js", "pdf.min.js", "pdf.worker.min.js"):
+    for asset in ("chart.umd.js", "sankey.js", "pdf.min.js", "pdf.worker.min.js"):
         shutil.copy(Path(__file__).parents[1] / "site_src" / asset, OUT / asset)
 
     # ---------- index
