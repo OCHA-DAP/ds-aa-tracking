@@ -100,6 +100,40 @@ def _records(df: pd.DataFrame) -> list[dict]:
     return json.loads(df.to_json(orient="records", date_format="iso"))
 
 
+def _pg_array(v) -> str:
+    """Python list -> Postgres array literal ('{"a","b"}'), so COPY parses it back exactly."""
+    def one(x):
+        if x is None:
+            return "NULL"
+        if isinstance(x, (list, tuple)):
+            return _pg_array(x)
+        s = str(x).replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{s}"'
+    return "{" + ",".join(one(x) for x in v) + "}"
+
+
+def _is_composite(typ: str) -> bool:
+    typ = (typ or "").lower()
+    return typ.endswith("[]") or typ.startswith("array") or typ in ("json", "jsonb")
+
+
+def _textify(df: pd.DataFrame, types: dict[str, str]) -> pd.DataFrame:
+    """Array and JSON columns come back from psycopg2 as Python lists / dicts; parquet would
+    keep only their repr. Serialise them to the text Postgres itself accepts on COPY
+    (array literal, JSON), so a restore is exact."""
+    for c, typ in types.items():
+        typ = (typ or "").lower()
+        if typ.endswith("[]") or typ.startswith("array"):
+            df[c] = df[c].map(lambda v: None if v is None or (not isinstance(v, (list, tuple))
+                                                             and pd.isna(v)) else _pg_array(v),
+                              na_action=None).astype("string")
+        elif typ in ("json", "jsonb"):
+            df[c] = df[c].map(lambda v: None if v is None or (not isinstance(v, (list, dict))
+                                                             and pd.isna(v))
+                              else json.dumps(v, default=str), na_action=None).astype("string")
+    return df
+
+
 def export(engine, out: Path, source: str = "") -> dict:
     """Write a snapshot of schema ``aa`` into ``out/`` (parquet + schema.json + manifest)."""
     out.mkdir(parents=True, exist_ok=True)
@@ -113,10 +147,20 @@ def export(engine, out: Path, source: str = "") -> dict:
             for key, sql in _CATALOG.items():
                 meta[key] = _records(pd.read_sql(sa.text(sql), conn, params={"s": SCHEMA}))
             for t in [r["name"] for r in meta["tables"]]:
-                df = pd.read_sql(
-                    sa.text(f"SELECT * FROM {q(SCHEMA)}.{q(t)}"), conn,
-                    dtype_backend="numpy_nullable",
-                )
+                types = {c["name"]: c["type"] for c in meta["columns"] if c["table_name"] == t}
+                if any(_is_composite(x) for x in types.values()):
+                    # arrays / JSON: read as objects (lists, dicts), serialise to Postgres
+                    # text, then apply the nullable dtypes to the rest
+                    df = pd.read_sql(sa.text(f"SELECT * FROM {q(SCHEMA)}.{q(t)}"), conn)
+                    df = _textify(df, types)
+                    keep = [c for c, x in types.items() if _is_composite(x) and c in df.columns]
+                    rest = df.drop(columns=keep).convert_dtypes(dtype_backend="numpy_nullable")
+                    df = pd.concat([rest, df[keep]], axis=1)[list(df.columns)]
+                else:
+                    df = pd.read_sql(
+                        sa.text(f"SELECT * FROM {q(SCHEMA)}.{q(t)}"), conn,
+                        dtype_backend="numpy_nullable",
+                    )
                 df.to_parquet(out / SCHEMA / f"{t}.parquet", index=False)
                 counts[t] = int(len(df))
     manifest = {
