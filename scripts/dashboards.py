@@ -928,6 +928,7 @@ function drawFlow(){
   const n = Math.max(...F.columns.map(c=>c.length));
   el.innerHTML = sankeySVG({columns:F.columns, links:F.links, width:1100, height:Math.max(260, n*24),
     fmt:money, labelW:170, label:'AA money from donors through funds and agencies to partners'});
+  el.insertAdjacentHTML('beforeend', "<div class='note'>Hover a band or a box to follow the money; click a box to keep it in focus, click again to clear. Colours: one per fund (CERF blue, pooled funds orange, regional funds green) and one per agency.</div>");
   flTot.textContent = 'Pre-arranged + released through the funds: ' + money(F.total) + ' (released money is drawn from pre-arranged envelopes, so the two overlap)';
 }
 if(window.sankeySVG){
@@ -2128,8 +2129,8 @@ if(SPLIT.length && window.sankeySVG){{
   const bars = k => {{ const g = groupSum(SPLIT, r=>r[k], r=>r.v);
     return Object.keys(g).sort((a,b)=>g[b]-g[a]).map(x=>({{label:x, v:g[x]}})); }};
   const AG = bars('a'), SE = bars('s');
-  document.getElementById('pAg').innerHTML = hbarsSVG(AG, {{width:460, fmt:money, labelW:130, label:'budget by agency'}});
-  document.getElementById('pSe').innerHTML = hbarsSVG(SE, {{width:460, fmt:money, labelW:130, color:PAL[2], label:'budget by sector'}});
+  document.getElementById('pAg').innerHTML = hbarsSVG(AG, {{width:460, fmt:money, labelW:130, colorBy:'a', label:'budget by agency'}});
+  document.getElementById('pSe').innerHTML = hbarsSVG(SE, {{width:460, fmt:money, labelW:130, color:'#64748b', label:'budget by sector'}});
   const L = {{}}; SPLIT.forEach(r=>{{ const k='a:'+r.a+'|s:'+r.s; L[k]=(L[k]||0)+r.v; }});
   document.getElementById('pSk').innerHTML = sankeySVG({{
     columns:[AG.map(x=>({{id:'a:'+x.label,label:x.label}})), SE.map(x=>({{id:'s:'+x.label,label:x.label}}))],

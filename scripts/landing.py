@@ -2121,7 +2121,7 @@ function fundingBlock(v){
   if(F.fund.length > 1) html += `<div class='small muted'>By fund: ${F.fund.map(x=>`${esc(x.fund)} ${money(x.usd)}`).join(' · ')}</div>`;
   const CW = Math.max(280, Math.min(560, (side.clientWidth || 420) - 36));
   const bars = (rows, label) => { const m = groupBy(rows, x=>x[label], x=>x.usd);
-    return hbarsSVG(Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([k,u])=>({label:k, v:u})), {width:CW, fmt:money, label:`budget by ${label}`}); };
+    return hbarsSVG(Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([k,u])=>({label:k, v:u})), {width:CW, fmt:money, label:`budget by ${label}`, colorBy: label==='agency' ? 'a' : null, color:'#64748b'}); };
   if(F.agency.length) html += `<h4>Budget by agency</h4>` + bars(F.agency, 'agency');
   if(F.sector.length) html += `<h4>Budget by sector</h4>` + bars(F.sector, 'sector');
   if((F.pair||[]).length > 1){
