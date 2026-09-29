@@ -251,6 +251,59 @@ def _backfill_years(pre, e, first_year=2020):
     return pd.concat([pre, pd.DataFrame(rows)[pre.columns]], ignore_index=True)
 
 
+def prearranged_now(e):
+    """THE definition of pre-arranged money now, from the framework records (2026-09-29):
+    for every live framework (active, being updated, in development — in-development ones
+    count once the ERC approved the pre-arrangement), the envelope of its MOST RECENT
+    VERSION THAT HAS ONE (a framework being updated keeps its last envelope), per fund, from
+    aa.v_version_funding; an 'all' total only where no per-fund split exists. Every page
+    that shows pre-arranged money now uses this: the Funding tile, the map tiles, and the
+    current year of the annual series (so the donor page and the flow chart agree).
+    Live frameworks with no envelope in any version are NOT filled from the sheets: they
+    are listed as gaps (see envelope_gaps)."""
+    now = pd.read_sql(
+        """WITH env AS (
+               SELECT vf.country_iso3, vf.hazard, vf.version, vf.fund_code, vf.total_usd,
+                      fv.valid_from
+               FROM aa.v_version_funding vf
+               JOIN aa.framework_version fv USING (country_iso3, hazard, version)
+               WHERE vf.kind = 'prearranged' AND vf.total_usd > 0),
+           env2 AS (
+               SELECT * FROM env x
+               WHERE NOT (x.fund_code = 'all' AND EXISTS (
+                   SELECT 1 FROM env y WHERE y.country_iso3 = x.country_iso3
+                     AND y.hazard = x.hazard AND y.version = x.version AND y.fund_code <> 'all'))),
+           pick AS (
+               SELECT DISTINCT ON (country_iso3, hazard) country_iso3, hazard, version
+               FROM env2 ORDER BY country_iso3, hazard, valid_from DESC NULLS LAST, version DESC)
+           SELECT x.country_iso3, x.hazard, x.version, x.fund_code, x.total_usd,
+                  l.lifecycle, l.latest_version
+           FROM env2 x
+           JOIN pick USING (country_iso3, hazard, version)
+           JOIN aa.v_framework_lifecycle l USING (country_iso3, hazard)
+           WHERE l.lifecycle IN ('active', 'updating', 'development')
+           ORDER BY 1, 2, 4""", e)
+    # an envelope recorded as "CBPF, fund not named" belongs to the country's own pooled fund,
+    # or its regional fund where it has no country fund (Burkina Faso -> RhPF-WCA)
+    reg = pd.read_sql("SELECT fund_code, fund_type, country_iso3 FROM aa.fund WHERE country_iso3 IS NOT NULL", e)
+    own = {r.country_iso3: r.fund_code for r in reg.itertuples() if r.fund_type == "cbpf"}
+    regional = {r.country_iso3: r.fund_code for r in reg.itertuples() if r.fund_type == "regional_fund"}
+    un = now["fund_code"] == "cbpf-unspecified"
+    now.loc[un, "fund_code"] = [own.get(c) or regional.get(c) or "cbpf-unspecified"
+                                for c in now.loc[un, "country_iso3"]]
+    return (now.groupby(["country_iso3", "hazard", "version", "fund_code", "lifecycle", "latest_version"],
+                        as_index=False, dropna=False)["total_usd"].sum())
+
+
+def envelope_gaps(d):
+    """Live frameworks with no pre-arranged envelope in any version (listed, never filled)."""
+    cur = d["current"]
+    live = cur[cur["lifecycle"].isin(["active", "updating", "development"])]
+    have = set(zip(d["vfund"]["country_iso3"], d["vfund"]["hazard"]))
+    return [(r.country_name or r.country_iso3, r.hazard, r.lifecycle) for r in live.itertuples()
+            if (r.country_iso3, r.hazard) not in have]
+
+
 def _fetch(e):
     """All row-level frames the dashboards embed."""
     d = {}
@@ -373,17 +426,7 @@ def _fetch(e):
            LEFT JOIN (SELECT DISTINCT allocation_code FROM aa.activation_funding) af
              ON af.allocation_code = v.allocation_code
            WHERE v.is_aa AND v.fund_type <> 'cerf'""", e)
-    # pre-arranged money NOW: the latest version's envelope of every framework that is not
-    # retired (a framework being updated keeps its most recent version's figures)
-    d["vfund"] = pd.read_sql(
-        """SELECT vf.country_iso3, vf.hazard, vf.version, vf.fund_code, vf.total_usd,
-                  l.lifecycle
-           FROM aa.v_version_funding vf
-           JOIN aa.v_framework_lifecycle l
-             ON l.country_iso3 = vf.country_iso3 AND l.hazard = vf.hazard
-            AND l.latest_version = vf.version
-           WHERE vf.kind = 'prearranged'
-             AND l.lifecycle IN ('active', 'updating', 'development')""", e)   # pre-arranged 'now' (2026-09-28: in-development frameworks count — the money is pre-arranged once the ERC approved it)
+    d["vfund"] = prearranged_now(e)
     d["windows"] = pd.read_sql(
         """SELECT w.country_iso3, r.country_name, w.hazard, w.version, w.window_name,
                   w.basis, w.all_in, w.allocation_usd,
@@ -580,6 +623,18 @@ def funding_series(d):
                 & pd.Series([(c, y) in mirror_cy for c, y in
                              zip(pre["country_iso3"], pre["year"])], index=pre.index))]
     pre = pd.concat([pre, cb[pre.columns]], ignore_index=True)
+    # the current year is pre-arranged money NOW (prearranged_now: the framework records), not
+    # the sheets or the mirror — one figure on every page. Past years keep the reported series
+    # until the official year-end reports are loaded.
+    import datetime as _dt
+    yr = _dt.date.today().year
+    now = d["vfund"].rename(columns={"total_usd": "amount_usd"}).copy()
+    now = now.assign(year=yr, kind="prearranged", financier=None, source="framework-record",
+                     hz=now["hazard"].map(haz),
+                     region=[reg_map.get((c, h)) or "?" for c, h in zip(now["country_iso3"], now["hazard"])],
+                     in_gho=[(c, yr) in gho_set for c in now["country_iso3"]])
+    pre = pd.concat([pre[~((pre["kind"] == "prearranged") & (pre["year"] == yr))], now[pre.columns]],
+                    ignore_index=True)
     return pre, act
 
 
@@ -753,6 +808,15 @@ def build_funding(page, d):
     vf["hz"] = vf["hazard"].map(haz)
     now_cerf = vf.loc[vf["ft"] == "cerf", "total_usd"].sum()
     now_cbpf = vf.loc[vf["ft"] != "cerf", "total_usd"].sum()
+    import html as _html
+    gaps = envelope_gaps(d)
+    gaps_html = ("" if not gaps else
+                 f" <b>{len(gaps)} live framework{'s' if len(gaps) > 1 else ''} with no envelope recorded</b>, so not counted: "
+                 + ", ".join(f"{_html.escape(str(n))} {_html.escape(str(h))} ({_html.escape(str(lc))})" for n, h, lc in gaps) + ".")
+    stale = vf[vf["version"].astype(str) != vf["latest_version"].astype(str)][["country_iso3", "hazard", "version"]].drop_duplicates()
+    stale_html = ("" if not len(stale) else
+                  (f" {len(stale)} frameworks count the envelope of an earlier version because the latest one has none yet: " if len(stale) > 1 else " 1 framework counts the envelope of an earlier version because the latest one has none yet: ")
+                  + ", ".join(f"{r.country_iso3} {r.hazard} ({_html.escape(str(r.version))})" for r in stale.itertuples()) + ".")
 
     n_active = int((cur["lifecycle"] == "active").sum())
     n_upd = int((cur["lifecycle"] == "updating").sum())
@@ -820,7 +884,7 @@ def build_funding(page, d):
  <div class='tile'><div class='v'>${total_disb/1e6:,.0f}M</div><div class='l'>AA/EA disbursed 2020–2026 (all funds)</div></div>
  <div class='tile'><div class='v'>{covered/1e6:,.1f}M</div><div class='l'>people covered (latest per framework)</div></div>
 </div>
-<div class='note' style='margin:-6px 0 10px'>Pre-arranged money stays pre-arranged until a framework is <b>retired</b>: a framework being updated keeps its most recent version's envelope. CBPF and regional-fund allocations are made up front, so an AA-tagged allocation counts as pre-arranged until an activation draws on it (then it is disbursed as well).</div>
+<div class='note' style='margin:-6px 0 10px'><b>Pre-arranged now</b> comes from the framework records: for every active, being-updated or in-development framework, the envelope of its most recent version that has one. The same figure is the current year in the chart below, on the map and on the donor page.{gaps_html}{stale_html} Pre-arranged money stays pre-arranged until a framework is <b>retired</b>: a framework being updated keeps its most recent version's envelope. CBPF and regional-fund allocations are made up front, so an AA-tagged allocation counts as pre-arranged until an activation draws on it (then it is disbursed as well).</div>
 <div class='fbar'>
  <label>Hazard <select id='fHaz'><option value=''>all</option></select></label>
  <label>Region <select id='fReg'><option value=''>all</option></select></label>

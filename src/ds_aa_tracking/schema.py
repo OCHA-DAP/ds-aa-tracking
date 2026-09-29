@@ -628,17 +628,24 @@ VIEWS = {
     # ---- version funding derived from the windows under the version's rollup mode
     "v_version_funding": """
         CREATE OR REPLACE VIEW aa.v_version_funding AS
-        WITH ranked AS (   -- ONE amount per window: latest year, best provenance
+        WITH votes AS (    -- how many sources report the same amount for the same window/year
+            SELECT *, count(*) OVER (PARTITION BY country_iso3, hazard, version, kind, fund_code,
+                                                  financier, window_name, year, amount_usd) AS n_agree
+            FROM aa.window_funding
+            WHERE agency IS NULL AND sector IS NULL AND amount_usd IS NOT NULL
+        ),
+        ranked AS (   -- ONE amount per window: latest year, best provenance, then the amount
+                      -- most sources agree on (2026-09-29: a lone co-financing sheet's 6.0M
+                      -- beat three sources and the document at 4.5M for Mozambique storm)
             SELECT DISTINCT ON (country_iso3, hazard, version, kind, fund_code, financier, window_name)
                    country_iso3, hazard, version, kind, fund_code, financier, window_name,
                    amount_usd
-            FROM aa.window_funding
-            WHERE agency IS NULL AND sector IS NULL AND amount_usd IS NOT NULL
+            FROM votes
             ORDER BY country_iso3, hazard, version, kind, fund_code, financier, window_name,
                      year DESC NULLS LAST,
                      CASE provenance WHEN 'entered' THEN 0 WHEN 'doc-stated' THEN 1
                                      WHEN 'kb' THEN 2 WHEN 'sheet' THEN 3 ELSE 4 END,
-                     amount_usd DESC
+                     n_agree DESC, amount_usd DESC
         ),
         named AS (      -- versions that have envelope rows on NAMED windows
             SELECT DISTINCT country_iso3, hazard, version, kind, fund_code, financier
