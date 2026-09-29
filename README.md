@@ -1,7 +1,8 @@
 # ds-aa-tracking
 
 Single authoritative tracking system for OCHA's anticipatory action (AA) portfolio,
-superseding the team-member spreadsheets it was seeded from.
+superseding the team-member spreadsheets it was seeded from — and, since 2026-09-28,
+the knowledge base's framework pages (see "The KB flip").
 
 This repo owns a set of tables in the dev Postgres `aa` schema, alongside (never
 overlapping with) the KB-owned trigger-performance tables (`ds-knowledge-base`) and the
@@ -24,6 +25,26 @@ CERF OneGMS mirror (`ds-cerf-supplement`). It adds:
   and markers, application-level beneficiary demographics, final-report narratives,
   emergency-type retags, CIRV
 
+## The KB flip (2026-09-28)
+
+This system is **authoritative**. The knowledge base (`ds-knowledge-base`) is no longer a
+source: its framework pages were imported once into `aa.version_page` (scope, monitoring
+months, trigger facets, data sources, agencies, the "Trigger windows" table, the page body)
+and are edited here; the nightly KB sweep (`scripts/sync_kb.py`) is off; the site build
+reads only the database snapshot (no KB checkout). The KB's job is now the other way
+round: read this DB (registry, versions, statuses, funding) and find the code, monitoring
+and published documents for each framework. The KB-loader tables (`window`,
+`simulated_activation`, `funding_breakdown`, `actual_activation`) stay as frozen inputs
+until their loaders are pointed at this DB.
+
+Two more DB-first tables came with the flip: `aa.learning_document` (the AA Compendium of
+Available Resources, Sept 2026, plus the website to-add list; `scripts/import_learning.py`;
+`internal` rows never render) and `aa.framework_partner` (organisations named in the
+endorsed framework documents, extracted once with `scripts/import_partners.py`, curated in
+the admin page). Sector/agency splits are read through `aa.v_window_funding_split` (one
+source per version, so a budget table can never double-count). Snapshots dated 31 December
+are kept forever (the year-end official state, for the map's time view).
+
 ## Layout
 
 - `src/ds_aa_tracking/normalize.py` — canonical country/hazard/status vocabularies
@@ -33,15 +54,14 @@ CERF OneGMS mirror (`ds-cerf-supplement`). It adds:
   window_funding}; ad hoc / early-action allocations off the pair (adhoc_activation)
 - publishing: `.github/workflows/publish.yml` rebuilds and publishes nightly, on pushes to
   main, by hand (workflow_dispatch, optionally from a dated snapshot) and on
-  `repository_dispatch` events `kb-updated` / `data-updated` (the knowledge base sends one
-  when framework pages change). It never touches the dev DB: it restores the blob snapshot
+  `repository_dispatch` events `data-updated` (`kb-updated` is still accepted but the KB is
+  not a source any more). It never touches the dev DB: it restores the blob snapshot
   (below) into a Postgres service container and builds against localhost. Needs the org
   blob secret plus repo secrets `EXTRACT_TOKEN` (the proxy site token) and `SITE_PASSWORD`
   (staticrypt).
 - snapshot: the dev DB is losing public network access (2026-09); only Databricks reaches
   it. `databricks.yml` defines one job, **AA Tracking Nightly** (03:30 UTC, Job Compute):
-  `databricks/nightly.py` clones the KB and runs `scripts/sync_kb.py`, then
-  `scripts/export_snapshot.py` writes every `aa` table (parquet) plus the DDL metadata
+  `databricks/nightly.py` runs `scripts/export_snapshot.py`, which writes every `aa` table (parquet) plus the DDL metadata
   (`schema.json`: exact column types, defaults, sequences, constraints, indexes, view
   definitions) and a `manifest.json` to the dev blob `projects/ds-aa-tracking/snapshot/`
   — `latest/` and a dated copy kept 30 days. `scripts/restore_snapshot.py` rebuilds the
@@ -74,13 +94,13 @@ CERF OneGMS mirror (`ds-cerf-supplement`). It adds:
 ## Running
 
 The dev DB is the single source of truth: data is entered and corrected through the
-site (`entry.html`, `admin.html`) and the KB sync — there is no spreadsheet ingest any
+site (`entry.html`, `admin.html`) — there is no spreadsheet ingest and no KB sync any
 more (`scripts/ingest.py` is the retired migration-era loader and refuses to run).
 DB access via `ocha-stratus` env vars; `PGSSLMODE=require` is set automatically.
 
 ```sh
 uv run python scripts/ensure_schema.py   # idempotent: create missing tables, additive migrations, views
-uv run python scripts/sync_kb.py         # upsert new KB framework pages into the registry
+uv run python scripts/import_kb_pages.py # one-off (done 2026-09-28): KB pages → aa.version_page
 uv run python scripts/build_site.py      # needs graphviz (`brew install graphviz`) for the ERD
 bash scripts/publish.sh                  # build → encrypt → gh-pages (SKIP_BUILD=1 reuses the build)
 ```

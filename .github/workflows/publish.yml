@@ -1,6 +1,8 @@
-# Rebuild and publish the site so it never drifts from the database and the knowledge base.
-# Runs nightly, on every push to main that touches the build, by hand, and whenever the
-# knowledge base tells us it changed (repository_dispatch from ds-knowledge-base).
+# Rebuild and publish the site so it never drifts from the database.
+# Runs nightly, on every push to main that touches the build, by hand, and on a
+# `data-updated` repository_dispatch. (`kb-updated` is still accepted for compatibility,
+# but since the KB flip of 2026-09-28 the knowledge base is not a source: the build reads
+# only the database snapshot.)
 #
 # Data path (2026-09-24): the dev DB is losing public network access, so this job never
 # talks to it. The Databricks job `AA Tracking Nightly` (databricks.yml, 03:30 UTC)
@@ -54,11 +56,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Check out the knowledge base (framework pages)
-        uses: actions/checkout@v4
-        with:
-          repository: OCHA-DAP/ds-knowledge-base
-          path: kb
       - uses: astral-sh/setup-uv@v5
       - uses: actions/setup-node@v4
         with:
@@ -82,7 +79,6 @@ jobs:
           uv run python scripts/restore_snapshot.py --snapshot "${{ github.event.inputs.snapshot || 'latest' }}"
       - name: Build, encrypt and publish
         env:
-          KB_DIR: ${{ github.workspace }}/kb
           EXTRACT_TOKEN: ${{ secrets.EXTRACT_TOKEN }}
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
         run: |

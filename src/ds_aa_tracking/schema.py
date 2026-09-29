@@ -416,6 +416,79 @@ TABLES = {
             source text NOT NULL,
             updated_at timestamptz NOT NULL DEFAULT now()
         )""",
+    # ---- KB flip (2026-09-28): the knowledge base is no longer a source. Everything the
+    # site used to read from a framework page's frontmatter (scope, monitoring months,
+    # trigger facets, data sources, agencies, learning links, the "Trigger windows" table)
+    # was imported ONCE (scripts/import_kb_pages.py) and is edited here from now on. The
+    # KB will read this DB instead. One row per (framework slug, version).
+    "version_page": """
+        CREATE TABLE IF NOT EXISTS aa.version_page (
+            kb_framework text NOT NULL,    -- framework slug (matches framework_version.kb_framework)
+            version text NOT NULL,
+            country_iso3 text[] NOT NULL,  -- one, or several for a regional framework
+            hazard text,
+            frontmatter jsonb NOT NULL,    -- the page's YAML frontmatter, as imported / edited
+            frontmatter_text text,         -- raw YAML at import (keeps scope-tier comments)
+            triggers jsonb NOT NULL DEFAULT '[]'::jsonb,   -- rows of the page's Trigger windows table
+            tiers jsonb NOT NULL DEFAULT '[]'::jsonb,      -- scope tiers parsed from the raw YAML
+            body_md text,                  -- the page body (reference only)
+            source text NOT NULL,          -- kb-import-YYYY-MM-DD | entered
+            note text,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (kb_framework, version)
+        )""",
+    # learning products (AARs, evaluations, M&E and activation reports, stories, research,
+    # guidance): seeded from the AA Compendium of Available Resources (Sept 2026) and the
+    # AA website resources list; per framework (country x hazard) or global. `internal`
+    # rows never render on the public pages.
+    "learning_document": """
+        CREATE TABLE IF NOT EXISTS aa.learning_document (
+            id serial PRIMARY KEY,
+            title text NOT NULL,
+            url text,
+            publisher text,
+            year smallint,
+            doc_type text NOT NULL,        -- aar | evaluation | impact_evaluation | monitoring_report
+                                           -- | activation_report | case_study | story | research
+                                           -- | guidance | trigger_analysis | other
+            scope text NOT NULL,           -- global | country
+            country_iso3 text[],           -- NULL for global
+            hazard text,
+            premises text[] NOT NULL DEFAULT '{}',  -- speed | cost_effectiveness | dignity
+                                                    -- | development_gains | lives_livelihoods | long_term
+            key_stat text,
+            summary text,
+            internal boolean NOT NULL DEFAULT false,
+            section text,                  -- heading in the compendium
+            source text NOT NULL,
+            note text,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            UNIQUE NULLS NOT DISTINCT (url, title)
+        )""",
+    # organisations with a role in a framework version, extracted from the endorsed
+    # framework documents (scripts/import_partners.py) and curated here. Funded partners
+    # per allocation stay in cerf_subgrant / cbpf_project_subip; this is the framework's
+    # own partner list (government counterparts, technical partners, sub-grantees named
+    # in the plan), which those mirrors cannot give.
+    "framework_partner": """
+        CREATE TABLE IF NOT EXISTS aa.framework_partner (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,
+            name text NOT NULL,
+            acronym text,
+            org_type text NOT NULL,        -- government | un | ingo | nngo | rcrc | donor
+                                           -- | academic | private | other
+            roles text[] NOT NULL DEFAULT '{}',  -- implementing | sub_grantee | technical
+                                                 -- | coordination | government_counterpart | funding
+            agency_parent text,            -- sub-grantee: the UN agency it works under
+            amount_usd numeric,
+            evidence text,                 -- short quote from the document
+            source text NOT NULL,          -- doc-extract-YYYY-MM-DD | entered
+            note text,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (country_iso3, hazard, version, name, source)
+        )""",
 }
 
 # ------------------------------------------------------------------ durable
@@ -589,6 +662,33 @@ VIEWS = {
                CASE WHEN fv.window_rollup = 'exclusive' OR w.has_unattributed THEN w.window_max
                     ELSE w.window_sum END AS total_usd
         FROM w LEFT JOIN aa.framework_version fv USING (country_iso3, hazard, version)
+    """,
+    # The agency x sector split of a version's pre-arranged money, ONE source per
+    # (framework, version, kind): the KB pages, the sheets and browser entries each carry
+    # a split, with different sector vocabularies (Agriculture vs Food Security …), so
+    # summing them doubled a framework's budget (Burkina Faso drought 2026, found
+    # 2026-09-25). Priority: entered > kb (from the endorsed document) > sheets. The
+    # envelope check (split total vs v_version_funding) is done by the readers.
+    "v_window_funding_split": """
+        CREATE OR REPLACE VIEW aa.v_window_funding_split AS
+        WITH src AS (
+            SELECT country_iso3, hazard, version, kind, source,
+                   CASE WHEN provenance = 'entered' THEN 0
+                        WHEN source LIKE 'kb-%' OR provenance = 'kb' THEN 1
+                        WHEN source LIKE 'yakubu-sector-%' THEN 2
+                        ELSE 3 END AS rank_
+            FROM aa.window_funding
+            WHERE amount_usd IS NOT NULL AND (agency IS NOT NULL OR sector IS NOT NULL)
+            GROUP BY 1, 2, 3, 4, 5, 6
+        ),
+        pick AS (
+            SELECT DISTINCT ON (country_iso3, hazard, version, kind)
+                   country_iso3, hazard, version, kind, source
+            FROM src ORDER BY country_iso3, hazard, version, kind, rank_, source
+        )
+        SELECT f.* FROM aa.window_funding f
+        JOIN pick USING (country_iso3, hazard, version, kind, source)
+        WHERE f.amount_usd IS NOT NULL AND (f.agency IS NOT NULL OR f.sector IS NOT NULL)
     """,
     # THE framework status, one row per (country, hazard) — the single rule every page
     # uses (map, headline counts, dashboards):

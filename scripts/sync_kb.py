@@ -1,4 +1,11 @@
-"""Upsert-only sync: KB framework-page frontmatter -> aa.framework_version / registry.
+"""RETIRED at the KB flip (2026-09-28) — kept for a deliberate one-off only.
+
+This tracking system is authoritative: frameworks and versions are entered here
+(entry/admin pages) and the knowledge base reads this database, not the other way
+round. The nightly job no longer runs this sweep (databricks/nightly.py --kb-sync is
+the explicit opt-in). Running it by hand requires --i-know-the-kb-is-not-a-source.
+
+Original behaviour — upsert-only sync: KB framework-page frontmatter -> aa.framework_version / registry.
 
 DB-first era (2026-09-10): the dev DB is the single source of truth, so this is
 deliberately narrow and NON-destructive —
@@ -41,6 +48,9 @@ FILL_IF_NULL = ["doc_title", "doc_url", "valid_until", "supersedes",
 
 def main():
     dry = "--dry-run" in sys.argv
+    if "--i-know-the-kb-is-not-a-source" not in sys.argv and not os.environ.get("KB_SYNC_ONEOFF"):
+        sys.exit("sync_kb is retired since the KB flip (2026-09-28): the tracking DB is "
+                 "authoritative. Pass --i-know-the-kb-is-not-a-source for a deliberate one-off.")
     kb = kb_versions()
     # version statuses are endorsed | development | pre-development only: 'superseded' is
     # inferred (a newer endorsed version exists) and retirement is a flag on country_hazard

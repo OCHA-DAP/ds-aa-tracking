@@ -151,7 +151,9 @@ def upload(out: Path, stage: str = "dev", day: dt.date | None = None) -> list[st
 
 
 def prune(stage: str = "dev", keep_days: int = KEEP_DAYS, today: dt.date | None = None) -> list[str]:
-    """Delete dated snapshot folders older than ``keep_days``; return the deleted prefixes."""
+    """Delete dated snapshot folders older than ``keep_days``; return the deleted prefixes.
+    Year-end snapshots (31 December) are kept forever: they are the "official state as
+    reported at year end" the map's time view is built on."""
     import ocha_stratus as stratus
 
     today = today or dt.datetime.now(dt.timezone.utc).date()
@@ -161,7 +163,8 @@ def prune(stage: str = "dev", keep_days: int = KEEP_DAYS, today: dt.date | None 
     old: dict[str, list[str]] = {}
     for n in names:
         m = re.match(rf"^{re.escape(PREFIX)}/(\d{{4}}-\d{{2}}-\d{{2}})/", n)
-        if m and (today - dt.date.fromisoformat(m.group(1))).days > keep_days:
+        if (m and not m.group(1).endswith("-12-31")
+                and (today - dt.date.fromisoformat(m.group(1))).days > keep_days):
             old.setdefault(m.group(1), []).append(n)
     if old:
         cc = stratus.get_container_client(container_name=CONTAINER, stage=stage, write=True)

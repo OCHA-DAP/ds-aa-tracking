@@ -1,4 +1,4 @@
-# Databricks Asset Bundle — ONE job: the nightly KB sync + `aa` schema snapshot.
+# Databricks Asset Bundle — ONE job: the nightly `aa` schema snapshot.
 #
 # Why Databricks: the dev Postgres server is losing public network access; the
 # workspace (private endpoint) is the only thing that will still reach it. The
@@ -32,8 +32,8 @@ variables:
 resources:
   jobs:
     aa_tracking_nightly:
-      name: AA Tracking Nightly (KB sync + aa snapshot)
-      description: "Sync knowledge base framework versions into the aa schema and snapshot it to blob"
+      name: AA Tracking Nightly (aa snapshot)
+      description: "Snapshot the aa schema (parquet + DDL) to blob for the GitHub Pages build; the KB sweep is off since the KB flip (2026-09-28)"
       permissions:
         - group_name: dsci
           level: CAN_MANAGE
@@ -51,7 +51,7 @@ resources:
         databricks: job
         type: schema-owner
         kb: aa-tracking
-        output_schema: aa.framework_version,aa.country_hazard,aa.entry_audit
+        output_schema: aa (snapshot only; no table writes since the KB flip)
         output_blob: projects/ds-aa-tracking/snapshot
       email_notifications:
         on_failure:

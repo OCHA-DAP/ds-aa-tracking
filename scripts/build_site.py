@@ -47,6 +47,7 @@ header a { color:#9ec5f0; text-decoration:none; margin-right:18px; }
 header .t { font-weight:700; font-size:17px; margin-right:26px; }
 header nav.pub a { color:#fff; font-weight:600; font-size:14px; padding:4px 0; border-bottom:2px solid transparent; }
 header nav.pub a:hover { border-bottom-color:#9ec5f0; }
+header nav.pub a.sub { color:#9ec5f0; font-weight:400; font-size:12px; margin-left:-10px; }
 header .intnav { margin-left:auto; position:relative; }
 header .intnav summary { cursor:pointer; color:#9ec5f0; font-size:13px; list-style:none; padding:4px 0; }
 header .intnav summary::-webkit-details-marker { display:none; }
@@ -95,17 +96,19 @@ function dlcsv(id, name) {
 }
 """
 
-# public-facing nav: the map, then the building blocks of AA (funding · model · plan) and
-# learning; everything internal sits behind one menu on the right
+# public-facing nav: the map, then the building blocks of AA (model · plan · funding, with
+# donor shares as a sub-link), learning and media; everything internal sits behind one
+# menu on the right
 NAV = """
 <header>
   <span class="t"><a href="index.html" style="color:#fff;text-decoration:none">Anticipatory action</a></span>
   <nav class="pub">
    <a href="index.html">Map</a>
-   <a href="dash-funding.html">Funding</a>
    <a href="pillar-model.html">Model</a>
    <a href="pillar-plan.html">Plan</a>
+   <a href="dash-funding.html">Funding</a><a class="sub" href="dash-donors.html" title="each donor's share of the AA money">donor shares</a>
    <a href="pillar-learning.html">Learning</a>
+   <a href="media.html">Media</a>
   </nav>
   <details class="intnav"><summary>Internal ▾</summary><div>
    <a href="overview.html">Overview</a>

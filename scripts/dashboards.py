@@ -58,6 +58,26 @@ canvas { max-height:300px; }
 .cal td.on { background:#1baf7a; }
 .covered { color:#1c6b31; font-weight:600; } .partial { color:#8a5c0a; font-weight:600; }
 .missing { color:#a11; font-weight:600; }
+.doctag { display:inline-block; padding:0 7px; border-radius:9px; font-size:10.5px; font-weight:600;
+          background:#e8e8f8; color:#3b3b8f; margin-left:4px; white-space:nowrap; }
+.warn-tag { display:inline-block; padding:0 7px; border-radius:9px; font-size:10.5px; font-weight:600;
+            background:#fde3e3; color:#a11; margin-left:6px; }
+ul.doclist { list-style:none; padding:0; margin:6px 0; }
+ul.doclist li { padding:5px 0; border-bottom:1px solid #f0f0f0; font-size:13px; }
+ul.doclist li:last-child { border-bottom:0; }
+ul.doclist .ks { display:block; color:#555; font-size:11.5px; margin-top:2px; }
+ul.doclist .who { color:#666; font-size:12px; }
+.headline { background:#f3f8ff; border-left:3px solid #2a78d6; padding:8px 12px 8px 26px; margin:6px 0 10px;
+            border-radius:4px; }
+.headline li { font-size:13px; margin:3px 0; }
+.headline li .src { color:#666; font-size:11.5px; }
+.empty { color:#777; font-size:13px; font-style:italic; padding:8px 0; }
+.blk { margin-top:30px; } .blk > h2 { margin-top:0; padding-bottom:6px; border-bottom:2px solid #e3e8ef; }
+.blk h3.sub { font-size:14px; margin:18px 0 6px; color:#334; }
+.partners { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
+.partners .pg { background:#fff; border:1px solid #e0e0e0; border-radius:6px; padding:10px 14px; }
+.partners .pg h4 { margin:0 0 6px; font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:#778; }
+.partners .pg li { font-size:12.5px; margin:2px 0; }
 """
 
 DASH_JS = """
@@ -69,6 +89,20 @@ Chart.defaults.plugins.legend.labels.boxWidth = 12;
 function money(v){ if(v==null) return '';
   return v>=1e9 ? '$'+(v/1e9).toFixed(1)+'B' : v>=1e6 ? '$'+(v/1e6).toFixed(1)+'M'
        : v>=1e3 ? '$'+(v/1e3).toFixed(0)+'k' : '$'+Math.round(v); }
+// stack totals: the sum of the visible datasets drawn above each bar (opts.totals);
+// a small inline plugin, no external dependency
+const stackTotals = { id:'stackTotals', afterDatasetsDraw(chart, args, o){
+  if(!o || !o.fmt) return;
+  const {ctx, scales:{x, y}} = chart, horiz = o.horiz, n = chart.data.labels.length;
+  ctx.save(); ctx.font = '600 10.5px ' + Chart.defaults.font.family; ctx.fillStyle = '#52514e';
+  for(let i=0;i<n;i++){ let tot = 0;
+    chart.data.datasets.forEach((d,di)=>{ if(chart.isDatasetVisible(di)) tot += (+d.data[i]||0); });
+    if(!tot) continue;
+    if(horiz){ ctx.textAlign='left'; ctx.textBaseline='middle';
+      ctx.fillText(o.fmt(tot), x.getPixelForValue(tot)+4, y.getPixelForValue(i)); }
+    else { ctx.textAlign='center'; ctx.textBaseline='bottom';
+      ctx.fillText(o.fmt(tot), x.getPixelForValue(i), y.getPixelForValue(tot)-3); } }
+  ctx.restore(); } };
 function mkChart(id, type, labels, datasets, opts={}){
   datasets.forEach((d,i)=>{ d.backgroundColor ??= PAL[i%%PAL.length];
     d.borderColor ??= (type==='line'? d.backgroundColor : '#fcfcfb');
@@ -77,13 +111,20 @@ function mkChart(id, type, labels, datasets, opts={}){
   const el = document.getElementById(id);
   if(el._chart) el._chart.destroy();
   const horiz = opts.extra && opts.extra.indexAxis === 'y';
-  const valAxis = {stacked:!!opts.stacked, ticks:{callback:v=>opts.count?v:money(v)}, grid:{color:'#f0f0f0'}};
+  const fmt = v=>opts.count?v:money(v);
+  const valAxis = {stacked:!!opts.stacked, ticks:{callback:fmt}, grid:{color:'#f0f0f0'},
+    ...(opts.totals ? {grace:'10%%'} : {})};
   const catAxis = {stacked:!!opts.stacked, grid:{display:false}, ticks:{autoSkip:!opts.allLabels}};
-  el._chart = new Chart(el, { type, data:{labels, datasets}, options:{
+  const cb = {label:c=>{const v=horiz?c.parsed.x:(c.parsed.y??c.parsed);return ` ${c.dataset.label??''}: ${fmt(v)}`;}};
+  if(opts.totals) cb.footer = items=>'total: '+fmt(items.reduce((s,c)=>s+((horiz?c.parsed.x:c.parsed.y)||0),0));
+  el._chart = new Chart(el, { type, data:{labels, datasets},
+    plugins: opts.totals ? [stackTotals] : [],
+    options:{
     responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
     scales: opts.noscale?{}:(horiz ? {x:valAxis, y:catAxis} : {x:catAxis, y:valAxis}),
     plugins:{ legend:{display:datasets.length>1},
-      tooltip:{callbacks:{label:c=>{const v=horiz?c.parsed.x:(c.parsed.y??c.parsed);return ` ${c.dataset.label??''}: ${opts.count?v:money(v)}`;}}},
+      tooltip:{callbacks:cb},
+      ...(opts.totals ? {stackTotals:{fmt, horiz}} : {}),
       ...(opts.plugins||{}) },
     ...(opts.extra||{}) }});
   return el._chart; }
@@ -96,6 +137,82 @@ function cumulate(arr){ let s=0; return arr.map(v=>s+=(v||0)); }
 
 def haz(h):
     return h if h in HAZARDS else "other"
+
+
+def _backfill_years(pre, e, first_year=2020):
+    """Framework-years with no dated pre-arranged row get the version in force at 31 December
+    (or today, for the current year) and its envelope from aa.v_version_funding — so the
+    annual series covers 2020→ from the framework record itself (source='version-inferred').
+    Sheet / entered rows for a framework-year always win; the official year-end reports,
+    once loaded, will replace the inferred rows year by year."""
+    import datetime as dt
+
+    ver = pd.read_sql(
+        """SELECT country_iso3, hazard, version, kb_framework, kb_status, valid_from,
+                  valid_until, prearranged_usd_doc FROM aa.framework_version
+           WHERE kb_status = 'endorsed' AND valid_from IS NOT NULL""", e)
+    env = pd.read_sql(
+        """SELECT country_iso3, hazard, version, fund_code, total_usd
+           FROM aa.v_version_funding WHERE kind = 'prearranged' AND fund_code IS NOT NULL""", e)
+    # the imported page metadata (funding_by_source / prearranged_funding_usd) for versions
+    # that never got envelope rows — older versions, mostly
+    pages = pd.read_sql(
+        """SELECT kb_framework, version, frontmatter -> 'funding_by_source' AS by_source,
+                  (frontmatter ->> 'prearranged_funding_usd')::numeric AS pre_doc
+           FROM aa.version_page""", e)
+    page_by = {(r.kb_framework, str(r.version)): (r.by_source, r.pre_doc)
+               for r in pages.itertuples()}
+    fw_slug = dict(zip(zip(ver["country_iso3"], ver["hazard"]), ver["kb_framework"]))
+    # a retired framework is inferred only up to the last year a status report still had it
+    # live (no retirement date is recorded)
+    ret = pd.read_sql(
+        """SELECT r.country_iso3, r.hazard,
+                  max(extract(year FROM s.as_of))::int AS last_live
+           FROM aa.country_hazard r
+           LEFT JOIN aa.framework_status s ON s.country_iso3 = r.country_iso3
+                AND s.hazard = r.hazard AND s.status NOT IN ('dormant', 'retired', 'expired')
+           WHERE r.retired GROUP BY 1, 2""", e)
+    last_live = {(r.country_iso3, r.hazard): r.last_live for r in ret.itertuples()}
+    fund_of = {"cerf": "cerf", "cbpf": "cbpf-unspecified", "rhpf": "rhpf"}
+    have = set(zip(pre["country_iso3"], pre["hazard"], pre["year"].astype(int)))
+    today = dt.date.today()
+    rows = []
+    for (c, h), vs in ver.groupby(["country_iso3", "hazard"]):
+        vs = vs.assign(valid_from=pd.to_datetime(vs["valid_from"]),
+                       valid_until=pd.to_datetime(vs["valid_until"]))
+        cap = last_live.get((c, h), None)
+        last_year = today.year if (c, h) not in last_live else (
+            cap if cap is not None and not pd.isna(cap)
+            else int(vs["valid_from"].min().year))
+        for y in range(first_year, int(last_year) + 1):
+            if (c, h, y) in have:
+                continue
+            at = pd.Timestamp(min(dt.date(y, 12, 31), today))
+            inforce = vs[(vs["valid_from"] <= at)
+                         & (vs["valid_until"].isna() | (vs["valid_until"] >= at))]
+            if inforce.empty:
+                continue
+            v = inforce.sort_values("valid_from").iloc[-1]
+            e_v = env[(env["country_iso3"] == c) & (env["hazard"] == h)
+                      & (env["version"] == v["version"])]
+            by_source, pre_doc = page_by.get((fw_slug.get((c, h)), str(v["version"])), (None, None))
+            amounts = []
+            if len(e_v):
+                amounts = [(x.fund_code, float(x.total_usd)) for x in e_v.itertuples()]
+            elif isinstance(by_source, dict) and by_source:
+                amounts = [(fund_of.get(str(k).lower(), str(k).lower()), float(a))
+                           for k, a in by_source.items() if a is not None]
+            elif pd.notna(v["prearranged_usd_doc"]):
+                amounts = [("cerf", float(v["prearranged_usd_doc"]))]
+            elif pre_doc is not None and pd.notna(pre_doc):
+                amounts = [("cerf", float(pre_doc))]
+            for fc, usd in amounts:
+                rows.append({"country_iso3": c, "hazard": h, "year": y, "kind": "prearranged",
+                             "fund_code": fc, "financier": None, "amount_usd": usd,
+                             "source": "version-inferred"})
+    if not rows:
+        return pre
+    return pd.concat([pre, pd.DataFrame(rows)[pre.columns]], ignore_index=True)
 
 
 def _fetch(e):
@@ -117,7 +234,7 @@ def _fetch(e):
     pre = pre[~((pre["fund_code"] == "all")
                 & pre.apply(lambda r: (r["country_iso3"], r["hazard"], r["year"])
                             in comp, axis=1))]
-    d["prearranged"] = pre
+    d["prearranged"] = _backfill_years(pre, e)
     d["activation"] = pd.read_sql(
         """SELECT a.country_iso3, a.hazard, a.event_type, a.event_date,
                   a.window_name, a.version, a.people_targeted, a.kb_event_date,
@@ -170,7 +287,7 @@ def _fetch(e):
     d["pre_sector"] = pd.read_sql(
         """SELECT country_iso3, hazard, window_name, agency, sector, amount_usd,
                   coalesce(year::text, 'Prearranged') AS year_label
-           FROM aa.window_funding
+           FROM aa.v_window_funding_split
            WHERE amount_usd IS NOT NULL AND (agency IS NOT NULL OR sector IS NOT NULL)""", e)
     d["cva"] = pd.read_sql(
         """SELECT year, country_iso3, agency, emergency_type, cva_usd,
@@ -229,7 +346,8 @@ def _fetch(e):
            JOIN aa.v_framework_lifecycle l
              ON l.country_iso3 = vf.country_iso3 AND l.hazard = vf.hazard
             AND l.latest_version = vf.version
-           WHERE vf.kind = 'prearranged' AND l.lifecycle IN ('active', 'updating')""", e)
+           WHERE vf.kind = 'prearranged'
+             AND l.lifecycle IN ('active', 'updating', 'development')""", e)   # pre-arranged 'now' (2026-09-28: in-development frameworks count — the money is pre-arranged once the ERC approved it)
     d["windows"] = pd.read_sql(
         """SELECT w.country_iso3, r.country_name, w.hazard, w.version, w.window_name,
                   w.basis, w.all_in, w.allocation_usd,
@@ -249,13 +367,14 @@ def _fetch(e):
     d["plan_rows"] = pd.read_sql(
         """SELECT f.country_iso3, r.country_name, f.hazard, f.version, f.agency, f.sector,
                   f.amount_usd, f.fund_code, l.lifecycle
-           FROM aa.window_funding f
+           FROM aa.v_window_funding_split f
            JOIN aa.v_framework_lifecycle l
              ON l.country_iso3 = f.country_iso3 AND l.hazard = f.hazard
             AND l.latest_version = f.version
            JOIN aa.country_hazard r ON r.country_iso3 = f.country_iso3 AND r.hazard = f.hazard
            WHERE f.amount_usd IS NOT NULL AND (f.agency IS NOT NULL OR f.sector IS NOT NULL)
-             AND l.lifecycle IN ('active', 'updating')""", e)
+             AND f.kind = 'prearranged'
+             AND l.lifecycle IN ('active', 'updating', 'development')""", e)
     d["act_all"] = pd.read_sql(
         """SELECT a.*, r.country_name FROM aa.activation a
            LEFT JOIN aa.country_hazard r ON r.country_iso3 = a.country_iso3 AND r.hazard = a.hazard
@@ -282,6 +401,51 @@ def _fetch(e):
         d["contrib"] = pd.DataFrame(columns=["fund_type", "fund_name", "donor", "donor_type",
                                              "year", "paid_usd", "pledged_usd", "fund_code"])
         d["build"] = pd.DataFrame(columns=["donor", "year", "amount_usd", "purpose", "source"])
+    # CERF AA sub-grants with the receiving agency (the partner view on the Funding page
+    # and the "funded sub-grantees" block of the framework pages)
+    d["subgrant_aa"] = pd.read_sql(
+        """SELECT project_code, application_code, agency, year, country_iso3, partner_name,
+                  partner_type, localization, subgrant_usd
+           FROM aa.cerf_subgrant WHERE is_aa AND subgrant_usd IS NOT NULL""", e)
+    # the agency × sector split of EVERY version (the framework pages show the current
+    # version's split next to its envelope; plan_rows above keeps only the live ones)
+    d["split_all"] = pd.read_sql(
+        """SELECT country_iso3, hazard, version, window_name, agency, sector, fund_code,
+                  amount_usd
+           FROM aa.v_window_funding_split
+           WHERE kind = 'prearranged' AND amount_usd IS NOT NULL
+             AND (agency IS NOT NULL OR sector IS NOT NULL)""", e)
+    d["env_all"] = pd.read_sql(
+        """SELECT country_iso3, hazard, version, fund_code, total_usd
+           FROM aa.v_version_funding WHERE kind = 'prearranged' AND fund_code IS NOT NULL""", e)
+    # learning documents and framework partners: filled by a parallel import, possibly
+    # empty (or absent in an older snapshot) — every consumer degrades to "none yet".
+    # Internal documents are NEVER rendered: filtered out here, at the source.
+    try:
+        d["learning"] = pd.read_sql(
+            """SELECT id, title, url, publisher, year, doc_type, scope, country_iso3, hazard,
+                      premises, key_stat, summary, section, source
+               FROM aa.learning_document WHERE NOT internal
+               ORDER BY year DESC NULLS LAST, title""", e)
+        d["n_internal_docs"] = int(pd.read_sql(
+            "SELECT count(*) AS n FROM aa.learning_document WHERE internal", e)["n"].iloc[0])
+    except Exception as exc:
+        print(f"  learning: aa.learning_document unavailable ({exc.__class__.__name__})")
+        d["learning"] = pd.DataFrame(columns=["id", "title", "url", "publisher", "year",
+                                              "doc_type", "scope", "country_iso3", "hazard",
+                                              "premises", "key_stat", "summary", "section",
+                                              "source"])
+        d["n_internal_docs"] = 0
+    try:
+        d["partners"] = pd.read_sql(
+            """SELECT country_iso3, hazard, version, name, acronym, org_type, roles,
+                      agency_parent, amount_usd, evidence, source
+               FROM aa.framework_partner ORDER BY org_type, name""", e)
+    except Exception as exc:
+        print(f"  partners: aa.framework_partner unavailable ({exc.__class__.__name__})")
+        d["partners"] = pd.DataFrame(columns=["country_iso3", "hazard", "version", "name",
+                                              "acronym", "org_type", "roles", "agency_parent",
+                                              "amount_usd", "evidence", "source"])
     return d
 
 
@@ -377,6 +541,58 @@ def build_funding(page, d):
     total_disb = act["amount_usd"].sum()
     covered = d["covered"]["people_covered"].sum()
 
+    # agency × sector split of the live frameworks' latest versions (one source per version)
+    pr = d["plan_rows"].merge(cur[["country_iso3", "hazard", "region"]],
+                              on=["country_iso3", "hazard"], how="left")
+    pr["hz"] = pr["hazard"].map(haz)
+    pr["ft"] = pr["fund_code"].map(lambda f: "cerf" if f == "cerf" else
+                                   "regional_fund" if str(f).startswith("rhpf") else "cbpf")
+
+    # UN agencies vs partners: CERF AA project money per year (direct UN spend) against
+    # what the agencies sub-granted (cerf_subgrant, is_aa) by partner-type group
+    sg = d["subgrant_aa"].copy()
+    PT_GROUP = {"INGO": "INGO", "NNGO": "NNGO / local", "GOV": "government",
+                "RedC": "Red Cross / Red Crescent", "REDC": "Red Cross / Red Crescent"}
+    sg["grp"] = sg["partner_type"].map(PT_GROUP).fillna("other")
+    ag_year = d["agency"].groupby("year")["amount_approved"].sum()
+    sg_year = sg.groupby("year")["subgrant_usd"].sum()
+    un_rows = [{"year": int(y), "grp": "direct UN spend",
+                "usd": float(max(ag_year.get(y, 0) - sg_year.get(y, 0), 0))}
+               for y in sorted(set(ag_year.index) | set(sg_year.index)) if y >= 2020]
+    un_rows += [{"year": int(r.year), "grp": r.grp, "usd": float(r.subgrant_usd)}
+                for r in sg.groupby(["year", "grp"])["subgrant_usd"].sum().reset_index()
+                .itertuples() if r.year >= 2020]
+    sub_total = float(sg["subgrant_usd"].sum())
+    local_usd = float(sg.loc[sg["localization"].fillna("").str.lower() == "local",
+                             "subgrant_usd"].sum())
+    local_share = (local_usd / sub_total * 100) if sub_total else 0
+    un_total = float(ag_year[ag_year.index >= 2020].sum())
+    sub_share = (sub_total / un_total * 100) if un_total else 0
+
+    # donors of the funds that pre-arrange AA money (CERF + every CBPF / RhPF with a
+    # pre-arranged row), paid contributions in the latest year on record
+    import datetime as _dt
+    aa_funds = set(pre.loc[pre["kind"] == "prearranged", "fund_code"].dropna()) | {"cerf"}
+    co = d["contrib"]
+    co = co[co["fund_code"].isin(aa_funds) & (co["paid_usd"].fillna(0) > 0)].copy()
+    donor_year = None
+    if len(co):
+        yrs = sorted(int(y) for y in co["year"].dropna().unique() if y <= _dt.date.today().year)
+        donor_year = yrs[-1] if yrs else int(co["year"].max())
+        co = co[co["year"] == donor_year]
+    co["ft"] = co["fund_type"].map(lambda t: "cerf" if t == "cerf" else
+                                   "regional_fund" if t == "regional_fund" else "cbpf")
+    top_donors = (co.groupby("donor")["paid_usd"].sum().sort_values(ascending=False)
+                  .head(10).index.tolist())
+    donor_rows = (co[co["donor"].isin(top_donors)].groupby(["donor", "ft"])["paid_usd"].sum()
+                  .reset_index().rename(columns={"paid_usd": "usd"}))
+    donor_note = (f"Paid contributions in {donor_year}"
+                  + (" (year to date)" if donor_year == _dt.date.today().year else "")
+                  + f" to the {len(aa_funds)} pooled funds holding pre-arranged AA money "
+                  "(CERF and the CBPFs / regional funds with an AA-tagged allocation). "
+                  "Contributions fund the whole pool, not AA alone."
+                  if donor_year else "No contribution rows in this snapshot.")
+
     panels = f"""
 <div class='tiles'>
  <div class='tile'><div class='v'>{n_active}</div><div class='l'>active frameworks · {n_upd} being updated{f' · {n_tech} technical support only' if n_tech else ''}</div></div>
@@ -392,17 +608,42 @@ def build_funding(page, d):
  <label><input type='checkbox' id='fCum'> cumulative</label>
 </div>
 <div class='grid'>
- <div class='panel'><h3>Pre-arranged funding by year — CERF vs CBPF</h3><canvas id='c1' height='260'></canvas>
+ <div class='panel'><h3>Pre-arranged funding by year — CERF, CBPF and RhPF</h3><canvas id='c1' height='260'></canvas>
    <div class='note'>CERF: the framework envelopes per year (sheets, KB pages, entries; 'all'-totals excluded where the fund split exists). CBPF / regional funds: AA-tagged allocations in the OneGMS mirror, in the year allocated. Co-financing shown separately below.</div></div>
- <div class='panel'><h3>AA/EA disbursed by year — CERF vs CBPF</h3><canvas id='c2' height='260'></canvas>
+ <div class='panel'><h3>AA/EA disbursed by year — CERF, CBPF and RhPF</h3><canvas id='c2' height='260'></canvas>
    <div class='note'>Allocations drawn by an activation (framework + ad-hoc + EA), all pooled funds. A CBPF allocation moves here only once an activation is recorded against it.</div></div>
- <div class='panel'><h3>Pre-arranged now, by hazard — CERF vs CBPF</h3><canvas id='c3' height='260'></canvas>
+ <div class='panel'><h3>Pre-arranged now, by hazard — CERF, CBPF and RhPF</h3><canvas id='c3' height='260'></canvas>
    <div class='note'>Latest version of every framework that is active or being updated.</div></div>
- <div class='panel'><h3>Pre-arranged now, by region — CERF vs CBPF</h3><canvas id='c4' height='260'></canvas></div>
+ <div class='panel'><h3>Pre-arranged now, by region — CERF, CBPF and RhPF</h3><canvas id='c4' height='260'></canvas></div>
  <div class='panel'><h3>Framework versions endorsed/revised per year</h3><canvas id='c5' height='260'></canvas>
    <div class='note'>One bar segment per version registered that year (endorsed docs; a version = an endorsed document).</div></div>
  <div class='panel'><h3>Co-financing & non-OCHA money</h3><canvas id='c6' height='260'></canvas>
    <div class='note'>kind = cofinancing / non_aa_mobilised; financier mostly uncurated — amounts only.</div></div>
+</div>
+<h2>Who holds the pre-arranged money</h2>
+<p class='meta'>The latest version of every live framework (active, being updated, in development), split by agency and sector as the framework documents state it, stacked by fund. Hazard and region filters apply; the GHO filter does not.</p>
+<div class='grid'>
+ <div class='panel'><h3>Pre-arranged by agency</h3><canvas id='c7' height='320'></canvas>
+   <div class='note'>Envelope shares per implementing agency (the agency lines of the framework budgets; top 18).</div></div>
+ <div class='panel'><h3>Pre-arranged by sector</h3><canvas id='c8' height='320'></canvas>
+   <div class='note'>Sector lines of the same budgets; a line with an agency but no sector is not shown here.</div></div>
+</div>
+<h2>UN agencies and partners</h2>
+<p class='meta'>Pre-arranged money is committed to UN agencies at the framework level. Once CERF disburses, the agencies keep part of it as direct spend and sub-grant the rest to implementing partners — this is where partners appear in the money trail. Not affected by the filters.</p>
+<div class='tiles'>
+ <div class='tile'><div class='v'>{sub_share:.0f}%</div><div class='l'>of CERF AA project money sub-granted to partners (2020→)</div></div>
+ <div class='tile'><div class='v'>{local_share:.0f}%</div><div class='l'>localization share — sub-grants to local / national actors (NNGO, government, Red Cross / Red Crescent)</div></div>
+ <div class='tile'><div class='v'>${sub_total/1e6:,.1f}M</div><div class='l'>sub-granted in total · {sg['partner_name'].nunique()} partners</div></div>
+</div>
+<div class='grid'>
+ <div class='panel' style='grid-column:1/-1'><h3>CERF AA allocations by year — direct UN spend vs sub-granted to partners</h3><canvas id='c9' height='280'></canvas>
+   <div class='note'>Direct UN spend = CERF AA project budgets (OneGMS mirror, AA-flagged allocations) minus the sub-grants reported for the same year (aa.cerf_subgrant, curated AA set). Partner groups from the sub-grant partner type; 'other' includes partners not yet typed.</div></div>
+</div>
+<h2>Donors</h2>
+<p class='meta'>{donor_note} <a href='dash-donors.html'>full donor shares →</a></p>
+<div class='grid'>
+ <div class='panel' style='grid-column:1/-1'><h3>Top 10 donors of the funds that pre-arrange AA money{f' — {donor_year}' if donor_year else ''}</h3><canvas id='c10' height='320'></canvas>
+   <div class='note'>Paid contributions (cash basis, pledges excluded), stacked by fund type. The <a href='dash-donors.html'>donor shares</a> page turns these into each donor's share of the AA money released and pre-arranged.</div></div>
 </div>"""
 
     data = {
@@ -414,14 +655,22 @@ def build_funding(page, d):
                                          "in_gho"])),
         "ver": json.loads(_records(ver, ["year", "kb_status"])),
         "now": json.loads(_records(vf, ["country_iso3", "hz", "region", "ft", "total_usd"])),
+        "split": json.loads(_records(pr, ["hz", "region", "agency", "sector", "ft",
+                                          "amount_usd"])),
+        "un": un_rows,
+        "donors": json.loads(_records(donor_rows)),
     }
     js = """
 function fundType(fc){ return fc==='cerf'?'cerf':(fc||'').startsWith('rhpf')?'regional_fund':'cbpf'; }
-function stackedBy(id, rows, keyFn){
-  const keys = uniqSorted(rows, keyFn);
-  mkChart(id,'bar',keys,['cerf','cbpf','regional_fund'].map(ft=>({label:ft, backgroundColor:FUND_COLORS[ft],
-    data:keys.map(k=>groupSum(rows.filter(r=>r.ft===ft&&keyFn(r)===k),()=>0,r=>r.total_usd)[0]||0)})).filter(d=>d.data.some(v=>v)),{stacked:true});
+const FT = ['cerf','cbpf','regional_fund'];
+function stackedBy(id, rows, keyFn, valFn, opts){
+  const keys = opts && opts.keys ? opts.keys : uniqSorted(rows, keyFn);
+  mkChart(id,'bar',keys,FT.map(ft=>({label:ft, backgroundColor:FUND_COLORS[ft],
+    data:keys.map(k=>groupSum(rows.filter(r=>r.ft===ft&&keyFn(r)===k),()=>0,valFn)[0]||0)})).filter(d=>d.data.some(v=>v)),
+    {stacked:true, totals:true, ...(opts||{})});
 }
+function topKeys(rows, keyFn, valFn, n){ const g = groupSum(rows.filter(r=>keyFn(r)!=null), keyFn, valFn);
+  return Object.keys(g).sort((a,b)=>g[b]-g[a]).slice(0,n); }
 function draw(){
   const hz=fHaz.value, rg=fReg.value, gho=fGho.value, cum=fCum.checked;
   const P = D.pre.filter(r=>r.kind==='prearranged' && r.fund_code!=='all'
@@ -429,22 +678,35 @@ function draw(){
   const A = D.act.filter(r=>(!hz||r.hz===hz)&&(!rg||r.region===rg)&&(!gho||r.in_gho));
   const years = uniqSorted(P.concat(A), r=>r.year);
   for(const [id, rows, kf] of [['c1',P,r=>fundType(r.fund_code)],['c2',A,r=>fundType(r.fund_code)]]){
-    const ds = ['cerf','cbpf','regional_fund'].map(ft=>{
+    const ds = FT.map(ft=>{
       let vals = years.map(y=>groupSum(rows.filter(r=>kf(r)===ft&&r.year===y),()=>0,r=>r.amount_usd)[0]||0);
       if(cum) vals = cumulate(vals);
       return {label:ft, data:vals, backgroundColor:FUND_COLORS[ft]};});
-    mkChart(id,'bar',years,ds,{stacked:true});
+    mkChart(id,'bar',years,ds,{stacked:true, totals:true});
   }
   const N = D.now.filter(r=>(!hz||r.hz===hz)&&(!rg||r.region===rg));
-  stackedBy('c3', N, r=>r.hz); stackedBy('c4', N, r=>r.region);
+  stackedBy('c3', N, r=>r.hz, r=>r.total_usd); stackedBy('c4', N, r=>r.region, r=>r.total_usd);
   const vy = uniqSorted(D.ver.filter(r=>r.year), r=>r.year);
   mkChart('c5','bar',vy,[{label:'versions',data:vy.map(y=>D.ver.filter(r=>r.year===y).length),backgroundColor:PAL[2]}],{count:true});
   const C = D.pre.filter(r=>r.kind!=='prearranged'&&(!hz||r.hz===hz)&&(!rg||r.region===rg));
   const cy = uniqSorted(C, r=>r.year);
   mkChart('c6','bar',cy,['cofinancing','non_aa_mobilised'].map((k,i)=>({label:k,
     data:cy.map(y=>groupSum(C.filter(r=>r.kind===k&&r.year===y),()=>0,r=>r.amount_usd)[0]||0),
-    backgroundColor:PAL[i+3]})),{stacked:true});
+    backgroundColor:PAL[i+3]})),{stacked:true, totals:true});
+  const S = D.split.filter(r=>(!hz||r.hz===hz)&&(!rg||r.region===rg));
+  const SA = S.filter(r=>r.agency), SS = S.filter(r=>r.sector);
+  stackedBy('c7', SA, r=>r.agency, r=>r.amount_usd, {keys:topKeys(SA,r=>r.agency,r=>r.amount_usd,18), extra:{indexAxis:'y'}});
+  stackedBy('c8', SS, r=>r.sector, r=>r.amount_usd, {keys:topKeys(SS,r=>r.sector,r=>r.amount_usd,18), extra:{indexAxis:'y'}});
 }
+// UN vs partners and donors: fixed panels (not filtered)
+const UG = ['direct UN spend','INGO','NNGO / local','Red Cross / Red Crescent','government','other'];
+const uy = uniqSorted(D.un, r=>r.year);
+mkChart('c9','bar',uy,UG.map((g,i)=>({label:g, backgroundColor:PAL[i],
+  data:uy.map(y=>groupSum(D.un.filter(r=>r.grp===g&&r.year===y),()=>0,r=>r.usd)[0]||0)})).filter(d=>d.data.some(v=>v)),
+  {stacked:true, totals:true});
+const dk = topKeys(D.donors, r=>r.donor, r=>r.usd, 10);
+if(dk.length) stackedBy('c10', D.donors, r=>r.donor, r=>r.usd, {keys:dk, extra:{indexAxis:'y'}});
+else document.getElementById('c10').outerHTML = "<p class='meta'>no contribution rows in this snapshot</p>";
 uniqSorted(D.pre,r=>r.hz).forEach(h=>fHaz.add(new Option(h,h)));
 uniqSorted(D.pre,r=>r.region).forEach(r=>fReg.add(new Option(r,r)));
 [fHaz,fReg,fGho,fCum].forEach(el=>el.addEventListener('change',draw));
@@ -454,7 +716,9 @@ draw();"""
                "disbursed AA money across CERF, CBPFs and regional funds — filter by "
                "hazard, region, GHO context; toggle cumulative. "
                "<a href='dash-donors.html'>Donor shares</a> attribute this money to the "
-               "donors of each fund. Internal: "
+               "donors of each fund. Donors report their AA funding annually under the "
+               "<a href='https://interagencystandingcommittee.org/grand-bargain' "
+               "target='_blank' rel='noopener'>Grand Bargain</a>. Internal: "
                "<a href='dash-allocations.html'>allocation explorer</a> · "
                "<a href='questions.html'>coverage of the CERF key data points</a>.",
                panels, json.dumps(data, default=str), js)
@@ -577,9 +841,8 @@ def build_plan(page, d):
 </div>
 <div class='grid'>
  <div class='panel'><h3>Pre-arranged budget by agency</h3><canvas id='p1' height='300'></canvas>
-   <div class='note'>Latest version of every framework that is active or being updated; from the framework documents' agency split.</div></div>
- <div class='panel'><h3>Pre-arranged budget by sector</h3><canvas id='p2' height='300'></canvas></div>
- <div class='panel' style='grid-column:1/-1'><h3>Frameworks per agency</h3><canvas id='p3' height='260'></canvas></div>
+   <div class='note'>Latest version of every framework that is active or being updated; from the framework documents' agency split. The sector view is on the <a href='dash-funding.html'>Funding</a> page.</div></div>
+ <div class='panel'><h3>Frameworks per agency</h3><canvas id='p3' height='300'></canvas></div>
 </div>
 <h2>Plans by framework</h2>
 <section><input class='filter' placeholder='filter…' oninput='filt(this)'>
@@ -587,14 +850,11 @@ def build_plan(page, d):
 <p class='meta'>Delivery detail (CERF projects, sub-grants, localization, cash, people reached) is on the internal <a href='dash-delivery.html'>delivery dashboard</a>.</p>"""
     data = {
         "ag": json.loads(_records(ag, ["agency", "amount_usd"])),
-        "sec": json.loads(_records(pr[pr["sector"].notna()], ["sector", "amount_usd"])),
         "fwag": [{"agency": k, "n": int(v)} for k, v in fw_ag.items()],
     }
     js = """
 const byA = groupSum(D.ag, r=>r.agency, r=>r.amount_usd), aKeys = Object.keys(byA).sort((a,b)=>byA[b]-byA[a]).slice(0,18);
 mkChart('p1','bar',aKeys,[{label:'pre-arranged',data:aKeys.map(k=>byA[k])}],{extra:{indexAxis:'y'}});
-const byS = groupSum(D.sec, r=>r.sector, r=>r.amount_usd), sKeys = Object.keys(byS).sort((a,b)=>byS[b]-byS[a]).slice(0,18);
-mkChart('p2','bar',sKeys,[{label:'pre-arranged',data:sKeys.map(k=>byS[k]),backgroundColor:PAL[1]}],{extra:{indexAxis:'y'}});
 const fa = D.fwag.slice(0,20);
 mkChart('p3','bar',fa.map(r=>r.agency),[{label:'frameworks',data:fa.map(r=>r.n),backgroundColor:PAL[2]}],{count:true});"""
     _dash_page(page, "pillar-plan.html", "Plan",
@@ -606,7 +866,54 @@ mkChart('p3','bar',fa.map(r=>r.agency),[{label:'frameworks',data:fa.map(r=>r.n),
 
 
 # ---------------------------------------------------------------- learning
+PREMISES = [("speed", "Speed"), ("cost_effectiveness", "Cost effectiveness"),
+            ("lives_livelihoods", "Saving lives and livelihoods"),
+            ("development_gains", "Protecting development gains"), ("dignity", "Dignity"),
+            ("long_term", "Long-term effects")]
+DOC_TYPE_LABEL = {"aar": "after-action review", "evaluation": "evaluation",
+                  "impact_evaluation": "impact evaluation", "monitoring_report": "monitoring report",
+                  "activation_report": "activation report", "case_study": "case study",
+                  "story": "story", "research": "research", "guidance": "guidance",
+                  "trigger_analysis": "trigger analysis", "other": "other"}
+
+
+def _aslist(v):
+    """text[] columns arrive as lists (psycopg2) — or None / a '{a,b}' string in a snapshot."""
+    if v is None or (not isinstance(v, (list, tuple)) and pd.isna(v)):
+        return []
+    if isinstance(v, str):
+        return [x for x in v.strip("{}").split(",") if x]
+    return list(v)
+
+
+def _doc_li(r, key_stat=True):
+    """One learning document as a list item: title link · publisher · year · type tag."""
+    import html as _h
+    title = _h.escape(str(r.title))
+    t = (f"<a href='{_h.escape(str(r.url))}' target='_blank' rel='noopener'>{title}</a>"
+         if isinstance(r.url, str) and r.url else title)
+    who = " · ".join(str(x) for x in [r.publisher if isinstance(r.publisher, str) else None,
+                                      int(r.year) if pd.notna(r.year) else None] if x)
+    tag = f"<span class='doctag'>{DOC_TYPE_LABEL.get(r.doc_type, str(r.doc_type))}</span>"
+    ks = (f"<span class='ks'>{_h.escape(str(r.key_stat))}</span>"
+          if key_stat and isinstance(r.key_stat, str) and r.key_stat else "")
+    return f"<li>{t}{(' <span class=' + chr(39) + 'who' + chr(39) + '>· ' + who + '</span>') if who else ''}{tag}{ks}</li>"
+
+
+def _fw_docs(docs, c, h):
+    """Country-scope documents of a framework: the ISO3 in country_iso3, hazard null or equal."""
+    if not len(docs):
+        return docs
+    m = [(r.scope == "country") and (c in _aslist(r.country_iso3))
+         and (not isinstance(r.hazard, str) or not r.hazard or r.hazard == h)
+         for r in docs.itertuples()]
+    return docs[m]
+
+
 def build_learning(page, d):
+    import html as _h
+    docs = d["learning"].copy()   # internal rows are excluded at the source (_fetch)
+    cur = d["current"]
     act = d["act_all"].copy()
     urls = d["act_url"]
     umap = {(r.country_iso3, r.hazard, str(r.event_date), r.window_name): r.url
@@ -619,6 +926,13 @@ def build_learning(page, d):
         lambda t: "framework" if t == "framework_aa" else str(t).replace("_", " "))
     n_fw = int((act["kind"] == "framework").sum())
 
+    # per-framework document counts (a hazard-less country document counts for every
+    # framework of that country)
+    fw_docs = {(r.country_iso3, r.hazard): _fw_docs(docs, r.country_iso3, r.hazard)
+               for r in cur.itertuples()}
+    fw_with = {k for k, v in fw_docs.items() if len(v)}
+    n_eval = int(docs["doc_type"].isin(["evaluation", "impact_evaluation"]).sum()) if len(docs) else 0
+
     def _link(u):
         return f"<a href='{u}' target='_blank' rel='noopener'>record ↗</a>" if isinstance(u, str) and u else ""
     rows = "".join(
@@ -628,25 +942,78 @@ def build_learning(page, d):
         f"<td class='num'>{int(r.people_targeted) if pd.notna(r.people_targeted) else ''}</td>"
         f"<td>{_link(r.url)}</td></tr>"
         for r in act.itertuples())
+
+    # (b) what the evidence says — one panel per premise, headline figures on top
+    prem_panels = ""
+    for key, label in PREMISES:
+        sub = docs[[key in _aslist(p) for p in docs["premises"]]] if len(docs) else docs
+        stats = "".join(
+            f"<li>{_h.escape(str(r.key_stat))} <span class='src'>— "
+            f"{_h.escape(str(r.publisher)) if isinstance(r.publisher, str) else ''}"
+            f"{(' ' + str(int(r.year))) if pd.notna(r.year) else ''}</span></li>"
+            for r in sub.itertuples() if isinstance(r.key_stat, str) and r.key_stat)
+        body = ((f"<ul class='headline'>{stats}</ul>" if stats else "")
+                + (f"<ul class='doclist'>{''.join(_doc_li(r, key_stat=False) for r in sub.itertuples())}</ul>"
+                   if len(sub) else "<div class='empty'>no documents tagged yet</div>"))
+        prem_panels += f"<div class='panel'><h3>{label} <span class='doctag'>{len(sub)}</span></h3>{body}</div>"
+
+    # (c) global learning by document type
+    glob = docs[docs["scope"] == "global"] if len(docs) else docs
+    glob_html = ""
+    for dt in DOC_TYPE_LABEL:
+        g = glob[glob["doc_type"] == dt] if len(glob) else glob
+        if len(g):
+            glob_html += (f"<h3 class='sub'>{DOC_TYPE_LABEL[dt].capitalize()} · {len(g)}</h3>"
+                          f"<ul class='doclist'>{''.join(_doc_li(r) for r in g.itertuples())}</ul>")
+    if len(glob):
+        other = glob[~glob["doc_type"].isin(DOC_TYPE_LABEL)]
+        if len(other):
+            glob_html += (f"<h3 class='sub'>Untyped · {len(other)}</h3>"
+                          f"<ul class='doclist'>{''.join(_doc_li(r) for r in other.itertuples())}</ul>")
+    if not glob_html:
+        glob_html = "<div class='empty'>no global documents yet</div>"
+
+    # (d) by framework
+    fw_rows = ""
+    for r in cur.sort_values("country_name").itertuples():
+        v = fw_docs[(r.country_iso3, r.hazard)]
+        if not len(v):
+            continue
+        latest = int(v["year"].max()) if v["year"].notna().any() else ""
+        fw_rows += (f"<tr><td><a href='fw-{r.country_iso3.lower()}-{r.hazard}.html'>{r.country_name}</a></td>"
+                    f"<td>{str(r.hazard).replace('_', ' ')}</td><td class='num'>{len(v)}</td>"
+                    f"<td class='num'>{latest}</td></tr>")
+
     panels = f"""
 <div class='tiles'>
- <div class='tile'><div class='v'>{len(act)}</div><div class='l'>activations on record — {n_fw} framework triggers, {len(act) - n_fw} ad hoc / early action</div></div>
- <div class='tile'><div class='v'>{int(act['url'].notna().sum())}</div><div class='l'>with a public activation record linked</div></div>
- <div class='tile'><div class='v'>{act['year'].nunique()}</div><div class='l'>years of activations ({act['year'].min()}–{act['year'].max()})</div></div>
+ <div class='tile'><div class='v'>{len(docs)}</div><div class='l'>learning documents</div></div>
+ <div class='tile'><div class='v'>{n_eval}</div><div class='l'>evaluations and impact evaluations</div></div>
+ <div class='tile'><div class='v'>{len(fw_with)}</div><div class='l'>frameworks with at least one document</div></div>
+ <div class='tile'><div class='v'>{len(act)}</div><div class='l'>activations recorded — {n_fw} framework triggers, {len(act) - n_fw} ad hoc / early action</div></div>
 </div>
-<div class='card'><b>What lives here.</b> Every activation is a learning event: the trigger fired (or was called by hand), money moved, and the after-action review says what worked. This page lists the activations on record with their public records where linked. After-action reviews, evaluations and learning documents per framework are being collected and will appear here and in each framework's <i>Learning</i> block on the map.</div>
+<div class='card'><b>What lives here.</b> The evidence on anticipatory action, curated: what the evaluations, after-action reviews and studies say about each of the premises of acting ahead of a shock, the global learning products by type, and the documents per framework. Every activation is a learning event, so the activation records are listed at the bottom.
+<span class='note' style='display:block;margin-top:6px'>Internal documents ({d.get('n_internal_docs', 0)} in the database) are held in the database but not shown here.</span></div>
+<div class='blk'><h2>What the evidence says</h2>
+<p class='meta'>One panel per premise; the headline figures are the documents' own key statistics.</p>
+<div class='grid'>{prem_panels}</div></div>
+<div class='blk'><h2>Global learning</h2>
+<p class='meta'>Documents with a global scope, by type.</p>
+<section>{glob_html}</section></div>
+<div class='blk'><h2>By framework</h2>
+<section><div class='scroll' style='max-height:60vh'><table class='data'><thead><tr><th>country</th><th>hazard</th><th>documents</th><th>latest year</th></tr></thead>
+<tbody>{fw_rows or '<tr><td colspan=4 class="empty">no framework has a document yet</td></tr>'}</tbody></table></div></section></div>
+<div class='blk'><h2>Activation records</h2>
 <div class='grid'><div class='panel' style='grid-column:1/-1'><h3>Activations per year</h3><canvas id='l1' height='240'></canvas></div></div>
-<h2>Activations</h2>
 <section><input class='filter' placeholder='filter…' oninput='filt(this)'>
-<div class='scroll'><table class='data'><thead><tr><th>date</th><th>framework</th><th>kind</th><th>version</th><th>window</th><th>people targeted</th><th>record</th></tr></thead><tbody>{rows}</tbody></table></div></section>"""
+<div class='scroll'><table class='data'><thead><tr><th>date</th><th>framework</th><th>kind</th><th>version</th><th>window</th><th>people targeted</th><th>record</th></tr></thead><tbody>{rows}</tbody></table></div></section></div>"""
     data = {"act": json.loads(_records(act, ["year", "kind"]))}
     js = """
 const yrs = uniqSorted(D.act, r=>r.year), kinds = uniqSorted(D.act, r=>r.kind);
-mkChart('l1','bar',yrs,kinds.map(k=>({label:k, data:yrs.map(y=>D.act.filter(r=>r.year===y&&r.kind===k).length)})),{stacked:true,count:true});"""
+mkChart('l1','bar',yrs,kinds.map(k=>({label:k, data:yrs.map(y=>D.act.filter(r=>r.year===y&&r.kind===k).length)})),{stacked:true,count:true,totals:true});"""
     _dash_page(page, "pillar-learning.html", "Learning",
-               "<b>The learning block of anticipatory action</b> — what the activations "
-               "taught us. Activation records now; after-action reviews and learning "
-               "documents as they are collected.",
+               "<b>The learning block of anticipatory action</b> — what the evidence "
+               "says, premise by premise; the global learning products; the documents "
+               "per framework; and the activation records.",
                panels, json.dumps(data, default=str), js)
 
 
@@ -886,21 +1253,82 @@ def _cal_strip(cal, c, h):
     return f"<table class='cal'><tr>{cells}</tr></table>"
 
 
-def build_framework_pages(page, tbl, d):
+ORG_GROUPS = [("government", "Government"), ("un", "UN"), ("ingo", "International NGOs"),
+              ("nngo", "National NGOs"), ("rcrc", "Red Cross / Red Crescent"), ("other", "Other")]
+
+
+def _partners_block(pt, sg, c, h, version):
+    """The Partners sub-block of a framework page: aa.framework_partner rows of the version,
+    grouped by org type, then the CERF AA sub-grantees of the country by agency."""
+    import html as _h
+    p = pt[(pt["country_iso3"] == c) & (pt["hazard"] == h)]
+    note = ""
+    pv = p[p["version"].astype(str) == str(version)] if version else p.iloc[0:0]
+    if not len(pv) and len(p):
+        alt = sorted(p["version"].astype(str).unique())[-1]
+        pv = p[p["version"].astype(str) == alt]
+        note = f" <span class='muted' style='font-size:11px'>(from version {alt})</span>"
+    groups = ""
+    for key, label in ORG_GROUPS:
+        g = pv[pv["org_type"] == key] if key != "other" else pv[
+            ~pv["org_type"].isin([k for k, _ in ORG_GROUPS if k != "other"])]
+        if not len(g):
+            continue
+        items = "".join(
+            f"<li>{_h.escape(str(r.name))}"
+            f"{(' (' + _h.escape(str(r.acronym)) + ')') if isinstance(r.acronym, str) and r.acronym else ''}"
+            f"{(' <span class=' + chr(39) + 'muted' + chr(39) + '>' + ', '.join(str(x).replace('_', ' ') for x in _aslist(r.roles)) + '</span>') if _aslist(r.roles) else ''}"
+            f"{(' <span class=' + chr(39) + 'muted' + chr(39) + '>under ' + _h.escape(str(r.agency_parent)) + '</span>') if isinstance(r.agency_parent, str) and r.agency_parent else ''}"
+            f"{(' · ' + _fmt_usd(r.amount_usd)) if pd.notna(r.amount_usd) else ''}</li>"
+            for r in g.itertuples())
+        groups += f"<div class='pg'><h4>{label} · {len(g)}</h4><ul style='margin:0;padding-left:16px'>{items}</ul></div>"
+    head = (f"<b>{pv['name'].nunique()} partners</b>{note}" if len(pv)
+            else "<span class='empty'>no partners recorded for this version yet</span>")
+    s = sg[sg["country_iso3"] == c]
+    sub = ""
+    if len(s):
+        for ag, g in s.groupby("agency", sort=True):
+            names = (g.groupby("partner_name")
+                     .agg(usd=("subgrant_usd", "sum"), typ=("partner_type", "first"))
+                     .sort_values("usd", ascending=False))
+            items = "".join(
+                f"<li>{_h.escape(str(n))} <span class='muted'>{str(r.typ) if pd.notna(r.typ) else ''}</span>"
+                f" · {_fmt_usd(r.usd)}</li>" for n, r in names.iterrows())
+            sub += (f"<div class='pg'><h4>{_h.escape(str(ag))} · {_fmt_usd(g['subgrant_usd'].sum())}"
+                    f" to {len(names)}</h4><ul style='margin:0;padding-left:16px'>{items}</ul></div>")
+        sub = (f"<h3 class='sub'>Funded sub-grantees <span class='muted' style='font-weight:400'>"
+               f"— CERF AA sub-grants in {c}, all activations, by agency</span></h3>"
+               f"<div class='partners'>{sub}</div>")
+    return (f"<h3 class='sub'>Partners</h3><p style='margin:4px 0 8px'>{head}</p>"
+            + (f"<div class='partners'>{groups}</div>" if groups else "") + sub)
+
+
+def build_framework_pages(page, tbl, d, e=None):
     cur, ver, act = d["current"], d["versions"], d["activation"]
     pre, cov, foc = d["prearranged"], d["covered"], d["focal"]
-    ps, rep, cal = d["pre_sector"], d["report"], d["calendar"]
+    rep, cal = d["report"], d["calendar"]
+    split, env, win = d["split_all"], d["env_all"], d["windows"]
+    docs, pt, sg = d["learning"], d["partners"], d["subgrant_aa"]
+    urls = d["act_url"]
+    umap = {(r.country_iso3, r.hazard, str(r.event_date), r.window_name): r.url
+            for r in urls.itertuples()}
+    try:
+        trig = _kb_trigger_info(e) if e is not None else {}
+    except Exception as exc:
+        print(f"  framework pages: KB trigger info unavailable ({exc.__class__.__name__})")
+        trig = {}
     links = []
     for _, fw in cur.sort_values("country_name").iterrows():
         c, h = fw["country_iso3"], fw["hazard"]
         slug = f"fw-{c.lower()}-{h}"
         links.append((fw["country_name"], h, fw.get("lifecycle") or fw["status"], slug, c))
+        version = fw["current_version"] if pd.notna(fw.get("current_version")) else None
+        kb_fw = fw["kb_framework"] if pd.notna(fw.get("kb_framework")) else None
         v = ver[(ver["country_iso3"] == c) & (ver["hazard"] == h)]
         a = act[(act["country_iso3"] == c) & (act["hazard"] == h)]
         p = pre[(pre["country_iso3"] == c) & (pre["hazard"] == h)
                 & (pre["kind"] == "prearranged") & (pre["fund_code"] != "all")]
         f = foc[(foc["country_iso3"] == c) & (foc["hazard"] == h)]
-        s = ps[(ps["country_iso3"] == c) & (ps["hazard"] == h)]
         r = rep[(rep["country_iso3"] == c) & (rep["hazard"] == h)]
         pc = cov[(cov["country_iso3"] == c) & (cov["hazard"] == h)]
         years = sorted(p["year"].unique())
@@ -912,12 +1340,19 @@ def build_framework_pages(page, tbl, d):
                 for fc in p["fund_code"].unique()
             },
         }
-        vrows = "".join(
-            f"<tr><td>{x.version}</td><td>{x.kb_status if pd.notna(x.kb_status) else ''}</td><td>{x.source}</td>"
-            f"<td>{f'<a href={x.doc_url!r}>doc</a>' if pd.notna(x.doc_url) else ''}</td>"
-            f"<td style='max-width:340px'>{x.analysis_ref if pd.notna(x.analysis_ref) else ''}</td></tr>"
-            for x in v.itertuples())
-        # one line per ACTIVATION; multi-fund events combine their funding rows
+        # ---- Model: trigger line, windows / backtests of the current version, activations
+        trig_line = trig.get((kb_fw, str(version))) if kb_fw and version else None
+        w = win[(win["country_iso3"] == c) & (win["hazard"] == h)]
+        wv = w[w["version"].astype(str) == str(version)] if version else w.iloc[0:0]
+        wrows = "".join(
+            f"<tr><td>{x.window_name}</td><td>{x.basis if pd.notna(x.basis) else ''}"
+            f"{' · all-in' if x.all_in is True else ''}</td>"
+            f"<td>{'triggered' + (f' ({x.triggered_on})' if pd.notna(x.triggered_on) else '') if x.triggered else 'not triggered'}</td>"
+            f"<td class='num'>{_fmt_usd(x.allocation_usd)}</td>"
+            f"<td class='num'>{f'1-in-{x.return_period:.1f} yr' if pd.notna(x.return_period) else ''}</td>"
+            f"<td class='num'>{f'{x.activation_prob*100:.0f}%' if pd.notna(x.activation_prob) else ''}</td>"
+            f"<td class='num'>{f'{int(x.n_activations)} in {int(x.analysis_years)} yrs' if pd.notna(x.n_activations) and pd.notna(x.analysis_years) else ''}</td></tr>"
+            for x in wv.sort_values("window_name").itertuples())
         arows = ""
         for (ed, et), g in a.sort_values("event_date").groupby(
                 ["event_date", "event_type"], sort=True):
@@ -928,22 +1363,58 @@ def build_framework_pages(page, tbl, d):
                 + (f" ({x.allocation_code})" if pd.notna(x.allocation_code) else "")
                 for x in g.itertuples())
             total = g["amount_usd"].sum()
-            pt = g["people_targeted"].max()
+            pt_ = g["people_targeted"].max()
+            u = umap.get((c, h, str(ed), first["window_name"]))
             arows += (
-                f"<tr><td>{ed}</td><td>{et}</td>"
+                f"<tr><td>{ed}</td><td>{str(et).replace('_', ' ')}</td>"
                 f"<td>{first['window_name'] if pd.notna(first['window_name']) else ''}</td>"
                 f"<td>{funding}</td>"
-                f"<td>{'' if not total else f'${total:,.0f}'}</td>"
-                f"<td>{'' if pd.isna(pt) else f'{int(pt):,}'}</td></tr>")
+                f"<td class='num'>{'' if not total else f'${total:,.0f}'}</td>"
+                f"<td class='num'>{'' if pd.isna(pt_) else f'{int(pt_):,}'}</td>"
+                f"<td>{f'<a href={u!r} target=_blank rel=noopener>record ↗</a>' if isinstance(u, str) and u else ''}</td></tr>")
+        # ---- Plan: people covered, agencies, the split vs the version envelope, partners
+        s = split[(split["country_iso3"] == c) & (split["hazard"] == h)]
+        sv = s[s["version"].astype(str) == str(version)] if version else s.iloc[0:0]
+        split_note = ""
+        split_version = version
+        if not len(sv) and len(s):
+            split_version = sorted(s["version"].astype(str).unique())[-1]
+            sv = s[s["version"].astype(str) == split_version]
+            split_note = (f" <span class='muted' style='font-size:11px'>(split and envelope from "
+                          f"version {split_version} — the current version has no split yet)</span>")
+        # the envelope of the SAME version as the split, so the comparison is like for like
+        ev = (env[(env["country_iso3"] == c) & (env["hazard"] == h)
+                  & (env["version"].astype(str) == str(split_version))]
+              if split_version else env.iloc[0:0])
+        comp = ev[ev["fund_code"] != "all"]
+        envelope = float(comp["total_usd"].sum()) if len(comp) else float(ev["total_usd"].sum())
+        split_total = float(sv["amount_usd"].sum())
+        over = envelope > 0 and split_total > envelope * 1.01
+        agencies = sorted(set(sv.loc[sv["agency"].notna(), "agency"]))
+        srows = "".join(
+            f"<tr><td>{x.window_name or ''}</td><td>{x.agency if pd.notna(x.agency) else ''}</td>"
+            f"<td>{x.sector if pd.notna(x.sector) else ''}</td><td>{x.fund_code if pd.notna(x.fund_code) else ''}</td>"
+            f"<td class='num'>${x.amount_usd:,.0f}</td></tr>" for x in sv.itertuples())
+        split_foot = (
+            f"<tr><th colspan=4>split total</th><th class='num'>${split_total:,.0f}</th></tr>"
+            f"<tr><th colspan=4>version envelope (pre-arranged)</th><th class='num'>"
+            f"{f'${envelope:,.0f}' if envelope else '—'}"
+            f"{'<span class=' + chr(39) + 'warn-tag' + chr(39) + '>split exceeds envelope by ' + f'{(split_total/envelope - 1)*100:.0f}' + '%</span>' if over else ''}</th></tr>")
+        vrows = "".join(
+            f"<tr><td>{x.version}</td><td>{x.kb_status if pd.notna(x.kb_status) else ''}</td><td>{x.source}</td>"
+            f"<td>{f'<a href={x.doc_url!r}>doc</a>' if pd.notna(x.doc_url) else ''}</td>"
+            f"<td style='max-width:340px'>{x.analysis_ref if pd.notna(x.analysis_ref) else ''}</td></tr>"
+            for x in v.itertuples())
         frows = "".join(f"<span class='badge b-kb'>{x.role}: {x.person}</span>"
                         for x in f.itertuples())
-        srows = "".join(
-            f"<tr><td>{x.window_name or ''}</td><td>{x.agency}</td><td>{x.sector}</td>"
-            f"<td>${x.amount_usd:,.0f}</td></tr>" for x in s.itertuples())
         rrows = ", ".join(sorted({f"{x.channel} ({x.report_year})"
                                   for x in r.itertuples()}))
         covered_txt = (f"{int(pc['people_covered'].iloc[0]):,}"
                        if not pc.empty else "—")
+        # ---- Learning: the framework's documents
+        fd = _fw_docs(docs, c, h)
+        fd_html = (f"<ul class='doclist'>{''.join(_doc_li(x) for x in fd.itertuples())}</ul>"
+                   if len(fd) else "<div class='empty'>no documents yet</div>")
         obs = fw.get("observed_status")
         derived_note = (
             f" <span class='muted' style='font-size:11px'>(derived from the endorsed "
@@ -957,6 +1428,28 @@ current version: <code>{fw['current_version'] or '—'}</code>
 · people covered: <b>{covered_txt}</b><br>
 Monitoring window: {_cal_strip(cal, c, h)}
 <div style='margin-top:6px'>{frows}</div></div>
+<div class='blk'><h2>Model</h2>
+<p class='meta'>{('Trigger: ' + trig_line) if trig_line else 'No structured trigger info in the KB for this version.'}</p>
+<h3 class='sub'>Windows and backtests (version {version or '—'})</h3>
+<section><div class='scroll' style='max-height:260px'><table class='data'><thead>
+<tr><th>window</th><th>basis</th><th>state</th><th>budget</th><th>return period</th><th>annual prob.</th><th>backtest</th></tr></thead>
+<tbody>{wrows or '<tr><td colspan=7 class="empty">no windows registered for this version</td></tr>'}</tbody></table></div></section>
+<h3 class='sub'>Activations</h3>
+<section><div class='scroll'><table class='data'><thead>
+<tr><th>date</th><th>type</th><th>window</th><th>funding (fund: USD, allocation)</th><th>total USD</th><th>targeted</th><th>record</th></tr>
+</thead><tbody>{arows or '<tr><td colspan=7 class="empty">none recorded</td></tr>'}</tbody></table></div></section></div>
+<div class='blk'><h2>Plan</h2>
+<div class='tiles'>
+ <div class='tile'><div class='v'>{covered_txt}</div><div class='l'>people covered (latest figure)</div></div>
+ <div class='tile'><div class='v'>{len(agencies) or '—'}</div><div class='l'>agencies with a budget line{(': ' + ', '.join(agencies)) if agencies else ''}</div></div>
+</div>
+<h3 class='sub'>Agency × sector split{split_note}</h3>
+<section><div class='scroll' style='max-height:360px'><table class='data'><thead>
+<tr><th>window</th><th>agency</th><th>sector</th><th>fund</th><th>USD</th></tr></thead>
+<tbody>{srows or '<tr><td colspan=5 class="empty">no split recorded</td></tr>'}</tbody>
+<tfoot>{split_foot}</tfoot></table></div></section>
+{_partners_block(pt, sg, c, h, version)}</div>
+<div class='blk'><h2>Funding</h2>
 <div class='grid'>
 <div class='panel'><h3>Pre-arranged funding by year × fund</h3><canvas id='pf' height='230'></canvas></div>
 <div class='panel'><h3>Versions (endorsed documents)</h3>
@@ -964,21 +1457,15 @@ Monitoring window: {_cal_strip(cal, c, h)}
 <tr><th>version</th><th>KB status</th><th>source</th><th>doc</th><th>analysis</th></tr></thead>
 <tbody>{vrows or '<tr><td colspan=5>none registered</td></tr>'}</tbody></table></div></div>
 </div>
-<h2>Activations</h2>
-<section><div class='scroll'><table class='data'><thead>
-<tr><th>date</th><th>type</th><th>window</th><th>funding (fund: USD, allocation)</th><th>total USD</th><th>targeted</th></tr>
-</thead><tbody>{arows or '<tr><td colspan=7>none recorded</td></tr>'}</tbody></table></div></section>
-<h2>Pre-arranged sector budgets</h2>
-<section><div class='scroll' style='max-height:320px'><table class='data'><thead>
-<tr><th>window</th><th>agency</th><th>sector</th><th>USD</th></tr></thead>
-<tbody>{srows or '<tr><td colspan=4>none</td></tr>'}</tbody></table></div></section>
-<p class='meta'>Counted in reports: {rrows or '—'}</p>
+<p class='meta'>Counted in reports: {rrows or '—'}</p></div>
+<div class='blk'><h2>Learning · {len(fd)} document{'' if len(fd) == 1 else 's'}</h2>
+{fd_html}</div>
 <script src="chart.umd.js"></script>
 <script>window.FD = {json.dumps(chart_data)};</script>
 <script>{DASH_JS}
 const ds = Object.entries(FD.series).map(([fc,vals],i)=>({{label:fc,data:vals,
   backgroundColor:FUND_COLORS[fc==='cerf'?'cerf':(fc.startsWith('rhpf')?'regional_fund':'cbpf')]||PAL[i]}}));
-if(FD.years.length) mkChart('pf','bar',FD.years,ds,{{stacked:true}});
+if(FD.years.length) mkChart('pf','bar',FD.years,ds,{{stacked:true, totals:true}});
 else document.getElementById('pf').outerHTML='<p class="meta">no funding rows</p>';
 </script>
 <style>{DASH_CSS}</style>"""
@@ -1000,6 +1487,8 @@ built to the CERF key-data-points list (<a href='questions.html'>coverage map</a
 <div class='tile'><a href='dash-donors.html'><b>Donor shares</b></a><div class='l'>each donor's share of AA released / pre-arranged, via their contributions to CERF and the CBPFs; build earmarks</div></div>
 <div class='tile'><a href='dash-allocations.html'><b>Allocation explorer</b></a><div class='l'>query every CERF + CBPF allocation 2006→; complementarity; timeliness</div></div>
 <div class='tile'><a href='dash-delivery.html'><b>Delivery & people</b></a><div class='l'>subgrants, localization, agencies, sectors, CVA, people reached</div></div>
+<div class='tile'><a href='pillar-learning.html'><b>Learning</b></a><div class='l'>the evidence by premise, global learning products, documents per framework, activation records</div></div>
+<div class='tile'><a href='media.html'><b>Media & visuals</b></a><div class='l'>videos, photos, social posts and press releases on AA (collection starting)</div></div>
 </div></div>
 <h2 id='frameworks'>Per-framework pages</h2>
 <p class='meta' id='calendar'>Green cells = trigger-window months (monitoring calendar).</p>
@@ -1008,6 +1497,26 @@ built to the CERF key-data-points list (<a href='questions.html'>coverage map</a
 <tbody>{fw_items}</tbody></table></div></section>
 <style>{DASH_CSS}</style>"""
     page("dashboards.html", "Dashboards", body)
+
+
+def build_media(page):
+    """media.html — the public 'Media & visuals' page: a simple card page with an empty
+    state until the collection (videos, photos, social posts, press releases) exists."""
+    body = f"""
+<div class='card'><b>Media &amp; visuals of anticipatory action.</b> This page will collect
+the best material on AA — videos, photos, social posts and press releases from the
+activations and the frameworks — so that every activation's story is one click away
+from its record. Nothing is sourced yet: the collection starts with the learning
+documents now being imported, and each item will link back to the framework it
+belongs to.</div>
+<div class='card' style='text-align:center;padding:40px 20px'>
+<div style='font-size:34px;line-height:1'>▶</div>
+<div class='empty' style='margin-top:10px'>No media collected yet.</div>
+<p class='meta' style='margin:8px 0 0'>Meanwhile: <a href='pillar-learning.html'>Learning</a> lists the evaluations,
+after-action reviews and stories on record, and each framework page links its documents.</p>
+</div>
+<style>{DASH_CSS}</style>"""
+    page("media.html", "Media & visuals", body)
 
 
 
@@ -1064,23 +1573,13 @@ def _st(status, kind="fw"):
     return f"<span class='st {cls}'>{status.replace('_', ' ')}</span>"
 
 
-def _kb_trigger_info():
-    """Structured trigger info per (kb_framework, version) from KB page frontmatter."""
-    import re
-
-    import yaml
-
-    from ds_aa_tracking.versions import KB_DIR
+def _kb_trigger_info(e):
+    """Structured trigger info per (kb_framework, version) from aa.version_page."""
+    from ds_aa_tracking.kb_pages import load_version_pages
 
     out = {}
-    for pg in KB_DIR.glob("frameworks/*/[0-9]*.md"):
-        m = re.match(r"^---\n(.*?)\n---", pg.read_text(), re.DOTALL)
-        if not m:
-            continue
-        try:
-            fm = yaml.safe_load(m.group(1))
-        except yaml.YAMLError:
-            continue
+    for (fw, ver), pg in load_version_pages(e).items():
+        fm = pg["fm"]
         tf = fm.get("trigger_facets") or {}
         mp = fm.get("monitoring_period") or {}
         bits = []
@@ -1094,7 +1593,7 @@ def _kb_trigger_info():
             bits.append("monitored " + "".join(names[m - 1] for m in months
                                                if isinstance(m, int) and 1 <= m <= 12))
         if bits:
-            out[(fm.get("framework"), str(fm.get("version")))] = " · ".join(bits)
+            out[(fw, ver)] = " · ".join(bits)
     return out
 
 
@@ -1138,7 +1637,7 @@ def build_hierarchy(page, d, e):
         "WHERE url IS NOT NULL", e)
     url_map = {(r["kb_framework"], r["event_date"]): r["url"]
                for _, r in urls.iterrows()}
-    trig = _kb_trigger_info()
+    trig = _kb_trigger_info(e)
     focal = d["focal"]
 
     def windows_table(wins_v):
@@ -1982,8 +2481,9 @@ def build_all(e, page, tbl):
     import donors
     donors.build_donors(page, d)
     build_questions(page)
-    links = build_framework_pages(page, tbl, d)
+    links = build_framework_pages(page, tbl, d, e)
     build_hub(page, d, links)
+    build_media(page)
     build_hierarchy(page, d, e)
     build_entry(page, d, e)
     build_status_form(page, d)

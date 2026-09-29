@@ -58,36 +58,54 @@ def build_donors(page, d):
  <label>Year <select id='fY'></select></label>
  <label>Fund <select id='fFT'><option value=''>all pooled funds</option><option value='cerf'>CERF</option><option value='cbpf'>CBPFs</option><option value='regional_fund'>regional funds</option></select></label>
  <label>Donor type <select id='fDT'><option value=''>all</option></select></label>
- <label>Donor <select id='fD'><option value=''>— pick one for the detail table —</option></select></label>
- <label>Top <select id='fN'><option>15</option><option selected>20</option><option>30</option><option>50</option></select></label>
+ <label>Donor <select id='fD'><option value=''>all donors (portfolio view)</option></select></label>
+ <label id='fNl'>Top <select id='fN'><option>15</option><option selected>20</option><option>30</option><option>50</option></select></label>
+ <button class='dl' id='backAll' style='display:none' onclick='goAll()'>← All donors</button>
 </div>
+<div id='dHead' style='display:none;margin:14px 0 4px'><h2 style='margin:0;display:inline'><span id='dName'></span></h2>
+ <span class='meta' style='margin-left:12px'><a href='#' onclick='goAll();return false'>← All donors</a></span></div>
 <div class='tiles'>
  <div class='tile'><div class='v' id='tC'>–</div><div class='l' id='tCl'>paid into the funds</div></div>
- <div class='tile'><div class='v' id='tR'>–</div><div class='l'>AA released, attributed to donors</div></div>
- <div class='tile'><div class='v' id='tP'>–</div><div class='l'>AA pre-arranged, attributed to donors</div></div>
- <div class='tile'><div class='v' id='tB'>–</div><div class='l'>build earmarks (OCHA AA project)</div></div>
+ <div class='tile'><div class='v' id='tR'>–</div><div class='l' id='tRl'>AA released, attributed to donors</div></div>
+ <div class='tile'><div class='v' id='tP'>–</div><div class='l' id='tPl'>AA pre-arranged, attributed to donors</div></div>
+ <div class='tile'><div class='v' id='tB'>–</div><div class='l' id='tBl'>build earmarks (OCHA AA project)</div></div>
 </div>
 <div class='note' id='unattr' style='margin:-6px 0 10px'></div>
+<div class='note' id='gbNote' style='display:none;margin:-6px 0 10px'>Donors report their AA funding annually under the <a href='https://interagencystandingcommittee.org/grand-bargain'>Grand Bargain</a>; these are the figures to use.</div>
 <div class='grid'>
- <div class='panel'><h3>Donor shares of AA released</h3><canvas id='c1' height='420'></canvas>
-   <div class='note'>Each donor's share of the fund's income that year × the AA the fund released that year (activations: framework, ad hoc, EA). Stacked by fund type.</div></div>
- <div class='panel'><h3>Donor shares of AA pre-arranged</h3><canvas id='c2' height='420'></canvas>
-   <div class='note'>Same shares × the pre-arranged envelopes / AA-tagged CBPF allocations of that year (the Funding page's annual series).</div></div>
- <div class='panel' style='grid-column:1/-1'><h3>Attributed AA released by year</h3><canvas id='c3' height='260'></canvas>
-   <div class='note'>All years; the largest donors over the period, everyone else as "other". Ignores the year filter.</div></div>
+ <div class='panel'><h3 id='c1t'>Donor shares of AA released</h3><canvas id='c1' height='420'></canvas>
+   <div class='note' id='c1n'>Each donor's share of the fund's income that year × the AA the fund released that year (activations: framework, ad hoc, EA). Stacked by fund type.</div></div>
+ <div class='panel'><h3 id='c2t'>Donor shares of AA pre-arranged</h3><canvas id='c2' height='420'></canvas>
+   <div class='note' id='c2n'>Same shares × the pre-arranged envelopes / AA-tagged CBPF allocations of that year (the Funding page's annual series).</div></div>
+ <div class='panel' style='grid-column:1/-1'><h3 id='c3t'>Attributed AA released by year</h3><canvas id='c3' height='260'></canvas>
+   <div class='note' id='c3n'>All years; the largest donors over the period, everyone else as "other". Ignores the year filter.</div></div>
 </div>
-<h2 id='detail'>Donor detail</h2>
-<section><p class='meta' id='detailMeta'>Pick a donor in the filter bar: one row per fund they paid into that handled AA that year — the workbook's per-donor tab.</p>
-<div class='scroll'><table class='data' id='dtbl'><thead><tr>
-<th>fund</th><th>paid by donor</th><th>fund income</th><th>share</th><th>AA released by fund</th><th>donor's share</th><th>AA pre-arranged by fund</th><th>donor's share</th>
+<div id='dview' style='display:none'>
+<h2 id='byfund'>By fund</h2>
+<section><p class='meta' id='fundMeta'></p>
+<div style='display:flex;gap:10px;align-items:center'><input class='filter' placeholder='filter rows…' oninput='filt(this)'>
+<button class='dl' onclick='dlFund()'>⬇ CSV</button></div>
+<div class='scroll'><table class='data' id='ftbl'><thead><tr>
+<th>fund</th><th>type</th><th>years</th><th>paid by donor</th><th>AA released by fund</th><th>attributed released</th><th>AA pre-arranged by fund</th><th>attributed pre-arranged</th>
 </tr></thead><tbody></tbody></table></div></section>
+<h2 id='detail'>Fund × year detail</h2>
+<section><p class='meta' id='detailMeta'></p>
+<div style='display:flex;gap:10px;align-items:center'><input class='filter' placeholder='filter rows…' oninput='filt(this)'>
+<button class='dl' onclick='dlDetail()'>⬇ CSV</button></div>
+<div class='scroll'><table class='data' id='dtbl'><thead><tr>
+<th>fund</th><th>year</th><th>paid by donor</th><th>fund income</th><th>share</th><th>AA released by fund</th><th>attributed released</th><th>AA pre-arranged by fund</th><th>attributed pre-arranged</th>
+</tr></thead><tbody></tbody></table></div></section>
+</div>
+<div id='pview'>
 <h2>All donors</h2>
-<section><div style='display:flex;gap:10px;align-items:center'>
+<section><p class='meta'>Pick a donor in the filter bar (or click a name) for that donor's view: their share of each fund, attributed AA by fund and by year, and a fund × year table — the workbook's per-donor tab.</p>
+<div style='display:flex;gap:10px;align-items:center'>
 <input class='filter' placeholder='filter rows…' oninput='filt(this)'>
 <button class='dl' onclick='dlTable()'>⬇ CSV</button></div>
 <div class='scroll'><table class='data' id='tbl'><thead><tr>
 <th>donor</th><th>type</th><th>paid to CERF</th><th>paid to CBPFs/RhPFs</th><th>share of CERF</th><th>released via CERF</th><th>released via CBPFs</th><th>released total</th><th>pre-arranged via CERF</th><th>pre-arranged via CBPFs</th><th>build</th>
-</tr></thead><tbody></tbody></table></div></section>"""
+</tr></thead><tbody></tbody></table></div></section>
+</div>"""
     if not have_data:
         panels = ("<div class='card' style='border-color:#e6a23c'><b>No contribution data in this "
                   "snapshot.</b> The OneGMS contribution mirror (aa.v_contribution) was not part "
@@ -109,10 +127,15 @@ const FT = {cerf:'CERF', cbpf:'CBPF', regional_fund:'regional fund'};
 const ftOf = fc => fc==='cerf' ? 'cerf' : (fc||'').startsWith('rhpf') ? 'regional_fund' : 'cbpf';
 const pct = v => (100*v).toFixed(v>=0.1?1:2)+'%';
 const esc = s => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+// donor view: to the dollar, thousands separators (the portfolio tiles keep money()'s $1.2M)
+const dollars = v => v==null ? '' : (v<0?'-':'')+'$'+Math.round(Math.abs(v)).toLocaleString('en-US');
+const fundLabel = fc => D.FN[fc]||fc;
+const BK = {rel:'#3b3f6b', pre:'#9aa3c7'};   // released / pre-arranged buckets in the donor view
+const slug = s => String(s).replace(/[^A-Za-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
 D.years.forEach(y=>fY.add(new Option(y,y))); fY.add(new Option('all years','all'));
 fY.value = String(D.defaultYear);
 uniqSorted(D.C, r=>r.donor_type).forEach(t=>fDT.add(new Option(t,t)));
-uniqSorted(D.C, r=>r.donor).forEach(n=>fD.add(new Option(n,n)));
+uniqSorted(D.C.concat(D.B), r=>r.donor).forEach(n=>fD.add(new Option(n,n)));
 
 // shares for one (fund, year): every donor row of that fund-year, with the fund's AA buckets
 function attribute(yearSel, ftSel){
@@ -139,9 +162,28 @@ function byDonor(rows, dtSel){
     else { o.paidCbpf+=r.paid_usd; o.relReg+=r.rel; o.preReg+=r.pre; } });
   return m;
 }
+// re-format a chart mkChart() built with money(): value-axis ticks and tooltips through f
+function fmtChart(ch, horiz, f){
+  const ax = horiz ? ch.options.scales.x : ch.options.scales.y;
+  ax.ticks.callback = v=>f(v);
+  ch.options.plugins.tooltip.callbacks.label = c=>{ const v = horiz?c.parsed.x:(c.parsed.y??c.parsed); return ` ${c.dataset.label??''}: ${f(v)}`; };
+  ch.update(); }
+// CSV: exact values — numbers as written (2 decimals), never rounded to millions
+const csvNum = (v, dp=2) => v==null || v==='' ? '' : typeof v==='number' ? v.toFixed(dp) : String(v);
+function csvDownload(name, header, rows){
+  const e = v => v==null ? '' : /[",\n]/.test(String(v)) ? '"'+String(v).replace(/"/g,'""')+'"' : String(v);
+  const csv = [header.join(',')].concat(rows.map(r=>r.map(e).join(','))).join('\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  a.download = name; a.click(); URL.revokeObjectURL(a.href); }
+function setView(dn){
+  [dview, backAll, gbNote, dHead].forEach(el=>el.style.display = dn?'':'none');
+  [pview, unattr, fNl].forEach(el=>el.style.display = dn?'none':'');
+  dName.textContent = dn; }
 function draw(){
-  const y = fY.value, ft = fFT.value, dtSel = fDT.value, N = +fN.value;
+  const y = fY.value, ft = fFT.value, dtSel = fDT.value, N = +fN.value, dn = fD.value;
   const {rows, un} = attribute(y, ft);
+  setView(dn);
+  if(dn){ drawDonor(dn, y, ft, rows); return; }
   const m = byDonor(rows, dtSel);
   D.B.filter(r=>y==='all'||r.year===+y).forEach(r=>{ if(m[r.donor]) m[r.donor].build += r.amount_usd||0;
     else if(!dtSel) m[r.donor] = {donor:r.donor, type:'', paidCerf:0, paidCbpf:0, shareCerf:null, relCerf:0, relCbpf:0, relReg:0, preCerf:0, preCbpf:0, preReg:0, build:r.amount_usd||0}; });
@@ -149,9 +191,12 @@ function draw(){
   const sum = f => L.reduce((s,o)=>s+f(o),0);
   tC.textContent = money(sum(o=>o.paidCerf+o.paidCbpf));
   tCl.textContent = 'paid into ' + (ft?FT[ft]+'s':'the pooled funds') + (y==='all'?' 2020→':' in '+y);
-  tR.textContent = money(sum(o=>o.relCerf+o.relCbpf+o.relReg));
-  tP.textContent = money(sum(o=>o.preCerf+o.preCbpf+o.preReg));
-  tB.textContent = money(sum(o=>o.build));
+  tR.textContent = money(sum(o=>o.relCerf+o.relCbpf+o.relReg)); tRl.textContent = 'AA released, attributed to donors';
+  tP.textContent = money(sum(o=>o.preCerf+o.preCbpf+o.preReg)); tPl.textContent = 'AA pre-arranged, attributed to donors';
+  tB.textContent = money(sum(o=>o.build)); tBl.textContent = 'build earmarks (OCHA AA project)';
+  c1t.textContent = 'Donor shares of AA released'; c1n.textContent = "Each donor's share of the fund's income that year × the AA the fund released that year (activations: framework, ad hoc, EA). Stacked by fund type.";
+  c2t.textContent = 'Donor shares of AA pre-arranged'; c2n.textContent = "Same shares × the pre-arranged envelopes / AA-tagged CBPF allocations of that year (the Funding page's annual series).";
+  c3t.textContent = 'Attributed AA released by year'; c3n.textContent = 'All years; the largest donors over the period, everyone else as "other". Ignores the year filter.';
   unattr.innerHTML = (un.rel||un.pre) ? `Not attributable (AA money on a fund with no contribution rows that year — ${un.keys.map(k=>esc(D.FN[k.split('|')[0]]||k.split('|')[0])+' '+k.split('|')[1]).join(', ')}): released ${money(un.rel)}, pre-arranged ${money(un.pre)}. Shown here, never spread across donors.` : 'Every dollar of AA in this selection sits on a fund with known donors.';
   const stack = (id, key) => { const top = L.filter(o=>o[key+'Cerf']+o[key+'Cbpf']+o[key+'Reg']>0)
       .sort((a,b)=>(b[key+'Cerf']+b[key+'Cbpf']+b[key+'Reg'])-(a[key+'Cerf']+a[key+'Cbpf']+a[key+'Reg'])).slice(0,N);
@@ -173,26 +218,86 @@ function draw(){
   // main table
   L.sort((a,b)=>(b.relCerf+b.relCbpf+b.relReg+b.preCerf+b.preCbpf+b.preReg+b.build)-(a.relCerf+a.relCbpf+a.relReg+a.preCerf+a.preCbpf+a.preReg+a.build));
   window._L = L;
-  document.querySelector('#tbl tbody').innerHTML = L.map(o=>`<tr><td>${esc(o.donor)}</td><td>${esc(o.type)}</td>
+  document.querySelector('#tbl tbody').innerHTML = L.map(o=>`<tr><td><a href='#donor=${encodeURIComponent(o.donor)}'>${esc(o.donor)}</a></td><td>${esc(o.type)}</td>
     <td>${money(o.paidCerf)}</td><td>${money(o.paidCbpf)}</td><td>${o.shareCerf==null?'':pct(o.shareCerf)}</td>
     <td>${money(o.relCerf)}</td><td>${money(o.relCbpf+o.relReg)}</td><td><b>${money(o.relCerf+o.relCbpf+o.relReg)}</b></td>
     <td>${money(o.preCerf)}</td><td>${money(o.preCbpf+o.preReg)}</td><td>${money(o.build)}</td></tr>`).join('');
-  // detail
-  const dn = fD.value;
-  const det = rows.filter(r=>r.donor===dn && (r.fundRel||r.fundPre)).sort((a,b)=>(b.year-a.year)||(b.paid_usd-a.paid_usd));
-  detailMeta.textContent = dn ? `${dn}${y==='all'?', 2020→':', '+y}: one row per fund paid into that handled AA that year — share = paid / fund income that fiscal year.` : 'Pick a donor in the filter bar: one row per fund they paid into that handled AA that year — the workbook\'s per-donor tab.';
-  document.querySelector('#dtbl tbody').innerHTML = det.map(r=>`<tr><td>${esc(D.FN[r.fund_code]||r.fund_code)}${y==='all'?' · '+r.year:''}</td>
-    <td>${money(r.paid_usd)}</td><td>${money(r.fundIncome)}</td><td>${pct(r.share)}</td>
-    <td>${money(r.fundRel)}</td><td><b>${money(r.rel)}</b></td><td>${money(r.fundPre)}</td><td><b>${money(r.pre)}</b></td></tr>`).join('')
-    + (det.length ? `<tr><td><b>total</b></td><td>${money(det.reduce((s,r)=>s+r.paid_usd,0))}</td><td></td><td></td><td></td><td><b>${money(det.reduce((s,r)=>s+r.rel,0))}</b></td><td></td><td><b>${money(det.reduce((s,r)=>s+r.pre,0))}</b></td></tr>` : '');
 }
+// ---- one donor's view: their share of each fund, attributed AA by fund and by year, fund × year rows
+function drawDonor(dn, y, ft, rows){
+  const inYear = r => y==='all' || r.year===+y, inFT = r => !ft || ftOf(r.fund_code)===ft;
+  const dr = rows.filter(r=>r.donor===dn);                       // donor × fund × year in the selection
+  const det = dr.filter(r=>r.fundRel||r.fundPre).sort((a,b)=>(b.year-a.year)||(b.paid_usd-a.paid_usd));
+  const sum = (arr,f) => arr.reduce((s,r)=>s+(f(r)||0),0);
+  const rel = sum(det,r=>r.rel), pre = sum(det,r=>r.pre);
+  const build = sum(D.B.filter(r=>r.donor===dn && inYear(r)), r=>r.amount_usd);
+  const totAA = sum(D.A.filter(r=>inYear(r)&&inFT(r)), r=>r.amount_usd) + sum(D.P.filter(r=>inYear(r)&&inFT(r)), r=>r.amount_usd);
+  const when = y==='all' ? '2020→' : 'in '+y, scope = ft ? FT[ft]+'s' : 'the pooled funds';
+  tC.textContent = dollars(rel); tCl.textContent = `AA released, attributed to ${dn} ${when}`;
+  tR.textContent = dollars(pre); tRl.textContent = `AA pre-arranged, attributed to ${dn} ${when}`;
+  tP.textContent = dollars(build); tPl.textContent = `build earmarks to the OCHA AA project ${when}`;
+  tB.textContent = totAA ? pct((rel+pre)/totAA) : '–'; tBl.textContent = `share of all AA released + pre-arranged via ${scope} ${when}`;
+  // chart 1: share of each fund's income, latest year in the selection the donor paid in
+  const y1 = y==='all' ? Math.max(-Infinity, ...dr.map(r=>r.year)) : +y;
+  const s1 = dr.filter(r=>r.year===y1).sort((a,b)=>b.share-a.share);
+  c1t.textContent = `${dn}: share of each fund's income${isFinite(y1)?', '+y1:''}`;
+  c1n.textContent = "Paid by the donor ÷ everything the fund received that fiscal year (cash basis, pledges excluded)." + (y==='all' ? ' Latest year the donor paid into a fund in this selection; the tables below cover every year.' : '');
+  fmtChart(mkChart('c1','bar', s1.map(r=>fundLabel(r.fund_code)),
+    [{label:'share of fund income', data:s1.map(r=>100*r.share), backgroundColor:s1.map(r=>FUND_COLORS[r.ft])}],
+    {allLabels:true, extra:{indexAxis:'y'}}), true, v=>(+v).toFixed(1)+'%');
+  // chart 2 + by-fund table: attributed released / pre-arranged per fund over the selected years
+  const byF = {};
+  det.forEach(r=>{ const o = byF[r.fund_code] ??= {fund_code:r.fund_code, ft:r.ft, years:new Set(), paid:0, fundRel:0, fundPre:0, rel:0, pre:0};
+    o.years.add(r.year); o.paid+=r.paid_usd; o.fundRel+=r.fundRel; o.fundPre+=r.fundPre; o.rel+=r.rel; o.pre+=r.pre; });
+  const F = Object.values(byF).sort((a,b)=>(b.rel+b.pre)-(a.rel+a.pre));
+  c2t.textContent = `${dn}: attributed AA by fund${y==='all'?', all years':', '+y}`;
+  c2n.textContent = "The donor's share of each fund's income × the AA that fund released / pre-arranged, summed over the selected years.";
+  fmtChart(mkChart('c2','bar', F.map(o=>fundLabel(o.fund_code)),
+    [{label:'AA released', data:F.map(o=>o.rel), backgroundColor:BK.rel}, {label:'AA pre-arranged', data:F.map(o=>o.pre), backgroundColor:BK.pre}],
+    {allLabels:true, extra:{indexAxis:'y'}}), true, dollars);
+  // chart 3: by year (every year; the fund filter applies, the year filter does not)
+  const perY = {};
+  attribute('all', ft).rows.filter(r=>r.donor===dn).forEach(r=>{ const o = perY[r.year] ??= {rel:0,pre:0}; o.rel+=r.rel; o.pre+=r.pre; });
+  c3t.textContent = `${dn}: attributed AA by year`;
+  c3n.textContent = 'Every year, released and pre-arranged — the annual figures the donor reports under the Grand Bargain. Ignores the year filter; the fund filter applies.';
+  fmtChart(mkChart('c3','bar', D.years,
+    [{label:'AA released', data:D.years.map(yy=>perY[yy]?.rel||0), backgroundColor:BK.rel},
+     {label:'AA pre-arranged', data:D.years.map(yy=>perY[yy]?.pre||0), backgroundColor:BK.pre}], {}), false, dollars);
+  // tables
+  const yrsOf = o => [...o.years].sort().join(', ');
+  fundMeta.textContent = `${dn}, ${y==='all'?'2020→':y}: funds the donor paid into that handled AA in those years, all years combined.`;
+  document.querySelector('#ftbl tbody').innerHTML = F.map(o=>`<tr><td>${esc(fundLabel(o.fund_code))}</td><td>${FT[o.ft]}</td><td>${yrsOf(o)}</td>
+    <td>${dollars(o.paid)}</td><td>${dollars(o.fundRel)}</td><td><b>${dollars(o.rel)}</b></td><td>${dollars(o.fundPre)}</td><td><b>${dollars(o.pre)}</b></td></tr>`).join('')
+    + (F.length ? `<tr><td><b>total</b></td><td></td><td></td><td>${dollars(sum(F,o=>o.paid))}</td><td></td><td><b>${dollars(rel)}</b></td><td></td><td><b>${dollars(pre)}</b></td></tr>` : '<tr><td colspan=8>No AA on a fund this donor paid into in the selection.</td></tr>');
+  detailMeta.textContent = `${dn}, ${y==='all'?'2020→':y}: one row per fund × fiscal year — share = paid / fund income that year; attributed = share × the fund's AA that year.`;
+  document.querySelector('#dtbl tbody').innerHTML = det.map(r=>`<tr><td>${esc(fundLabel(r.fund_code))}</td><td>${r.year}</td>
+    <td>${dollars(r.paid_usd)}</td><td>${dollars(r.fundIncome)}</td><td>${pct(r.share)}</td>
+    <td>${dollars(r.fundRel)}</td><td><b>${dollars(r.rel)}</b></td><td>${dollars(r.fundPre)}</td><td><b>${dollars(r.pre)}</b></td></tr>`).join('')
+    + (det.length ? `<tr><td><b>total</b></td><td></td><td>${dollars(sum(det,r=>r.paid_usd))}</td><td></td><td></td><td></td><td><b>${dollars(rel)}</b></td><td></td><td><b>${dollars(pre)}</b></td></tr>` : '');
+  window._F = F; window._det = det;
+}
+// ---- exports (exact dollars, 2 decimals; shares as percent, 4 decimals)
 function dlTable(){ const cols = ['donor','type','paidCerf','paidCbpf','shareCerf','relCerf','relCbpf','relReg','preCerf','preCbpf','preReg','build'];
-  const e = v => v==null ? '' : /[",\n]/.test(String(v)) ? '"'+String(v).replace(/"/g,'""')+'"' : String(v);
-  const csv = [cols.join(',')].concat((window._L||[]).map(o=>cols.map(c=>e(typeof o[c]==='number'?Math.round(o[c]):o[c])).join(','))).join('\n');
-  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
-  a.download = `donor_shares_${fY.value}.csv`; a.click(); URL.revokeObjectURL(a.href); }
-[fY,fFT,fDT,fD,fN].forEach(el=>el.addEventListener('change',draw));
-draw();"""
+  csvDownload(`donor_shares_${fY.value}.csv`, cols.map(c=>c==='shareCerf'?'shareCerf_pct':c),
+    (window._L||[]).map(o=>cols.map(c=>c==='shareCerf' ? (o[c]==null?'':csvNum(100*o[c],4)) : csvNum(o[c])))); }
+function dlDetail(){ const dn = fD.value;
+  csvDownload(`donor_${slug(dn)}_${fY.value}.csv`,
+    ['donor','fund_code','fund','fund_type','year','paid_usd','fund_income_usd','share_pct','fund_aa_released_usd','attributed_released_usd','fund_aa_prearranged_usd','attributed_prearranged_usd'],
+    (window._det||[]).map(r=>[dn, r.fund_code, fundLabel(r.fund_code), FT[r.ft], r.year, csvNum(r.paid_usd), csvNum(r.fundIncome), csvNum(100*r.share,4),
+      csvNum(r.fundRel), csvNum(r.rel), csvNum(r.fundPre), csvNum(r.pre)])); }
+function dlFund(){ const dn = fD.value;
+  csvDownload(`donor_${slug(dn)}_by_fund_${fY.value}.csv`,
+    ['donor','fund_code','fund','fund_type','years','paid_usd','fund_aa_released_usd','attributed_released_usd','fund_aa_prearranged_usd','attributed_prearranged_usd'],
+    (window._F||[]).map(o=>[dn, o.fund_code, fundLabel(o.fund_code), FT[o.ft], [...o.years].sort().join(' '), csvNum(o.paid), csvNum(o.fundRel), csvNum(o.rel), csvNum(o.fundPre), csvNum(o.pre)])); }
+// ---- routing: the donor lives in location.hash (#donor=Name) so the back button and links work
+const donorFromHash = () => { const m = /[#&]donor=([^&]*)/.exec(location.hash); try { return m ? decodeURIComponent(m[1]) : ''; } catch(e){ return ''; } };
+function syncFromHash(){ const dn = donorFromHash(); fD.value = dn; if(fD.value!==dn) fD.value = ''; draw(); }
+function goAll(){ fD.value = ''; fD.dispatchEvent(new Event('change')); }
+fD.addEventListener('change', ()=>{ const h = fD.value ? '#donor='+encodeURIComponent(fD.value) : '';
+  if(h !== location.hash) location.hash = h; else draw(); });     // hashchange → syncFromHash → draw
+[fY,fFT,fDT,fN].forEach(el=>el.addEventListener('change',draw));
+window.addEventListener('hashchange', syncFromHash);
+syncFromHash();"""
     _dash_page(page, "dash-donors.html", "Donor shares of AA",
                "<b>Who funded the anticipatory action.</b> A donor's share of a pooled fund's "
                "income in a fiscal year (their contributions ÷ everything the fund received, "

@@ -19,9 +19,8 @@ import unicodedata
 from pathlib import Path
 
 import pandas as pd
-import yaml
 
-from ds_aa_tracking.versions import KB_DIR
+from ds_aa_tracking.kb_pages import load_version_pages
 
 ROOT = Path(__file__).parents[1]
 OUT = ROOT / "site_build"
@@ -76,6 +75,19 @@ W, H = VB_W, VB_H                       # kept for callers; the view box is 0 0 
 # framework status (aa.v_framework_lifecycle): 'updating' shares the active colour, hatched
 KB_COLOR = {"active": "#2171b5", "updating": "#2171b5", "development": "#9ecae1"}
 KB_LABEL = {"active": "Active", "updating": "Being updated", "development": "In development"}
+# map layers (index.html toggles). A pair can sit on several layers; the pin takes the
+# style of the first ENABLED layer in this order (a framework with ad hoc allocations is
+# drawn as a framework while the framework layer is on).
+LAYER_ORDER = ("framework", "retired", "adhoc", "tech")
+LAYER_COLOR = {"adhoc": "#74c476", "retired": "#9e9e9e", "tech": "#2a9d8f"}
+LAYER_LABEL = {"framework": "Frameworks", "adhoc": "Ad hoc allocations", "retired": "Retired",
+               "tech": "Technical support"}
+DISP_LABEL = {**KB_LABEL, "retired": "Retired", "pipeline": "No framework version yet",
+              "adhoc": "Ad hoc allocations only"}
+# trigger-validation Drive folder (rendered in the Model pillar when non-empty)
+TRIGGER_VALIDATION_URL = ""
+# framework_version.analysis_ref is 'repo@branch:path' in the team's GitHub org
+ANALYSIS_REPO_BASE = "https://github.com/OCHA-DAP/"
 HAZ_COLOR = {"flood": "#2a78d6", "drought": "#eb6834", "storm": "#8e5bd9",
              "cholera": "#1baf7a", "plague": "#b8860b"}
 HAZ_LABEL = {"storm": "Trop. cyclones", "flood": "Floods", "drought": "Drought",
@@ -209,81 +221,11 @@ def world_data(shown_iso, country_names):
     return svg, bboxes, data
 
 
-# ---------------------------------------------------------------- KB pages
-def _kb_pages():
-    """(kb_framework, version) -> {frontmatter, triggers[list of dict]}."""
-    out = {}
-    for pg in sorted(KB_DIR.glob("frameworks/*/[0-9]*.md")):
-        txt = pg.read_text()
-        m = re.match(r"^---\n(.*?)\n---", txt, re.DOTALL)
-        if not m:
-            continue
-        try:
-            fm = yaml.safe_load(m.group(1)) or {}
-        except yaml.YAMLError:
-            continue
-        trig = []
-        t = re.search(r"^## Trigger windows\n(.*?)(?=^## |\Z)", txt, re.M | re.S)
-        if t:
-            rows = [ln for ln in t.group(1).splitlines() if ln.strip().startswith("|")]
-            if len(rows) >= 3:
-                hdr = [h.strip().lower() for h in rows[0].strip().strip("|").split("|")]
-                for ln in rows[2:]:
-                    cells = [c.strip() for c in ln.strip().strip("|").split("|")]
-                    if len(cells) != len(hdr) or all(not c or c.startswith("e.g.") for c in cells):
-                        continue
-                    trig.append({h: re.sub(r"\*\*(.*?)\*\*", r"\1", c) for h, c in zip(hdr, cells)})
-        out[(fm.get("framework"), str(fm.get("version")))] = {
-            "fm": fm, "triggers": trig, "tiers": _scope_tiers(m.group(1))}
-    return out
-
-
-REST_RE = re.compile(r"all other|non-endemic|rest of|remaining|elsewhere", re.I)
-
-
-def _scope_tiers(front):
-    """Tiers inside a block-form geographic_scope: a comment line on its own names a tier
-    for the items that follow ('# riverine window — …'); an item such as 'Non-endemic
-    provinces (all other)' is a REST tier covering everything not named. -> list of
-    {label, items, rest}, or [] when the scope has no tiers."""
-    m = re.search(r"^geographic_scope:[ \t]*\n((?:[ \t]+.*\n?)*)", front, re.M)
-    if not m:
-        return []
-    tiers, cur = [], {"label": None, "items": [], "rest": False}
-    for line in m.group(1).splitlines():
-        st = line.strip()
-        if not st:
-            continue
-        if st.startswith("#"):
-            if cur["label"] is not None and not cur["items"]:
-                continue                        # a header comment wrapped onto a second line
-            label = re.split(r"\s+[—–-]{1,2}\s+|:", st.lstrip("# ").strip(), 1)[0].strip()
-            if cur["items"] or cur["rest"]:
-                tiers.append(cur)
-            cur = {"label": label, "items": [], "rest": False}
-            continue
-        if not st.startswith("-"):
-            continue
-        item = st[1:].split("#", 1)[0].strip().strip("\"'")
-        if REST_RE.search(item):
-            if cur["items"]:
-                tiers.append(cur)
-                cur = {"label": None, "items": [], "rest": False}
-            lab = re.sub(r"\s*\(all other\)\s*", "", item, flags=re.I).strip()
-            tiers.append({"label": lab, "items": [], "rest": True})
-            continue
-        cur["items"].append(item)
-    if cur["items"] or cur["rest"]:
-        tiers.append(cur)
-    if len(tiers) < 2:
-        return []
-    # an unlabelled tier next to a 'non-X' rest tier is the 'X' tier
-    for t in tiers:
-        if t["label"] is None:
-            rest = next((r for r in tiers if r["rest"] and r["label"]), None)
-            t["label"] = (re.sub(r"^non-?\s*", "", rest["label"], flags=re.I) if rest
-                          and re.match(r"non-?", rest["label"], re.I) else "named areas")
-    return tiers
+# ---------------------------------------------------------------- framework pages (DB)
+def _kb_pages(e):
+    """(kb_framework, version) -> {fm, triggers, tiers} — aa.version_page (the KB pages,
+    imported once on 2026-09-28 and edited in the DB since; the KB is not a source)."""
+    return load_version_pages(e)
 
 
 # ---------------------------------------------------------------- CODAB + scope matching
@@ -672,6 +614,55 @@ def _s(v):
     return None if v is None else str(v)
 
 
+def _envelopes(vf):
+    """(country, hazard, version) -> pre-arranged USD from v_version_funding rows: the
+    'all' total only counts where no per-fund split exists (the dashboards' rule)."""
+    out = {}
+    if vf is None or not len(vf):
+        return out
+    keys = ["country_iso3", "hazard", "version"]
+    has_comp = set(map(tuple, vf.loc[vf["fund_code"] != "all", keys].values))
+    for r in vf.itertuples():
+        k = (r.country_iso3, r.hazard, r.version)
+        if r.fund_code == "all" and k in has_comp:
+            continue
+        if _num(r.total_usd) is not None:
+            out[k] = out.get(k, 0.0) + float(r.total_usd)
+    return out
+
+
+def _analysis_url(ref):
+    """'repo@branch:path' -> GitHub tree URL in the team org; anything else stays text."""
+    m = re.match(r"^([\w.-]+)@([\w./-]+):(.*)$", str(ref or ""))
+    if not m:
+        return None
+    repo, branch, path = m.groups()
+    return f"{ANALYSIS_REPO_BASE}{repo}/tree/{branch}/{path.strip('/')}"
+
+
+ORG_GROUP = {"government": "Government", "un": "UN", "ingo": "International NGOs",
+             "nngo": "National NGOs", "rcrc": "Red Cross / Red Crescent"}
+
+
+def _partner_rows(df):
+    return [{"name": _s(x.name), "acronym": _s(x.acronym),
+             "group": ORG_GROUP.get(_s(x.org_type), "Other"),
+             "roles": _list(x.roles),
+             "parent": _s(x.agency_parent), "usd": _num(x.amount_usd)} for x in df.itertuples()]
+
+
+def _list(v):
+    """A Postgres text[] as read by pandas (list / ndarray / '{a,b}' text / NULL) -> list[str]."""
+    if v is None or isinstance(v, float):
+        return []
+    if isinstance(v, str):
+        return [s for s in v.strip("{}").split(",") if s]
+    try:
+        return [str(s) for s in v]
+    except TypeError:
+        return []
+
+
 def assemble(d, e):
     cur = d["current"].sort_values("country_name")
     ver = pd.read_sql("SELECT * FROM aa.framework_version", e)
@@ -699,7 +690,7 @@ def assemble(d, e):
         """SELECT country_iso3, hazard, version, window_name,
                   coalesce(fund_code, financier, 'unspecified') AS fund_source,
                   agency, sector, amount_usd, provenance
-           FROM aa.window_funding
+           FROM aa.v_window_funding_split
            WHERE amount_usd IS NOT NULL AND (agency IS NOT NULL OR sector IS NOT NULL)""", e)
     sim = pd.read_sql(
         """SELECT country_iso3, hazard, version, window_name, event_year, event_label
@@ -717,7 +708,57 @@ def assemble(d, e):
         """SELECT kb_framework, event_date, country_iso3, url, released_usd, full_activation, note
            FROM aa.actual_activation""", e)
     cal = d["calendar"]
-    kb = _kb_pages()
+    kb = _kb_pages(e)
+
+    def _try(sql, cols):
+        """Read a table that may not exist yet on this DB: an empty frame, never a crash."""
+        try:
+            return pd.read_sql(sql, e)
+        except Exception as ex:  # noqa: BLE001
+            print(f"  ! {sql.split('FROM')[1].split()[0] if 'FROM' in sql else sql}: {ex}")
+            return pd.DataFrame(columns=cols)
+
+    # ad hoc / early-action allocations sit on the (country, hazard) pair, not on a version
+    adhoc = _try("SELECT country_iso3, hazard, count(*) AS n FROM aa.adhoc_activation GROUP BY 1, 2",
+                 ["country_iso3", "hazard", "n"])
+    n_adhoc = {(a.country_iso3, a.hazard): int(a.n) for a in adhoc.itertuples()}
+    learn = _try(
+        """SELECT id, title, url, publisher, year, doc_type, country_iso3, hazard, key_stat
+           FROM aa.learning_document
+           WHERE scope = 'country' AND NOT internal ORDER BY year DESC NULLS LAST, title""",
+        ["id", "title", "url", "publisher", "year", "doc_type", "country_iso3", "hazard", "key_stat"])
+    partners = _try(
+        """SELECT country_iso3, hazard, version, name, acronym, org_type, roles, agency_parent,
+                  amount_usd FROM aa.framework_partner ORDER BY org_type, name""",
+        ["country_iso3", "hazard", "version", "name", "acronym", "org_type", "roles",
+         "agency_parent", "amount_usd"])
+    subg = _try(
+        """SELECT country_iso3, agency, partner_name, partner_acronym, partner_type,
+                  sum(subgrant_usd) AS usd
+           FROM aa.cerf_subgrant WHERE is_aa AND country_iso3 IS NOT NULL
+           GROUP BY 1, 2, 3, 4, 5 ORDER BY 1, 2, 6 DESC NULLS LAST""",
+        ["country_iso3", "agency", "partner_name", "partner_acronym", "partner_type", "usd"])
+    # every version's pre-arranged envelope (all funds; an 'all' total is dropped where the
+    # per-fund split exists — the dashboards' rule) for the budget sanity check
+    vfa = pd.read_sql(
+        """SELECT country_iso3, hazard, version, fund_code, total_usd
+           FROM aa.v_version_funding WHERE kind = 'prearranged' AND total_usd IS NOT NULL""", e)
+    envelope = _envelopes(vfa)
+    pre_now = {}                          # pair -> pre-arranged now (the landing tile's rule)
+    for (c_, h_, _), usd in _envelopes(d["vfund"]).items():
+        pre_now[(c_, h_)] = pre_now.get((c_, h_), 0.0) + usd
+
+    # ad hoc pairs absent from country_hazard (food insecurity, locusts…) still get a pin
+    # on the ad hoc layer: synthesise a row with the country's name from any known row
+    have = set(zip(cur["country_iso3"], cur["hazard"]))
+    iso_name = dict(zip(cur["country_iso3"], cur["country_name"]))
+    iso_region = dict(zip(cur["country_iso3"], cur["region"])) if "region" in cur else {}
+    extra = [{"country_iso3": c_, "hazard": h_, "country_name": iso_name.get(c_),
+              "region": iso_region.get(c_), "lifecycle": None, "technical_support": False,
+              "retired": False, "synthetic": True}
+             for (c_, h_) in sorted(n_adhoc) if (c_, h_) not in have]
+    if extra:
+        cur = pd.concat([cur, pd.DataFrame(extra)], ignore_index=True)
 
     def kb_page(kb_fw, version):
         if not kb_fw:
@@ -738,7 +779,7 @@ def assemble(d, e):
     for _, r in cur.iterrows():
         c, h = r["country_iso3"], r["hazard"]
         kb_fw = _s(r.get("kb_framework"))
-        countries.setdefault(c, {"name": r["country_name"], "region": _s(r.get("region")),
+        countries.setdefault(c, {"name": _s(r["country_name"]), "region": _s(r.get("region")),
                                  "fws": []})
         vs = ver[(ver["country_iso3"] == c) & (ver["hazard"] == h)].copy()
         vs = vs.sort_values("valid_from", na_position="first")
@@ -848,7 +889,21 @@ def assemble(d, e):
                 "scope_tiers_raw": (pg["tiers"] if pg else []) if not regional else [],
                 "scope": None,      # filled by the geo pass
                 "kb_page": bool(pg), "source": _s(v.source), "note": _s(v.note),
+                # budget sanity: the version's pre-arranged envelope (v_version_funding, all
+                # funds) — the sidebar compares the agency x sector split total against it
+                "envelope": envelope.get((c, h, v.version)),
+                "analysis_ref": _s(v.analysis_ref), "analysis_url": _analysis_url(_s(v.analysis_ref)),
+                "partners": _partner_rows(partners[(partners["country_iso3"] == c)
+                                                   & (partners["hazard"] == h)
+                                                   & (partners["version"] == v.version)]),
+                "partners_from": None,
             })
+        # partners: a version without its own list borrows the latest version that has one
+        with_p = [x for x in versions if x["partners"]]
+        for x in versions:
+            if not x["partners"] and with_p:
+                src = with_p[-1]
+                x["partners"], x["partners_from"] = src["partners"], src["v"]
 
         activations = []
         for a in a_f.itertuples():
@@ -886,25 +941,60 @@ def assemble(d, e):
             in_force = latest
         sheet_status = _s(r.get("status"))
         disp = _s(r.get("lifecycle"))                 # aa.v_framework_lifecycle — the one rule
-        if disp not in KB_LABEL:
-            continue                                  # retired / conversation stage: not on the map
+        tech = bool(_f(r.get("technical_support")) or False)
+        synthetic = bool(_f(r.get("synthetic")) or False)
+        # map layers (the page filters; LAYER_ORDER decides the pin style)
+        layers = []
+        if disp in KB_LABEL:
+            layers.append("framework")                # active · updating · development
+        if disp == "retired":
+            layers.append("retired")
+        if n_adhoc.get((c, h)):
+            layers.append("adhoc")                    # ad hoc / early-action allocations on the pair
+        if tech:
+            layers.append("tech")                     # OCHA technical support, whatever the lifecycle
+        if not layers:
+            continue                                  # conversation stage with nothing to show
+        if disp is None or (disp == "pipeline" and not tech):
+            disp = "adhoc" if "adhoc" in layers else "pipeline"
         months_now = (versions[-1]["months"] if versions else [])
         ring = "now" if disp == "active" and TODAY.month in months_now else None   # currently monitored
         n_fw_act = sum(1 for a in activations if a["type"] == "framework_aa")
+        docs = learn[learn["country_iso3"].map(lambda xs: c in _list(xs))
+                     & (learn["hazard"].isna() | (learn["hazard"] == h))] if len(learn) else learn
         countries[c]["fws"].append({
             "hazard": h, "status": sheet_status, "kb": kb_fw,
-            "disp": disp, "disp_label": KB_LABEL[disp], "ring": ring, "n_act": n_fw_act,
-            "tech": bool(r.get("technical_support")),
+            "disp": disp, "disp_label": DISP_LABEL.get(disp, disp), "ring": ring, "n_act": n_fw_act,
+            "n_act_all": len(activations), "n_adhoc": n_adhoc.get((c, h), 0),
+            "layers": layers, "layer": next(l for l in LAYER_ORDER if l in layers),
+            "tech": tech,
             "hz_label": HAZ_LABEL.get(h, h.replace("_", " ").capitalize()),
             "glyph": HAZ_GLYPH.get(h, "other"),
             "latest": latest, "in_force": in_force,
-            "page": f"fw-{c.lower()}-{h}.html",
+            "page": None if synthetic else f"fw-{c.lower()}-{h}.html",
             "prearranged": _num(r.get("cerf_prearranged_usd")),
             "prearranged_year": _num(r.get("prearranged_year")),
+            "pre_now": pre_now.get((c, h)),           # the landing tile's pre-arranged 'now'
             "covered": _num(r.get("people_covered")),
             "current": latest, "versions": versions, "activations": activations,
+            "learning_docs": [{"id": int(x.id), "title": _s(x.title), "url": _s(x.url),
+                               "publisher": _s(x.publisher),
+                               "year": int(x.year) if _num(x.year) is not None else None,
+                               "type": _s(x.doc_type), "stat": _s(x.key_stat)}
+                              for x in docs.itertuples()],
         })
-    return {iso: cd for iso, cd in countries.items() if cd["fws"]}
+    out = {iso: cd for iso, cd in countries.items() if cd["fws"]}
+    # funded sub-grantees (CERF AA allocations) are per country: one list per country
+    for iso, cd in out.items():
+        s = subg[subg["country_iso3"] == iso] if len(subg) else subg
+        groups = {}
+        for x in s.itertuples():
+            groups.setdefault(_s(x.agency) or "unspecified agency", []).append(
+                {"name": _s(x.partner_name), "acronym": _s(x.partner_acronym),
+                 "type": _s(x.partner_type), "usd": _num(x.usd)})
+        cd["subgrants"] = [{"agency": a, "partners": ps} for a, ps in
+                           sorted(groups.items(), key=lambda kv: -sum(p["usd"] or 0 for p in kv[1]))]
+    return out
 
 
 def _expired(valid_until):
@@ -992,6 +1082,21 @@ def geo_pass(countries, bboxes):
         cd["has_geo"] = m is not None
 
 
+def tile_figures(countries, layers):
+    """Headline figures for a set of enabled layers — mirrors updateTiles() in LANDING_JS.
+    A pair is shown when any of its layers is enabled; framework figures (count, pre-arranged,
+    people covered) count pairs shown ON the framework layer; activations count every shown pair."""
+    shown = [f for cd in countries.values() for f in cd["fws"] if set(f["layers"]) & set(layers)]
+    fw = [f for f in shown if "framework" in layers and "framework" in f["layers"]]
+    return {"n_fw": len(fw),
+            "n_active": sum(1 for f in fw if f["disp"] == "active"),
+            "n_upd": sum(1 for f in fw if f["disp"] == "updating"),
+            "n_dev": sum(1 for f in fw if f["disp"] == "development"),
+            "pre": sum(f["pre_now"] or 0 for f in fw),
+            "n_act": sum(f["n_act_all"] for f in shown),
+            "covered": sum(f["covered"] or 0 for f in fw)}
+
+
 # ---------------------------------------------------------------- page
 def build_landing(page, d, e):
     cur = d["current"]
@@ -999,6 +1104,8 @@ def build_landing(page, d, e):
     countries = assemble(d, e)
     svg, bboxes, wdata = world_data(set(countries), names)
     for iso, cd in countries.items():
+        if not cd.get("name"):                        # ad hoc-only country: Natural Earth name
+            cd["name"] = (wdata.get(iso) or {}).get("n") or iso
         cd["lbbox"] = bboxes.get(iso)                 # layout box (world file, largest polygon)
         cd["centroid"] = CENTROID.get(iso) or (
             [(cd["lbbox"][1] + cd["lbbox"][3]) / 2, (cd["lbbox"][0] + cd["lbbox"][2]) / 2]
@@ -1006,32 +1113,26 @@ def build_landing(page, d, e):
         cd["dir"] = DIRECTIONS.get(iso, (0.7, -0.7))
     geo_pass(countries, bboxes)
 
-    act = d["activation"]
-    # the same numbers as everywhere else: status from aa.v_framework_lifecycle, pre-arranged
-    # = the latest version's envelope of every non-retired framework (see dashboards)
-    n_active = int((cur["lifecycle"] == "active").sum())
-    n_upd = int((cur["lifecycle"] == "updating").sum())
-    vf = d["vfund"]
-    has_comp = set(map(tuple, vf.loc[vf["fund_code"] != "all",
-                                     ["country_iso3", "hazard", "version"]].values))
-    total_pre = vf.loc[~((vf["fund_code"] == "all")
-                         & vf.apply(lambda r: (r["country_iso3"], r["hazard"], r["version"])
-                                    in has_comp, axis=1)), "total_usd"].sum()
-    n_act_all = act["event_date"].nunique()
-    covered = d["covered"]["people_covered"].sum()
-    n_shown = sum(len(cd["fws"]) for cd in countries.values())
+    # headline tiles follow the map: the same rule as the page's updateTiles() (JS), here
+    # for the default layer set so the static HTML matches what the page first shows.
+    # Status from aa.v_framework_lifecycle; pre-arranged = the latest version's envelope of
+    # every framework shown (development ones included — they just have no envelope yet)
+    t = tile_figures(countries, {"framework"})
+    n_shown = t["n_fw"]
 
     body = f"""
 <div class='hero'>
  <p>Published triggers, windows, pre-arranged financing and activations across the AA
  portfolio — CERF, country-based and regional pooled funds. Pin colour = framework status, inferred from
  the most recent version; each red dot = one past activation; a pulsing ring = monitored this month. <b>Click a country or a pin</b>
- to zoom in and see the areas each framework covers.</p>
- <div class='tiles'>
-  <div class='tile'><div class='v'>{n_active}</div><div class='l'>active frameworks · {n_upd} being updated ({n_shown} on the map)</div></div>
-  <div class='tile'><div class='v'>${total_pre/1e6:,.0f}M</div><div class='l'>pre-arranged now (CERF + CBPF)</div></div>
-  <div class='tile'><div class='v'>{n_act_all}</div><div class='l'>activations since 2020</div></div>
-  <div class='tile'><div class='v'>{covered/1e6:,.1f}M</div><div class='l'>people covered</div></div>
+ to zoom in and see the areas each framework covers; the <b>layer toggles</b> in the map legend
+ choose what is drawn — the figures below follow them.</p>
+ <div class='tiles gtiles' id='gtiles'>
+  <div class='gcap' id='gcap'>Global portfolio — all layers currently shown on the map</div>
+  <div class='tile' id='t-fw'><div class='v'>{t["n_fw"]}</div><div class='l'>frameworks on the map · {t["n_active"]} active · {t["n_upd"]} being updated · {t["n_dev"]} in development</div></div>
+  <div class='tile' id='t-pre'><div class='v'>${t["pre"]/1e6:,.0f}M</div><div class='l'>pre-arranged now (CERF + CBPF), frameworks shown</div></div>
+  <div class='tile' id='t-act'><div class='v'>{t["n_act"]}</div><div class='l'>activations, pairs shown</div></div>
+  <div class='tile' id='t-cov'><div class='v'>{t["covered"]/1e6:,.1f}M</div><div class='l'>people covered, frameworks shown</div></div>
  </div>
 </div>
 <div class='maprow' id='maprow'>
@@ -1073,9 +1174,15 @@ def build_landing(page, d, e):
    <text x='240' y='262' class='sh-note'>validity, or whose next version is already in development — the framework stands, a new version is coming</text>
    <g class='sh-box sh-dev'><rect x='10' y='276' width='220' height='34' rx='8'/><text x='120' y='298'>In development</text></g>
    <text x='240' y='290' class='sh-note'>no endorsed version yet — the framework is being built for the first time</text>
-   <g class='sh-box sh-off'><rect x='10' y='318' width='220' height='34' rx='8'/><text x='120' y='340'>Retired (not on the map)</text></g>
+   <g class='sh-box sh-off'><rect x='10' y='318' width='220' height='34' rx='8'/><text x='120' y='340'>Retired (layer off by default)</text></g>
    <text x='240' y='332' class='sh-note'>a manual flag on the framework (country × hazard) in the admin — overrides everything above</text>
   </svg>
+  <div class='sh-layers'>
+   <b>Map layers.</b> <span class='dot' style='background:{KB_COLOR["active"]}'></span><b>Frameworks</b> — every framework whose status is active, being updated or in development (the default view; the headline figures follow whatever is shown).
+   <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span><b>Ad hoc allocations</b> — country × hazard pairs that received ad hoc anticipatory-action or early-action money without a framework version (light green; a framework that also received ad hoc money stays drawn as a framework).
+   <span class='dot' style='background:{LAYER_COLOR["retired"]}'></span><b>Retired</b> — frameworks flagged retired in the admin, drawn in grey so past coverage can be compared with today's.
+   <span class='dot dot-hollow' style='border-color:{LAYER_COLOR["tech"]}'></span><b>Technical support</b> — pairs where OCHA supported the framework technically without a funding commitment, whatever their status (including pipeline ones like Palau and Tonga), drawn as a hollow teal pin.
+  </div>
  </div>
 </details>
 <div class='tiles' style='margin-top:18px'>
@@ -1086,7 +1193,9 @@ def build_landing(page, d, e):
 </div>
 <script>window.L = {json.dumps(countries, default=str)};
 window.HAZ = {json.dumps(HAZ_COLOR)}; window.COLOR = {json.dumps(KB_COLOR)};
-window.KBLABEL = {json.dumps(KB_LABEL)}; window.GLYPH = {json.dumps(HAZARD_SVG)};
+window.KBLABEL = {json.dumps(DISP_LABEL)}; window.GLYPH = {json.dumps(HAZARD_SVG)};
+window.LAYER_ORDER = {json.dumps(list(LAYER_ORDER))}; window.LAYER_COLOR = {json.dumps(LAYER_COLOR)};
+window.LAYER_LABEL = {json.dumps(LAYER_LABEL)}; window.TRIGGER_VALIDATION_URL = {json.dumps(TRIGGER_VALIDATION_URL)};
 window.WORLD = {json.dumps(wdata, separators=(",", ":"))};
 window.VB = {{w:{VB_W:.2f}, h:{VB_H:.2f}}}; window.EEBOX = {json.dumps([round(x, 6) for x in EE_BBOX])};
 window.EE = {{lam0:{EE_LAM0}, smax:{S_MAX_DEG}}};
@@ -1243,6 +1352,46 @@ table.mini td.num { text-align:right; white-space:nowrap; font-variant-numeric:t
 table.bt th { position:sticky; top:0; } table.bt td { padding:2px 6px; } table.bt tr.bt-on td { background:#fbfcfe; }
 table.bt .bt-c { text-align:center; } table.bt td.lbl { width:70px; }
 .bt-dot { display:inline-block; width:9px; height:9px; border-radius:50%; }
+/* headline tiles follow the map layers; when a country is open they step back as the GLOBAL
+   portfolio (caption + subdued) and the country's own figures sit at the top of the sidebar */
+.gtiles { position:relative; transition: opacity .3s; }
+.gtiles .gcap { flex-basis:100%; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#64748b; margin:-2px 0 -6px 2px; }
+.gtiles.global { opacity:.72; } .gtiles.global .tile { background:#f6f8fa; border-style:dashed; box-shadow:none; }
+.gtiles.global .tile .v { font-size:18px; color:#475569; } .gtiles.global .gcap { color:#b45309; font-weight:700; }
+.ctiles { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin:8px 0 4px; }
+.ctiles .ctile { background:#eef5fc; border:1px solid #cfe1f3; border-radius:8px; padding:6px 8px; }
+.ctiles .ctile .v { font-size:15px; font-weight:700; color:#0f2540; line-height:1.2; } .ctiles .ctile .l { font-size:10.5px; color:#475569; }
+.ctiles .ccap { grid-column:1 / -1; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:#1a5fa0; font-weight:700; margin-bottom:-2px; }
+@media (max-width:759px){ .ctiles { grid-template-columns:repeat(2,1fr); } }
+/* map layer toggles (world legend) */
+.layerctl { display:flex; flex-direction:column; gap:2px; margin:0 0 6px; padding-bottom:6px; border-bottom:1px solid #e2e8f0; }
+.layerctl label { display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap; }
+.layerctl input { margin:0; accent-color:#2171b5; }
+.layerctl .cnt { color:#64748b; }
+.maplegend .dot-hollow, .sh-layers .dot-hollow { background:#fff !important; border:2.5px solid #2a9d8f; box-sizing:border-box; }
+.sh-layers { font-size:12px; color:#334155; line-height:1.6; margin:6px 0 4px; }
+.sh-layers .dot { display:inline-block; width:11px; height:11px; border-radius:50%; margin:0 4px 0 6px; vertical-align:-1px; }
+/* technical support: a hollow teal pin (the glyph takes the teal too) */
+.iconbox.tech { background:#fff !important; border:2px solid #2a9d8f; }
+.iconbox.tech svg.hz [fill='#fff'] { fill:#2a9d8f; } .iconbox.tech svg.hz [stroke='#fff'] { stroke:#2a9d8f; }
+.b-adhoc { background:#e3f4e1; color:#2a7a2f; } .b-pipeline { background:#f1f5f9; color:#475569; }
+/* plain-language help: ⓘ with a hover / focus tooltip (keyboard reachable) */
+.info { display:inline-grid; place-items:center; width:13px; height:13px; border-radius:50%; font-size:9.5px; font-weight:700; line-height:1;
+  color:#fff; background:#94a3b8; margin-left:3px; cursor:help; position:relative; vertical-align:2px; font-style:normal; user-select:none; text-transform:none; letter-spacing:0; font-family:Georgia,serif; }
+.info:hover, .info:focus { background:var(--ocha); outline:none; }
+.info::after { content:attr(data-tip); position:absolute; left:50%; bottom:calc(100% + 6px); transform:translateX(-50%); width:max-content; max-width:240px;
+  background:rgba(15,37,64,.95); color:#fff; font-size:11.5px; font-weight:400; line-height:1.35; padding:6px 9px; border-radius:6px; text-align:left; white-space:normal;
+  box-shadow:0 4px 12px -4px rgba(0,0,0,.35); display:none; z-index:6; text-transform:none; letter-spacing:0; }
+.info:hover::after, .info:focus::after, .info:focus-visible::after { display:block; }
+.info.left::after { left:auto; right:-4px; transform:none; }
+abbr[title] { text-decoration:underline dotted #94a3b8; text-underline-offset:2px; cursor:help; }
+/* partners */
+.pgrp { margin:6px 0 2px; font-weight:650; color:#16324f; font-size:12px; }
+.prow { font-size:12px; padding:2px 0 2px 8px; }
+.rtag { display:inline-block; font-size:10px; padding:0 6px; border-radius:8px; background:#eef2f7; color:#4a5670; margin-left:4px; vertical-align:1px; }
+.dtag { display:inline-block; font-size:10px; padding:0 6px; border-radius:8px; background:#f3e8ff; color:#6b21a8; margin-left:4px; vertical-align:1px; }
+.warntag { display:inline-block; font-size:10.5px; padding:0 7px; border-radius:8px; background:#fde2e1; color:#b3261e; font-weight:600; margin-left:6px; }
+.tdoc { font-size:12px; margin:4px 0; }
 """
 
 LANDING_JS = r"""
@@ -1254,19 +1403,33 @@ const svg = document.getElementById('map'), world = document.getElementById('wor
       leaders = document.getElementById('leaders'), mapbox = document.getElementById('mapbox'),
       maprow = document.getElementById('maprow');
 const GEO = {};
-let state = { iso:null, hz:null, ver:null, pillar:'funding' };
+let state = { iso:null, hz:null, ver:null, pillar:'model' };
+// ---------- map layers: what the map draws (the legend's toggles); the tiles follow
+const LAYERS = { framework:true, adhoc:false, retired:false, tech:false };
+// the pin takes the style of the first ENABLED layer of the pair (LAYER_ORDER: framework > retired > ad hoc > tech)
+function visLayer(f){ return LAYER_ORDER.find(l => LAYERS[l] && f.layers.includes(l)) || null; }
+function vis(c){ return c.fws.filter(f => visLayer(f)); }
+function hidden(c){ return c.fws.filter(f => !visLayer(f)); }
+function setLayer(k, on){ LAYERS[k] = !!on; applyLayers(); }
 
 function money(v){ return v==null ? '—' : v>=1e6 ? '$'+(v/1e6).toFixed(v>=1e7?0:1)+'M' : v>=1e3 ? '$'+Math.round(v/1e3)+'k' : '$'+Math.round(v); }
 function num(v){ return v==null ? '—' : Math.round(v).toLocaleString(); }
 function esc(s){ return s==null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 const SPLIT = `linear-gradient(135deg,${'#2171b5'} 0 50%,${'#9ecae1'} 50% 100%)`;   // 'being updated': half active, half development
-function bgFor(st){ return st==='updating' ? SPLIT : COLOR[st]; }
-function badge(st, label){ st = st || 'development'; const cls = st==='active' ? 'endorsed' : st==='updating' ? 'updating' : 'development'; return `<span class='badge b-${cls}'>${esc(label || KBLABEL[st] || st.replace(/_/g,' '))}</span>`; }
+function bgFor(st){ return st==='updating' ? SPLIT : (COLOR[st] || COLOR.development); }
+// pin background for a pair given the layer it is drawn on
+function pinStyle(f){ const l = visLayer(f) || f.layer;
+  if(l==='framework') return {bg: bgFor(f.disp), cls: f.disp==='updating' ? 'upd' : ''};
+  if(l==='tech') return {bg: '#fff', cls: 'tech'};
+  return {bg: LAYER_COLOR[l], cls: l}; }
+function badge(st, label){ st = st || 'development';
+  const cls = st==='active' ? 'endorsed' : st==='updating' ? 'updating' : st==='retired' ? 'retired' : st==='adhoc' ? 'adhoc' : st==='pipeline' ? 'pipeline' : 'development';
+  return `<span class='badge b-${cls}'>${esc(label || KBLABEL[st] || st.replace(/_/g,' '))}</span>`; }
 function verBadge(st){ st=st||''; const m = {endorsed:'endorsed', superseded:'superseded', development:'development', 'pre-development':'pre-development', retired:'retired'};
   const lbl = {development:'in development', 'pre-development':'pre-development'}[st] || st || '?';
   return `<span class='badge b-${m[st]||'retired'}'>${esc(lbl)}</span>`; }
 function hzColor(h){ return HAZ[h] || '#7a8699'; }
-function iconHTML(f, extra=''){ return `<span class='iconbox ${f.ring==='now'?'able-now':''} ${f.disp==='updating'?'upd':''} ${extra}' style='background:${bgFor(f.disp)}' data-hz='${f.hazard}'>`
+function iconHTML(f, extra=''){ const ps = pinStyle(f); return `<span class='iconbox ${f.ring==='now'?'able-now':''} ${ps.cls} ${extra}' style='background:${ps.bg}' data-hz='${f.hazard}'>`
   + `<svg viewBox='0 0 24 24' class='hz'>${GLYPH[f.glyph]||GLYPH.other}</svg>`
   + (f.n_act ? `<span class='actdots'>${'<span class="actdot"></span>'.repeat(Math.min(f.n_act,6))}</span>` : '') + `</span>`; }
 // ---------- projections
@@ -1303,10 +1466,10 @@ function fixHeight(){
 }
 // phones: callouts are unusable at 350 px, so the panel lists the countries instead
 function renderWorldList(){
-  const rows = Object.entries(L).sort((a,b)=>a[1].name.localeCompare(b[1].name)).map(([iso,c]) =>
-    `<div class='fcardx wl' style='--hz:${hzColor(c.fws[0].hazard)}' onclick='selectCountry("${iso}")'>
-      <div class='fhead'><b>${esc(c.name)}</b><span class='muted'>${c.fws.length} framework${c.fws.length>1?'s':''}</span></div>
-      <div class='wl-pins'>${c.fws.map(f=>`<span class='wl-pin'>${iconHTML(f)}<span class='hlab'>${esc(f.hz_label)}</span> ${badge(f.disp)}</span>`).join('')}</div>
+  const rows = Object.entries(L).filter(([iso,c]) => vis(c).length).sort((a,b)=>a[1].name.localeCompare(b[1].name)).map(([iso,c]) =>
+    `<div class='fcardx wl' style='--hz:${hzColor(vis(c)[0].hazard)}' onclick='selectCountry("${iso}")'>
+      <div class='fhead'><b>${esc(c.name)}</b><span class='muted'>${vis(c).length} pair${vis(c).length>1?'s':''}</span></div>
+      <div class='wl-pins'>${vis(c).map(f=>`<span class='wl-pin'>${iconHTML(f)}<span class='hlab'>${esc(f.hz_label)}</span> ${badge(f.disp)}</span>`).join('')}</div>
     </div>`).join('');
   side.innerHTML = `<div class='muted' style='margin:2px 0 8px'>Tap a country to zoom in.</div><div class='fwlist'>${rows}</div>`;
 }
@@ -1423,7 +1586,7 @@ function drawAdmin(iso, fade){
   g.adm1.forEach(a => html += `<path class='a1' data-n='${esc(a.n)}' d='${ringsD(a.r)}'/>`);
 
   // one entry per framework tier: {hz, label, color, pcodes, rest}
-  const targets = state.hz ? c.fws.filter(f=>f.hazard===state.hz) : c.fws;
+  const targets = state.hz ? c.fws.filter(f=>f.hazard===state.hz) : vis(c);
   const tiers = [];
   targets.forEach(f => {
     const v = f.versions.find(x => x.v === (state.hz && state.ver ? state.ver : f.current));
@@ -1456,30 +1619,64 @@ function drawAdmin(iso, fade){
 
 // ---------- world legend (KB style)
 function worldLegend(){
-  const fws = Object.values(L).flatMap(c=>c.fws);
-  const n = k => fws.filter(f=>f.disp===k).length;
-  const nAct = fws.reduce((s,f)=>s+f.n_act,0), nNow = fws.filter(f=>f.ring==='now').length;
-  legend.innerHTML = `<b>Framework</b><br>`
-    + `<span class='dot' style='background:${COLOR.active}'></span>Active (${n('active')}) — latest version endorsed, not fully triggered<br>`
+  const all = Object.values(L).flatMap(c=>c.fws), shown = all.filter(f=>visLayer(f));
+  const onLayer = k => all.filter(f=>f.layers.includes(k));
+  const fw = shown.filter(f=>visLayer(f)==='framework');
+  const n = k => fw.filter(f=>f.disp===k).length;
+  const nAct = shown.reduce((s,f)=>s+f.n_act_all,0), nNow = shown.filter(f=>f.ring==='now').length;
+  const swatch = { framework: `<span class='dot' style='background:${COLOR.active}'></span>`, adhoc: `<span class='dot' style='background:${LAYER_COLOR.adhoc}'></span>`,
+                   retired: `<span class='dot' style='background:${LAYER_COLOR.retired}'></span>`, tech: `<span class='dot dot-hollow'></span>` };
+  const ctl = `<div class='layerctl' role='group' aria-label='Map layers'><b>Layers</b>` + LAYER_ORDER.map(k =>
+    `<label>${swatch[k]}<input type='checkbox' ${LAYERS[k]?'checked':''} onchange='setLayer("${k}", this.checked)'> ${LAYER_LABEL[k]} <span class='cnt'>(${onLayer(k).length})</span></label>`).join('') + `</div>`;
+  let keys = '';
+  if(LAYERS.framework) keys += `<span class='dot' style='background:${COLOR.active}'></span>Active (${n('active')}) — latest version endorsed, not fully triggered<br>`
     + `<span class='dot' style='background:${SPLIT}'></span>Being updated (${n('updating')}) — endorsed framework: fully triggered, expired, or a new version in the works<br>`
-    + `<span class='dot' style='background:${COLOR.development}'></span>In development (${n('development')}) — no endorsed version yet<br>`
-    + `<span class='dot' style='background:#e3322d;width:11px;height:11px;border:2px solid #fff'></span>Activated — a dot per activation (${nAct})<br>`
-    + `<span class='dot' style='background:#fff;width:12px;height:12px;border:2.5px solid #f5a300'></span>Currently monitored — in season (${CURMONTH}), pulsing (${nNow})<br>`
-    + `<span class='small' style='color:#64748b'>Retired frameworks are not shown · <a onclick='document.getElementById("statushelp").open=true;document.getElementById("statushelp").scrollIntoView({behavior:"smooth"})'>how statuses work</a></span>`;
+    + `<span class='dot' style='background:${COLOR.development}'></span>In development (${n('development')}) — no endorsed version yet<br>`;
+  if(LAYERS.adhoc) keys += `<span class='dot' style='background:${LAYER_COLOR.adhoc}'></span>Ad hoc / early-action allocations, no framework version (${shown.filter(f=>visLayer(f)==='adhoc').length})<br>`;
+  if(LAYERS.retired) keys += `<span class='dot' style='background:${LAYER_COLOR.retired}'></span>Retired framework (${shown.filter(f=>visLayer(f)==='retired').length})<br>`;
+  if(LAYERS.tech) keys += `<span class='dot dot-hollow'></span>Technical support only, no funding commitment (${shown.filter(f=>visLayer(f)==='tech').length})<br>`;
+  keys += `<span class='dot' style='background:#e3322d;width:11px;height:11px;border:2px solid #fff'></span>Activated — a dot per activation (${nAct})<br>`
+    + `<span class='dot' style='background:#fff;width:12px;height:12px;border:2.5px solid #f5a300'></span>Currently monitored — trigger in season (${CURMONTH}), pulsing (${nNow})<br>`
+    + `<span class='small' style='color:#64748b'>Pre-arranged money and the tiles above follow these layers · <a onclick='document.getElementById("statushelp").open=true;document.getElementById("statushelp").scrollIntoView({behavior:"smooth"})'>how statuses work</a></span>`;
+  legend.innerHTML = ctl + keys;
+  annotate(legend, legend);
+}
+// re-draw everything that depends on the layer set: pins, callouts, legend, tiles, sidebar
+function syncOn(){ for(const [iso, c] of Object.entries(L)){ const el = WP[iso] && WP[iso].el; if(el) el.classList.toggle('on', vis(c).length > 0); } }
+function applyLayers(){
+  syncOn(); worldLegend(); updateTiles();
+  if(state.iso){ renderSide(); if(GEO[state.iso]) drawAdmin(state.iso, false); }
+  else { buildCallouts(); runLayout(); if(isMobile()) renderWorldList(); }
+}
+// headline tiles: recomputed from the pairs the map currently shows (see tile_figures in Python)
+function updateTiles(){
+  const shown = Object.values(L).flatMap(c=>c.fws).filter(f=>visLayer(f));
+  const fw = shown.filter(f=>LAYERS.framework && f.layers.includes('framework'));
+  const n = k => fw.filter(f=>f.disp===k).length;
+  const set = (id, v, l) => { const el = document.getElementById(id); if(!el) return; el.querySelector('.v').textContent = v; el.querySelector('.l').textContent = l; };
+  set('t-fw', fw.length, `frameworks on the map · ${n('active')} active · ${n('updating')} being updated · ${n('development')} in development`);
+  set('t-pre', '$' + Math.round(fw.reduce((s,f)=>s+(f.pre_now||0),0)/1e6) + 'M', 'pre-arranged now (CERF + CBPF), frameworks shown');
+  set('t-act', shown.reduce((s,f)=>s+f.n_act_all,0), 'activations, pairs shown');
+  set('t-cov', (fw.reduce((s,f)=>s+(f.covered||0),0)/1e6).toFixed(1) + 'M', 'people covered, frameworks shown');
+  const g = document.getElementById('gtiles'); if(g) g.classList.toggle('global', !!state.iso);
+  const cap = document.getElementById('gcap'); if(cap) cap.textContent = state.iso ? `Global portfolio — not ${L[state.iso].name}: its own figures are in the panel` : 'Global portfolio — all layers currently shown on the map';
 }
 
 // ---------- callouts: one per country, laid out clear of every framework country (ported from the KB map)
 const NS = 'http://www.w3.org/2000/svg';
-const labels = [];
+let labels = [];
+// one callout per country with something on the enabled layers; rebuilt on every layer change
 function buildCallouts(){
+  lpane.querySelectorAll('.callout').forEach(el => el.remove()); leaders.innerHTML = ''; labels = [];
   Object.entries(L).forEach(([iso, c]) => {
-    if(!c.centroid) return;
+    const fws = vis(c);
+    if(!c.centroid || !fws.length) return;
     const el = document.createElement('div'); el.className = 'callout';
     el.innerHTML = `<span class='cname' data-iso='${iso}'>${esc(c.name)}</span>` +
-      c.fws.map(f => `<span class='hrow'>${iconHTML(f)}<span class='hlab'>${esc(f.hz_label)}</span></span>`).join('');
+      fws.map(f => `<span class='hrow'>${iconHTML(f)}<span class='hlab'>${esc(f.hz_label)}</span></span>`).join('');
     el.querySelector('.cname').onclick = e => { e.stopPropagation(); selectCountry(iso); };
     el.querySelectorAll('.iconbox').forEach(ib => { ib.onclick = e => { e.stopPropagation(); selectCountry(iso, ib.dataset.hz); };
-      ib.onmouseenter = ev => { const f = c.fws.find(x=>x.hazard===ib.dataset.hz); showTip(ev, `${c.name} — ${f.hz_label}: ${f.disp_label}${f.n_act?` · ${f.n_act} activation${f.n_act>1?'s':''}`:''}`); };
+      ib.onmouseenter = ev => { const f = c.fws.find(x=>x.hazard===ib.dataset.hz); const nA = f.n_act_all; showTip(ev, `${c.name} — ${f.hz_label}: ${f.disp_label}${f.tech?' · technical support':''}${nA?` · ${nA} activation${nA>1?'s':''}`:''}`); };
       ib.onmouseleave = () => tip.hidden = true; });
     lpane.appendChild(el);
     const ln = document.createElementNS(NS, 'line'); ln.setAttribute('class','leader'); leaders.appendChild(ln);
@@ -1573,7 +1770,7 @@ function showTip(ev, txt){ const box = mapbox.getBoundingClientRect(); tip.textC
   tip.style.left = (ev.clientX-box.left)+'px'; tip.style.top = (ev.clientY-box.top)+'px'; }
 svg.addEventListener('mousemove', ev => {
   const t = ev.target; let txt = null;
-  if(t.classList.contains('cty') && !state.iso){ const c = L[t.dataset.iso]; txt = c ? `${c.name} · ${c.fws.length} framework${c.fws.length>1?'s':''}` : t.dataset.name; }
+  if(t.classList.contains('cty') && !state.iso){ const c = L[t.dataset.iso], nv = c ? vis(c).length : 0; txt = nv ? `${c.name} · ${nv} ${nv>1?'pairs':'pair'} on the map` : t.dataset.name; }
   else if(t.classList.contains('sc')) txt = `${t.dataset.n} · ${t.dataset.hz}`;
   else if(t.classList.contains('a1') || t.classList.contains('nb')) txt = t.dataset.n;
   if(txt) showTip(ev, txt); else tip.hidden = true;
@@ -1590,9 +1787,9 @@ back.addEventListener('click', goWorld);
 document.addEventListener('keydown', e => { if(e.key === 'Escape' && state.iso) goWorld(); });
 
 function goWorld(){
-  state = { iso:null, hz:null, ver:null };
+  state = { iso:null, hz:null, ver:null, pillar: state.pillar };
   document.querySelectorAll('.cty.sel').forEach(x=>x.classList.remove('sel'));
-  adm.classList.remove('show'); back.hidden = true; worldLegend();
+  adm.classList.remove('show'); back.hidden = true; worldLegend(); updateTiles();
   if(isMobile()){ renderWorldList(); fixHeight(); } else { side.innerHTML = `<div class='muted' style='padding:20px 6px'>Select a country or a pin on the map.</div>`; side.style.opacity = '0'; setTimeout(()=>{ side.style.opacity=''; }, 900); }
   setTimeout(()=>{ adm.innerHTML=''; }, 300);
   zoomOut(() => scheduleLayout());
@@ -1601,11 +1798,15 @@ function goWorld(){
 async function selectCountry(iso, hz, ver){
   const c = L[iso]; if(!c) return;
   const changed = state.iso !== iso;
-  state = { iso, hz: hz || (c.fws.length===1 ? c.fws[0].hazard : null), ver: ver || null };
+  // a deep link to a pair whose layer is off: switch that layer on so the map and the panel agree
+  const want = hz ? c.fws.find(f=>f.hazard===hz) : null;
+  if(want && !visLayer(want)){ LAYERS[want.layer] = true; syncOn(); }
+  const fws = vis(c);
+  state = { iso, hz: hz || (fws.length===1 ? fws[0].hazard : null), ver: ver || null, pillar: state.pillar };
   document.querySelectorAll('.cty.sel').forEach(x=>x.classList.remove('sel'));
   svg.querySelectorAll(`.cty[data-iso='${iso}']`).forEach(el => el.classList.add('sel'));
   back.hidden = false; lpane.classList.add('hide'); tip.hidden = true; maprow.classList.add('open');
-  renderSide();
+  renderSide(); updateTiles(); if(want && !changed) worldLegend();
   if(isMobile()){ fixHeight(); setTimeout(() => window.scrollTo({top: side.getBoundingClientRect().top + window.scrollY - 8, behavior:'smooth'}), 1150); }
   location.hash = [iso, state.hz, state.ver].filter(Boolean).join('/');
   if(changed){
@@ -1625,80 +1826,150 @@ function selectVersion(v){ state.ver = v; renderSide(); drawAdmin(state.iso, fal
 
 // ---------- sidebar
 function monthStrip(months){ months = months||[]; return [...MONL].map((m,i)=>`<span class='mm ${months.includes(i+1)?'on':''}'>${m}</span>`).join(''); }
+// the country's OWN figures, at the top of the panel — never to be confused with the global tiles
+function countryTiles(c){
+  const fws = vis(c), fw = fws.filter(f=>visLayer(f)==='framework');
+  const pre = fw.reduce((s,f)=>s+(f.pre_now||0),0), cov = fw.reduce((s,f)=>s+(f.covered||0),0), nA = fws.reduce((s,f)=>s+f.n_act_all,0);
+  return `<div class='ctiles'><div class='ccap'>${esc(c.name)} only</div>
+    <div class='ctile'><div class='v'>${fw.length}</div><div class='l'>framework${fw.length===1?'':'s'}${fws.length>fw.length?` · ${fws.length-fw.length} other pair${fws.length-fw.length>1?'s':''}`:''}</div></div>
+    <div class='ctile'><div class='v'>${pre?money(pre):'—'}</div><div class='l'>pre-arranged now</div></div>
+    <div class='ctile'><div class='v'>${nA}</div><div class='l'>activation${nA===1?'':'s'}</div></div>
+    <div class='ctile'><div class='v'>${cov?num(cov):'—'}</div><div class='l'>people covered</div></div></div>`;
+}
+function hiddenNote(c){
+  const h = hidden(c); if(!h.length) return '';
+  return `<div class='small' style='margin:6px 0;color:#64748b'>Not drawn by the current layers: ` + h.map(f => `${esc(f.hz_label)} (<a style='cursor:pointer' onclick='setLayer("${f.layer}", true)'>${LAYER_LABEL[f.layer].toLowerCase()}</a>)`).join(', ') + `</div>`;
+}
 function renderSide(){
   const c = L[state.iso];
   const crumb = `<div class='crumb'><a onclick='goWorld()'>World</a> › ` +
     (state.hz ? `<a onclick='selectCountry("${state.iso}", null)'>${esc(c.name)}</a> › ${esc(c.fws.find(f=>f.hazard===state.hz)?.hz_label||state.hz)}` : `<b>${esc(c.name)}</b>`) + `</div>`;
   if(!state.hz){
-    side.innerHTML = crumb + `<h3>${esc(c.name)}</h3><div class='muted'>${esc(c.region||'')} · ${c.fws.length} framework${c.fws.length>1?'s':''} — select one</div>` +
-      `<div class='fwlist'>` + c.fws.map(f => {
+    const fws = vis(c);
+    side.innerHTML = crumb + `<h3>${esc(c.name)}</h3><div class='muted'>${esc(c.region||'')} · ${fws.length} pair${fws.length===1?'':'s'} on the map — select one</div>` + countryTiles(c) + hiddenNote(c) +
+      `<div class='fwlist'>` + fws.map(f => {
         const v = f.versions.find(x=>x.v===f.current);
         return `<div class='fcardx' style='--hz:${hzColor(f.hazard)}' onclick='selectFramework("${f.hazard}")'>
           <div class='fhead'><b>${iconHTML(f)}${esc(f.hz_label)}</b>${badge(f.disp)}${f.tech?` <span class='badge b-tech'>technical support</span>`:''}</div>
           <table class='mini'>
-           <tr><td class='lbl'>Latest version</td><td>${f.current ? `<code>${f.current}</code> <span class='muted'>(${f.versions.length} total)</span>` : '<span class="muted">none in the KB yet</span>'}</td></tr>
-           <tr><td class='lbl'>Pre-arranged</td><td>${money(f.prearranged)}${f.prearranged_year?` <span class='muted'>(${f.prearranged_year})</span>`:''}</td></tr>
+           <tr><td class='lbl'>Latest version</td><td>${f.current ? `<code>${f.current}</code> <span class='muted'>(${f.versions.length} total)</span>` : '<span class="muted">no framework version</span>'}</td></tr>
+           <tr><td class='lbl'>Pre-arranged</td><td>${money(f.pre_now ?? f.prearranged)}${f.pre_now==null && f.prearranged_year?` <span class='muted'>(${f.prearranged_year})</span>`:''}</td></tr>
            <tr><td class='lbl'>People covered</td><td>${num(f.covered)}</td></tr>
-           <tr><td class='lbl'>Activations</td><td>${f.n_act||'—'}</td></tr>
+           <tr><td class='lbl'>Activations</td><td>${f.n_act_all||'—'}${f.n_adhoc?` <span class='muted'>(${f.n_adhoc} ad hoc / early action)</span>`:''}</td></tr>
            <tr><td class='lbl'>Monitoring</td><td>${monthStrip(v ? v.months : [])}</td></tr>
           </table></div>`; }).join('') + `</div>`;
+    annotate(side, side);
     return;
   }
   const f = c.fws.find(x=>x.hazard===state.hz); if(!f){ state.hz=null; return renderSide(); }
   if(!f.versions.length){
-    side.innerHTML = crumb + fwHeader(c, f) + `<p class='muted'>No version in the knowledge base yet — status comes from the tracking sheets (${esc((f.status||'').replace(/_/g,' '))}).</p>` +
-      activationsBlock(f, null) + `<p><a href='${f.page}'>framework page →</a></p>`;
+    const why = f.layer==='adhoc' ? `Ad hoc / early-action allocations on this country × hazard pair — no framework version behind them.`
+              : f.layer==='tech' ? `OCHA technical support — no framework version in the registry yet${f.status?` (tracking sheets: ${esc(f.status.replace(/_/g,' '))})`:''}.`
+              : `No framework version in the registry yet — status comes from the tracking sheets (${esc((f.status||'').replace(/_/g,' '))}).`;
+    side.innerHTML = crumb + fwHeader(c, f) + countryTiles(c) + `<p class='muted'>${why}</p>` +
+      learningBlock(f, null) + partnersBlock(c, f, null) + (f.page ? `<p><a href='${f.page}'>framework page →</a></p>` : '');
+    annotate(side, side);
     return;
   }
   const ver = state.ver || f.current; state.ver = ver;
   const v = f.versions.find(x=>x.v===ver) || f.versions[f.versions.length-1];
   const isCur = v.v === f.current;
-  side.innerHTML = crumb + fwHeader(c, f) + versionBar(f, v, isCur) +
+  side.innerHTML = crumb + fwHeader(c, f) + countryTiles(c) + versionBar(f, v, isCur) +
     (isCur ? '' : `<div class='warnbox'>Viewing an older version (${esc(v.superseded?'superseded':(v.status||'past'))}). The map shows this version's scope. Most recent: <a onclick='selectVersion("${f.current}")' style='cursor:pointer'>${f.current}</a>.</div>`) +
     factsBlock(f, v) + pillarsBar(f, v) + `<div id='pillarbody'>${pillarBody(f, v)}</div>` +
-    `<p class='small' style='margin-top:12px'><a href='${f.page}'>full framework page →</a> · <a href='hierarchy.html'>explorer</a></p>`;
+    `<p class='small' style='margin-top:12px'>${f.page?`<a href='${f.page}'>full framework page →</a> · `:''}<a href='hierarchy.html'>explorer</a></p>`;
+  annotate(side, side);
 }
-// ---------- the building blocks of AA: funding · model · plan (+ learning when there is any)
-function hasLearning(f, v){ return (v.learning||[]).length > 0 || f.activations.length > 0; }
+// ---------- the building blocks of AA: model · plan · funding · learning (always shown)
+const PILLARS = ['model', 'plan', 'funding', 'learning'];
 function pillarsBar(f, v){
   const F = v.funding, funds = [...new Set(F.fund.map(x=>x.fund))].filter(x=>x!=='unspecified');
   const nTrig = v.triggers.length || v.windows.length || v.n_windows || 0;
+  const nDocs = (f.learning_docs||[]).length + (v.learning||[]).length;
+  const nPart = (v.partners||[]).length;
   const boxes = [
-    ['funding', 'Funding', money(v.prearranged_doc), v.prearranged_doc ? `pre-arranged${funds.length?' · '+funds.map(x=>x.toUpperCase().replace('CBPF-','CBPF ')).join(', '):''}` : (f.tech ? 'technical support only' : 'no figure yet')],
     ['model', 'Model', nTrig ? `${nTrig} trigger window${nTrig>1?'s':''}` : (v.basis ? esc(v.basis) : '—'), [v.basis, v.months.length ? `${v.months.length} months monitored` : null].filter(Boolean).join(' · ')],
-    ['plan', 'Plan', v.agencies.length ? `${v.agencies.length} agenc${v.agencies.length>1?'ies':'y'}` : (F.agency.length ? `${new Set(F.agency.map(x=>x.agency)).size} agencies` : '—'), v.target_people ? `${num(v.target_people)} people targeted` : (f.covered ? `${num(f.covered)} people covered` : '')],
+    ['plan', 'Plan', v.agencies.length ? `${v.agencies.length} agenc${v.agencies.length>1?'ies':'y'}` : (F.agency.length ? `${new Set(F.agency.map(x=>x.agency)).size} agencies` : (nPart ? `${nPart} partner${nPart>1?'s':''}` : '—')), [v.target_people ? `${num(v.target_people)} people targeted` : (f.covered ? `${num(f.covered)} people covered` : null), nPart && (v.agencies.length || F.agency.length) ? `${nPart} partner${nPart>1?'s':''}` : null].filter(Boolean).join(' · ')],
+    ['funding', 'Funding', money(v.prearranged_doc ?? v.envelope), (v.prearranged_doc ?? v.envelope) ? `pre-arranged${funds.length?' · '+funds.map(x=>x.toUpperCase().replace('CBPF-','CBPF ')).join(', '):''}` : (f.tech ? 'technical support only' : 'no figure yet')],
+    ['learning', 'Learning', nDocs ? `${nDocs} document${nDocs>1?'s':''}` : 'no documents yet', f.activations.length ? `${f.activations.length} activation record${f.activations.length>1?'s':''}` : 'never activated'],
   ];
-  if(hasLearning(f, v)) boxes.push(['learning', 'Learning', f.activations.length ? `${f.activations.length} activation${f.activations.length>1?'s':''}` : `${v.learning.length} document${v.learning.length>1?'s':''}`, v.learning.length ? `${v.learning.length} learning doc${v.learning.length>1?'s':''}` : 'activation records']);
-  if(!boxes.some(b=>b[0]===state.pillar)) state.pillar = 'funding';
-  return `<div class='pillars ${boxes.length===4?'four':''}'>` + boxes.map(([k, name, val, sub]) =>
+  if(!PILLARS.includes(state.pillar)) state.pillar = 'model';
+  return `<div class='pillars four'>` + boxes.map(([k, name, val, sub]) =>
     `<div class='pillar ${state.pillar===k?'on':''}' onclick='selectPillar("${k}")'><div class='pk'>${name}</div><div class='pv'>${val}</div><div class='ps'>${sub||''}</div></div>`).join('') + `</div>`;
 }
 function selectPillar(k){ state.pillar = k; const c = L[state.iso], f = c.fws.find(x=>x.hazard===state.hz); const v = f.versions.find(x=>x.v===state.ver) || f.versions[f.versions.length-1];
   document.querySelectorAll('.pillar').forEach(el=>el.classList.toggle('on', el.getAttribute('onclick').includes(`"${k}"`)));
-  document.getElementById('pillarbody').innerHTML = pillarBody(f, v); }
+  const pb = document.getElementById('pillarbody'); pb.innerHTML = pillarBody(f, v); annotate(pb, side); }
 function pillarBody(f, v){
   const rows = [];
+  const c = L[state.iso];
   if(state.pillar==='funding'){
-    rows.push(['Pre-arranged', `${money(v.prearranged_doc)}${v.regional?` <span class='muted'>· regional document total (all countries)</span>`:''}${v.all_in===false?` <span class='muted'>· split budget per window</span>`:v.all_in===true?` <span class='muted'>· all-in</span>`:''}`]);
+    rows.push(['Pre-arranged', `${money(v.prearranged_doc ?? v.envelope)}${v.regional?` <span class='muted'>· regional document total (all countries)</span>`:''}${v.all_in===false?` <span class='muted'>· split budget per window</span>`:v.all_in===true?` <span class='muted'>· all-in</span>`:''}`]);
+    if(v.envelope!=null && v.prearranged_doc!=null && Math.abs(v.envelope - v.prearranged_doc) > 0.01*Math.max(v.envelope, v.prearranged_doc)) rows.push(['Envelope (registry)', `${money(v.envelope)} <span class='muted'>from the version's window funding; the document says ${money(v.prearranged_doc)}</span>`]);
     if(v.cofin) rows.push(['Co-financing', `${money(v.cofin)}${v.cofin_sources.length?` <span class='muted'>${esc(v.cofin_sources.join(', '))}</span>`:''}`]);
     if(f.tech) rows.push(['OCHA role', `<span class='badge b-tech'>technical support</span> <span class='muted'>no funding commitment</span>`]);
-    return miniTable(rows) + fundingBlock(v) + (v.windows.length && v.windows.some(w=>w.budget) ? '' : '');
+    return miniTable(rows) + fundingBlock(v);
   }
   if(state.pillar==='model'){
     rows.push(['Monitored', `${monthStrip(v.months)}${v.months_src?` <span class='muted'>${esc(v.months_src)}</span>`:''}${v.months_note?`<div class='small' style='margin-top:3px'>${esc(v.months_note)}</div>`:''}`]);
     if(v.basis||v.indicators.length) rows.push(['Trigger basis', `${esc(v.basis||'')}${v.calibration?` · ${esc(v.calibration)}`:''}${v.indicators.length?`<div class='chips'>${v.indicators.map(i=>`<span>${esc(i)}</span>`).join('')}</div>`:''}`]);
     if(v.data_sources.length) rows.push(['Data sources', esc(v.data_sources.map(d=>typeof d==='string'?d:(d.name||d.source||JSON.stringify(d))).join(', '))]);
-    return miniTable(rows) + triggersBlock(v) + scopeBlock(v) + backtestBlock(f, v);
+    // historical activations / backtest first, then the trigger design, then the docs
+    return backtestBlock(f, v) + miniTable(rows) + triggersBlock(v) + scopeBlock(v) + techDocsBlock(v);
   }
   if(state.pillar==='plan'){
     if(v.agencies.length) rows.push(['Agencies', esc(v.agencies.join(', '))]);
     if(v.target_people) rows.push(['People targeted', num(v.target_people)]);
     if(f.covered && f.current===v.v) rows.push(['People covered', `${num(f.covered)} <span class='muted'>(tracking sheet)</span>`]);
-    return miniTable(rows) + sectorBlock(v);
+    return miniTable(rows) + partnersBlock(c, f, v) + sectorBlock(v);
   }
-  let html = '';
-  if((v.learning||[]).length) html += `<h4>Learning documents</h4><ul class='small'>` + v.learning.map(d=>`<li>${d.url?`<a href='${esc(d.url)}' target='_blank' rel='noopener'>${esc(d.title||d.url)}</a>`:esc(d.title||'')}${d.date?` <span class='muted'>(${esc(d.date)})</span>`:''}</li>`).join('') + `</ul>`;
-  return html + activationsBlock(f, v);
+  return learningBlock(f, v) + activationsBlock(f, v);
+}
+// Learning: curated documents (aa.learning_document, country scope, hazard-matched or
+// hazard-less, public only) + the version page's learning links; then the activations
+const DOCTYPE = {aar:'AAR', evaluation:'evaluation', impact_evaluation:'impact evaluation', monitoring_report:'monitoring', activation_report:'activation report',
+                 case_study:'case study', story:'story', research:'research', guidance:'guidance', trigger_analysis:'trigger analysis', other:'other'};
+function learningBlock(f, v){
+  const docs = f.learning_docs || [], links = (v && v.learning) || [];
+  const n = docs.length + links.length;
+  let html = `<h4>Learning · ${n ? `${n} document${n>1?'s':''}` : 'no documents yet'}</h4>`;
+  if(!n) return html + `<div class='muted'>No learning documents recorded for this framework yet — after-action reviews, evaluations and activation reports will appear here.</div>`;
+  html += `<ul class='small' style='margin:2px 0 6px;padding-left:18px'>`;
+  docs.forEach(d => { html += `<li>${d.url?`<a href='${esc(d.url)}' target='_blank' rel='noopener'>${esc(d.title)}</a>`:esc(d.title)}${d.publisher?` · ${esc(d.publisher)}`:''}${d.year?` · ${d.year}`:''}${d.type?` <span class='dtag'>${esc(DOCTYPE[d.type]||d.type.replace(/_/g,' '))}</span>`:''}${d.stat?`<div class='muted'>${esc(d.stat)}</div>`:''}</li>`; });
+  links.forEach(d => { html += `<li>${d.url?`<a href='${esc(d.url)}' target='_blank' rel='noopener'>${esc(d.title||d.url)}</a>`:esc(d.title||'')}${d.date?` <span class='muted'>(${esc(d.date)})</span>`:''} <span class='dtag'>framework page</span></li>`; });
+  return html + `</ul>`;
+}
+// Model: technical documentation links (trigger analysis, framework document, validation folder)
+function techDocsBlock(v){
+  const items = [];
+  if(v.analysis_ref) items.push(v.analysis_url ? `<a href='${esc(v.analysis_url)}' target='_blank' rel='noopener'>trigger analysis ↗</a> <span class='muted'>${esc(v.analysis_ref)}</span>` : `trigger analysis: <code>${esc(v.analysis_ref)}</code>`);
+  if(v.doc_url) items.push(`<a href='${esc(v.doc_url)}' target='_blank' rel='noopener'>framework document ↗</a>${v.doc_title?` <span class='muted'>${esc(v.doc_title)}</span>`:''}`);
+  if(TRIGGER_VALIDATION_URL) items.push(`<a href='${esc(TRIGGER_VALIDATION_URL)}' target='_blank' rel='noopener'>trigger validation (Drive) ↗</a>`);
+  if(!items.length) return '';
+  return `<h4>Technical documentation</h4>` + items.map(x=>`<div class='tdoc'>${x}</div>`).join('');
+}
+// Plan: the framework's partner list (aa.framework_partner, this version or the latest that
+// has one) and the funded sub-grantees of the country's CERF AA allocations (aa.cerf_subgrant)
+const PGROUPS = ['Government', 'UN', 'International NGOs', 'National NGOs', 'Red Cross / Red Crescent', 'Other'];
+const ROLE = {implementing:'implementing', sub_grantee:'sub-grantee', technical:'technical', coordination:'coordination', government_counterpart:'counterpart', funding:'funding'};
+function partnersBlock(c, f, v){
+  const P = (v && v.partners) || [], S = c.subgrants || [];
+  let html = `<h4>Partners${P.length?` · ${P.length}`:''}</h4>`;
+  if(!P.length && !S.length) return html + `<div class='muted'>No partner list yet.</div>`;
+  if(P.length){
+    html += `<div class='small'><b>${P.length} partner${P.length>1?'s':''}</b> named in the framework${v && v.partners_from ? ` <span class='muted'>(from version ${esc(v.partners_from)} — none extracted for ${esc(v.v)})</span>` : ''}</div>`;
+    PGROUPS.forEach(g => { const rows = P.filter(p=>p.group===g); if(!rows.length) return;
+      html += `<div class='pgrp'>${g} <span class='muted' style='font-weight:400'>(${rows.length})</span></div>` + rows.map(p =>
+        `<div class='prow'>${esc(p.name)}${p.acronym?` (${esc(p.acronym)})`:''}${p.parent?` <span class='muted'>· under ${esc(p.parent)}</span>`:''}${p.roles.map(r=>`<span class='rtag'>${esc(ROLE[r]||r.replace(/_/g,' '))}</span>`).join('')}${p.usd?` <span class='muted'>· ${money(p.usd)}</span>`:''}</div>`).join(''); });
+  } else html += `<div class='muted'>No partner list extracted from the framework document yet.</div>`;
+  if(S.length){
+    const tot = S.reduce((s,a)=>s+a.partners.reduce((t,p)=>t+(p.usd||0),0),0), nP = S.reduce((s,a)=>s+a.partners.length,0);
+    html += `<h4>Funded sub-grantees <span class='muted' style='text-transform:none'>(CERF AA allocations, ${esc(c.name)}, all hazards)</span></h4>
+      <div class='small'>${nP} sub-grant${nP>1?'s':''} · ${money(tot)}</div>` + S.map(a =>
+      `<div class='pgrp'>${esc(a.agency)} <span class='muted' style='font-weight:400'>· ${money(a.partners.reduce((t,p)=>t+(p.usd||0),0))}</span></div>` +
+      a.partners.map(p=>`<div class='prow'>${esc(p.name)}${p.acronym&&p.acronym!==p.name?` (${esc(p.acronym)})`:''}${p.type?`<span class='rtag'>${esc(p.type)}</span>`:''}${p.usd?` <span class='muted'>· ${money(p.usd)}</span>`:''}</div>`).join('')).join('');
+  }
+  return html;
 }
 function miniTable(rows){ return rows.length ? `<table class='mini' style='margin-top:4px'>${rows.map(([k,val])=>`<tr><td class='lbl'>${k}</td><td>${val}</td></tr>`).join('')}</table>` : ''; }
 function sectorBlock(v){
@@ -1759,7 +2030,12 @@ function triggersBlock(v){
 function fundingBlock(v){
   const F = v.funding; if(!F.agency.length && !F.sector.length && !F.fund.length) return '';
   const funds = [...new Set(F.fund.map(x=>x.fund))];
-  let html = `<h4>Budget by agency ${F.src==='sheet'?'<span class="muted" style="text-transform:none">(tracking sheet)</span>':''}</h4>`;
+  // budget sanity: the split rows (one source per version, v_window_funding_split) must not
+  // add up to more than the version's envelope — a flag here is a genuine data problem
+  const splitTot = F.fund.reduce((s,x)=>s+x.usd,0), env = v.envelope ?? v.prearranged_doc;
+  const over = env != null && splitTot > env * 1.01;
+  let html = `<h4>Budget by agency ${F.src==='sheet'?'<span class="muted" style="text-transform:none">(tracking sheet)</span>':''}</h4>
+    <div class='small' style='margin-bottom:4px'>Split total <b>${money(splitTot)}</b>${env!=null?` of a ${money(env)} envelope`:' — no envelope recorded'}${over?`<span class='warntag' title='the agency × sector split adds up to more than the version envelope'>split exceeds envelope</span>`:''}</div>`;
   if(F.agency.length){
     const ags = [...new Set(F.agency.map(x=>x.agency))];
     const cell = (a,fd) => F.agency.filter(x=>x.agency===a&&x.fund===fd).reduce((s,x)=>s+x.usd,0);
@@ -1833,8 +2109,52 @@ function backtestBlock(f, v){
   return html + `</tbody></table></div>`;
 }
 
+// ---------- plain-language help: ⓘ after the first use of a term, <abbr> around the first
+// use of an acronym, applied to the TEXT NODES of a rendered block (never by hand in strings).
+// `scope` is the container whose earlier annotations count as "already explained".
+const HELP = [
+  ['pre-arranged', /\bpre-?arranged\b/i, 'money set aside in advance so it can be released the moment a trigger is met'],
+  ['trigger', /\btriggers?\b/i, 'the pre-agreed forecast or observation threshold that releases the money'],
+  ['window', /\bwindows?\b/i, 'the period in the year during which a trigger is monitored'],
+  ['return period', /\breturn periods?\b/i, 'how rare the trigger threshold is: a 1-in-5-year trigger is expected to be met about once every five years'],
+  ['activation probability', /\b(activation probability|annual prob(?:ability)?)\b/i, 'the chance the trigger is met in any given year'],
+  ['all-in', /\ball-in\b/i, 'all windows share one envelope: the first window to fire takes it'],
+  ['lead time', /\blead time\b/i, 'how far ahead of the shock the money is released'],
+  ['readiness', /\b(readiness(?: vs\.? action)?|readiness and action)\b/i, 'readiness money prepares the response before the shock is certain; action money delivers it'],
+];
+const ABBR = {CERF:'Central Emergency Response Fund', CBPF:'Country-Based Pooled Fund', RhPF:'Regional Humanitarian Pooled Fund', ERC:'Emergency Relief Coordinator',
+  AA:'anticipatory action', EA:'early action', GHO:'Global Humanitarian Overview', HRP:'Humanitarian Response Plan', IPC:'Integrated Food Security Phase Classification',
+  CH:'Cadre Harmonisé', SEAS5:'ECMWF seasonal forecast system', ECMWF:'European Centre for Medium-Range Weather Forecasts', GloFAS:'Global Flood Awareness System',
+  ASAP:'Anomaly hot Spots of Agricultural Production', 'FEWS NET':'Famine Early Warning Systems Network', ENSO:'El Niño–Southern Oscillation', NDMO:'National Disaster Management Office',
+  UNFPA:'United Nations Population Fund', UNHCR:'UN Refugee Agency', UNICEF:'United Nations Children\'s Fund', WFP:'World Food Programme', FAO:'Food and Agriculture Organization of the United Nations',
+  IOM:'International Organization for Migration', WHO:'World Health Organization', IFRC:'International Federation of Red Cross and Red Crescent Societies'};
+const ABBR_RE = new RegExp('(?<![\\w-])(' + Object.keys(ABBR).sort((a,b)=>b.length-a.length).join('|') + ')(?![\\w-])');
+const SKIP = new Set(['SCRIPT','STYLE','SELECT','OPTION','TEXTAREA','CODE','ABBR','INPUT']);
+function annotate(root, scope){
+  scope = scope || root;
+  const doneHelp = new Set([...scope.querySelectorAll('.info[data-term]')].map(e=>e.dataset.term));
+  const doneAbbr = new Set([...scope.querySelectorAll('abbr[data-ab]')].map(e=>e.dataset.ab));
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: n => {
+    for(let p = n.parentNode; p && p !== root.parentNode; p = p.parentNode){ if(p.nodeType===1 && (SKIP.has(p.tagName) || p.classList.contains('info'))) return NodeFilter.FILTER_REJECT; }
+    return n.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP; } });
+  const nodes = []; for(let n; (n = walker.nextNode());) nodes.push(n);
+  for(let node of nodes){
+    for(;;){
+      const txt = node.nodeValue; let best = null;
+      for(const [key, re, tip] of HELP){ if(doneHelp.has(key)) continue; const m = re.exec(txt); if(m && (!best || m.index < best.idx)) best = {idx:m.index, len:m[0].length, key, tip, kind:'help'}; }
+      const am = ABBR_RE.exec(txt); if(am && !doneAbbr.has(am[1]) && (!best || am.index < best.idx)) best = {idx:am.index, len:am[0].length, key:am[1], tip:ABBR[am[1]], kind:'abbr'};
+      if(!best) break;
+      const after = node.splitText(best.idx), rest = after.splitText(best.len);   // node | after (the match) | rest
+      if(best.kind==='abbr'){ const ab = document.createElement('abbr'); ab.title = best.tip; ab.dataset.ab = best.key; ab.textContent = after.nodeValue; after.replaceWith(ab); doneAbbr.add(best.key); }
+      else { const i = document.createElement('span'); i.className = 'info'; i.tabIndex = 0; i.setAttribute('role','note'); i.setAttribute('aria-label', best.tip); i.dataset.term = best.key; i.dataset.tip = best.tip; i.textContent = 'i';
+             after.parentNode.insertBefore(i, rest); doneHelp.add(best.key); }
+      node = rest;
+    }
+  }
+}
+
 // ---------- boot
-fixHeight(); buildWorld(); worldLegend(); buildCallouts(); runLayout();
+fixHeight(); buildWorld(); syncOn(); worldLegend(); updateTiles(); buildCallouts(); runLayout();
 if(isMobile()){ maprow.classList.add('open'); renderWorldList(); }
 setTimeout(runLayout, 300);   // once fonts have settled
 (function(){ const h = location.hash.replace('#','').split('/'); if(h[0] && L[h[0]]) selectCountry(h[0], h[1]||null, h[2]||null); })();

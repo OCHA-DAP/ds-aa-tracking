@@ -31,9 +31,11 @@ GROUPS = [
         "start_network", "cirv", "emergency_type_override",
         "cerf_allocation_extra", "cerf_application_people", "cerf_application_report",
         "cerf_project_supplement", "cerf_subgrant", "cerf_cva_history"]),
+    ("Framework pages, learning, partners (KB flip 2026-09-28: edited here, the KB reads this)",
+     "ds-aa-tracking", ["version_page", "learning_document", "framework_partner"]),
     ("Data entry (entered values win)", "ds-aa-tracking", [
         "entered_version", "entered_window", "entered_window_funding", "entry_audit"]),
-    ("Knowledge base — trigger performance (read-only)", "ds-knowledge-base", [
+    ("Knowledge base — trigger performance (read-only, frozen at the KB flip)", "ds-knowledge-base", [
         "window", "simulated_activation", "funding_breakdown", "actual_activation",
         "activation_allocation", "version_performance_reported"]),
     ("OneGMS mirrors (read-only)", "ds-cerf-supplement", [
@@ -48,7 +50,9 @@ GROUPS = [
 
 # columns that read better as a textarea
 LONG_TEXT = ("note", "notes", "comment", "comments", "remark", "remarks", "description",
-             "narrative", "statement", "title", "summary", "text", "lesson", "objective")
+             "narrative", "statement", "title", "summary", "text", "lesson", "objective",
+             "evidence", "key_stat", "frontmatter", "frontmatter_text", "body_md", "triggers",
+             "tiers")
 
 
 def build_admin(page):
