@@ -80,7 +80,7 @@ KB_LABEL = {"active": "Active", "updating": "Being updated", "development": "In 
 # drawn as a framework while the framework layer is on).
 LAYER_ORDER = ("framework", "retired", "adhoc", "tech")
 LAYER_COLOR = {"adhoc": "#74c476", "retired": "#9e9e9e", "tech": "#2a9d8f"}
-LAYER_LABEL = {"framework": "Frameworks", "adhoc": "Ad hoc allocations", "retired": "Retired",
+LAYER_LABEL = {"framework": "Current frameworks", "adhoc": "Ad hoc allocations", "retired": "Retired",
                "tech": "Technical support"}
 DISP_LABEL = {**KB_LABEL, "retired": "Retired", "pipeline": "No framework version yet",
               "adhoc": "Ad hoc allocations only"}
@@ -1131,7 +1131,7 @@ def build_landing(page, d, e):
   <div class='gcap' id='gcap'>Global portfolio — all layers currently shown on the map</div>
   <div class='tile' id='t-fw'><div class='v'>{t["n_fw"]}</div><div class='l'>frameworks on the map · {t["n_active"]} active · {t["n_upd"]} being updated · {t["n_dev"]} in development</div></div>
   <div class='tile' id='t-pre'><div class='v'>${t["pre"]/1e6:,.0f}M</div><div class='l'>pre-arranged now (CERF + CBPF), frameworks shown</div></div>
-  <div class='tile' id='t-act'><div class='v'>{t["n_act"]}</div><div class='l'>activations, pairs shown</div></div>
+  <div class='tile' id='t-act'><div class='v'>{t["n_act"]}</div><div class='l'>activations</div></div>
   <div class='tile' id='t-cov'><div class='v'>{t["covered"]/1e6:,.1f}M</div><div class='l'>people covered, frameworks shown</div></div>
  </div>
 </div>
@@ -1178,10 +1178,10 @@ def build_landing(page, d, e):
    <text x='240' y='332' class='sh-note'>a manual flag on the framework (country × hazard) in the admin — overrides everything above</text>
   </svg>
   <div class='sh-layers'>
-   <b>Map layers.</b> <span class='dot' style='background:{KB_COLOR["active"]}'></span><b>Frameworks</b> — every framework whose status is active, being updated or in development (the default view; the headline figures follow whatever is shown).
-   <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span><b>Ad hoc allocations</b> — country × hazard pairs that received ad hoc anticipatory-action or early-action money without a framework version (light green; a framework that also received ad hoc money stays drawn as a framework).
+   <b>Map layers.</b> <span class='dot' style='background:{KB_COLOR["active"]}'></span><b>Current frameworks</b> — every framework whose status is active, being updated or in development (the default view; the headline figures follow whatever is shown).
+   <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span><b>Ad hoc allocations</b> — countries and hazards that received ad hoc anticipatory-action or early-action money without a framework version (light green; a framework that also received ad hoc money stays drawn as a framework).
    <span class='dot' style='background:{LAYER_COLOR["retired"]}'></span><b>Retired</b> — frameworks flagged retired in the admin, drawn in grey so past coverage can be compared with today's.
-   <span class='dot dot-hollow' style='border-color:{LAYER_COLOR["tech"]}'></span><b>Technical support</b> — pairs where OCHA supported the framework technically without a funding commitment, whatever their status (including pipeline ones like Palau and Tonga), drawn as a hollow teal pin.
+   <span class='dot dot-hollow' style='border-color:{LAYER_COLOR["tech"]}'></span><b>Technical support</b> — countries where OCHA supported the framework technically without a funding commitment, whatever their status (including pipeline ones like Palau and Tonga), drawn as a hollow teal pin.
   </div>
  </div>
 </details>
@@ -1364,7 +1364,13 @@ table.bt .bt-c { text-align:center; } table.bt td.lbl { width:70px; }
 .ctiles .ccap { grid-column:1 / -1; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:#1a5fa0; font-weight:700; margin-bottom:-2px; }
 @media (max-width:759px){ .ctiles { grid-template-columns:repeat(2,1fr); } }
 /* map layer toggles (world legend) */
-.layerctl { display:flex; flex-direction:column; gap:2px; margin:0 0 6px; padding-bottom:6px; border-bottom:1px solid #e2e8f0; }
+.layerctl { display:flex; flex-direction:column; gap:1px; margin:0 0 5px; padding-bottom:5px; border-bottom:1px solid #e2e8f0; }
+.maplegend { width:max-content; font-variant-numeric:tabular-nums; }
+.maplegend .cnt { color:#64748b; display:inline-block; min-width:1.6em; }
+.maplegend .lsub { display:flex; gap:10px; white-space:nowrap; font-size:10.5px; color:#475569; }
+.layerctl .lsub { margin:0 0 2px 22px; }
+.maplegend .lsub.off { opacity:.35; }
+.maplegend .lsub .dot { width:9px; height:9px; margin-right:4px; }
 .layerctl label { display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap; }
 .layerctl input { margin:0; accent-color:#2171b5; }
 .layerctl .cnt { color:#64748b; }
@@ -1468,7 +1474,7 @@ function fixHeight(){
 function renderWorldList(){
   const rows = Object.entries(L).filter(([iso,c]) => vis(c).length).sort((a,b)=>a[1].name.localeCompare(b[1].name)).map(([iso,c]) =>
     `<div class='fcardx wl' style='--hz:${hzColor(vis(c)[0].hazard)}' onclick='selectCountry("${iso}")'>
-      <div class='fhead'><b>${esc(c.name)}</b><span class='muted'>${vis(c).length} pair${vis(c).length>1?'s':''}</span></div>
+      <div class='fhead'><b>${esc(c.name)}</b><span class='muted'>${nounCount(vis(c))}</span></div>
       <div class='wl-pins'>${vis(c).map(f=>`<span class='wl-pin'>${iconHTML(f)}<span class='hlab'>${esc(f.hz_label)}</span> ${badge(f.disp)}</span>`).join('')}</div>
     </div>`).join('');
   side.innerHTML = `<div class='muted' style='margin:2px 0 8px'>Tap a country to zoom in.</div><div class='fwlist'>${rows}</div>`;
@@ -1621,25 +1627,29 @@ function drawAdmin(iso, fade){
 function worldLegend(){
   const all = Object.values(L).flatMap(c=>c.fws), shown = all.filter(f=>visLayer(f));
   const onLayer = k => all.filter(f=>f.layers.includes(k));
-  const fw = shown.filter(f=>visLayer(f)==='framework');
-  const n = k => fw.filter(f=>f.disp===k).length;
+  const n = k => onLayer('framework').filter(f=>f.disp===k).length;
   const nAct = shown.reduce((s,f)=>s+f.n_act_all,0), nNow = shown.filter(f=>f.ring==='now').length;
   const swatch = { framework: `<span class='dot' style='background:${COLOR.active}'></span>`, adhoc: `<span class='dot' style='background:${LAYER_COLOR.adhoc}'></span>`,
                    retired: `<span class='dot' style='background:${LAYER_COLOR.retired}'></span>`, tech: `<span class='dot dot-hollow'></span>` };
-  const ctl = `<div class='layerctl' role='group' aria-label='Map layers'><b>Layers</b>` + LAYER_ORDER.map(k =>
-    `<label>${swatch[k]}<input type='checkbox' ${LAYERS[k]?'checked':''} onchange='setLayer("${k}", this.checked)'> ${LAYER_LABEL[k]} <span class='cnt'>(${onLayer(k).length})</span></label>`).join('') + `</div>`;
-  let keys = '';
-  if(LAYERS.framework) keys += `<span class='dot' style='background:${COLOR.active}'></span>Active (${n('active')}) — latest version endorsed, not fully triggered<br>`
-    + `<span class='dot' style='background:${SPLIT}'></span>Being updated (${n('updating')}) — endorsed framework: fully triggered, expired, or a new version in the works<br>`
-    + `<span class='dot' style='background:${COLOR.development}'></span>In development (${n('development')}) — no endorsed version yet<br>`;
-  if(LAYERS.adhoc) keys += `<span class='dot' style='background:${LAYER_COLOR.adhoc}'></span>Ad hoc / early-action allocations, no framework version (${shown.filter(f=>visLayer(f)==='adhoc').length})<br>`;
-  if(LAYERS.retired) keys += `<span class='dot' style='background:${LAYER_COLOR.retired}'></span>Retired framework (${shown.filter(f=>visLayer(f)==='retired').length})<br>`;
-  if(LAYERS.tech) keys += `<span class='dot dot-hollow'></span>Technical support only, no funding commitment (${shown.filter(f=>visLayer(f)==='tech').length})<br>`;
-  keys += `<span class='dot' style='background:#e3322d;width:11px;height:11px;border:2px solid #fff'></span>Activated — a dot per activation (${nAct})<br>`
-    + `<span class='dot' style='background:#fff;width:12px;height:12px;border:2.5px solid #f5a300'></span>Currently monitored — trigger in season (${CURMONTH}), pulsing (${nNow})<br>`
-    + `<span class='small' style='color:#64748b'>Pre-arranged money and the tiles above follow these layers · <a onclick='document.getElementById("statushelp").open=true;document.getElementById("statushelp").scrollIntoView({behavior:"smooth"})'>how statuses work</a></span>`;
-  legend.innerHTML = ctl + keys;
-  annotate(legend, legend);
+  const row = k => `<label><input type='checkbox' ${LAYERS[k]?'checked':''} onchange='setLayer("${k}", this.checked)'>${swatch[k]}${LAYER_LABEL[k]} <span class='cnt'>${onLayer(k).length}</span></label>`;
+  const st = `<div class='lsub${LAYERS.framework?'':' off'}'>`
+    + `<span><span class='dot' style='background:${COLOR.active}'></span>Active <span class='cnt'>${n('active')}</span></span>`
+    + `<span><span class='dot' style='background:${SPLIT}'></span>Being updated <span class='cnt'>${n('updating')}</span></span>`
+    + `<span><span class='dot' style='background:${COLOR.development}'></span>In development <span class='cnt'>${n('development')}</span></span></div>`;
+  legend.innerHTML = `<div class='layerctl' role='group' aria-label='Map layers'>` + row('framework') + st + row('adhoc') + row('retired') + row('tech') + `</div>`
+    + `<div class='lsub'><span><span class='dot' style='background:#e3322d'></span>Activated <span class='cnt'>${nAct}</span></span>`
+    + `<span><span class='dot' style='background:#fff;border:2.5px solid #f5a300;box-sizing:border-box'></span>Monitored now <span class='cnt'>${nNow}</span></span></div>`;
+}
+// what a list of map entries is called: frameworks, unless some are ad hoc allocations or technical support
+function nounCount(fs){
+  const k = {framework:0, retired:0, adhoc:0, tech:0};
+  fs.forEach(f => { k[visLayer(f) || f.layer] = (k[visLayer(f) || f.layer] || 0) + 1; });
+  const out = [];
+  if(k.framework) out.push(`${k.framework} framework${k.framework>1?'s':''}`);
+  if(k.retired) out.push(`${k.retired} retired framework${k.retired>1?'s':''}`);
+  if(k.adhoc) out.push(`${k.adhoc} with ad hoc allocations`);
+  if(k.tech) out.push(`${k.tech} with technical support`);
+  return out.join(' · ') || 'nothing shown';
 }
 // re-draw everything that depends on the layer set: pins, callouts, legend, tiles, sidebar
 function syncOn(){ for(const [iso, c] of Object.entries(L)){ const el = WP[iso] && WP[iso].el; if(el) el.classList.toggle('on', vis(c).length > 0); } }
@@ -1656,7 +1666,7 @@ function updateTiles(){
   const set = (id, v, l) => { const el = document.getElementById(id); if(!el) return; el.querySelector('.v').textContent = v; el.querySelector('.l').textContent = l; };
   set('t-fw', fw.length, `frameworks on the map · ${n('active')} active · ${n('updating')} being updated · ${n('development')} in development`);
   set('t-pre', '$' + Math.round(fw.reduce((s,f)=>s+(f.pre_now||0),0)/1e6) + 'M', 'pre-arranged now (CERF + CBPF), frameworks shown');
-  set('t-act', shown.reduce((s,f)=>s+f.n_act_all,0), 'activations, pairs shown');
+  set('t-act', shown.reduce((s,f)=>s+f.n_act_all,0), 'activations');
   set('t-cov', (fw.reduce((s,f)=>s+(f.covered||0),0)/1e6).toFixed(1) + 'M', 'people covered, frameworks shown');
   const g = document.getElementById('gtiles'); if(g) g.classList.toggle('global', !!state.iso);
   const cap = document.getElementById('gcap'); if(cap) cap.textContent = state.iso ? `Global portfolio — not ${L[state.iso].name}: its own figures are in the panel` : 'Global portfolio — all layers currently shown on the map';
@@ -1770,7 +1780,7 @@ function showTip(ev, txt){ const box = mapbox.getBoundingClientRect(); tip.textC
   tip.style.left = (ev.clientX-box.left)+'px'; tip.style.top = (ev.clientY-box.top)+'px'; }
 svg.addEventListener('mousemove', ev => {
   const t = ev.target; let txt = null;
-  if(t.classList.contains('cty') && !state.iso){ const c = L[t.dataset.iso], nv = c ? vis(c).length : 0; txt = nv ? `${c.name} · ${nv} ${nv>1?'pairs':'pair'} on the map` : t.dataset.name; }
+  if(t.classList.contains('cty') && !state.iso){ const c = L[t.dataset.iso], nv = c ? vis(c).length : 0; txt = nv ? `${c.name} · ${nounCount(vis(c))}` : t.dataset.name; }
   else if(t.classList.contains('sc')) txt = `${t.dataset.n} · ${t.dataset.hz}`;
   else if(t.classList.contains('a1') || t.classList.contains('nb')) txt = t.dataset.n;
   if(txt) showTip(ev, txt); else tip.hidden = true;
@@ -1831,7 +1841,7 @@ function countryTiles(c){
   const fws = vis(c), fw = fws.filter(f=>visLayer(f)==='framework');
   const pre = fw.reduce((s,f)=>s+(f.pre_now||0),0), cov = fw.reduce((s,f)=>s+(f.covered||0),0), nA = fws.reduce((s,f)=>s+f.n_act_all,0);
   return `<div class='ctiles'><div class='ccap'>${esc(c.name)} only</div>
-    <div class='ctile'><div class='v'>${fw.length}</div><div class='l'>framework${fw.length===1?'':'s'}${fws.length>fw.length?` · ${fws.length-fw.length} other pair${fws.length-fw.length>1?'s':''}`:''}</div></div>
+    <div class='ctile'><div class='v'>${fw.length}</div><div class='l'>framework${fw.length===1?'':'s'}${fws.length>fw.length?` · ${fws.length-fw.length} other`:''}</div></div>
     <div class='ctile'><div class='v'>${pre?money(pre):'—'}</div><div class='l'>pre-arranged now</div></div>
     <div class='ctile'><div class='v'>${nA}</div><div class='l'>activation${nA===1?'':'s'}</div></div>
     <div class='ctile'><div class='v'>${cov?num(cov):'—'}</div><div class='l'>people covered</div></div></div>`;
@@ -1846,7 +1856,7 @@ function renderSide(){
     (state.hz ? `<a onclick='selectCountry("${state.iso}", null)'>${esc(c.name)}</a> › ${esc(c.fws.find(f=>f.hazard===state.hz)?.hz_label||state.hz)}` : `<b>${esc(c.name)}</b>`) + `</div>`;
   if(!state.hz){
     const fws = vis(c);
-    side.innerHTML = crumb + `<h3>${esc(c.name)}</h3><div class='muted'>${esc(c.region||'')} · ${fws.length} pair${fws.length===1?'':'s'} on the map — select one</div>` + countryTiles(c) + hiddenNote(c) +
+    side.innerHTML = crumb + `<h3>${esc(c.name)}</h3><div class='muted'>${esc(c.region||'')} · ${nounCount(fws)} — select one</div>` + countryTiles(c) + hiddenNote(c) +
       `<div class='fwlist'>` + fws.map(f => {
         const v = f.versions.find(x=>x.v===f.current);
         return `<div class='fcardx' style='--hz:${hzColor(f.hazard)}' onclick='selectFramework("${f.hazard}")'>
@@ -1863,7 +1873,7 @@ function renderSide(){
   }
   const f = c.fws.find(x=>x.hazard===state.hz); if(!f){ state.hz=null; return renderSide(); }
   if(!f.versions.length){
-    const why = f.layer==='adhoc' ? `Ad hoc / early-action allocations on this country × hazard pair — no framework version behind them.`
+    const why = f.layer==='adhoc' ? `Ad hoc / early-action allocations for this hazard — no framework behind them.`
               : f.layer==='tech' ? `OCHA technical support — no framework version in the registry yet${f.status?` (tracking sheets: ${esc(f.status.replace(/_/g,' '))})`:''}.`
               : `No framework version in the registry yet — status comes from the tracking sheets (${esc((f.status||'').replace(/_/g,' '))}).`;
     side.innerHTML = crumb + fwHeader(c, f) + countryTiles(c) + `<p class='muted'>${why}</p>` +
