@@ -133,7 +133,7 @@ const fundLabel = fc => D.FN[fc]||fc;
 const BK = {rel:'#3b3f6b', pre:'#9aa3c7'};   // released / pre-arranged buckets in the donor view
 const slug = s => String(s).replace(/[^A-Za-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
 D.years.forEach(y=>fY.add(new Option(y,y))); fY.add(new Option('all years','all'));
-fY.value = String(D.defaultYear);
+fY.value = 'all';
 uniqSorted(D.C, r=>r.donor_type).forEach(t=>fDT.add(new Option(t,t)));
 uniqSorted(D.C.concat(D.B), r=>r.donor).forEach(n=>fD.add(new Option(n,n)));
 

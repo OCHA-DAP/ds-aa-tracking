@@ -31,7 +31,7 @@ trap 'git worktree remove --force "$WT" 2>/dev/null || true' EXIT
 cp site_encrypted/*.html "$WT"/
 # committed copies of the vendored assets (main locally; the checked-out ref in CI)
 REF=main; git rev-parse -q --verify main >/dev/null 2>&1 || REF=HEAD
-for a in chart.umd.js pdf.min.js pdf.worker.min.js; do
+for a in chart.umd.js sankey.js pdf.min.js pdf.worker.min.js; do
   git show "$REF:site_src/$a" > "$WT/$a"
 done
 # per-country admin geometry for the landing map (public CODAB data, not encrypted)
@@ -40,7 +40,7 @@ cp site_build/adm-*.json "$WT"/
 touch "$WT/.nojekyll"
 (
   cd "$WT"
-  for f in *.html adm-*.json chart.umd.js pdf.min.js pdf.worker.min.js .nojekyll; do git add -f "./$f"; done
+  for f in *.html adm-*.json chart.umd.js sankey.js pdf.min.js pdf.worker.min.js .nojekyll; do git add -f "./$f"; done
   if git diff --cached --name-only | grep -q "/"; then
     echo "FATAL: staged a nested path — aborting" >&2
     git status --short | head; exit 1

@@ -1305,6 +1305,7 @@ LANDING_CSS = r"""
 a.rm:hover { transform:scale(1.3); }
 table.bt { table-layout:fixed; width:100%; } table.bt th.bt-c { font-size:10.5px; line-height:1.2; white-space:normal; }
 .bt-key { margin:4px 0 8px; color:#64748b; }
+td.bt-na { background:#eef1f5; }
 table.acttbl { table-layout:fixed; width:100%; } table.acttbl td, table.acttbl th { overflow-wrap:anywhere; vertical-align:top; }
 table.acttbl tr.oldv td { background:#f8fafc; }
 .fhead .actdots, .wl-pin .actdots { display:none; }
@@ -1321,7 +1322,7 @@ table.acttbl tr.oldv td { background:#f8fafc; }
   border-radius:6px; pointer-events:none; white-space:nowrap; transform:translate(-50%,-135%); box-shadow:0 4px 12px -4px rgba(0,0,0,.35); }
 /* sidebar (KB info-pop styling) */
 .side { background:#fff; border:1px solid #e6eaef; border-radius:12px; padding:12px 16px 16px;
-  overflow-y:auto; font-size:12.5px; line-height:1.45; color:var(--ink); box-shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px -12px rgba(16,24,40,.18); box-sizing:border-box; }
+  overflow-y:auto; scrollbar-gutter:stable; font-size:12.5px; line-height:1.45; color:var(--ink); box-shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px -12px rgba(16,24,40,.18); box-sizing:border-box; }
 .side a { color:var(--ocha); }
 .side h3 { margin:2px 0 4px; font-size:17px; color:#16324f; } .side h4 { margin:14px 0 4px; font-size:11.5px;
   text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
@@ -1966,10 +1967,12 @@ function pillarsBar(f, v){
   const F = v.funding, funds = [...new Set(F.fund.map(x=>x.fund))].filter(x=>x!=='unspecified');
   const nTrig = v.triggers.length || v.windows.length || v.n_windows || 0;
   const nDocs = (f.learning_docs||[]).length + (v.learning||[]).length;
-  const nPart = (v.partners||[]).length;
+  const Pv = (v.partners||[]).length ? v.partners : (([...f.versions].reverse().find(x => (x.partners||[]).length) || {}).partners || []);
+  const nPart = new Set(Pv.map(p => (p.name||'').toLowerCase())).size;
+  const nUN = new Set(F.agency.map(x => x.agency)).size || v.agencies.length;
   const boxes = [
     ['model', 'Model', nTrig ? `${nTrig} trigger window${nTrig>1?'s':''}` : (v.basis ? esc(v.basis) : '—'), [v.basis, v.months.length ? `${v.months.length} months monitored` : null, f.activations.length ? `${f.activations.length} activation${f.activations.length>1?'s':''}` : 'never activated'].filter(Boolean).join(' · ')],
-    ['plan', 'Plan', v.agencies.length ? `${v.agencies.length} agenc${v.agencies.length>1?'ies':'y'}` : (F.agency.length ? `${new Set(F.agency.map(x=>x.agency)).size} agencies` : (nPart ? `${nPart} partner${nPart>1?'s':''}` : '—')), [v.target_people ? `${num(v.target_people)} people targeted` : (f.covered ? `${num(f.covered)} people covered` : null), nPart && (v.agencies.length || F.agency.length) ? `${nPart} partner${nPart>1?'s':''}` : null].filter(Boolean).join(' · ')],
+    ['plan', 'Plan', nUN ? `${nUN} UN agenc${nUN>1?'ies':'y'} funded` : '—', [v.target_people ? `${num(v.target_people)} people targeted` : (f.covered ? `${num(f.covered)} people covered` : null), nPart ? `${nPart} partner${nPart>1?'s':''} in total` : null].filter(Boolean).join('<br>')],
     ['funding', 'Funding', money(v.prearranged_doc ?? v.envelope), (v.prearranged_doc ?? v.envelope) ? `pre-arranged${funds.length?' · '+funds.map(x=>x.toUpperCase().replace('CBPF-','CBPF ')).join(', '):''}` : (f.tech ? 'technical support only' : 'no figure yet')],
     ['learning', 'Learning', nDocs ? `${nDocs} document${nDocs>1?'s':''}` : 'no documents yet', 'evaluations, reviews, reports'],
   ];
@@ -1996,7 +1999,7 @@ function pillarBody(f, v){
     if(v.data_sources.length) rows.push(['Data sources', esc(v.data_sources.map(d=>typeof d==='string'?d:(d.name||d.source||JSON.stringify(d))).join(', '))]);
     // trigger design, then (at the bottom of the trigger section) the historical activations
     // simulation with the real ones marked in, the table of real activations, scope, docs
-    return miniTable(rows) + triggersBlock(v) + backtestBlock(f, v) + actualBlock(f, v) + scopeBlock(v) + techDocsBlock(v);
+    return miniTable(rows) + triggersBlock(v) + actualBlock(f, v) + backtestBlock(f, v) + scopeBlock(v) + techDocsBlock(v);
   }
   if(state.pillar==='plan'){
     if(v.agencies.length) rows.push(['Agencies', esc(v.agencies.join(', '))]);
@@ -2173,12 +2176,13 @@ function backtestBlock(f, v){
     if(col) (r.real[col] ??= []).push(a); else r.realYear.push(a);
   });
   rows.sort((a,b) => b.year - a.year || String(a.label||'').localeCompare(String(b.label||'')));
+  const simYears = new Set(bt.rows.map(r => r.year));
   const dot = `<span class='bt-dot' style='background:${hzColor(f.hazard)}' title='would have fired (simulation)'></span>`;
   let html = `<h4>Historical activations</h4>
     <div class='small' style='margin-bottom:4px'>Simulation ${bt.start}–${bt.end}: would each trigger of this version have fired${bt.per_event?' for each storm':' each year'}? Real activations are marked in, linked to their announcement.</div>
     <table class='mini bt'><thead><tr><th>${bt.per_event?'storm':'year'}</th>${bt.windows.map(w=>`<th class='bt-c'>${trigName(w)}</th>`).join('')}</tr></thead><tbody>`;
   html += rows.map(r => `<tr class='${r.fired.length?'bt-on':''}'><td class='lbl'>${r.year}${r.label?` <span class='muted'>${esc(r.label)}</span>`:''}${r.realYear.map(a=>realMark(a, v)).join('')}</td>`
-    + bt.windows.map(w => `<td class='bt-c'>${r.fired.includes(w)?dot:''}${(r.real[w]||[]).map(a=>realMark(a, v)).join('')}</td>`).join('') + `</tr>`).join('');
+    + bt.windows.map(w => `<td class='bt-c${simYears.has(r.year) && !r.extra ? '' : ' bt-na'}'${simYears.has(r.year) && !r.extra ? '' : ` title='${r.year} is not covered by the historical simulation'`}>${r.fired.includes(w)?dot:''}${(r.real[w]||[]).map(a=>realMark(a, v)).join('')}</td>`).join('') + `</tr>`).join('');
   return html + `</tbody></table><div class='small bt-key'>${dot} would have fired (simulation) · <span class='rm'></span> activated, money released · <span class='rm old'></span> activated under an earlier version</div>`;
 }
 // the real activations of the framework, all versions: when, which window, how much, links
@@ -2191,7 +2195,7 @@ function actualBlock(f, v){
       const old = !!(v && a.version && a.version !== v.v && !String(a.version).startsWith(v.v) && !String(v.v).startsWith(a.version));
       const tags = (a.type!=='framework_aa'?` <span class='badge b-retired'>${esc(a.type.replace(/_/g,' '))}</span>`:'')
         + (a.full===false?` <span class='badge b-development'>partial</span>`:'')
-        + (old?` <span class='vtag other' title='fired under an earlier version of the framework'>v ${esc(a.version)}</span>`:'');
+        + (old?` <span class='vtag other' title='Fired under version ${esc(a.version)}, an earlier version than the one shown (${esc(v.v)}); its triggers and budget may differ.'>v ${esc(a.version)}</span>`:'');
       return `<tr${old?" class='oldv'":''}><td>${esc(a.date)}${tags}</td><td>${a.window?esc(a.window):'<span class="muted">not recorded</span>'}${a.people?`<div class='muted'>${num(a.people)} people</div>`:''}</td><td>${actMoney(a)||'<span class="muted">—</span>'}</td><td>${actLinks(a).join('<br>')||'<span class="muted">—</span>'}</td></tr>`;
     }).join('') + `</table>`;
 }

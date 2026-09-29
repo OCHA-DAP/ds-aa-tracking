@@ -39,6 +39,7 @@ def canonical(df, keys):
 
 
 DASH_CSS = """
+td.na { background:#eef1f5; }
 .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(420px,1fr)); gap:16px; }
 .panel { background:#fff; border:1px solid #e0e0e0; border-radius:6px; padding:14px 16px; min-width:0; overflow:hidden; }
 .panel h3 { margin:2px 0 10px; font-size:14.5px; }
@@ -1767,6 +1768,7 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
     # the year before the version took effect
     n_years = pd.to_numeric(wv["analysis_years"], errors="coerce").max() if len(wv) else None
     rows = {}   # (year, label) -> {'cell': [...], window: [...]}
+    sim_years = set()   # years the historical simulation covers; others are greyed out
     if len(ss):
         vf = fvm.loc[fvm["version"].astype(str) == shown, "valid_from"]
         vf_y = pd.to_datetime(vf, errors="coerce").dt.year.max() if len(vf) else None
@@ -1774,6 +1776,7 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
         y0 = int(y1 - n_years + 1) if n_years and pd.notna(n_years) else int(ss["event_year"].min())
         y0 = min(y0, int(ss["event_year"].min()))
         labelled = ss[ss["event_label"].fillna("").astype(str) != ""]
+        sim_years = set(range(y0, y1 + 1))
         for y in range(y0, y1 + 1):
             if not (labelled["event_year"] == y).any():
                 rows[(y, "")] = {}
@@ -1839,7 +1842,9 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
             cells = rows[(y, lab)]
             body += (f"<tr><td class='yr'>{y}{(' <span class=' + chr(39) + 'muted' + chr(39) + '>' + esc(lab) + '</span>') if lab else ''}"
                      f"{' ' + ''.join(cells.get('__cell', [])) if cells.get('__cell') else ''}</td>"
-                     + "".join(f"<td>{''.join(cells.get(w, []))}</td>" for w in wins) + "</tr>")
+                     + "".join((f"<td>{''.join(cells.get(w, []))}</td>" if y in sim_years or not sim_years else
+                                f"<td class='na' title='{y} is not covered by the historical simulation'>{''.join(cells.get(w, []))}</td>")
+                               for w in wins) + "</tr>")
         vnote = ("" if shown is None else
                  f"Backtest of version <code>{esc(shown)}</code>"
                  + ("" if str(shown) == str(version) else " (the current version has no recorded backtest)")
@@ -1869,7 +1874,7 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
                 links.append(f"<a href='{esc(ev['ann'])}' target='_blank' rel='noopener'>announcement ↗</a>")
             links += [f"<a href='{esc(u)}' target='_blank' rel='noopener'>other ↗</a>" for u in ev["other"]]
             vtag = ("" if (not ev["version"] or str(ev["version"]) == str(version))
-                    else " <span class='doctag'>earlier version</span>")
+                    else f" <span class='doctag' title='This activation fired under version {esc(ev['version'])}, an earlier version of the framework than the current one ({esc(version)}); its triggers and budget may differ.'>earlier version</span>")
             tr += (f"<tr><td>{esc(ev['date'])}</td><td>{esc(ev['version'])}{vtag}</td>"
                    f"<td>{esc(ev['win'])}{(' · ' + esc(ev['label'])) if ev['label'] else ''}"
                    f"{'' if ev['typ'] == 'framework_aa' else ' <span class=' + chr(39) + 'muted' + chr(39) + '>(' + esc(ev['typ'].replace('_', ' ')) + ')</span>'}"
@@ -2056,10 +2061,10 @@ Monitoring window: {_cal_strip(cal, c, h)}
 <section><div class='scroll' style='max-height:260px'><table class='data'><thead>
 <tr><th>window</th><th>basis</th><th>state</th><th>budget</th><th>return period</th><th>annual prob.</th><th>backtest</th></tr></thead>
 <tbody>{wrows or '<tr><td colspan=7 class="empty">no windows registered for this version</td></tr>'}</tbody></table></div></section>
-<h3 class='sub'>Historical activations</h3>
-<section>{hist_html}</section>
 <h3 class='sub'>Actual activations</h3>
 <section>{actual_html}</section>
+<h3 class='sub'>Historical activations</h3>
+<section>{hist_html}</section>
 {valid_html}</div>
 <div class='blk'><h2>Plan</h2>
 <div class='tiles'>
