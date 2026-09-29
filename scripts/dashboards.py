@@ -727,9 +727,15 @@ def _money_flows(d, pre, act):
                 cand = split[(split["country_iso3"] == r.country_iso3) & (split["hazard"] == r.hazard)
                              & (split["version"] == v) & split["agency"].notna()]
                 if len(cand):
-                    own = cand[cand["fund_code"] == fc]
-                    sp = own if len(own) else cand
+                    if fc == "cerf":
+                        own = cand[cand["fund_code"].isin(["cerf"]) | cand["fund_code"].isna()]
+                    else:   # a pooled fund's money never borrows CERF's agency split
+                        own = cand[cand["fund_code"].isin([fc, "cbpf-unspecified", "cbpf", "rhpf"])]
+                    sp = own if len(own) else None
                     break
+            if (sp is None or sp["amount_usd"].sum() <= 0) and fc != "cerf":
+                grantees("p", y, fc, amount)      # pooled funds: grantee types, as allocated
+                continue
             if sp is None or sp["amount_usd"].sum() <= 0:
                 add("p", y, "f", "f:" + fc, "a:agencies not recorded", amount)
                 continue
