@@ -133,6 +133,9 @@ const fundLabel = fc => D.FN[fc]||fc;
 const BK = {rel:'#3b3f6b', pre:'#9aa3c7'};   // released / pre-arranged buckets in the donor view
 const slug = s => String(s).replace(/[^A-Za-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
 D.years.forEach(y=>fY.add(new Option(y,y))); fY.add(new Option('all years','all'));
+// pre-arranged money is a STOCK (in place on a date), released money a FLOW (per year): released adds up
+// across years, pre-arranged never does — 'all years' shows it as at the latest year instead
+const PREY = Math.max(...D.P.map(r=>r.year).filter(yy=>yy <= new Date().getFullYear()));
 fY.value = 'all';
 uniqSorted(D.C, r=>r.donor_type).forEach(t=>fDT.add(new Option(t,t)));
 uniqSorted(D.C.concat(D.B), r=>r.donor).forEach(n=>fD.add(new Option(n,n)));
@@ -187,15 +190,17 @@ function draw(){
   const m = byDonor(rows, dtSel);
   D.B.filter(r=>y==='all'||r.year===+y).forEach(r=>{ if(m[r.donor]) m[r.donor].build += r.amount_usd||0;
     else if(!dtSel) m[r.donor] = {donor:r.donor, type:'', paidCerf:0, paidCbpf:0, shareCerf:null, relCerf:0, relCbpf:0, relReg:0, preCerf:0, preCbpf:0, preReg:0, build:r.amount_usd||0}; });
+  if(y==='all'){ const mP = byDonor(attribute(String(PREY), ft).rows, dtSel);
+    Object.values(m).forEach(o=>{ const q = mP[o.donor]; o.preCerf = q?q.preCerf:0; o.preCbpf = q?q.preCbpf:0; o.preReg = q?q.preReg:0; }); }
   const L = Object.values(m);
   const sum = f => L.reduce((s,o)=>s+f(o),0);
   tC.textContent = money(sum(o=>o.paidCerf+o.paidCbpf));
   tCl.textContent = 'paid into ' + (ft?FT[ft]+'s':'the pooled funds') + (y==='all'?' 2020→':' in '+y);
   tR.textContent = money(sum(o=>o.relCerf+o.relCbpf+o.relReg)); tRl.textContent = 'AA released, attributed to donors';
-  tP.textContent = money(sum(o=>o.preCerf+o.preCbpf+o.preReg)); tPl.textContent = 'AA pre-arranged, attributed to donors';
+  tP.textContent = money(sum(o=>o.preCerf+o.preCbpf+o.preReg)); tPl.textContent = y==='all' ? `AA pre-arranged, attributed to donors, as at ${PREY} (a stock: never summed across years)` : 'AA pre-arranged, attributed to donors';
   tB.textContent = money(sum(o=>o.build)); tBl.textContent = 'build earmarks (OCHA AA project)';
   c1t.textContent = 'Donor shares of AA released'; c1n.textContent = "Each donor's share of the fund's income that year × the AA the fund released that year (activations: framework, ad hoc, EA). Stacked by fund type.";
-  c2t.textContent = 'Donor shares of AA pre-arranged'; c2n.textContent = "Same shares × the pre-arranged envelopes / AA-tagged CBPF allocations of that year (the Funding page's annual series).";
+  c2t.textContent = 'Donor shares of AA pre-arranged' + (y==='all' ? ` — as at ${PREY}` : ''); c2n.textContent = "Same shares × the pre-arranged envelopes / AA-tagged CBPF allocations of that year (the Funding page's annual series)." + (y==='all' ? ' Pre-arranged money is in place on a date, so it is shown for the latest year rather than added up over years.' : '');
   c3t.textContent = 'Attributed AA released by year'; c3n.textContent = 'All years; the largest donors over the period, everyone else as "other". Ignores the year filter.';
   unattr.innerHTML = (un.rel||un.pre) ? `Not attributable (AA money on a fund with no contribution rows that year — ${un.keys.map(k=>esc(D.FN[k.split('|')[0]]||k.split('|')[0])+' '+k.split('|')[1]).join(', ')}): released ${money(un.rel)}, pre-arranged ${money(un.pre)}. Shown here, never spread across donors.` : 'Every dollar of AA in this selection sits on a fund with known donors.';
   const stack = (id, key) => { const top = L.filter(o=>o[key+'Cerf']+o[key+'Cbpf']+o[key+'Reg']>0)
@@ -229,14 +234,15 @@ function drawDonor(dn, y, ft, rows){
   const dr = rows.filter(r=>r.donor===dn);                       // donor × fund × year in the selection
   const det = dr.filter(r=>r.fundRel||r.fundPre).sort((a,b)=>(b.year-a.year)||(b.paid_usd-a.paid_usd));
   const sum = (arr,f) => arr.reduce((s,r)=>s+(f(r)||0),0);
-  const rel = sum(det,r=>r.rel), pre = sum(det,r=>r.pre);
+  const PY = y==='all' ? PREY : +y, preRows = det.filter(r=>r.year===PY);   // pre-arranged: one year's stock
+  const rel = sum(det,r=>r.rel), pre = sum(preRows,r=>r.pre);
   const build = sum(D.B.filter(r=>r.donor===dn && inYear(r)), r=>r.amount_usd);
-  const totAA = sum(D.A.filter(r=>inYear(r)&&inFT(r)), r=>r.amount_usd) + sum(D.P.filter(r=>inYear(r)&&inFT(r)), r=>r.amount_usd);
+  const totRel = sum(D.A.filter(r=>inYear(r)&&inFT(r)), r=>r.amount_usd), totPre = sum(D.P.filter(r=>r.year===PY&&inFT(r)), r=>r.amount_usd);
   const when = y==='all' ? '2020→' : 'in '+y, scope = ft ? FT[ft]+'s' : 'the pooled funds';
   tC.textContent = dollars(rel); tCl.textContent = `AA released, attributed to ${dn} ${when}`;
-  tR.textContent = dollars(pre); tRl.textContent = `AA pre-arranged, attributed to ${dn} ${when}`;
+  tR.textContent = dollars(pre); tRl.textContent = `AA pre-arranged, attributed to ${dn}, as at ${PY}` + (y==='all' ? ' (not summed across years)' : '');
   tP.textContent = dollars(build); tPl.textContent = `build earmarks to the OCHA AA project ${when}`;
-  tB.textContent = totAA ? pct((rel+pre)/totAA) : '–'; tBl.textContent = `share of all AA released + pre-arranged via ${scope} ${when}`;
+  tB.textContent = totRel ? pct(rel/totRel) : '–'; tBl.textContent = `share of all AA released via ${scope} ${when}` + (totPre ? ` · ${pct(pre/totPre)} of pre-arranged as at ${PY}` : '');
   // chart 1: share of each fund's income, latest year in the selection the donor paid in
   const y1 = y==='all' ? Math.max(-Infinity, ...dr.map(r=>r.year)) : +y;
   const s1 = dr.filter(r=>r.year===y1).sort((a,b)=>b.share-a.share);
@@ -248,10 +254,11 @@ function drawDonor(dn, y, ft, rows){
   // chart 2 + by-fund table: attributed released / pre-arranged per fund over the selected years
   const byF = {};
   det.forEach(r=>{ const o = byF[r.fund_code] ??= {fund_code:r.fund_code, ft:r.ft, years:new Set(), paid:0, fundRel:0, fundPre:0, rel:0, pre:0};
-    o.years.add(r.year); o.paid+=r.paid_usd; o.fundRel+=r.fundRel; o.fundPre+=r.fundPre; o.rel+=r.rel; o.pre+=r.pre; });
+    o.years.add(r.year); o.paid+=r.paid_usd; o.fundRel+=r.fundRel; o.rel+=r.rel;
+    if(r.year===PY){ o.fundPre+=r.fundPre; o.pre+=r.pre; } });
   const F = Object.values(byF).sort((a,b)=>(b.rel+b.pre)-(a.rel+a.pre));
   c2t.textContent = `${dn}: attributed AA by fund${y==='all'?', all years':', '+y}`;
-  c2n.textContent = "The donor's share of each fund's income × the AA that fund released / pre-arranged, summed over the selected years.";
+  c2n.textContent = `The donor's share of each fund's income × the AA that fund released (summed over the selected years) and pre-arranged (as at ${PY}: a stock, never summed).`;
   fmtChart(mkChart('c2','bar', F.map(o=>fundLabel(o.fund_code)),
     [{label:'AA released', data:F.map(o=>o.rel), backgroundColor:BK.rel}, {label:'AA pre-arranged', data:F.map(o=>o.pre), backgroundColor:BK.pre}],
     {allLabels:true, extra:{indexAxis:'y'}}), true, dollars);
@@ -273,7 +280,7 @@ function drawDonor(dn, y, ft, rows){
   document.querySelector('#dtbl tbody').innerHTML = det.map(r=>`<tr><td>${esc(fundLabel(r.fund_code))}</td><td>${r.year}</td>
     <td>${dollars(r.paid_usd)}</td><td>${dollars(r.fundIncome)}</td><td>${pct(r.share)}</td>
     <td>${dollars(r.fundRel)}</td><td><b>${dollars(r.rel)}</b></td><td>${dollars(r.fundPre)}</td><td><b>${dollars(r.pre)}</b></td></tr>`).join('')
-    + (det.length ? `<tr><td><b>total</b></td><td></td><td>${dollars(sum(det,r=>r.paid_usd))}</td><td></td><td></td><td></td><td><b>${dollars(rel)}</b></td><td></td><td><b>${dollars(pre)}</b></td></tr>` : '');
+    + (det.length ? `<tr><td><b>total</b></td><td></td><td>${dollars(sum(det,r=>r.paid_usd))}</td><td></td><td></td><td></td><td><b>${dollars(rel)}</b></td><td></td><td>${y==='all' ? `<span class='muted' title='pre-arranged money is a stock: summing it over years would count the same envelope several times'>as at ${PY}: </span>` : ''}<b>${dollars(pre)}</b></td></tr>` : '');
   window._F = F; window._det = det;
 }
 // ---- exports (exact dollars, 2 decimals; shares as percent, 4 decimals)
