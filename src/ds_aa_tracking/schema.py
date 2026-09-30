@@ -72,6 +72,50 @@ TABLES = {
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard, version)
         )""",
+    # the document registry: WHICH FILE is a version's framework document, by content
+    # hash. Publication stays with OCHA (unocha.org / ReliefWeb) — official_url is the
+    # canonical public link; the bytes are archived in the dev blob, content-addressed
+    # at projects/ds-aa-tracking/raw/framework_documents/<sha256>.pdf, so a file shared
+    # by several versions (the Dry Corridor's one document for SLV/GTM/HND) is stored
+    # once and linked from each. The archive is the record when an official page goes
+    # (nic-drought's ReliefWeb page 404s). Append-only: a changed file is a new row.
+    "framework_document": """
+        CREATE TABLE IF NOT EXISTS aa.framework_document (
+            sha256 text PRIMARY KEY,       -- hex digest of the file bytes = its identity
+            blob_path text NOT NULL,       -- container `projects`, dev stage
+            bytes bigint NOT NULL,
+            media_type text NOT NULL DEFAULT 'application/pdf',
+            title text,
+            language text,                 -- en | fr | es — one per file; a translation
+                                           -- is another file of the SAME version
+            is_public boolean NOT NULL,    -- false: never on the public site or in the KB
+            official_url text,             -- publication LANDING page (unocha.org /
+                                           -- ReliefWeb), not the /attachments/ PDF link;
+                                           -- NULL until published (or never, if internal)
+            retrieved_from text,           -- where these bytes came from (URL, email, …)
+            retrieved_at timestamptz,
+            registered_by text NOT NULL,
+            source text NOT NULL,          -- kb-pdf-cache | entered | fetched
+            note text,
+            registered_at timestamptz NOT NULL DEFAULT now()
+        )""",
+    # version <-> document, many-to-many: a version can have several files (the endorsed
+    # original, the published rendition, translations, annexes) and a file can serve
+    # several versions (a shared regional document).
+    "version_document": """
+        CREATE TABLE IF NOT EXISTS aa.version_document (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,         -- aa.framework_version (by convention)
+            sha256 text NOT NULL,          -- aa.framework_document
+            role text NOT NULL,            -- endorsed (the file as endorsed / circulated)
+                                           -- | published (the rendition on the official
+                                           --   site — may differ byte-wise from endorsed)
+                                           -- | translation | annex
+            note text,
+            registered_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (country_iso3, hazard, version, sha256)
+        )""",
     "framework_status": """
         CREATE TABLE IF NOT EXISTS aa.framework_status (
             country_iso3 text NOT NULL,
