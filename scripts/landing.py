@@ -663,6 +663,77 @@ def _list(v):
         return []
 
 
+HZ_EMERGENCY = {"drought": ("drought",), "flood": ("flood",), "storm": ("storm", "cyclone", "hurricane", "typhoon"),
+                "cholera": ("cholera",), "locusts": ("insect", "locust"), "plague": ("plague",),
+                "food_insecurity": ("food",)}
+
+
+def _adhoc_cerf(e, acts, actf, _try):
+    """(country, hazard) -> [CERF allocation dicts] behind the pair's ad hoc AA allocations.
+    The allocation code from activation_funding when recorded; otherwise the CERF allocation
+    of that country and year whose emergency type matches the hazard (closest amount wins).
+    Each carries agencies, sectors and planned / reached people from the CERF mirror."""
+    ad = acts[acts["event_type"] == "adhoc_aa"]
+    if ad.empty:
+        return {}
+    isos = sorted(set(ad["country_iso3"]))
+    q = ", ".join(f"'{c}'" for c in isos)
+    al = _try(f"""SELECT application_code, year, country_iso3, emergency_type, title, amount_approved,
+                         individuals_planned, individuals_reached, aa_keyword
+                  FROM aa.cerf_allocation WHERE country_iso3 IN ({q})""",
+              ["application_code", "year", "country_iso3", "emergency_type", "title", "amount_approved",
+               "individuals_planned", "individuals_reached", "aa_keyword"])
+    out = {}
+    for (c, h), evs in ad.groupby(["country_iso3", "hazard"]):
+        picked = []
+        for ev in evs.itertuples():
+            y = int(str(ev.event_date)[:4]) if str(ev.event_date)[:4].isdigit() else None
+            f = actf[(actf["country_iso3"] == c) & (actf["hazard"] == h)
+                     & (actf["event_date"] == ev.event_date) & (actf["event_type"] == "adhoc_aa")]
+            codes = [x for x in f["allocation_code"].dropna() if x]
+            if codes:
+                cand = al[al["application_code"].isin(codes)]
+                how = "recorded allocation code"
+            else:
+                keys = HZ_EMERGENCY.get(h, (h,))
+                cand = al[(al["year"] == y) & al["emergency_type"].fillna("").str.lower()
+                          .map(lambda t: any(k in t for k in keys))]
+                target = f["amount_usd"].sum()
+                if len(cand) > 1 and target > 0:
+                    cand = cand.iloc[[int((cand["amount_approved"] - target).abs().argmin())]]
+                how = "matched by country, year and emergency type"
+            for a in cand.itertuples():
+                if a.application_code not in [p["code"] for p in picked]:
+                    picked.append({"code": a.application_code, "year": int(a.year), "emergency": a.emergency_type,
+                                   "title": a.title, "usd": _num(a.amount_approved), "how": how,
+                                   "event": str(ev.event_date),
+                                   "url": f"https://cerf.un.org/what-we-do/allocation/{int(a.year)}/summary/{a.application_code}"})
+        if not picked:
+            continue
+        codes = ", ".join(f"'{p['code']}'" for p in picked)
+        pr = _try(f"""SELECT application_code, project_code, agency_short_name AS agency, amount_approved,
+                             people_planned, people_reached, sector_name
+                      FROM aa.cerf_project WHERE application_code IN ({codes})""",
+                  ["application_code", "project_code", "agency", "amount_approved", "people_planned",
+                   "people_reached", "sector_name"])
+        ps = _try(f"""SELECT p.application_code, s.cerf_sector_name AS sector, s.sector_amount
+                      FROM aa.cerf_project_sector s JOIN aa.cerf_project p USING (project_code)
+                      WHERE p.application_code IN ({codes})""",
+                  ["application_code", "sector", "sector_amount"])
+        for p_ in picked:
+            x = pr[pr["application_code"] == p_["code"]]
+            p_["agencies"] = [{"agency": a, "usd": float(g["amount_approved"].sum())}
+                              for a, g in x.groupby("agency")] if len(x) else []
+            p_["agencies"].sort(key=lambda z: -z["usd"])
+            p_["planned"] = _num(x["people_planned"].sum()) if len(x) else None
+            p_["reached"] = _num(x["people_reached"].sum()) if len(x) and x["people_reached"].notna().any() else None
+            y_ = ps[ps["application_code"] == p_["code"]]
+            p_["sectors"] = sorted(({"sector": k, "usd": float(v)} for k, v in
+                                    y_.groupby("sector")["sector_amount"].sum().items()), key=lambda z: -z["usd"])
+        out[(c, h)] = picked
+    return out
+
+
 def assemble(d, e):
     cur = d["current"].sort_values("country_name")
     ver = pd.read_sql("SELECT * FROM aa.framework_version", e)
@@ -696,18 +767,21 @@ def assemble(d, e):
         """SELECT country_iso3, hazard, version, window_name, event_year, event_label
            FROM aa.simulated_activation ORDER BY event_year DESC""", e)
     psb = fb.iloc[0:0]                                    # folded into window_funding
+    from dashboards import EXCLUDED_EVENT_TYPES
+    excl = ", ".join(f"'{t}'" for t in EXCLUDED_EVENT_TYPES)
     acts = pd.read_sql(
-        """SELECT a.country_iso3, a.hazard, a.event_type, a.event_date, a.window_name,
+        f"""SELECT a.country_iso3, a.hazard, a.event_type, a.event_date, a.window_name,
                   a.event_label, a.version, a.kb_framework, a.kb_event_date,
                   a.people_targeted, a.comments
-           FROM aa.activation a ORDER BY a.event_date DESC""", e)
+           FROM aa.activation a WHERE a.event_type NOT IN ({excl}) ORDER BY a.event_date DESC""", e)
     actf = pd.read_sql(
         """SELECT f.country_iso3, f.hazard, f.event_date, f.window_name, f.event_label,
                   f.event_type, f.fund_code, f.allocation_code, f.amount_usd, c.year AS alloc_year
            FROM aa.activation_funding f
            LEFT JOIN (SELECT DISTINCT ON (application_code) application_code, year
                       FROM aa.cerf_allocation ORDER BY application_code, year) c
-             ON c.application_code = f.allocation_code""", e)
+             ON c.application_code = f.allocation_code
+           WHERE f.event_type NOT IN (""" + excl + ")", e)
     aurl = pd.read_sql(
         """SELECT kb_framework, event_date, country_iso3, url, released_usd, full_activation, note
            FROM aa.actual_activation""", e)
@@ -722,9 +796,11 @@ def assemble(d, e):
             print(f"  ! {sql.split('FROM')[1].split()[0] if 'FROM' in sql else sql}: {ex}")
             return pd.DataFrame(columns=cols)
 
-    # ad hoc / early-action allocations sit on the (country, hazard) pair, not on a version
-    adhoc = _try("SELECT country_iso3, hazard, count(*) AS n FROM aa.adhoc_activation GROUP BY 1, 2",
+    # ad hoc AA allocations sit on the (country, hazard) pair, not on a version
+    adhoc = _try(f"SELECT country_iso3, hazard, count(*) AS n FROM aa.adhoc_activation "
+                 f"WHERE event_type NOT IN ({excl}) GROUP BY 1, 2",
                  ["country_iso3", "hazard", "n"])
+    adhoc_cerf = _adhoc_cerf(e, acts, actf, _try)
     n_adhoc = {(a.country_iso3, a.hazard): int(a.n) for a in adhoc.itertuples()}
     learn = _try(
         """SELECT id, title, url, publisher, year, doc_type, country_iso3, hazard, key_stat
@@ -965,7 +1041,7 @@ def assemble(d, e):
         if disp == "retired":
             layers.append("retired")
         if n_adhoc.get((c, h)):
-            layers.append("adhoc")                    # ad hoc / early-action allocations on the pair
+            layers.append("adhoc")                    # ad hoc AA allocations on the pair
         if tech:
             layers.append("tech")                     # OCHA technical support, whatever the lifecycle
         if not layers:
@@ -981,6 +1057,7 @@ def assemble(d, e):
             "hazard": h, "status": sheet_status, "kb": kb_fw,
             "disp": disp, "disp_label": DISP_LABEL.get(disp, disp), "ring": ring, "n_act": n_fw_act,
             "n_act_all": len(activations), "n_adhoc": n_adhoc.get((c, h), 0),
+            "adhoc_cerf": adhoc_cerf.get((c, h), []),
             "layers": layers, "layer": next(l for l in LAYER_ORDER if l in layers),
             "tech": tech,
             "hz_label": HAZ_LABEL.get(h, h.replace("_", " ").capitalize()),
@@ -1194,7 +1271,7 @@ def build_landing(page, d, e):
   </svg>
   <div class='sh-layers'>
    <b>Map layers.</b> <span class='dot' style='background:{KB_COLOR["active"]}'></span><b>Current frameworks</b> — every framework whose status is active, being updated or in development (the default view; the headline figures follow whatever is shown).
-   <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span><b>Ad hoc allocations</b> — countries and hazards that received ad hoc anticipatory-action or early-action money without a framework version (light green; a framework that also received ad hoc money stays drawn as a framework).
+   <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span><b>Ad hoc allocations</b> — countries and hazards that received ad hoc anticipatory-action money without a framework version (light green; a framework that also received ad hoc money stays drawn as a framework).
    <span class='dot' style='background:{LAYER_COLOR["retired"]}'></span><b>Retired</b> — frameworks flagged retired in the admin, drawn in grey so past coverage can be compared with today's.
    <span class='dot dot-hollow' style='border-color:{LAYER_COLOR["tech"]}'></span><b>Technical support</b> — countries where OCHA supported the framework technically without a funding commitment, whatever their status (including pipeline ones like Palau and Tonga), drawn as a hollow teal pin.
   </div>
@@ -1690,7 +1767,9 @@ function updateTiles(){
   const n = k => fw.filter(f=>f.disp===k).length;
   const set = (id, v, l) => { const el = document.getElementById(id); if(!el) return; el.querySelector('.v').textContent = v; el.querySelector('.l').textContent = l; };
   set('t-fw', fw.length, `frameworks on the map · ${n('active')} active · ${n('updating')} being updated · ${n('development')} in development`);
-  set('t-pre', '$' + Math.round(fw.reduce((s,f)=>s+(f.pre_now||0),0)/1e6) + 'M', 'pre-arranged now (CERF + CBPF), frameworks shown');
+  const noEnv = []; Object.values(L).forEach(c => c.fws.forEach(f => { if(fw.includes(f) && !f.pre_now) noEnv.push(`${c.name} ${f.hz_label.toLowerCase()}`); }));
+  set('t-pre', '$' + Math.round(fw.reduce((s,f)=>s+(f.pre_now||0),0)/1e6) + 'M', 'pre-arranged now (CERF + CBPFs), all current frameworks incl. in development'
+      + (noEnv.length ? ` · ${noEnv.length} without an envelope recorded yet: ${noEnv.join(', ')}` : ''));
   set('t-act', shown.reduce((s,f)=>s+f.n_act_all,0), 'activations');
   set('t-cov', (fw.reduce((s,f)=>s+(f.covered||0),0)/1e6).toFixed(1) + 'M', 'people covered, frameworks shown');
   const g = document.getElementById('gtiles'); if(g) g.classList.toggle('global', !!state.iso);
@@ -1936,7 +2015,7 @@ function renderSide(){
            <tr><td class='lbl'>Latest version</td><td>${f.current ? `<code>${f.current}</code> <span class='muted'>(${f.versions.length} total)</span>` : '<span class="muted">no framework version</span>'}</td></tr>
            <tr><td class='lbl'>Pre-arranged</td><td>${money(f.pre_now ?? f.prearranged)}${f.pre_now==null && f.prearranged_year?` <span class='muted'>(${f.prearranged_year})</span>`:''}</td></tr>
            <tr><td class='lbl'>People covered</td><td>${num(f.covered)}</td></tr>
-           <tr><td class='lbl'>Activations</td><td>${f.n_act_all||'—'}${f.n_adhoc?` <span class='muted'>(${f.n_adhoc} ad hoc / early action)</span>`:''}</td></tr>
+           <tr><td class='lbl'>Activations</td><td>${f.n_act_all||'—'}${f.n_adhoc?` <span class='muted'>(${f.n_adhoc} ad hoc)</span>`:''}</td></tr>
            <tr><td class='lbl'>Monitoring</td><td>${monthStrip(v ? v.months : [])}</td></tr>
           </table></div>`; }).join('') + `</div>`;
     annotate(side, side);
@@ -1944,10 +2023,10 @@ function renderSide(){
   }
   const f = c.fws.find(x=>x.hazard===state.hz); if(!f){ state.hz=null; return renderSide(); }
   if(!f.versions.length){
-    const why = f.layer==='adhoc' ? `Ad hoc / early-action allocations for this hazard — no framework behind them.`
+    const why = f.layer==='adhoc' ? `Ad hoc anticipatory-action allocations for this hazard — no framework behind them.`
               : f.layer==='tech' ? `OCHA technical support — no framework version in the registry yet${f.status?` (tracking sheets: ${esc(f.status.replace(/_/g,' '))})`:''}.`
               : `No framework version in the registry yet — status comes from the tracking sheets (${esc((f.status||'').replace(/_/g,' '))}).`;
-    side.innerHTML = crumb + fwHeader(c, f) + countryTiles(c) + `<p class='muted'>${why}</p>` +
+    side.innerHTML = crumb + fwHeader(c, f) + countryTiles(c) + `<p class='muted'>${why}</p>` + adhocBlock(f) +
       learningBlock(f, null) + partnersBlock(c, f, null) + (f.page ? `<p><a href='${f.page}'>framework page →</a></p>` : '');
     annotate(side, side);
     return;
@@ -2061,6 +2140,20 @@ function sectorBlock(v){
   const tot = groupBy(F.sector, x=>x.sector, x=>x.usd);
   const keys = Object.keys(tot).sort((a,b)=>tot[b]-tot[a]);
   return `<h4>Budget by sector</h4><table class='mini'><tr><th>sector</th><th class='num'>USD</th></tr>` + keys.map(k=>`<tr><td>${esc(k)}</td><td class='num'>${money(tot[k])}</td></tr>`).join('') + `</table>`;
+}
+// the CERF allocations behind a pair's ad hoc AA allocations: amount, agencies, sectors, people
+function adhocBlock(f){
+  const A = f.adhoc_cerf || [];
+  if(!A.length) return f.n_adhoc ? `<div class='muted small'>No CERF allocation found for these allocations in the CERF data.</div>` : '';
+  const CW = Math.max(280, Math.min(560, (side.clientWidth || 420) - 36));
+  return `<h4>Ad hoc allocations (${A.length})</h4>` + A.map(a => `<div class='trig'>
+      <div class='tn'><a href='${esc(a.url)}' target='_blank' rel='noopener'>CERF ${esc(a.code)} ↗</a> <span class='muted'>· ${esc(a.emergency||'')} · ${a.year}</span></div>
+      <div class='tt'><b>${money(a.usd)}</b>${a.planned?` · ${num(a.planned)} people planned`:''}${a.reached?` · ${num(a.reached)} reached`:''}</div>
+      ${a.title?`<div class='tm'>${esc(a.title)}</div>`:''}
+      ${a.agencies.length?`<div class='small' style='margin-top:4px'><b>Agencies</b></div>` + hbarsSVG(a.agencies.map(x=>({label:x.agency, v:x.usd})), {width:CW, fmt:money, colorBy:'a', label:'CERF allocation by agency'}):''}
+      ${a.sectors.length?`<div class='small' style='margin-top:4px'><b>Sectors</b></div>` + hbarsSVG(a.sectors.map(x=>({label:x.sector, v:x.usd})), {width:CW, fmt:money, color:'#64748b', label:'CERF allocation by sector'}):''}
+      <div class='tm'>${a.how==='recorded allocation code' ? 'Allocation code recorded with the ad hoc allocation.' : 'Matched to the CERF allocation of the same country, year and emergency type (no code recorded).'}</div>
+    </div>`).join('');
 }
 function groupBy(rows, kf, vf){ const m = {}; rows.forEach(r=>{ const k = kf(r); m[k] = (m[k]||0) + (vf(r)||0); }); return m; }
 function fwHeader(c, f){
@@ -2214,7 +2307,7 @@ const HELP = [
   ['readiness', /\b(readiness(?: vs\.? action)?|readiness and action)\b/i, 'readiness money prepares the response before the shock is certain; action money delivers it'],
 ];
 const ABBR = {CERF:'Central Emergency Response Fund', CBPF:'Country-Based Pooled Fund', RhPF:'Regional Humanitarian Pooled Fund', ERC:'Emergency Relief Coordinator',
-  AA:'anticipatory action', EA:'early action', GHO:'Global Humanitarian Overview', HRP:'Humanitarian Response Plan', IPC:'Integrated Food Security Phase Classification',
+  AA:'anticipatory action', GHO:'Global Humanitarian Overview', HRP:'Humanitarian Response Plan', IPC:'Integrated Food Security Phase Classification',
   CH:'Cadre Harmonisé', SEAS5:'ECMWF seasonal forecast system', ECMWF:'European Centre for Medium-Range Weather Forecasts', GloFAS:'Global Flood Awareness System',
   ASAP:'Anomaly hot Spots of Agricultural Production', 'FEWS NET':'Famine Early Warning Systems Network', ENSO:'El Niño–Southern Oscillation', NDMO:'National Disaster Management Office',
   UNFPA:'United Nations Population Fund', UNHCR:'UN Refugee Agency', UNICEF:'United Nations Children\'s Fund', WFP:'World Food Programme', FAO:'Food and Agriculture Organization of the United Nations',
