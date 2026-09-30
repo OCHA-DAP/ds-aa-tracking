@@ -83,6 +83,8 @@ DOC_COLS = [
     "note",
 ]
 LINK_COLS = [*KEY, "role", "official_url", "note"]
+SINGLE_ROLES = ("endorsed", "published")  # one CURRENT file per version (unique index)
+CURRENT_IDX = next(i for i in schema.INDEXES if "version_document_current_uniq" in i)
 
 
 def blob_path(sha):
@@ -174,7 +176,8 @@ def _none(v):
 
 
 def plan_backfill(fv, vp):
-    """(docs, links, report) for the PDFs in the KB cache; report = {kind: [lines]}."""
+    """(docs, links, report, held) for the PDFs in the KB cache; report = {kind: [lines]};
+    held = the shas registered only on a heuristic (direct link / publisher mirror)."""
     lang = (
         {}
         if vp is None
@@ -184,7 +187,7 @@ def plan_backfill(fv, vp):
     paths_by_sha = {}
     for pdf, (_, sha) in cached.items():
         paths_by_sha.setdefault(sha, []).append(f"{pdf.parent.name}/{pdf.stem}")
-    docs, links = {}, []
+    docs, links, held = {}, [], set()
     report = {"skipped": [], "check": []}
     for paths in paths_by_sha.values():
         if len(paths) > 1:
@@ -219,6 +222,7 @@ def plan_backfill(fv, vp):
                 continue
             how = "the same report on the other publisher" if mirror else "the direct link"
             report["check"].append(f"{fw}/{ver}: fetched from {how} {fetched}")
+            held.add(sha)
         docs.setdefault(
             sha,
             {
@@ -246,7 +250,7 @@ def plan_backfill(fv, vp):
             }
             for r in rows.itertuples()
         ]
-    return docs, links, report
+    return docs, links, report, held
 
 
 def plan_register(args, fv):
@@ -291,20 +295,40 @@ def plan_register(args, fv):
 
 def split_known(docs, links, known_docs, known_links):
     """Split the plan into new rows and rows already registered DIFFERENTLY (a correction:
-    never applied silently). Rows already registered identically drop out."""
+    never applied silently); rows already registered identically drop out. `taken` =
+    new links whose version already has a CURRENT file in an endorsed/published role:
+    (link, sha of that file) — replacing it needs --supersedes."""
     kd = None if known_docs is None else known_docs.set_index("sha256")
     kl = None if known_links is None else known_links.set_index(KEY)
-    new_docs, new_links, changed_docs, changed_links, diffs = {}, [], {}, [], []
+    cur = {}
+    if known_links is not None:
+        live = known_links[known_links.superseded_by.isna()]
+        for r in live[live.role.isin(SINGLE_ROLES)].itertuples():
+            cur[(r.country_iso3, r.hazard, r.version, r.role)] = r.sha256
+    new_docs, new_links, changed_docs, changed_links, diffs, taken = {}, [], {}, [], [], []
     for sha, d in docs.items():
         if kd is None or sha not in kd.index:
             new_docs[sha] = d
-        elif bool(kd.at[sha, "is_public"]) != d["is_public"]:
+            continue
+        old = kd.loc[sha]
+        dd = [f"is_public {old['is_public']} → {d['is_public']}"] * (
+            bool(old["is_public"]) != d["is_public"]
+        ) + [
+            f"{c} {_none(old[c])} → {d[c]}"
+            for c in ("title", "language", "retrieved_from", "note")
+            if d[c] is not None and _none(old[c]) != d[c]
+        ]
+        if dd:
             changed_docs[sha] = d
-            diffs.append(f"{sha[:12]}: is_public {kd.at[sha, 'is_public']} → {d['is_public']}")
+            diffs.append(f"{sha[:12]}: {'; '.join(dd)}")
     for x in links:
         k = tuple(x[c] for c in KEY)
         if kl is None or k not in kl.index:
-            new_links.append(x)
+            other = cur.get((*k[:3], x["role"]))
+            if other and other != x["sha256"]:
+                taken.append((x, other))
+            else:
+                new_links.append(x)
             continue
         old = kl.loc[k]
         d = [
@@ -315,13 +339,14 @@ def split_known(docs, links, known_docs, known_links):
         if d:
             changed_links.append(x)
             diffs.append(f"{'/'.join(k[:3])} {k[3][:12]}: {'; '.join(d)}")
-    return new_docs, new_links, changed_docs, changed_links, diffs
+    return new_docs, new_links, changed_docs, changed_links, diffs, taken
 
 
 def write(engine, docs, links, by, changed_docs=None, changed_links=(), supersede=None):
     with engine.begin() as conn:
         for t in ("framework_document", "version_document"):
             conn.execute(sa.text(schema.DURABLE_TABLES[t]))
+        conn.execute(sa.text(CURRENT_IDX))
     for d in docs.values():  # blob first: a DB row never points at a missing file
         stratus.upload_blob_data(
             d["data"],
@@ -350,6 +375,20 @@ def write(engine, docs, links, by, changed_docs=None, changed_links=(), supersed
                 ON CONFLICT (sha256) DO NOTHING"""),
                 rows,
             )
+        if supersede:  # before the insert: one current file per role
+            old, new, keys = supersede
+            for iso3, hazard, version in keys:
+                n = conn.execute(
+                    sa.text("""
+                    UPDATE aa.version_document SET superseded_by = :new
+                    WHERE country_iso3 = :c AND hazard = :h AND version = :v
+                      AND sha256 = :old AND superseded_by IS NULL"""),
+                    {"new": new, "old": old, "c": iso3, "h": hazard, "v": version},
+                ).rowcount
+                if n != 1:  # raising rolls the whole transaction back
+                    raise SystemExit(
+                        f"--supersedes: no current {old[:12]} link on {iso3}/{hazard}/{version}"
+                    )
         if links:
             conn.execute(
                 sa.text(f"""
@@ -380,20 +419,6 @@ def write(engine, docs, links, by, changed_docs=None, changed_links=(), supersed
                   AND version = :version AND sha256 = :sha256"""),
                 {c: x[c] for c in LINK_COLS},
             )
-        if supersede:
-            old, new, keys = supersede
-            for iso3, hazard, version in keys:
-                n = conn.execute(
-                    sa.text("""
-                    UPDATE aa.version_document SET superseded_by = :new
-                    WHERE country_iso3 = :c AND hazard = :h AND version = :v
-                      AND sha256 = :old AND superseded_by IS NULL"""),
-                    {"new": new, "old": old, "c": iso3, "h": hazard, "v": version},
-                ).rowcount
-                if n != 1:  # raising rolls the whole transaction back
-                    raise SystemExit(
-                        f"--supersedes: no current {old[:12]} link on {iso3}/{hazard}/{version}"
-                    )
 
 
 def main():
@@ -413,6 +438,11 @@ def main():
     ap.add_argument("--note")
     ap.add_argument("--supersedes", metavar="SHA256", help="the file this one replaces")
     ap.add_argument("--update", action="store_true", help="correct an existing registration")
+    ap.add_argument(
+        "--accept-checked",
+        action="store_true",
+        help="backfill: also write the files matched only on a direct link / publisher mirror",
+    )
     ap.add_argument("--by", default=getpass.getuser(), help="registered_by")
     args = ap.parse_args()
     if bool(args.register) != bool(args.key):
@@ -435,13 +465,31 @@ def main():
 
     if args.register:
         docs, links = plan_register(args, fv)
-        reg_sha = next(iter(docs))
+        reg_sha, held = next(iter(docs)), set()
+        if args.supersedes == reg_sha:
+            sys.exit("--supersedes names the file being registered")
         report = {"skipped": [], "check": []}
     else:
-        docs, links, report = plan_backfill(fv, vp)
-    docs, links, changed_docs, changed_links, diffs = split_known(
+        docs, links, report, held = plan_backfill(fv, vp)
+    docs, links, changed_docs, changed_links, diffs, taken = split_known(
         docs, links, known_docs, known_links
     )
+    for x, other in taken:
+        key = f"{x['country_iso3']}/{x['hazard']}/{x['version']}"
+        if args.register and args.supersedes == other:
+            links.append(x)  # the replacement --supersedes asked for
+        elif args.register:
+            sys.exit(
+                f"{key} already has a current {x['role']} file {other}: "
+                "pass --supersedes with it to replace it, or another --role"
+            )
+        else:
+            report["skipped"].append(f"{key}: already has a current {x['role']} file {other[:12]}")
+    if not args.register:  # a file whose every link was skipped is not registered either
+        docs = {sha: d for sha, d in docs.items() if any(x["sha256"] == sha for x in links)}
+    if held and not args.accept_checked:
+        docs = {sha: d for sha, d in docs.items() if sha not in held}
+        links = [x for x in links if x["sha256"] not in held]
     if diffs and args.register and not args.update:
         sys.exit(
             "already registered differently (re-run with --update to correct):\n  "
@@ -474,7 +522,11 @@ def main():
                 + ("" if ok else " — NO current link with that file: --write would fail")
             )
     for line in report["check"]:
-        print(f"  ? {line} — check it is the document of the version's landing page")
+        print(
+            f"  ? {line} — "
+            + ("registered on --accept-checked" if args.accept_checked else "HELD BACK")
+            + ": check it is the document of the version's landing page"
+        )
     for line in report["skipped"]:
         print(f"  ! skipped {line}")
     if not args.register:

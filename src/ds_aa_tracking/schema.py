@@ -650,6 +650,11 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS cerf_subgrant_app_idx ON aa.cerf_subgrant (application_code)",
     """CREATE UNIQUE INDEX IF NOT EXISTS cerf_subgrant_uniq ON aa.cerf_subgrant
        (project_code, partner_name, COALESCE(subgrant_usd, -1), source)""",
+    # one CURRENT endorsed / published file per version (translations and annexes can be
+    # several); a replacement sets superseded_by on the old link first
+    """CREATE UNIQUE INDEX IF NOT EXISTS version_document_current_uniq ON aa.version_document
+       (country_iso3, hazard, version, role)
+       WHERE superseded_by IS NULL AND role IN ('endorsed', 'published')""",
 ]
 
 LEGACY_TABLES = [   # renamed zz_legacy_<name> by the window-first migration; read-only history
