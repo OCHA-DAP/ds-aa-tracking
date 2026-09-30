@@ -177,17 +177,20 @@ def _none(v):
 
 def plan_backfill(fv, vp):
     """(docs, links, report, held) for the PDFs in the KB cache; report = {kind: [lines]};
-    held = the shas registered only on a heuristic (direct link / publisher mirror)."""
-    lang = (
-        {}
-        if vp is None
-        else {(r.kb_framework, r.version): language_of(r.frontmatter) for r in vp.itertuples()}
+    held = {sha: "fw/ver"} registered only on a heuristic (direct link / publisher mirror).
+    A version whose page lists framework_doc_annexes comes in several documents (the Dry
+    Corridor's 2026 page links Guatemala's national framework, with El Salvador's and
+    Honduras's as annexes), so which one the cached file is can't be told: skipped, and
+    registered per country by hand."""
+    fms = (
+        {} if vp is None else {(r.kb_framework, r.version): r.frontmatter for r in vp.itertuples()}
     )
+    fms = {k: json.loads(v) if isinstance(v, str) else (v or {}) for k, v in fms.items()}
     cached = {pdf: read_pdf(pdf) for pdf in sorted(PDF_CACHE.glob("*/*.pdf"))}
     paths_by_sha = {}
     for pdf, (_, sha) in cached.items():
         paths_by_sha.setdefault(sha, []).append(f"{pdf.parent.name}/{pdf.stem}")
-    docs, links, held = {}, [], set()
+    docs, links, held = {}, [], {}
     report = {"skipped": [], "check": []}
     for paths in paths_by_sha.values():
         if len(paths) > 1:
@@ -195,6 +198,12 @@ def plan_backfill(fv, vp):
     for pdf, (data, sha) in cached.items():
         fw, ver = pdf.parent.name, pdf.stem
         if len(paths_by_sha[sha]) > 1:
+            continue
+        if fms.get((fw, ver), {}).get("framework_doc_annexes"):
+            report["skipped"].append(
+                f"{fw}/{ver}: the version comes in several documents (framework_doc_annexes) "
+                "— register each by hand"
+            )
             continue
         rows = fv[(fv.kb_framework == fw) & (fv.version == ver)]
         if rows.empty:
@@ -222,14 +231,14 @@ def plan_backfill(fv, vp):
                 continue
             how = "the same report on the other publisher" if mirror else "the direct link"
             report["check"].append(f"{fw}/{ver}: fetched from {how} {fetched}")
-            held.add(sha)
+            held[sha] = f"{fw}/{ver}"
         docs.setdefault(
             sha,
             {
                 "sha256": sha,
                 "data": data,
                 "title": _first(rows.doc_title),
-                "language": lang.get((fw, ver)),
+                "language": language_of(fms.get((fw, ver))),
                 "is_public": True,
                 "retrieved_from": fetched,
                 "retrieved_at": None,
@@ -376,25 +385,26 @@ def write(engine, docs, links, by, changed_docs=None, changed_links=(), supersed
                 rows,
             )
         if supersede:  # before the insert: one current file per role
-            old, new, keys = supersede
+            old, new, keys, role = supersede
             for iso3, hazard, version in keys:
                 n = conn.execute(
                     sa.text("""
                     UPDATE aa.version_document SET superseded_by = :new
                     WHERE country_iso3 = :c AND hazard = :h AND version = :v
-                      AND sha256 = :old AND superseded_by IS NULL"""),
-                    {"new": new, "old": old, "c": iso3, "h": hazard, "v": version},
+                      AND sha256 = :old AND role = :role AND superseded_by IS NULL"""),
+                    {"new": new, "old": old, "c": iso3, "h": hazard, "v": version, "role": role},
                 ).rowcount
                 if n != 1:  # raising rolls the whole transaction back
                     raise SystemExit(
-                        f"--supersedes: no current {old[:12]} link on {iso3}/{hazard}/{version}"
+                        f"--supersedes: no current {role} {old[:12]} link on "
+                        f"{iso3}/{hazard}/{version}"
                     )
         if links:
             conn.execute(
                 sa.text(f"""
                 INSERT INTO aa.version_document ({", ".join(LINK_COLS)})
                 VALUES ({", ".join(":" + c for c in LINK_COLS)})
-                ON CONFLICT DO NOTHING"""),
+                ON CONFLICT (country_iso3, hazard, version, sha256) DO NOTHING"""),
                 [{c: x[c] for c in LINK_COLS} for x in links],
             )
         for d in (changed_docs or {}).values():
@@ -440,8 +450,10 @@ def main():
     ap.add_argument("--update", action="store_true", help="correct an existing registration")
     ap.add_argument(
         "--accept-checked",
-        action="store_true",
-        help="backfill: also write the files matched only on a direct link / publisher mirror",
+        nargs="*",
+        metavar="FW/VER|SHA",
+        help="backfill: also write files matched only on a direct link / publisher mirror — "
+        "all of them, or only those named (kb_framework/version or sha256 prefix)",
     )
     ap.add_argument("--by", default=getpass.getuser(), help="registered_by")
     args = ap.parse_args()
@@ -465,7 +477,7 @@ def main():
 
     if args.register:
         docs, links = plan_register(args, fv)
-        reg_sha, held = next(iter(docs)), set()
+        reg_sha, held = next(iter(docs)), {}
         if args.supersedes == reg_sha:
             sys.exit("--supersedes names the file being registered")
         report = {"skipped": [], "check": []}
@@ -487,9 +499,14 @@ def main():
             report["skipped"].append(f"{key}: already has a current {x['role']} file {other[:12]}")
     if not args.register:  # a file whose every link was skipped is not registered either
         docs = {sha: d for sha, d in docs.items() if any(x["sha256"] == sha for x in links)}
-    if held and not args.accept_checked:
-        docs = {sha: d for sha, d in docs.items() if sha not in held}
-        links = [x for x in links if x["sha256"] not in held]
+    acc = args.accept_checked
+    accepted = {
+        sha
+        for sha, fwv in held.items()
+        if acc == [] or (acc and any(a == fwv or sha.startswith(a) for a in acc))
+    }
+    docs = {sha: d for sha, d in docs.items() if sha not in held or sha in accepted}
+    links = [x for x in links if x["sha256"] not in held or x["sha256"] in accepted]
     if diffs and args.register and not args.update:
         sys.exit(
             "already registered differently (re-run with --update to correct):\n  "
@@ -512,19 +529,27 @@ def main():
             set()
             if known_links is None
             else set(
-                zip(*(known_links[known_links.superseded_by.isna()][c] for c in KEY), strict=True)
+                zip(
+                    *(known_links[known_links.superseded_by.isna()][c] for c in [*KEY, "role"]),
+                    strict=True,
+                )
             )
         )
         for k in args.key:
-            ok = (*k.split("/", 2), args.supersedes) in current
+            ok = (*k.split("/", 2), args.supersedes, args.role) in current
             print(
                 f"  supersedes {args.supersedes[:12]} on {k}"
-                + ("" if ok else " — NO current link with that file: --write would fail")
+                + (
+                    ""
+                    if ok
+                    else f" — NO current {args.role} link with that file: --write would fail"
+                )
             )
-    for line in report["check"]:
+    for sha, fwv in held.items():
+        line = next(x for x in report["check"] if x.startswith(f"{fwv}:"))
         print(
             f"  ? {line} — "
-            + ("registered on --accept-checked" if args.accept_checked else "HELD BACK")
+            + ("accepted" if sha in accepted else "HELD BACK")
             + ": check it is the document of the version's landing page"
         )
     for line in report["skipped"]:
@@ -548,7 +573,7 @@ def main():
         supersede = None
         if args.supersedes:
             keys = [tuple(k.split("/", 2)) for k in args.key]
-            supersede = (args.supersedes, reg_sha, keys)
+            supersede = (args.supersedes, reg_sha, keys, args.role)
         write(engine, docs, links, args.by, changed_docs, changed_links, supersede)
         print("written")
     else:
