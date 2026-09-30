@@ -197,7 +197,11 @@ def _partners(d, ex):
     pt = d["partners"].copy()
     pt["version"] = pt["version"].astype(str)
     pt = pt.merge(live[["country_iso3", "hazard"]], on=["country_iso3", "hazard"])
-    lv = pt.groupby(["country_iso3", "hazard"])["version"].max().rename("lv").reset_index()
+    # latest partner list per framework: dated versions rank above undated labels such as
+    # 'development' (a plain string max would put 'development' above every date)
+    _vk = pt["version"].astype(str).map(lambda v: (v[:1].isdigit(), v))
+    lv = (pt.assign(_vk=_vk).sort_values("_vk").groupby(["country_iso3", "hazard"])["version"]
+          .last().rename("lv").reset_index())
     pt = pt.merge(lv, on=["country_iso3", "hazard"])
     pt = pt[pt["version"] == pt["lv"]].reset_index(drop=True)
     pt["grp"] = [_group(t, n, a) for t, n, a in zip(pt["org_type"], pt["name"], pt["acronym"])]

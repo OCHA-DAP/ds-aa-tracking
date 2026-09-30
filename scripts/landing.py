@@ -689,18 +689,25 @@ def _adhoc_cerf(e, acts, actf, _try):
         for ev in evs.itertuples():
             y = int(str(ev.event_date)[:4]) if str(ev.event_date)[:4].isdigit() else None
             f = actf[(actf["country_iso3"] == c) & (actf["hazard"] == h)
-                     & (actf["event_date"] == ev.event_date) & (actf["event_type"] == "adhoc_aa")]
+                     & (actf["event_date"] == ev.event_date) & (actf["event_type"] == "adhoc_aa")
+                     & (actf["fund_code"] == "cerf")]                 # CERF rows only
+            mine = al[al["country_iso3"] == c]                         # never another country
             codes = [x for x in f["allocation_code"].dropna() if x]
-            if codes:
-                cand = al[al["application_code"].isin(codes)]
-                how = "recorded allocation code"
-            else:
+            cand = mine[mine["application_code"].isin(codes)] if codes else mine.iloc[0:0]
+            how = "recorded allocation code"
+            if cand.empty and y is not None:
+                # same country and year, emergency type matching the hazard; AA-tagged
+                # allocations first; never the underfunded-emergencies window (-UF-)
                 keys = HZ_EMERGENCY.get(h, (h,))
-                cand = al[(al["year"] == y) & al["emergency_type"].fillna("").str.lower()
-                          .map(lambda t: any(k in t for k in keys))]
+                cand = mine[(mine["year"] == y)
+                            & mine["emergency_type"].fillna("").str.lower().map(lambda t: any(k in t for k in keys))
+                            & ~mine["application_code"].str.contains("-UF-", na=False)]
+                if cand["aa_keyword"].fillna(False).astype(bool).any():
+                    cand = cand[cand["aa_keyword"].fillna(False).astype(bool)]
                 target = f["amount_usd"].sum()
-                if len(cand) > 1 and target > 0:
-                    cand = cand.iloc[[int((cand["amount_approved"] - target).abs().argmin())]]
+                if len(cand) > 1:
+                    cand = (cand.iloc[[int((cand["amount_approved"] - target).abs().argmin())]]
+                            if target > 0 else cand.iloc[0:0])        # ambiguous: show nothing
                 how = "matched by country, year and emergency type"
             for a in cand.itertuples():
                 if a.application_code not in [p["code"] for p in picked]:
