@@ -128,15 +128,17 @@ NAV = """
 """
 
 
+from policy_text import POLICY_CSS, policy_box  # noqa: E402  (plain-language box on top of each page)
+
 def page(name, title, body):
     doc = f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{html.escape(title)}</title><style>{CSS}</style>
+<title>{html.escape(title)}</title><style>{CSS}{POLICY_CSS}</style>
 <script>{FILTER_JS}</script></head><body>
 {NAV}<main><h1>{html.escape(title)}</h1>
 <p class="meta">Generated {date.today().isoformat()} from the dev <code>aa</code> schema
 ({DATA_STAMP}) · internal review only</p>
-{body}</main></body></html>"""
+{policy_box(name)}{body}</main></body></html>"""
     (OUT / name).write_text(doc)
     print(f"  {name}")
 

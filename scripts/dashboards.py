@@ -28,6 +28,13 @@ SOURCE_PRIORITY = [
 ]
 
 
+# Early-action (EA) allocations are kept in the database but never shown or counted on the
+# site (decision 2026-09-30, a colleague's review: EA "opens a Pandora's box"). One place:
+# every activation query filters on this. Remove the value to bring EA back.
+EXCLUDED_EVENT_TYPES = ("early_action",)
+_EXCL_SQL = ", ".join(f"'{t}'" for t in EXCLUDED_EVENT_TYPES)
+
+
 def canonical(df, keys):
     """One row per key-combo by source priority (dashboard view; conflicts live on
     the reconciliation pages)."""
@@ -330,9 +337,16 @@ def _fetch(e):
                   f.fund_code, f.allocation_code, f.amount_usd,
                   r.region
            FROM aa.activation_funding f
-           JOIN aa.activation a USING (country_iso3, hazard, event_date,
-                                       window_name, event_label, event_type)
-           LEFT JOIN aa.country_hazard r USING (country_iso3, hazard)""", e)
+           -- null-safe: ad hoc rows have no window, and a plain USING join silently
+           -- dropped them (until 2026-09-30 only framework activations came through)
+           JOIN aa.activation a
+             ON a.country_iso3 = f.country_iso3 AND a.hazard = f.hazard
+            AND a.event_date = f.event_date AND a.event_type = f.event_type
+            AND a.window_name IS NOT DISTINCT FROM f.window_name
+            AND coalesce(a.event_label, '') = coalesce(f.event_label, '')
+           LEFT JOIN aa.country_hazard r
+             ON r.country_iso3 = a.country_iso3 AND r.hazard = a.hazard
+           WHERE a.event_type NOT IN (""" + _EXCL_SQL + ")", e)
     d["versions"] = pd.read_sql(
         """SELECT country_iso3, hazard, version, kb_status, valid_from, source,
                   doc_url, analysis_ref, prearranged_usd_doc
@@ -457,6 +471,7 @@ def _fetch(e):
     d["act_all"] = pd.read_sql(
         """SELECT a.*, r.country_name FROM aa.activation a
            LEFT JOIN aa.country_hazard r ON r.country_iso3 = a.country_iso3 AND r.hazard = a.hazard
+           WHERE a.event_type NOT IN (""" + _EXCL_SQL + """)
            ORDER BY a.event_date DESC""", e)
     d["act_url"] = pd.read_sql(
         """SELECT country_iso3, hazard, event_date, window_name, url
@@ -579,7 +594,7 @@ def _records(df, cols=None):
     return json.dumps(json.loads(df.to_json(orient="records")), default=str)
 
 
-def funding_series(d):
+def funding_series(d, released="framework"):
     """The annual series the Funding page charts — and the donor-shares page attributes.
     pre: pre-arranged rows per framework-year (sheets/KB/entries, canonical) plus
     AA-tagged CBPF/RhPF allocations from the OneGMS mirror (specific fund_code where
@@ -592,6 +607,11 @@ def funding_series(d):
     pre["region"] = [reg_map.get((c, h)) or "?" for c, h in
                      zip(pre["country_iso3"], pre["hazard"])]
     act = d["activation"].copy()
+    # released money: framework activations by default (what every total showed until
+    # 2026-09-30 and what matches the digest); released="all" adds ad hoc AA allocations,
+    # for pages with an ad hoc toggle. Early action never comes through (EXCLUDED_EVENT_TYPES).
+    if released == "framework":
+        act = act[act["event_type"] == "framework_aa"]
     act["hz"] = act["hazard"].map(haz)
     gho = d["gho"]
     gho_set = set(map(tuple, gho.loc[gho["in_gho"], ["country_iso3", "year"]].values))
@@ -1091,140 +1111,14 @@ LIFE_LABEL = {"active": "active", "updating": "being updated", "development": "i
 
 
 def build_model(page, d):
-    w = d["windows"].copy()
-    cur = d["current"]
-    live = cur[cur["lifecycle"].isin(["active", "updating", "development"])]
-    wl = w[w["is_latest"].fillna(False).astype(bool)
-           & w["lifecycle"].isin(["active", "updating", "development"])].copy()
-    wl["hz"] = wl["hazard"].map(haz)
-    wl["basis"] = wl["basis"].fillna("unspecified")
-    n_trig = int(wl["triggered"].fillna(False).astype(bool).sum())
-    fc_share = (wl["basis"].str.contains("forecast", case=False).mean() * 100) if len(wl) else 0
-    act = d["act_all"].copy()
-    act["year"] = act["event_date"].astype(str).str[:4]
-    act = act[act["year"].str.match(r"^\d{4}$")].copy()
-    act["year"] = act["year"].astype(int)
-    act["kind"] = act["event_type"].map(
-        lambda t: "framework" if t == "framework_aa" else "ad hoc / early action")
-    cal = d["calendar"]
-    cal_rows = "".join(
-        f"<tr><td>{r.country_name} — {r.hazard.replace('_', ' ')}</td>"
-        f"<td>{_st(LIFE_LABEL.get(r.lifecycle, r.lifecycle))}</td>"
-        f"<td>{_cal_strip(cal, r.country_iso3, r.hazard)}</td></tr>"
-        for r in live.sort_values("country_name").itertuples())
-
-    def _state(r):
-        if r.triggered:
-            return "triggered" + (f" ({r.triggered_on})" if pd.notna(r.triggered_on) else "")
-        return "not triggered"
-    win_rows = "".join(
-        f"<tr><td>{r.country_name} — {r.hazard.replace('_', ' ')}</td><td>{r.version}</td>"
-        f"<td>{r.window_name}</td><td>{r.basis}</td><td>{_state(r)}</td>"
-        f"<td class='num'>{f'1-in-{r.return_period:.1f} yr' if pd.notna(r.return_period) else ''}</td>"
-        f"<td class='num'>{f'{r.activation_prob*100:.0f}%' if pd.notna(r.activation_prob) else ''}</td>"
-        f"<td class='num'>{f'{int(r.n_activations)} in {int(r.analysis_years)} yrs' if pd.notna(r.n_activations) and pd.notna(r.analysis_years) else ''}</td></tr>"
-        for r in wl.sort_values(["country_name", "hazard", "window_name"]).itertuples())
-    panels = f"""
-<div class='tiles'>
- <div class='tile'><div class='v'>{len(live)}</div><div class='l'>frameworks with a model (active, being updated, in development)</div></div>
- <div class='tile'><div class='v'>{len(wl)}</div><div class='l'>trigger windows on the latest versions</div></div>
- <div class='tile'><div class='v'>{n_trig}</div><div class='l'>windows triggered on the latest versions</div></div>
- <div class='tile'><div class='v'>{fc_share:.0f}%</div><div class='l'>of windows are forecast-based</div></div>
-</div>
-<div class='grid'>
- <div class='panel'><h3>Trigger windows by hazard × basis</h3><canvas id='m1' height='250'></canvas>
-   <div class='note'>Latest version of every live framework; basis from the KB trigger registry.</div></div>
- <div class='panel'><h3>Designed return period of the windows</h3><canvas id='m2' height='250'></canvas>
-   <div class='note'>From the backtests (1-in-N years); windows without a backtest are not shown.</div></div>
- <div class='panel' style='grid-column:1/-1'><h3>Activations per year — framework triggers vs ad hoc / early action</h3><canvas id='m3' height='250'></canvas></div>
-</div>
-<h2>Monitoring calendar</h2>
-<p class='meta'>Green cells = months the framework is monitored (trigger-window months).</p>
-<section><div class='scroll'><table class='data'><thead><tr><th>framework</th><th>status</th><th>monitoring window</th></tr></thead><tbody>{cal_rows}</tbody></table></div></section>
-<h2>Trigger windows (latest versions)</h2>
-<section><input class='filter' placeholder='filter windows…' oninput='filt(this)'>
-<div class='scroll'><table class='data'><thead><tr><th>framework</th><th>version</th><th>window</th><th>basis</th><th>state</th><th>return period</th><th>annual prob.</th><th>backtest</th></tr></thead><tbody>{win_rows}</tbody></table></div></section>"""
-    data = {
-        "win": json.loads(_records(wl, ["hz", "basis", "return_period", "triggered"])),
-        "act": json.loads(_records(
-            act.drop_duplicates(["country_iso3", "hazard", "event_date", "event_type"]),
-            ["year", "kind"])),
-    }
-    js = """
-const hz = uniqSorted(D.win, r=>r.hz), bases = uniqSorted(D.win, r=>r.basis);
-mkChart('m1','bar',hz,bases.map((b,i)=>({label:b, data:hz.map(h=>D.win.filter(r=>r.hz===h&&r.basis===b).length)})),{stacked:true,count:true});
-const bins = [['≤ 1-in-3',0,3],['1-in-3 to 5',3,5],['1-in-5 to 10',5,10],['> 1-in-10',10,1e9]];
-mkChart('m2','bar',bins.map(b=>b[0]),[{label:'windows',data:bins.map(b=>D.win.filter(r=>r.return_period!=null&&r.return_period>b[1]&&r.return_period<=b[2]).length)}],{count:true});
-const yrs = uniqSorted(D.act, r=>r.year), kinds = ['framework','ad hoc / early action'];
-mkChart('m3','bar',yrs,kinds.map((k,i)=>({label:k, data:yrs.map(y=>D.act.filter(r=>r.year===y&&r.kind===k).length)})),{stacked:true,count:true});"""
-    _dash_page(page, "pillar-model.html", "Model",
-               "<b>The model block of anticipatory action</b> — the triggers: what is "
-               "monitored, when, on what basis, how often it is designed to fire, and what "
-               "actually fired. One row per trigger window of the latest framework versions.",
-               panels, json.dumps(data, default=str), js)
+    import page_model
+    return page_model.build_model(page, d)
 
 
 # -------------------------------------------------------------- plan (people)
 def build_plan(page, d):
-    pr = d["plan_rows"].copy()
-    cur = d["current"]
-    live = cur[cur["lifecycle"].isin(["active", "updating"])]
-    ag = pr[pr["agency"].notna()]
-    n_ag = ag["agency"].nunique()
-    cov = d["covered"].merge(cur[["country_iso3", "hazard", "country_name", "lifecycle"]],
-                             on=["country_iso3", "hazard"], how="left")
-    cov = cov[cov["lifecycle"].isin(["active", "updating"])]
-    covered = cov["people_covered"].sum()
-    fw_ag = (ag.groupby("agency")[["country_iso3", "hazard"]]
-             .apply(lambda x: len(x.drop_duplicates())).sort_values(ascending=False))
-
-    def _agencies(c, h):
-        return ", ".join(sorted(set(ag.loc[(ag["country_iso3"] == c) & (ag["hazard"] == h), "agency"])))
-
-    def _budget(c, h):
-        v = pr.loc[(pr["country_iso3"] == c) & (pr["hazard"] == h) & pr["agency"].notna(), "amount_usd"].sum()
-        return _fmt_usd(v) if v else ""
-
-    def _covered(c, h):
-        v = cov.loc[(cov["country_iso3"] == c) & (cov["hazard"] == h), "people_covered"].sum()
-        return f"{int(v):,}" if v else ""
-    fw_rows = "".join(
-        f"<tr><td>{r.country_name} — {r.hazard.replace('_', ' ')}</td>"
-        f"<td>{_st(LIFE_LABEL.get(r.lifecycle, r.lifecycle))}</td>"
-        f"<td>{_agencies(r.country_iso3, r.hazard)}</td>"
-        f"<td class='num'>{_budget(r.country_iso3, r.hazard)}</td>"
-        f"<td class='num'>{_covered(r.country_iso3, r.hazard)}</td></tr>"
-        for r in live.sort_values("country_name").itertuples())
-    panels = f"""
-<div class='tiles'>
- <div class='tile'><div class='v'>{len(live)}</div><div class='l'>frameworks with a plan (active or being updated)</div></div>
- <div class='tile'><div class='v'>{n_ag}</div><div class='l'>implementing agencies with a pre-arranged budget line</div></div>
- <div class='tile'><div class='v'>{covered/1e6:,.1f}M</div><div class='l'>people covered by the plans (latest figure per framework)</div></div>
-</div>
-<div class='grid'>
- <div class='panel'><h3>Pre-arranged budget by agency</h3><canvas id='p1' height='300'></canvas>
-   <div class='note'>Latest version of every framework that is active or being updated; from the framework documents' agency split. The sector view is on the <a href='dash-funding.html'>Funding</a> page.</div></div>
- <div class='panel'><h3>Frameworks per agency</h3><canvas id='p3' height='300'></canvas></div>
-</div>
-<h2>Plans by framework</h2>
-<section><input class='filter' placeholder='filter…' oninput='filt(this)'>
-<div class='scroll'><table class='data'><thead><tr><th>framework</th><th>status</th><th>agencies</th><th>agency budget</th><th>people covered</th></tr></thead><tbody>{fw_rows}</tbody></table></div></section>
-<p class='meta'>Delivery detail (CERF projects, sub-grants, localization, cash, people reached) is on the internal <a href='dash-delivery.html'>delivery dashboard</a>.</p>"""
-    data = {
-        "ag": json.loads(_records(ag, ["agency", "amount_usd"])),
-        "fwag": [{"agency": k, "n": int(v)} for k, v in fw_ag.items()],
-    }
-    js = """
-const byA = groupSum(D.ag, r=>r.agency, r=>r.amount_usd), aKeys = Object.keys(byA).sort((a,b)=>byA[b]-byA[a]).slice(0,18);
-mkChart('p1','bar',aKeys,[{label:'pre-arranged',data:aKeys.map(k=>byA[k])}],{extra:{indexAxis:'y'}});
-const fa = D.fwag.slice(0,20);
-mkChart('p3','bar',fa.map(r=>r.agency),[{label:'frameworks',data:fa.map(r=>r.n),backgroundColor:PAL[2]}],{count:true});"""
-    _dash_page(page, "pillar-plan.html", "Plan",
-               "<b>The plan block of anticipatory action</b> — who acts and for whom: the "
-               "agencies with a pre-arranged budget line, the sectors, and the people the "
-               "plans cover. Figures follow the latest version of each framework that is "
-               "active or being updated.",
-               panels, json.dumps(data, default=str), js)
+    import page_plan
+    return page_plan.build_plan(page, d)
 
 
 # ---------------------------------------------------------------- learning
