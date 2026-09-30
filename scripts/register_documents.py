@@ -2,29 +2,38 @@
 in aa.framework_document and link it to its version(s) in aa.version_document.
 
 The DB says WHICH FILE is a version's document; publication stays with OCHA (unocha.org /
-ReliefWeb) and official_url points there. Files are content-addressed
+ReliefWeb) and the link's official_url points there. Files are content-addressed
 (projects/ds-aa-tracking/raw/framework_documents/<sha256>.pdf), so re-registering the
 same bytes is a no-op and a document shared by several versions is stored once.
 
 Two modes:
-  backfill (default) — every PDF in the knowledge base's committed cache,
+  backfill (default) — the PDFs in the knowledge base's committed cache,
       ds-knowledge-base/raw/.pdf-cache/<kb_framework>/<version>.pdf, matched to
       aa.framework_version on (kb_framework, version) — ALL matching rows, so the Dry
-      Corridor's one file links to SLV, GTM and HND. A cached file was fetched from the
-      version's doc_url, so it registers as the PUBLISHED rendition, public.
+      Corridor's one file links to SLV, GTM and HND — as the PUBLISHED rendition. The
+      cache is keyed by page, fetched once and kept forever, so a cached file is only
+      trusted when the URL it was fetched from (the page's framework_doc at the commit
+      that cached it) is the version's doc_url today, or a direct PDF link on the same
+      publisher. Skipped and reported otherwise: the version has no document link (the
+      ken-drought cache is an IFRC EAP, not an OCHA framework), the page's link changed
+      after the fetch, or one file is cached under two versions (bgd-flooding 2020-06-26
+      holds the 2021 framework).
   --register FILE --key ISO3/hazard/version [--key …] — one file by hand: versions whose
       official page is WAF-blocked or gone, or an endorsed original that arrived by email
       (--role endorsed). --private keeps it off the public site and the KB.
+      --supersedes SHA marks the file this one replaces (same keys) as superseded;
+      --update corrects an already-registered file or link instead of refusing.
 
 Dry run by default, reading aa.framework_version from the nightly blob snapshot (no DB
 route needed). --write reads and writes the live dev DB — from a laptop that is the SSH
 tunnel (`~/bin/db-tunnel up` + the DSCI_AZ_DB_DEV_HOST override) — creates the two tables
-if missing, uploads to blob, then inserts in one transaction (ON CONFLICT DO NOTHING).
+if missing, uploads to blob, then writes in one transaction.
 
 Usage:
   uv run python scripts/register_documents.py                       # dry run, backfill
   uv run python scripts/register_documents.py --write
-  uv run python scripts/register_documents.py --register afg.pdf --key AFG/drought/2026-04-04
+  uv run python scripts/register_documents.py --register afg.pdf --key AFG/drought/2026-04-04 \\
+      --retrieved-from <url>
   uv run python scripts/register_documents.py --register lac.pdf --key SLV/drought/2024-03-22 \\
       --key GTM/drought/2024-03-22 --key HND/drought/2024-03-22 --retrieved-from <url> --write
 """
@@ -35,12 +44,15 @@ import hashlib
 import io
 import json
 import os
+import re
 import subprocess
 import sys
+import urllib.parse as up
 from pathlib import Path
 
 import pandas as pd
 import sqlalchemy as sa
+import yaml
 from azure.core.exceptions import ResourceNotFoundError
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
@@ -54,7 +66,9 @@ from ds_aa_tracking.versions import KB_DIR  # noqa: E402
 CONTAINER = "projects"
 PREFIX = "ds-aa-tracking/raw/framework_documents"
 PDF_CACHE = KB_DIR / "raw" / ".pdf-cache"
+PUBLISHERS = ("reliefweb.int", "unocha.org")
 ROLES = ("endorsed", "published", "translation", "annex")
+KEY = ["country_iso3", "hazard", "version", "sha256"]
 DOC_COLS = [
     "sha256",
     "blob_path",
@@ -62,13 +76,13 @@ DOC_COLS = [
     "title",
     "language",
     "is_public",
-    "official_url",
     "retrieved_from",
     "retrieved_at",
     "registered_by",
     "source",
     "note",
 ]
+LINK_COLS = [*KEY, "role", "official_url", "note"]
 
 
 def blob_path(sha):
@@ -107,24 +121,47 @@ def language_of(fm):
     return langs[0] if len(langs) == 1 else None
 
 
-def first_cached(pdf):
-    """When the file was first committed to the KB cache (≈ when it was fetched)."""
-    out = subprocess.run(
-        [
-            "git",
-            "-C",
-            str(KB_DIR),
-            "log",
-            "--diff-filter=A",
-            "--format=%cI",
-            "--",
-            str(pdf.relative_to(KB_DIR)),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.split()
-    return out[-1] if out else None
+def _kb_git(*args):
+    return subprocess.run(
+        ["git", "-C", str(KB_DIR), *args], capture_output=True, text=True, check=False
+    ).stdout
+
+
+def cache_provenance(pdf):
+    """(commit, date, url): the KB commit that first cached the file, and the page's
+    framework_doc AT THAT COMMIT — the URL the bytes were actually fetched from. Today's
+    doc_url can differ: pages get corrected after the fetch, the cache never does."""
+    rel = pdf.relative_to(KB_DIR).as_posix()
+    added = _kb_git("log", "--diff-filter=A", "--format=%H %cs", "--", rel).split()
+    if not added:
+        return None, None, None
+    commit, date = added[-2], added[-1]
+    page = _kb_git("show", f"{commit}:frameworks/{pdf.parent.name}/{pdf.stem}.md")
+    m = re.match(r"^---\n(.*?)\n---", page, re.S)
+    try:
+        fm = (yaml.safe_load(m.group(1)) if m else None) or {}
+    except yaml.YAMLError:
+        fm = {}
+    return commit[:8], date, fm.get("framework_doc")
+
+
+def is_direct_pdf(url):
+    """A publisher's direct PDF link (…/attachments/….pdf) rather than a landing page."""
+    p = up.urlparse(url)
+    return p.netloc.endswith(PUBLISHERS) and (
+        "/attachments/" in p.path or p.path.lower().endswith(".pdf")
+    )
+
+
+def report_slug(url):
+    """(country, slug) of a publication page on either publisher — unocha.org
+    /publications/report/<country>/<slug> is mirrored on reliefweb.int/report/<country>/<slug>,
+    so the same pair on the other host is the same report."""
+    p = up.urlparse(url)
+    parts = [x for x in p.path.split("/") if x]
+    if p.netloc.endswith(PUBLISHERS) and len(parts) >= 3 and parts[-3] == "report":
+        return tuple(parts[-2:])
+    return None
 
 
 def _first(s):
@@ -132,13 +169,12 @@ def _first(s):
     return s.iloc[0] if len(s) else None
 
 
-def plan_backfill(fv, vp):
-    """(docs, links, unmatched, ambiguous) for every PDF in the KB cache.
+def _none(v):
+    return None if v is None or (not isinstance(v, str | bool) and pd.isna(v)) else v
 
-    One file cached under two versions is ambiguous, and neither is registered: the cache
-    is keyed by page, fetched once and kept forever, so when a page's doc URL is corrected
-    the stale file stays (bgd-flooding 2020-06-26 holds the 2021 framework). Register the
-    right one by hand with --register."""
+
+def plan_backfill(fv, vp):
+    """(docs, links, report) for the PDFs in the KB cache; report = {kind: [lines]}."""
     lang = (
         {}
         if vp is None
@@ -148,93 +184,144 @@ def plan_backfill(fv, vp):
     paths_by_sha = {}
     for pdf, (_, sha) in cached.items():
         paths_by_sha.setdefault(sha, []).append(f"{pdf.parent.name}/{pdf.stem}")
-    ambiguous = [p for p in paths_by_sha.values() if len(p) > 1]
-    docs, links, unmatched = {}, [], []
+    docs, links = {}, []
+    report = {"skipped": [], "check": []}
+    for paths in paths_by_sha.values():
+        if len(paths) > 1:
+            report["skipped"].append(f"one file cached as {' and '.join(paths)}")
     for pdf, (data, sha) in cached.items():
         fw, ver = pdf.parent.name, pdf.stem
         if len(paths_by_sha[sha]) > 1:
             continue
         rows = fv[(fv.kb_framework == fw) & (fv.version == ver)]
         if rows.empty:
-            unmatched.append((fw, ver, sorted(fv.loc[fv.kb_framework == fw, "version"])))
+            versions = ", ".join(sorted(fv.loc[fv.kb_framework == fw, "version"])) or "none"
+            report["skipped"].append(f"{fw}/{ver}: matches no version (DB has {versions})")
             continue
-        urls = list(rows.doc_url.dropna().unique())
-        note = f"ds-knowledge-base raw/.pdf-cache/{fw}/{ver}.pdf"
-        if len(urls) > 1:
-            note += "; also published at " + ", ".join(urls[1:])
+        urls = set(rows.doc_url.dropna())
+        if not urls:
+            report["skipped"].append(
+                f"{fw}/{ver}: the version has no document link — not an OCHA-published "
+                "framework document?"
+            )
+            continue
+        commit, date, fetched = cache_provenance(pdf)
+        if not fetched:
+            report["skipped"].append(f"{fw}/{ver}: can't tell which URL the file came from")
+            continue
+        if fetched not in urls:
+            mirror = report_slug(fetched) and report_slug(fetched) in map(report_slug, urls)
+            if not (mirror or is_direct_pdf(fetched)):
+                report["skipped"].append(
+                    f"{fw}/{ver}: fetched from {fetched}, but the version's link is now "
+                    f"{', '.join(sorted(urls))}"
+                )
+                continue
+            how = "the same report on the other publisher" if mirror else "the direct link"
+            report["check"].append(f"{fw}/{ver}: fetched from {how} {fetched}")
         docs.setdefault(
             sha,
-            dict(
-                sha256=sha,
-                data=data,
-                title=_first(rows.doc_title),
-                language=lang.get((fw, ver)),
-                is_public=True,
-                official_url=urls[0] if urls else None,
-                retrieved_from=urls[0] if urls else None,
-                retrieved_at=first_cached(pdf),
-                source="kb-pdf-cache",
-                note=note,
-            ),
+            {
+                "sha256": sha,
+                "data": data,
+                "title": _first(rows.doc_title),
+                "language": lang.get((fw, ver)),
+                "is_public": True,
+                "retrieved_from": fetched,
+                "retrieved_at": None,
+                "source": "kb-pdf-cache",
+                "note": f"ds-knowledge-base raw/.pdf-cache/{fw}/{ver}.pdf, cached {date} "
+                f"({commit})",
+            },
         )
         links += [
-            dict(
-                country_iso3=r.country_iso3,
-                hazard=r.hazard,
-                version=r.version,
-                sha256=sha,
-                role="published",
-                note=None,
-            )
+            {
+                "country_iso3": r.country_iso3,
+                "hazard": r.hazard,
+                "version": r.version,
+                "sha256": sha,
+                "role": "published",
+                "official_url": _none(r.doc_url),
+                "note": None,
+            }
             for r in rows.itertuples()
         ]
-    return docs, links, unmatched, ambiguous
+    return docs, links, report
 
 
 def plan_register(args, fv):
     data, sha = read_pdf(args.register)
-    links, rows = [], []
+    links, titles = [], []
     for key in args.key:
         iso3, hazard, version = key.split("/", 2)
         r = fv[(fv.country_iso3 == iso3) & (fv.hazard == hazard) & (fv.version == version)]
         if r.empty:
             sys.exit(f"no aa.framework_version row {key}")
-        rows.append(r.iloc[0])
-        links.append(
-            dict(
-                country_iso3=iso3,
-                hazard=hazard,
-                version=version,
-                sha256=sha,
-                role=args.role,
-                note=args.note,
+        r = r.iloc[0]
+        titles.append(_none(r.doc_title))
+        official = None
+        if not args.private:
+            official = args.official_url or (
+                _none(r.doc_url) if args.role == "published" else None
             )
+        links.append(
+            {
+                "country_iso3": iso3,
+                "hazard": hazard,
+                "version": version,
+                "sha256": sha,
+                "role": args.role,
+                "official_url": official,
+                "note": args.note,
+            }
         )
-    rows = pd.DataFrame(rows)
-    official = (
-        None
-        if args.private
-        else (args.official_url or (_first(rows.doc_url) if args.role == "published" else None))
-    )
-    doc = dict(
-        sha256=sha,
-        data=data,
-        title=args.title or _first(rows.doc_title),
-        language=args.language,
-        is_public=not args.private,
-        official_url=official,
-        retrieved_from=args.retrieved_from,
-        retrieved_at=None,
-        source="entered",
-        note=args.note,
-    )
+    doc = {
+        "sha256": sha,
+        "data": data,
+        "title": args.title or next((t for t in titles if t), None),
+        "language": args.language,
+        "is_public": not args.private,
+        "retrieved_from": args.retrieved_from,
+        "retrieved_at": args.retrieved_at,
+        "source": "entered",
+        "note": args.note,
+    }
     return {sha: doc}, links
 
 
-def write(engine, docs, links, by):
+def split_known(docs, links, known_docs, known_links):
+    """Split the plan into new rows and rows already registered DIFFERENTLY (a correction:
+    never applied silently). Rows already registered identically drop out."""
+    kd = None if known_docs is None else known_docs.set_index("sha256")
+    kl = None if known_links is None else known_links.set_index(KEY)
+    new_docs, new_links, changed_docs, changed_links, diffs = {}, [], {}, [], []
+    for sha, d in docs.items():
+        if kd is None or sha not in kd.index:
+            new_docs[sha] = d
+        elif bool(kd.at[sha, "is_public"]) != d["is_public"]:
+            changed_docs[sha] = d
+            diffs.append(f"{sha[:12]}: is_public {kd.at[sha, 'is_public']} → {d['is_public']}")
+    for x in links:
+        k = tuple(x[c] for c in KEY)
+        if kl is None or k not in kl.index:
+            new_links.append(x)
+            continue
+        old = kl.loc[k]
+        d = [
+            f"{c} {_none(old[c])} → {x[c]}"
+            for c in ("role", "official_url")
+            if _none(old[c]) != x[c]
+        ]
+        if d:
+            changed_links.append(x)
+            diffs.append(f"{'/'.join(k[:3])} {k[3][:12]}: {'; '.join(d)}")
+    return new_docs, new_links, changed_docs, changed_links, diffs
+
+
+def write(engine, docs, links, by, changed_docs=None, changed_links=(), supersede=None):
     with engine.begin() as conn:
         for t in ("framework_document", "version_document"):
-            conn.execute(sa.text(schema.TABLES[t]))
+            conn.execute(sa.text(schema.DURABLE_TABLES[t]))
     for d in docs.values():  # blob first: a DB row never points at a missing file
         stratus.upload_blob_data(
             d["data"],
@@ -252,28 +339,61 @@ def write(engine, docs, links, by):
         }
         for d in docs.values()
     ]
+    values = ", ".join(
+        f"CAST(:{c} AS timestamptz)" if c == "retrieved_at" else f":{c}" for c in DOC_COLS
+    )
     with engine.begin() as conn:
         if rows:
             conn.execute(
                 sa.text(f"""
-                INSERT INTO aa.framework_document ({", ".join(DOC_COLS)})
-                VALUES ({
-                    ", ".join(
-                        f"CAST(:{c} AS timestamptz)" if c == "retrieved_at" else f":{c}"
-                        for c in DOC_COLS
-                    )
-                })
+                INSERT INTO aa.framework_document ({", ".join(DOC_COLS)}) VALUES ({values})
                 ON CONFLICT (sha256) DO NOTHING"""),
                 rows,
             )
         if links:
             conn.execute(
-                sa.text("""
-                INSERT INTO aa.version_document (country_iso3, hazard, version, sha256, role, note)
-                VALUES (:country_iso3, :hazard, :version, :sha256, :role, :note)
+                sa.text(f"""
+                INSERT INTO aa.version_document ({", ".join(LINK_COLS)})
+                VALUES ({", ".join(":" + c for c in LINK_COLS)})
                 ON CONFLICT DO NOTHING"""),
-                links,
+                [{c: x[c] for c in LINK_COLS} for x in links],
             )
+        for d in (changed_docs or {}).values():
+            conn.execute(
+                sa.text("""
+                UPDATE aa.framework_document SET is_public = :is_public,
+                    title = COALESCE(:title, title), language = COALESCE(:language, language),
+                    retrieved_from = COALESCE(:retrieved_from, retrieved_from),
+                    note = COALESCE(:note, note)
+                WHERE sha256 = :sha256"""),
+                {
+                    k: d[k]
+                    for k in ("sha256", "is_public", "title", "language", "retrieved_from", "note")
+                },
+            )
+        for x in changed_links:
+            conn.execute(
+                sa.text("""
+                UPDATE aa.version_document SET role = :role, official_url = :official_url,
+                    note = COALESCE(:note, note)
+                WHERE country_iso3 = :country_iso3 AND hazard = :hazard
+                  AND version = :version AND sha256 = :sha256"""),
+                {c: x[c] for c in LINK_COLS},
+            )
+        if supersede:
+            old, new, keys = supersede
+            for iso3, hazard, version in keys:
+                n = conn.execute(
+                    sa.text("""
+                    UPDATE aa.version_document SET superseded_by = :new
+                    WHERE country_iso3 = :c AND hazard = :h AND version = :v
+                      AND sha256 = :old AND superseded_by IS NULL"""),
+                    {"new": new, "old": old, "c": iso3, "h": hazard, "v": version},
+                ).rowcount
+                if n != 1:  # raising rolls the whole transaction back
+                    raise SystemExit(
+                        f"--supersedes: no current {old[:12]} link on {iso3}/{hazard}/{version}"
+                    )
 
 
 def main():
@@ -287,54 +407,48 @@ def main():
         "--official-url", help="publication landing page (default: the version's doc_url)"
     )
     ap.add_argument("--retrieved-from", help="where the file came from (URL, 'email from …')")
+    ap.add_argument("--retrieved-at", help="when (date or timestamp), if known")
     ap.add_argument("--language", choices=("en", "fr", "es"))
     ap.add_argument("--title")
     ap.add_argument("--note")
+    ap.add_argument("--supersedes", metavar="SHA256", help="the file this one replaces")
+    ap.add_argument("--update", action="store_true", help="correct an existing registration")
     ap.add_argument("--by", default=getpass.getuser(), help="registered_by")
     args = ap.parse_args()
     if bool(args.register) != bool(args.key):
         ap.error("--register and --key go together")
+    if (args.supersedes or args.update) and not args.register:
+        ap.error("--supersedes and --update need --register")
+    if args.supersedes and not re.fullmatch(r"[0-9a-f]{64}", args.supersedes):
+        ap.error("--supersedes takes a full sha256")
 
     engine = stratus.get_engine(stage="dev", write=True) if args.write else None
     if engine is not None:
         with engine.connect() as conn:
             fv, vp = from_db(conn, "framework_version"), from_db(conn, "version_page")
-            known_docs, known_links = (
-                from_db(conn, "framework_document"),
-                from_db(conn, "version_document"),
-            )
+            known_docs = from_db(conn, "framework_document")
+            known_links = from_db(conn, "version_document")
     else:
         fv, vp = from_snapshot("framework_version"), from_snapshot("version_page")
-        known_docs, known_links = (
-            from_snapshot("framework_document"),
-            from_snapshot("version_document"),
-        )
+        known_docs = from_snapshot("framework_document")
+        known_links = from_snapshot("version_document")
 
     if args.register:
         docs, links = plan_register(args, fv)
-        unmatched, ambiguous = [], []
+        reg_sha = next(iter(docs))
+        report = {"skipped": [], "check": []}
     else:
-        docs, links, unmatched, ambiguous = plan_backfill(fv, vp)
-
-    have = set() if known_docs is None else set(known_docs.sha256)
-    linked = (
-        set()
-        if known_links is None
-        else set(
-            zip(
-                known_links.country_iso3,
-                known_links.hazard,
-                known_links.version,
-                known_links.sha256,
-            )
-        )
+        docs, links, report = plan_backfill(fv, vp)
+    docs, links, changed_docs, changed_links, diffs = split_known(
+        docs, links, known_docs, known_links
     )
-    docs = {s: d for s, d in docs.items() if s not in have}
-    links = [
-        x
-        for x in links
-        if (x["country_iso3"], x["hazard"], x["version"], x["sha256"]) not in linked
-    ]
+    if diffs and args.register and not args.update:
+        sys.exit(
+            "already registered differently (re-run with --update to correct):\n  "
+            + "\n  ".join(diffs)
+        )
+    if not args.update:
+        changed_docs, changed_links = {}, []
 
     mb = sum(len(d["data"]) for d in docs.values()) / 1e6
     print(f"{len(docs)} new documents ({mb:.1f} MB), {len(links)} new version links")
@@ -343,19 +457,35 @@ def main():
             f"  + {x['country_iso3']}/{x['hazard']}/{x['version']}  "
             f"{x['sha256'][:12]}  {x['role']}"
         )
-    for fw, ver, db_versions in unmatched:
-        print(
-            f"  ? cached {fw}/{ver}.pdf matches no version "
-            f"(DB has {', '.join(db_versions) or 'none'})"
+    for line in diffs:
+        print(f"  {'~ update' if args.update else '! registered differently, unchanged'}: {line}")
+    if args.supersedes:
+        current = (
+            set()
+            if known_links is None
+            else set(
+                zip(*(known_links[known_links.superseded_by.isna()][c] for c in KEY), strict=True)
+            )
         )
-    for paths in ambiguous:
-        print(
-            f"  ! one file cached as {' and '.join(paths)} — skipped, "
-            "register the right one by hand"
-        )
+        for k in args.key:
+            ok = (*k.split("/", 2), args.supersedes) in current
+            print(
+                f"  supersedes {args.supersedes[:12]} on {k}"
+                + ("" if ok else " — NO current link with that file: --write would fail")
+            )
+    for line in report["check"]:
+        print(f"  ? {line} — check it is the document of the version's landing page")
+    for line in report["skipped"]:
+        print(f"  ! skipped {line}")
     if not args.register:
-        covered = linked | {(x["country_iso3"], x["hazard"], x["version"]) for x in links}
-        covered = {k[:3] for k in covered}
+        known = (
+            set()
+            if known_links is None
+            else set(
+                zip(known_links.country_iso3, known_links.hazard, known_links.version, strict=True)
+            )
+        )
+        covered = known | {(x["country_iso3"], x["hazard"], x["version"]) for x in links}
         for r in (
             fv[fv.doc_url.notna()].sort_values(["country_iso3", "hazard", "version"]).itertuples()
         ):
@@ -363,7 +493,11 @@ def main():
                 print(f"  - no file for {r.country_iso3}/{r.hazard}/{r.version}: {r.doc_url}")
 
     if args.write:
-        write(engine, docs, links, args.by)
+        supersede = None
+        if args.supersedes:
+            keys = [tuple(k.split("/", 2)) for k in args.key]
+            supersede = (args.supersedes, reg_sha, keys)
+        write(engine, docs, links, args.by, changed_docs, changed_links, supersede)
         print("written")
     else:
         print("dry run — nothing written (--write to upload and insert)")

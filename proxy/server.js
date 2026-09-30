@@ -49,6 +49,8 @@ const RATE = { extract: 20, entry: 60, read: 1200, write: 600, windowMs: 60 * 60
 // tables the generic /save and /delete refuse: other repos' loaders own them, or append-only
 const READONLY_TABLES = new Set([
   "entry_audit",
+  // document registry: content-addressed, written only by scripts/register_documents.py
+  "framework_document", "version_document",
   // ds-knowledge-base loaders
   "window", "simulated_activation", "funding_breakdown", "actual_activation",
   "activation_allocation", "version_performance_reported",
