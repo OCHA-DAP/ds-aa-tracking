@@ -666,15 +666,40 @@ CBPF_ORG = {"International NGO": "INGO", "National NGO": "national / local NGO",
             "Others": "other"}
 
 
+def _layer_of(d):
+    """(country, hazard) -> the map layer its money belongs to: 'r' a retired framework, 'c' any
+    other (current frameworks, and the odd AA-tagged CBPF allocation in a country whose only
+    framework is still in the pipeline, e.g. Sudan). CBPF mirror rows are country-level (hazard
+    'multi' or '?'): 'r' only when the country has retired frameworks and no live one. Ad hoc
+    allocations are their own layer ('a'), set by the caller from event_type."""
+    cur = d["current"]
+    pair = dict(zip(zip(cur["country_iso3"], cur["hazard"]), cur["lifecycle"]))
+    ret_c = set(cur.loc[cur["lifecycle"] == "retired", "country_iso3"])
+    live_c = set(cur.loc[cur["lifecycle"].isin(["active", "updating", "development"]), "country_iso3"])
+
+    def layer(c, h):
+        lc = pair.get((c, h))
+        if lc is not None:
+            return "r" if lc == "retired" else "c"
+        return "r" if (c in ret_c and c not in live_c) else "c"
+    return layer
+
+
+def _fu(fc):
+    """Fund type letter carried by the flow rows: c CERF, r regional fund, p country CBPF."""
+    return "c" if fc == "cerf" else "r" if str(fc).startswith("rhpf") else "p"
+
+
 def _money_flows(d, pre, act):
-    """Link rows {m, y, lv, s, t, v} for the two 'Where the money flows' Sankeys.
+    """Link rows {m, y, lv, s, t, v, g, fu} for the two 'Where the money flows' Sankeys
+    (the Financing page, and the donor-flows view of the donor-shares page).
 
     The two are kept apart on purpose (never summed): pre-arranged money is a STOCK — the
     envelopes in place at a date — while released money is a FLOW, per year. Released money
     is drawn from the pre-arranged envelopes, so adding the two double-counts it.
 
     m 'p' pre-arranged, as at the end of year y (the current year: today). One row per
-      framework × fund (the Funding page's canonical series); fund -> agency from the agency
+      framework × fund (the Financing page's canonical series); fund -> agency from the agency
       split of the version in force that year (v_window_funding_split, scaled to the
       envelope); CBPF / RhPF allocations by grantee type. No partner level: who a UN agency
       sub-grants to is only known once money is released. Years are never added up.
@@ -682,7 +707,12 @@ def _money_flows(d, pre, act):
       approved that year (scaled to the released total); agency -> partner type from the
       CERF AA sub-grants; CBPF / RhPF by grantee type. Years add up.
     lv: 'd' donor -> fund (donor share of the fund's paid income that year × the amount),
-        'f' fund -> agency, 'a' agency -> partner type."""
+        'f' fund -> agency, 'a' agency -> partner type.
+    g: the map layer of the money, for the page toggles — 'c' current frameworks, 'r' retired
+       frameworks, 'a' ad hoc allocations (released only; pass act from
+       funding_series(d, released="all") to have them). fu: fund type, 'c' CERF, 'p' CBPF,
+       'r' regional fund. Every split is linear in the amount, so the per-layer rows add up
+       to the same totals as one pass over all the money."""
     import datetime as _dt
     import re as _re
     today = _dt.date.today()
@@ -701,43 +731,46 @@ def _money_flows(d, pre, act):
     split["version"] = split["version"].astype(str)
     fvm = d["fv_meta"].copy()
     fvm["vf"] = pd.to_datetime(fvm["valid_from"], errors="coerce")
+    layer = _layer_of(d)
     rows = []
 
-    def add(m, y, lv, s_, t, v):
+    def add(m, y, lv, s_, t, v, g, fc):
         if v and v > 0.5:
-            rows.append({"m": m, "y": int(y), "lv": lv, "s": s_, "t": t, "v": round(float(v), 2)})
+            rows.append({"m": m, "y": int(y), "lv": lv, "s": s_, "t": t, "v": round(float(v), 2),
+                         "g": g, "fu": _fu(fc)})
 
-    def donors(m, y, fc, amount):
+    def donors(m, y, fc, amount, g):
         cy = C[(C["fund_code"] == fc) & (C["year"] == y)]
         inc = cy["paid_usd"].sum()
         if inc > 0:
             for r in cy.itertuples():
-                add(m, y, "d", "d:" + r.donor, "f:" + fc, r.paid_usd / inc * amount)
+                add(m, y, "d", "d:" + r.donor, "f:" + fc, r.paid_usd / inc * amount, g, fc)
         else:
-            add(m, y, "d", "d:(donors not recorded)", "f:" + fc, amount)
+            add(m, y, "d", "d:(donors not recorded)", "f:" + fc, amount, g, fc)
 
-    def grantees(m, y, fc, amount):
+    def grantees(m, y, fc, amount, g):
         o = co[(co.index.get_level_values(0) == fc) & (co.index.get_level_values(1) == y)] if len(co) else co
         osum = float(o.sum()) if len(o) else 0.0
         if osum <= 0:
-            add(m, y, "f", "f:" + fc, "a:partners (CBPF)", amount)
+            add(m, y, "f", "f:" + fc, "a:partners (CBPF)", amount, g, fc)
             return
         for (_, _, grp), v in o.items():
-            add(m, y, "f", "f:" + fc, "a:CBPF grantees: " + grp, v / osum * amount)
+            add(m, y, "f", "f:" + fc, "a:CBPF grantees: " + grp, v / osum * amount, g, fc)
 
     # ---------------- pre-arranged, as at the end of each year (never summed over years)
     P = pre[(pre["kind"] == "prearranged") & (pre["fund_code"] != "all") & (pre["year"] <= today.year)]
+    P = P.assign(g=[layer(c, h) for c, h in zip(P["country_iso3"], P["hazard"])])
     for y, py in P.groupby("year"):
         y = int(y)
         at = pd.Timestamp(min(_dt.date(y, 12, 31), today))
-        for fc, amount in py.groupby("fund_code")["amount_usd"].sum().items():
-            donors("p", y, fc, amount)
+        for (fc, g), amount in py.groupby(["fund_code", "g"])["amount_usd"].sum().items():
+            donors("p", y, fc, amount, g)
         for r in py.itertuples():
-            fc, amount = r.fund_code, float(r.amount_usd)
+            fc, amount, g = r.fund_code, float(r.amount_usd), r.g
             if amount <= 0:
                 continue
             if fc != "cerf" and r.source == "onegms-mirror":
-                grantees("p", y, fc, amount)
+                grantees("p", y, fc, amount, g)
                 continue
             # the agency split of the version in force at that date (latest one with a split)
             vs = fvm[(fvm["country_iso3"] == r.country_iso3) & (fvm["hazard"] == r.hazard)
@@ -754,37 +787,39 @@ def _money_flows(d, pre, act):
                     sp = own if len(own) else None
                     break
             if (sp is None or sp["amount_usd"].sum() <= 0) and fc != "cerf":
-                grantees("p", y, fc, amount)      # pooled funds: grantee types, as allocated
+                grantees("p", y, fc, amount, g)      # pooled funds: grantee types, as allocated
                 continue
             if sp is None or sp["amount_usd"].sum() <= 0:
-                add("p", y, "f", "f:" + fc, "a:agencies not recorded", amount)
+                add("p", y, "f", "f:" + fc, "a:agencies not recorded", amount, g, fc)
                 continue
             shares = sp.groupby("agency")["amount_usd"].sum()
             for agency, v in shares.items():
-                add("p", y, "f", "f:" + fc, "a:" + agency, v / shares.sum() * amount)
+                add("p", y, "f", "f:" + fc, "a:" + agency, v / shares.sum() * amount, g, fc)
 
-    # ---------------- released, in the year it went out (years add up)
+    # ---------------- released, in the year it went out (years add up); one pass per layer
     R = act[act["amount_usd"].fillna(0) > 0]
-    for (fc, y), amount in R.groupby(["fund_code", "year"])["amount_usd"].sum().items():
+    R = R.assign(g=["a" if et == "adhoc_aa" else layer(c, h)
+                    for et, c, h in zip(R["event_type"], R["country_iso3"], R["hazard"])])
+    for (fc, y, g), amount in R.groupby(["fund_code", "year", "g"])["amount_usd"].sum().items():
         y = int(y)
-        donors("r", y, fc, amount)
+        donors("r", y, fc, amount, g)
         if fc != "cerf":
-            grantees("r", y, fc, amount)
+            grantees("r", y, fc, amount, g)
             continue
         a_ = ag[ag.index.get_level_values(0) == y] if len(ag) else ag
         asum = float(a_.sum()) if len(a_) else 0.0
         if asum <= 0:
-            add("r", y, "f", "f:cerf", "a:agencies not recorded", amount)
+            add("r", y, "f", "f:cerf", "a:agencies not recorded", amount, g, fc)
             continue
         k = amount / asum
         for (_, agency), v in a_.items():
-            add("r", y, "f", "f:cerf", "a:" + agency, v * k)
+            add("r", y, "f", "f:cerf", "a:" + agency, v * k, g, fc)
             s_ = sgm[(sgm.index.get_level_values(0) == y) & (sgm.index.get_level_values(1) == agency)]
             tot_s = float(s_.sum())
             parts = min(tot_s, float(v)) * k
             for (_, _, grp), sv in s_.items():
-                add("r", y, "a", "a:" + agency, "p:" + grp, sv / tot_s * parts if tot_s else 0)
-            add("r", y, "a", "a:" + agency, "p:retained by agency", v * k - parts)
+                add("r", y, "a", "a:" + agency, "p:" + grp, sv / tot_s * parts if tot_s else 0, g, fc)
+            add("r", y, "a", "a:" + agency, "p:retained by agency", v * k - parts, g, fc)
 
     # ---------------- fund labels from the registry, one RhPF spelling
     names = {"cerf": "CERF", "cbpf-unspecified": "CBPF (fund not recorded)", "cbpf": "CBPF (not in registry)",
@@ -812,12 +847,123 @@ def _money_flows(d, pre, act):
     return rows, years, default, names
 
 
-# ------------------------------------------------------------------ funding
+# ------------------------------------------------- where the money flows (shared Sankey)
+FLOW_NOTE = (
+    "<b>Pre-arranged</b>: the envelopes in place at the end of the chosen year (the current year: "
+    "today), one per framework and fund — the Financing page's annual series. Never summed over "
+    "years: a two-year envelope would count twice. Fund → agency uses the agency split of the "
+    "version in force at that date, scaled to the envelope; CBPF / RhPF allocations go to their "
+    "grantee types. There is no partner level: who an agency sub-grants to is only known once "
+    "money is released. "
+    "<b>Released</b>: money that went out on activations in the chosen year (all years add up). "
+    "CERF → agency uses the AA projects approved that year, scaled to the released total; "
+    "agency → partner type uses the CERF AA sub-grants, the rest \"retained by agency\"; "
+    "CBPF / RhPF go to grantee types from their AA-keyword project budgets. "
+    "<b>Donors → fund</b>: each donor's paid contributions to the fund that year ÷ the fund's "
+    "total paid income that year, × the amount — attributed pro rata, since contributions fund "
+    "the whole pool. Top 12 donors, the rest grouped.")
+
+
+def _flow_panel(donors_on, donor_toggle=True):
+    """The 'Where the money flows' panel: pre-arranged / released switch, year, levels
+    (FLOW_JS mounts it). Used by the Financing page (donors off) and the donor-shares page
+    (donors on, no toggle: the donor-flows view)."""
+    chk = " checked" if donors_on else ""
+    dctl = (f"<label><input type='checkbox' id='flD'{chk}> donors</label>" if donor_toggle
+            else f"<input type='checkbox' id='flD'{chk} hidden>")
+    return f"""<div class='panel'>
+ <div style='display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:12.5px;margin-bottom:8px'>
+  <span role='radiogroup' aria-label='which money' style='display:inline-flex;border:1px solid #cbd5e1;border-radius:6px;overflow:hidden'>
+   <label style='padding:3px 10px;cursor:pointer'><input type='radio' name='flM' value='p' checked> pre-arranged</label>
+   <label style='padding:3px 10px;cursor:pointer;border-left:1px solid #cbd5e1'><input type='radio' name='flM' value='r'> released</label></span>
+  <label><span id='flYl'>As at end of</span> <select id='flY'></select></label>
+  {dctl}
+  <label id='flPw'><input type='checkbox' id='flP' checked> partner types (sub-granting)</label>
+  <span id='flTot' class='muted'></span>
+ </div>
+ <div id='flow'></div><script src="sankey.js"></script>
+ <div class='note'>{FLOW_NOTE}</div>
+</div>"""
+
+
+FLOW_JS = """
+// ---- where the money flows: [donors ->] funds -> agencies [-> partner types]. Shared by the
+// Financing page and the donor-flows view of the donor-shares page; rows from _money_flows.
+function buildFlow(rows, mode, year, showD, showP, names, topN, keep){
+  const R = rows.filter(r=>r.m===mode && (year==='all' || r.y===+year) && keep(r));
+  const agg = {}; R.forEach(r=>{ const k=r.lv+'\\u0001'+r.s+'\\u0001'+r.t; agg[k]=(agg[k]||0)+r.v; });
+  let L = Object.entries(agg).map(([k,v])=>{ const [lv,s,t]=k.split('\\u0001'); return {lv,s,t,v}; });
+  // top donors; the rest grouped
+  const dt = {}; L.filter(l=>l.lv==='d').forEach(l=>dt[l.s]=(dt[l.s]||0)+l.v);
+  const top = new Set(Object.keys(dt).filter(k=>k!=='d:(donors not recorded)').sort((a,b)=>dt[b]-dt[a]).slice(0,topN||12));
+  top.add('d:(donors not recorded)');
+  const g = {}; L.forEach(l=>{ if(l.lv==='d' && !top.has(l.s)) l.s='d:Other donors';
+    const k=l.lv+'\\u0001'+l.s+'\\u0001'+l.t; g[k]=g[k]?(g[k].v+=l.v,g[k]):{...l}; });
+  L = Object.values(g);
+  if(!showD) L = L.filter(l=>l.lv!=='d');
+  if(!showP) L = L.filter(l=>l.lv!=='a');
+  const lab = id => { const [p, ...rest] = id.split(':'); const n = rest.join(':');
+    return p==='f' ? (names[n]||n) : n; };
+  const cols = [];
+  const col = pre => { const ids = new Set(); L.forEach(l=>{ [l.s,l.t].forEach(x=>{ if(x.startsWith(pre)) ids.add(x); }); });
+    return [...ids].map(id=>({id, label:lab(id)})); };
+  if(showD) cols.push(col('d:'));
+  cols.push(col('f:')); cols.push(col('a:'));
+  if(showP) cols.push(col('p:'));
+  const total = L.filter(l=>l.lv==='f').reduce((s,l)=>s+l.v,0);
+  return {columns:cols, links:L.map(l=>({s:l.s,t:l.t,v:l.v})), total};
+}
+// wire the panel _flow_panel() wrote; cfg.keep(row) filters the rows (the page's toggles).
+// Returns the redraw function, for the page to call when its own filters change.
+function mountFlow(cfg){
+  if(!window.sankeySVG) return ()=>{};
+  const keep = cfg.keep || (()=>true);
+  const modeOf = () => document.querySelector("input[name='flM']:checked").value;
+  function drawFlow(){
+    const mode = modeOf();
+    const F = buildFlow(D.flow, mode, flY.value, flD.checked, mode==='r' && flP.checked, D.fundNames, 12, keep);
+    const el = document.getElementById('flow');
+    if(!F.links.length){ el.innerHTML = "<p class='empty'>no AA money in this selection for this year</p>"; flTot.textContent=''; return; }
+    const n = Math.max(...F.columns.map(c=>c.length));
+    el.innerHTML = sankeySVG({columns:F.columns, links:F.links, width:1100, height:Math.max(260, n*24),
+      fmt:money, labelW:170, label:cfg.label || 'AA money through funds and agencies'});
+    el.insertAdjacentHTML('beforeend', "<div class='note'>Hover a band or a box to follow the money; click a box to keep it in focus, click again to clear. Colours: one per fund (CERF blue, pooled funds orange, regional funds green) and one per agency.</div>");
+    flTot.textContent = mode==='p' ? `Pre-arranged, in place at the end of ${flY.value}: ${money(F.total)}` + (+flY.value===new Date().getFullYear() ? ' (today)' : '')
+                                    : `Released ${flY.value==='all' ? 'in all years' : 'in ' + flY.value}: ${money(F.total)}`;
+  }
+  // the year list depends on the view: pre-arranged is one year's stock (no 'all years')
+  function fillYears(){
+    const mode = modeOf(), keepY = flY.value;
+    flY.innerHTML = '';
+    D.flowYears[mode].slice().reverse().forEach(y=>flY.add(new Option(y, y)));
+    if(mode==='r') flY.add(new Option('all years', 'all'));
+    flY.value = [...flY.options].some(o=>o.value===keepY) && keepY!=='' ? keepY : String(D.flowDefault[mode]);
+    document.getElementById('flYl').textContent = mode==='p' ? 'As at end of' : 'Released in';
+    document.getElementById('flPw').style.display = mode==='r' ? '' : 'none';
+  }
+  document.querySelectorAll("input[name='flM']").forEach(el=>el.addEventListener('change', ()=>{ fillYears(); drawFlow(); }));
+  fillYears();
+  [flY, flD, flP].forEach(el=>el.addEventListener('change', drawFlow));
+  drawFlow();
+  return drawFlow;
+}
+"""
+
+
+# ---------------------------------------------------------------- financing
 def build_funding(page, d):
-    pre, act = funding_series(d)
+    """The Financing page (dash-funding.html: the file name predates the rename, links keep it).
+    Every tile and chart follows the map's layer toggles (current frameworks, retired, ad hoc
+    allocations) and a fund switch; the defaults (current + retired, no ad hoc, both funds)
+    give the framework-only figures the page always showed."""
+    import html as _html
+    pre, act = funding_series(d, released="all")   # ad hoc rows ride along, toggled client-side
     cur = d["current"]
-    ver = d["versions"].copy()
-    ver["year"] = pd.to_datetime(ver["valid_from"]).dt.year
+    layer = _layer_of(d)
+    region_of = dict(zip(zip(cur["country_iso3"], cur["hazard"]), cur["region"]))
+    pre["g"] = [layer(c, h) for c, h in zip(pre["country_iso3"], pre["hazard"])]
+    act["g"] = ["a" if et == "adhoc_aa" else layer(c, h)
+                for et, c, h in zip(act["event_type"], act["country_iso3"], act["hazard"])]
 
     # pre-arranged NOW under the convention: every non-retired framework keeps its latest
     # version's envelope ('all' totals dropped where the fund split exists)
@@ -832,9 +978,9 @@ def build_funding(page, d):
     vf = vf.merge(cur[["country_iso3", "hazard", "region"]], on=["country_iso3", "hazard"],
                   how="left")
     vf["hz"] = vf["hazard"].map(haz)
+    vf["g"] = [layer(c, h) for c, h in zip(vf["country_iso3"], vf["hazard"])]
     now_cerf = vf.loc[vf["ft"] == "cerf", "total_usd"].sum()
     now_cbpf = vf.loc[vf["ft"] != "cerf", "total_usd"].sum()
-    import html as _html
     gaps = envelope_gaps(d)
     gaps_html = ("" if not gaps else
                  f" <b>{len(gaps)} live framework{'s' if len(gaps) > 1 else ''} with no envelope recorded</b>, so not counted: "
@@ -844,10 +990,41 @@ def build_funding(page, d):
                   (f" {len(stale)} frameworks count the envelope of an earlier version because the latest one has none yet: " if len(stale) > 1 else " 1 framework counts the envelope of an earlier version because the latest one has none yet: ")
                   + ", ".join(f"{r.country_iso3} {r.hazard} ({_html.escape(str(r.version))})" for r in stale.itertuples()) + ".")
 
+    # which funds each framework has money on (any year, pre-arranged or released on a
+    # framework activation): the fund switch keeps the frameworks with money on that fund
+    # in the counts, people covered and versions
+    pair_funds = {}
+    money_rows = [pre.loc[(pre["kind"] == "prearranged") & (pre["fund_code"] != "all"),
+                          ["country_iso3", "hazard", "fund_code"]],
+                  act.loc[act["g"] != "a", ["country_iso3", "hazard", "fund_code"]],
+                  vf.loc[vf["fund_code"] != "all", ["country_iso3", "hazard", "fund_code"]]]
+    for r in pd.concat(money_rows).itertuples():
+        pair_funds.setdefault((r.country_iso3, r.hazard), set()).add(
+            "c" if r.fund_code == "cerf" else "p")
+
+    def frame_rows(df):
+        df = df.copy()
+        df["hz"] = df["hazard"].map(haz)
+        df["region"] = [region_of.get((c, h)) or "?" for c, h in zip(df["country_iso3"], df["hazard"])]
+        df["g"] = [layer(c, h) for c, h in zip(df["country_iso3"], df["hazard"])]
+        df["funds"] = ["".join(sorted(pair_funds.get((c, h), ()))) for c, h in
+                       zip(df["country_iso3"], df["hazard"])]
+        return df
+
+    fw = frame_rows(cur[["country_iso3", "hazard", "lifecycle", "technical_support"]])
+    fw["technical_support"] = fw["technical_support"].fillna(False).astype(bool)
+    cov = frame_rows(d["covered"])
+    ver = frame_rows(d["versions"])
+    ver["year"] = pd.to_datetime(ver["valid_from"]).dt.year
+
     n_active = int((cur["lifecycle"] == "active").sum())
     n_upd = int((cur["lifecycle"] == "updating").sum())
-    n_tech = int(cur["technical_support"].fillna(False).astype(bool).sum())
-    total_disb = act["amount_usd"].sum()
+    n_dev = int((cur["lifecycle"] == "development").sum())
+    n_ret = int((cur["lifecycle"] == "retired").sum())
+    n_tech = int(fw["technical_support"].sum())
+    fw_act = act[act["g"] != "a"]
+    total_rel = fw_act["amount_usd"].sum()
+    rel_years = f"{int(fw_act['year'].min())}–{int(fw_act['year'].max())}" if len(fw_act) else ""
     covered = d["covered"]["people_covered"].sum()
 
     # agency × sector split of the live frameworks' latest versions (one source per version)
@@ -856,6 +1033,7 @@ def build_funding(page, d):
     pr["hz"] = pr["hazard"].map(haz)
     pr["ft"] = pr["fund_code"].map(lambda f: "cerf" if f == "cerf" else
                                    "regional_fund" if str(f).startswith("rhpf") else "cbpf")
+    pr["g"] = [layer(c, h) for c, h in zip(pr["country_iso3"], pr["hazard"])]
 
     # UN agencies vs partners: CERF AA project money per year (direct UN spend) against
     # what the agencies sub-granted (cerf_subgrant, is_aa) by partner-type group
@@ -872,83 +1050,62 @@ def build_funding(page, d):
                 for r in sg.groupby(["year", "grp"])["subgrant_usd"].sum().reset_index()
                 .itertuples() if r.year >= 2020]
     sub_total = float(sg["subgrant_usd"].sum())
-    local_usd = float(sg.loc[sg["localization"].fillna("").str.lower() == "local",
-                             "subgrant_usd"].sum())
+    loc = sg["localization"].fillna("").str.lower()
+    local_usd = float(sg.loc[loc == "local", "subgrant_usd"].sum())
     local_share = (local_usd / sub_total * 100) if sub_total else 0
     un_total = float(ag_year[ag_year.index >= 2020].sum())
     sub_share = (sub_total / un_total * 100) if un_total else 0
+    # the local / national share per year: sub-grants typed Local ÷ all AA sub-grants that year;
+    # international NGOs and partners not yet typed (TBD, blank) make up the rest
+    sg["lk"] = loc.map({"local": "local", "ingo": "intl"}).fillna("untyped")
+    local_rows = [{"year": int(y), "local": float(g.loc[g["lk"] == "local", "subgrant_usd"].sum()),
+                   "intl": float(g.loc[g["lk"] == "intl", "subgrant_usd"].sum()),
+                   "untyped": float(g.loc[g["lk"] == "untyped", "subgrant_usd"].sum())}
+                  for y, g in sg.groupby("year") if y >= 2020]
 
-    # donors of the funds that pre-arrange AA money (CERF + every CBPF / RhPF with a
-    # pre-arranged row), paid contributions in the latest year on record
-    import datetime as _dt
-    aa_funds = set(pre.loc[pre["kind"] == "prearranged", "fund_code"].dropna()) | {"cerf"}
-    co = d["contrib"]
-    co = co[co["fund_code"].isin(aa_funds) & (co["paid_usd"].fillna(0) > 0)].copy()
-    donor_year = None
-    if len(co):
-        yrs = sorted(int(y) for y in co["year"].dropna().unique() if y <= _dt.date.today().year)
-        donor_year = yrs[-1] if yrs else int(co["year"].max())
-        co = co[co["year"] == donor_year]
-    co["ft"] = co["fund_type"].map(lambda t: "cerf" if t == "cerf" else
-                                   "regional_fund" if t == "regional_fund" else "cbpf")
-    top_donors = (co.groupby("donor")["paid_usd"].sum().sort_values(ascending=False)
-                  .head(10).index.tolist())
-    donor_rows = (co[co["donor"].isin(top_donors)].groupby(["donor", "ft"])["paid_usd"].sum()
-                  .reset_index().rename(columns={"paid_usd": "usd"}))
-    donor_note = (f"Paid contributions in {donor_year}"
-                  + (" (year to date)" if donor_year == _dt.date.today().year else "")
-                  + f" to the {len(aa_funds)} pooled funds holding pre-arranged AA money "
-                  "(CERF and the CBPFs / regional funds with an AA-tagged allocation). "
-                  "Contributions fund the whole pool, not AA alone."
-                  if donor_year else "No contribution rows in this snapshot.")
     flow_rows, flow_years, flow_default, fund_names = _money_flows(d, pre, act)
 
+    fund_sel = ("<label>Fund <select id='fFund'><option value=''>CERF and CBPFs</option>"
+                "<option value='cerf'>CERF</option>"
+                "<option value='pooled'>CBPFs (incl. regional funds)</option></select></label>")
     panels = f"""
-<div class='tiles'>
- <div class='tile'><div class='v'>{n_active}</div><div class='l'>active frameworks · {n_upd} being updated{f' · {n_tech} technical support only' if n_tech else ''}</div></div>
- <div class='tile'><div class='v'>${(now_cerf + now_cbpf)/1e6:,.0f}M</div><div class='l'>pre-arranged now — CERF ${now_cerf/1e6:,.0f}M · CBPF/RhPF ${now_cbpf/1e6:,.0f}M</div></div>
- <div class='tile'><div class='v'>${total_disb/1e6:,.0f}M</div><div class='l'>AA/EA disbursed 2020–2026 (all funds)</div></div>
- <div class='tile'><div class='v'>{covered/1e6:,.1f}M</div><div class='l'>people covered (latest per framework)</div></div>
-</div>
-<div class='note' style='margin:-6px 0 10px'><b>Pre-arranged now</b> comes from the framework records: for every active, being-updated or in-development framework, the envelope of its most recent version that has one. The same figure is the current year in the chart below, on the map and on the donor page.{gaps_html}{stale_html} Pre-arranged money stays pre-arranged until a framework is <b>retired</b>: a framework being updated keeps its most recent version's envelope. CBPF and regional-fund allocations are made up front, so an AA-tagged allocation counts as pre-arranged until an activation draws on it (then it is disbursed as well).</div>
 <div class='fbar'>
+ <span style='display:inline-flex;gap:10px;align-items:center;padding-right:10px;border-right:1px solid #e0e0e0'>
+  <label title='frameworks active, being updated or in development: their money in every year'><input type='checkbox' id='fCur' checked> Current frameworks</label>
+  <label title='frameworks since retired: their money in the years they were live'><input type='checkbox' id='fRet' checked> Retired</label>
+  <label title='AA money allocated without a framework: released money only'><input type='checkbox' id='fAdh'> Ad hoc allocations</label></span>
+ {fund_sel}
  <label>Hazard <select id='fHaz'><option value=''>all</option></select></label>
  <label>Region <select id='fReg'><option value=''>all</option></select></label>
  <label>GHO <select id='fGho'><option value=''>all</option><option value='1'>GHO contexts only</option></select></label>
  <label title='released money only: pre-arranged money is a stock, in place on a date, so it never accumulates'><input type='checkbox' id='fCum'> cumulative (released)</label>
 </div>
+<div class='tiles'>
+ <div class='tile'><div class='v' id='tFw'>{n_active}</div><div class='l' id='tFwl'>active frameworks · {n_upd} being updated · {n_dev} in development{f' · {n_tech} technical support only' if n_tech else ''} · {n_ret} retired</div></div>
+ <div class='tile'><div class='v' id='tPre'>${(now_cerf + now_cbpf)/1e6:,.0f}M</div><div class='l' id='tPrel'>pre-arranged now — CERF ${now_cerf/1e6:,.0f}M · CBPF/RhPF ${now_cbpf/1e6:,.0f}M</div></div>
+ <div class='tile'><div class='v' id='tRel'>${total_rel/1e6:,.0f}M</div><div class='l' id='tRell'>AA released {rel_years} — framework activations, CERF and CBPFs</div></div>
+ <div class='tile'><div class='v' id='tCov'>{covered/1e6:,.1f}M</div><div class='l'>people covered (latest per framework)</div></div>
+</div>
+<div class='note' style='margin:-6px 0 10px'><b>Layers</b>, as on the map: <b>current frameworks</b> (active, being updated, in development) and <b>retired</b> frameworks bring their pre-arranged and released money in every year — a framework's layer is its status today, so the past years need the retired ones to be complete (an AA-tagged CBPF allocation in a country with no retired framework counts as current). <b>Ad hoc allocations</b> add the AA money allocated without a framework: released money only, nothing is pre-arranged for it. The <b>fund</b> switch applies to every figure; framework counts, people covered and versions then keep the frameworks with money recorded on that fund. There is no technical-support layer here: technical support carries no money. The tiles and the charts above follow the layers, the fund and the hazard and region filters (the GHO filter: the annual series); the sections below say what they follow.</div>
+<div class='note' style='margin:0 0 10px'><b>Pre-arranged now</b> comes from the framework records: for every active, being-updated or in-development framework, the envelope of its most recent version that has one. The same figure is the current year in the chart below, on the map and on the donor page.{gaps_html}{stale_html} Pre-arranged money stays pre-arranged until a framework is <b>retired</b>: a framework being updated keeps its most recent version's envelope. CBPF and regional-fund allocations are made up front, so an AA-tagged allocation counts as pre-arranged until an activation draws on it (then it counts as released as well).</div>
 <div class='grid'>
- <div class='panel'><h3>Pre-arranged funding in place at year end — CERF, CBPF and RhPF</h3><canvas id='c1' height='260'></canvas>
-   <div class='note'>A stock: what was committed at each year end, so the bars are not added up (the cumulative switch applies to released money only). CERF: the framework envelopes per year (sheets, KB pages, entries; 'all'-totals excluded where the fund split exists). CBPF / regional funds: AA-tagged allocations in the OneGMS mirror, in the year allocated. Co-financing shown separately below.</div></div>
- <div class='panel'><h3>AA/EA disbursed by year — CERF, CBPF and RhPF</h3><canvas id='c2' height='260'></canvas>
-   <div class='note'>Allocations drawn by an activation (framework + ad-hoc + EA), all pooled funds. A CBPF allocation moves here only once an activation is recorded against it.</div></div>
- <div class='panel'><h3>Pre-arranged now, by hazard — CERF, CBPF and RhPF</h3><canvas id='c3' height='260'></canvas>
-   <div class='note'>Latest version of every framework that is active or being updated.</div></div>
- <div class='panel'><h3>Pre-arranged now, by region — CERF, CBPF and RhPF</h3><canvas id='c4' height='260'></canvas></div>
+ <div class='panel'><h3>Pre-arranged funding in place at year end, by fund</h3><canvas id='c1' height='260'></canvas>
+   <div class='note'>A stock: what was committed at each year end, so the bars are not added up (the cumulative switch applies to released money only). CERF: the framework envelopes per year (sheets, framework pages, entries; 'all'-totals excluded where the fund split exists); the current year is pre-arranged now. CBPF / regional funds: AA-tagged allocations in the OneGMS mirror, in the year allocated. Co-financing shown separately below.</div></div>
+ <div class='panel'><h3>AA released by year, by fund</h3><canvas id='c2' height='260'></canvas>
+   <div class='note'>Allocations drawn by a framework activation, all pooled funds — plus the ad hoc AA allocations when that layer is on. A CBPF allocation moves here only once an activation is recorded against it.</div></div>
+ <div class='panel'><h3>Pre-arranged now, by hazard</h3><canvas id='c3' height='260'></canvas>
+   <div class='note'>Latest envelope of every framework that is active, being updated or in development.</div></div>
+ <div class='panel'><h3>Pre-arranged now, by region</h3><canvas id='c4' height='260'></canvas></div>
  <div class='panel'><h3>Framework versions endorsed/revised per year</h3><canvas id='c5' height='260'></canvas>
    <div class='note'>One bar segment per version registered that year (endorsed docs; a version = an endorsed document).</div></div>
- <div class='panel'><h3>Co-financing & non-OCHA money</h3><canvas id='c6' height='260'></canvas>
+ <div class='panel'><h3>Co-financing & non-OCHA money</h3><canvas id='c6' height='260'></canvas><p class='empty' id='c6x' style='display:none'>Co-financing is money from outside the pooled funds: shown when both funds are selected.</p>
    <div class='note'>kind = cofinancing / non_aa_mobilised; financier mostly uncurated — amounts only.</div></div>
 </div>
 <h2>Where the money flows</h2>
-<p class='meta'>Donors → funds → agencies (→ partner types). Two views that are never added together: <b>pre-arranged</b> money is a stock, the envelopes in place on a date; <b>released</b> money is a flow, what went out in a year, drawn from those envelopes. Not affected by the filter bar above.</p>
-<div class='panel'>
- <div style='display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:12.5px;margin-bottom:8px'>
-  <span role='radiogroup' aria-label='which money' style='display:inline-flex;border:1px solid #cbd5e1;border-radius:6px;overflow:hidden'>
-   <label style='padding:3px 10px;cursor:pointer'><input type='radio' name='flM' value='p' checked> pre-arranged</label>
-   <label style='padding:3px 10px;cursor:pointer;border-left:1px solid #cbd5e1'><input type='radio' name='flM' value='r'> released</label></span>
-  <label><span id='flYl'>As at end of</span> <select id='flY'></select></label>
-  <label><input type='checkbox' id='flD' checked> donors</label>
-  <label id='flPw'><input type='checkbox' id='flP' checked> partner types (sub-granting)</label>
-  <span id='flTot' class='muted'></span>
- </div>
- <div id='flow'></div><script src="sankey.js"></script>
- <div class='note'><b>Pre-arranged</b>: the envelopes in place at the end of the chosen year (the current year: today), one per framework and fund — the Funding page's annual series. Never summed over years: a two-year envelope would count twice. Fund → agency uses the agency split of the version in force at that date, scaled to the envelope; CBPF / RhPF allocations go to their grantee types. There is no partner level: who an agency sub-grants to is only known once money is released.
- <b>Released</b>: money that went out on activations in the chosen year (all years add up). CERF → agency uses the AA projects approved that year, scaled to the released total; agency → partner type uses the CERF AA sub-grants, the rest "retained by agency"; CBPF / RhPF go to grantee types from their AA-keyword project budgets.
- <b>Donors → fund</b> (both views): each donor's paid contributions to the fund that year ÷ the fund's total paid income that year, × the amount — attributed pro rata, since contributions fund the whole pool. Top 12 donors, the rest grouped.</div>
-</div>
-<h2>Who holds the pre-arranged money</h2>
-<p class='meta'>The latest version of every live framework (active, being updated, in development), split by agency and sector as the framework documents state it, stacked by fund. Hazard and region filters apply; the GHO filter does not.</p>
+<p class='meta'>Funds → agencies (→ partner types); tick <i>donors</i> to start from the donors of each fund (the <a href='dash-donors.html'>donor-shares page</a> shows that donor-flows view). Two views that are never added together: <b>pre-arranged</b> money is a stock, the envelopes in place on a date; <b>released</b> money is a flow, what went out in a year, drawn from those envelopes. Follows the layers and the fund switch above; the hazard, region and GHO filters do not apply.</p>
+{_flow_panel(donors_on=False)}
+<h2>Where the pre-arranged money goes</h2>
+<p class='meta'>The latest version of every live framework (active, being updated, in development), split by agency and sector as the framework documents state it, stacked by fund. Follows the current-frameworks layer (retired frameworks have no pre-arranged money now), the fund switch and the hazard and region filters; the GHO filter does not apply.</p>
 <div class='grid'>
  <div class='panel'><h3>Pre-arranged by agency</h3><canvas id='c7' height='320'></canvas>
    <div class='note'>Envelope shares per implementing agency (the agency lines of the framework budgets; top 18).</div></div>
@@ -956,42 +1113,51 @@ def build_funding(page, d):
    <div class='note'>Sector lines of the same budgets; a line with an agency but no sector is not shown here.</div></div>
 </div>
 <h2>UN agencies and partners</h2>
-<p class='meta'>Pre-arranged money is committed to UN agencies at the framework level. Once CERF disburses, the agencies keep part of it as direct spend and sub-grant the rest to implementing partners — this is where partners appear in the money trail. Not affected by the filters.</p>
+<p class='meta'>Pre-arranged money is committed to UN agencies at the framework level. Once CERF releases it, the agencies keep part of it as direct spend and sub-grant the rest to implementing partners — this is where partners appear in the money trail. CERF's sub-grant reports: they follow the fund switch only, since they cover framework and ad hoc allocations together and carry no hazard.</p>
+<p class='empty' id='unNone' style='display:none'>The sub-grant reports are CERF's: select CERF, or both funds, to see them.</p>
+<div id='unBox'>
 <div class='tiles'>
  <div class='tile'><div class='v'>{sub_share:.0f}%</div><div class='l'>of CERF AA project money sub-granted to partners (2020→)</div></div>
- <div class='tile'><div class='v'>{local_share:.0f}%</div><div class='l'>localization share — sub-grants to local / national actors (NNGO, government, Red Cross / Red Crescent)</div></div>
+ <div class='tile'><div class='v'>{local_share:.0f}%</div><div class='l'>localisation share — sub-grants to local / national actors (NNGO, government, Red Cross / Red Crescent)</div></div>
  <div class='tile'><div class='v'>${sub_total/1e6:,.1f}M</div><div class='l'>sub-granted in total · {sg['partner_name'].nunique()} partners</div></div>
 </div>
 <div class='grid'>
- <div class='panel' style='grid-column:1/-1'><h3>CERF AA allocations by year — direct UN spend vs sub-granted to partners</h3><canvas id='c9' height='280'></canvas>
+ <div class='panel'><h3>CERF AA allocations by year — direct UN spend vs sub-granted to partners</h3><canvas id='c9' height='280'></canvas>
    <div class='note'>Direct UN spend = CERF AA project budgets (OneGMS mirror, AA-flagged allocations) minus the sub-grants reported for the same year (aa.cerf_subgrant, curated AA set). Partner groups from the sub-grant partner type; 'other' includes partners not yet typed.</div></div>
+ <div class='panel'><h3>Share of CERF AA sub-grants to local and national actors, by year</h3><canvas id='c10' height='280'></canvas>
+   <div class='note'>Each bar is one year's CERF AA sub-grants (100%): to local and national actors (national / local NGOs, government, national Red Cross / Red Crescent societies), to international NGOs, and to partners not yet typed in the reports. The label is the local and national share; the recent years fill in as partners are typed.</div></div>
 </div>
-<h2>Donors</h2>
-<p class='meta'>{donor_note} <a href='dash-donors.html'>full donor shares →</a></p>
-<div class='grid'>
- <div class='panel' style='grid-column:1/-1'><h3>Top 10 donors of the funds that pre-arrange AA money{f' — {donor_year}' if donor_year else ''}</h3><canvas id='c10' height='320'></canvas>
-   <div class='note'>Paid contributions (cash basis, pledges excluded), stacked by fund type. The <a href='dash-donors.html'>donor shares</a> page turns these into each donor's share of the AA money released and pre-arranged.</div></div>
 </div>"""
 
     data = {
         "pre": json.loads(_records(pre, ["country_iso3", "hz", "region", "year",
                                          "kind", "fund_code", "amount_usd",
-                                         "in_gho"])),
+                                         "in_gho", "g"])),
         "act": json.loads(_records(act, ["country_iso3", "hz", "region", "year",
                                          "fund_code", "amount_usd", "event_type",
-                                         "in_gho"])),
-        "ver": json.loads(_records(ver, ["year", "kb_status"])),
-        "now": json.loads(_records(vf, ["country_iso3", "hz", "region", "ft", "total_usd"])),
+                                         "in_gho", "g"])),
+        "ver": json.loads(_records(ver, ["year", "kb_status", "hz", "region", "g", "funds"])),
+        "now": json.loads(_records(vf, ["country_iso3", "hz", "region", "ft", "total_usd", "g"])),
+        "fw": json.loads(_records(fw, ["hz", "region", "lifecycle", "technical_support", "g", "funds"])),
+        "cov": json.loads(_records(cov, ["hz", "region", "people_covered", "g", "funds"])),
         "split": json.loads(_records(pr, ["hz", "region", "agency", "sector", "ft",
-                                          "amount_usd"])),
-        "un": un_rows,
-        "donors": json.loads(_records(donor_rows)),
+                                          "amount_usd", "g"])),
+        "un": un_rows, "local": local_rows,
         "flow": flow_rows, "flowYears": flow_years, "flowDefault": flow_default,
         "fundNames": fund_names,
     }
-    js = """
+    js = FLOW_JS + """
 function fundType(fc){ return fc==='cerf'?'cerf':(fc||'').startsWith('rhpf')?'regional_fund':'cbpf'; }
 const FT = ['cerf','cbpf','regional_fund'];
+const M0 = v => '$'+Math.round(v/1e6).toLocaleString('en-US')+'M';
+// the toggles: layers as on the map (g: c current framework, r retired, a ad hoc) and the fund
+function sel(){ return {hz:fHaz.value, rg:fReg.value, gho:fGho.value, cum:fCum.checked,
+  cur:fCur.checked, ret:fRet.checked, adh:fAdh.checked, fund:fFund.value}; }
+const layerOK = (g, s) => g==='a' ? s.adh : g==='r' ? s.ret : s.cur;
+const ftOK = (ft, s) => !s.fund || (s.fund==='cerf') === (ft==='cerf');
+const fundOK = (fc, s) => ftOK(fundType(fc), s);
+const pairFundOK = (funds, s) => !s.fund || (funds||'').includes(s.fund==='cerf' ? 'c' : 'p');
+const sumOf = (rows, f) => rows.reduce((t,r)=>t+(f(r)||0), 0);
 function stackedBy(id, rows, keyFn, valFn, opts){
   const keys = opts && opts.keys ? opts.keys : uniqSorted(rows, keyFn);
   mkChart(id,'bar',keys,FT.map(ft=>({label:ft, backgroundColor:FUND_COLORS[ft],
@@ -1000,105 +1166,101 @@ function stackedBy(id, rows, keyFn, valFn, opts){
 }
 function topKeys(rows, keyFn, valFn, n){ const g = groupSum(rows.filter(r=>keyFn(r)!=null), keyFn, valFn);
   return Object.keys(g).sort((a,b)=>g[b]-g[a]).slice(0,n); }
+function tiles(s, geo, A, N){
+  const fundTxt = s.fund==='cerf' ? ' with CERF money' : s.fund==='pooled' ? ' with CBPF money' : '';
+  const F = D.fw.filter(r=>geo(r) && layerOK(r.g,s) && pairFundOK(r.funds,s));
+  const n = lc => F.filter(r=>r.lifecycle===lc).length, nT = F.filter(r=>r.technical_support).length;
+  if(s.cur){ tFw.textContent = n('active');
+    tFwl.textContent = `active frameworks${fundTxt} · ${n('updating')} being updated · ${n('development')} in development`
+      + (nT ? ` · ${nT} technical support only` : '') + (s.ret ? ` · ${n('retired')} retired` : ''); }
+  else if(s.ret){ tFw.textContent = n('retired'); tFwl.textContent = `retired frameworks${fundTxt}`; }
+  else { tFw.textContent = '–'; tFwl.textContent = 'frameworks: no framework layer selected'; }
+  const nc = sumOf(N.filter(r=>r.ft==='cerf'), r=>r.total_usd), np = sumOf(N.filter(r=>r.ft!=='cerf'), r=>r.total_usd);
+  if(!s.cur){ tPre.textContent = '–'; tPrel.textContent = 'pre-arranged now: select current frameworks (retired frameworks and ad hoc allocations have none)'; }
+  else { tPre.textContent = M0(nc+np);
+    tPrel.textContent = 'pre-arranged now — ' + (s.fund==='cerf' ? 'CERF' : s.fund==='pooled' ? 'CBPFs and regional funds' : `CERF ${M0(nc)} · CBPF/RhPF ${M0(np)}`); }
+  const ys = uniqSorted(A, r=>r.year);
+  const what = [(s.cur||s.ret) ? 'framework activations' : null, s.adh ? 'ad hoc allocations' : null].filter(Boolean).join(' + ');
+  tRel.textContent = M0(sumOf(A, r=>r.amount_usd));
+  tRell.textContent = `AA released ${ys.length ? ys[0]+(ys.length>1 ? '–'+ys[ys.length-1] : '') : '(none in this selection)'} — ${what || 'no layer selected'}, `
+    + (s.fund==='cerf' ? 'CERF' : s.fund==='pooled' ? 'CBPFs and regional funds' : 'CERF and CBPFs') + (s.gho ? ', GHO contexts' : '');
+  tCov.textContent = (sumOf(D.cov.filter(r=>geo(r) && layerOK(r.g,s) && pairFundOK(r.funds,s)), r=>r.people_covered)/1e6).toFixed(1)+'M';
+}
 function draw(){
-  const hz=fHaz.value, rg=fReg.value, gho=fGho.value, cum=fCum.checked;
-  const P = D.pre.filter(r=>r.kind==='prearranged' && r.fund_code!=='all'
-      && (!hz||r.hz===hz) && (!rg||r.region===rg) && (!gho||r.in_gho));
-  const A = D.act.filter(r=>(!hz||r.hz===hz)&&(!rg||r.region===rg)&&(!gho||r.in_gho));
+  const s = sel(), gho = s.gho;
+  const geo = r => (!s.hz||r.hz===s.hz) && (!s.rg||r.region===s.rg);
+  const P = D.pre.filter(r=>r.kind==='prearranged' && r.fund_code!=='all' && geo(r) && (!gho||r.in_gho)
+      && layerOK(r.g,s) && fundOK(r.fund_code,s));
+  const A = D.act.filter(r=>geo(r) && (!gho||r.in_gho) && layerOK(r.g,s) && fundOK(r.fund_code,s));
   const years = uniqSorted(P.concat(A), r=>r.year);
-  for(const [id, rows, kf] of [['c1',P,r=>fundType(r.fund_code)],['c2',A,r=>fundType(r.fund_code)]]){
+  for(const [id, rows] of [['c1',P],['c2',A]]){
     const ds = FT.map(ft=>{
-      let vals = years.map(y=>groupSum(rows.filter(r=>kf(r)===ft&&r.year===y),()=>0,r=>r.amount_usd)[0]||0);
-      if(cum && id==='c2') vals = cumulate(vals);   // pre-arranged is a stock: never cumulated
-      return {label:ft, data:vals, backgroundColor:FUND_COLORS[ft]};});
+      let vals = years.map(y=>sumOf(rows.filter(r=>fundType(r.fund_code)===ft&&r.year===y), r=>r.amount_usd));
+      if(s.cum && id==='c2') vals = cumulate(vals);   // pre-arranged is a stock: never cumulated
+      return {label:ft, data:vals, backgroundColor:FUND_COLORS[ft]};}).filter(d=>d.data.some(v=>v));
     mkChart(id,'bar',years,ds,{stacked:true, totals:true});
   }
-  const N = D.now.filter(r=>(!hz||r.hz===hz)&&(!rg||r.region===rg));
+  const N = D.now.filter(r=>geo(r) && layerOK(r.g,s) && ftOK(r.ft,s));
   stackedBy('c3', N, r=>r.hz, r=>r.total_usd); stackedBy('c4', N, r=>r.region, r=>r.total_usd);
-  const vy = uniqSorted(D.ver.filter(r=>r.year), r=>r.year);
-  mkChart('c5','bar',vy,[{label:'versions',data:vy.map(y=>D.ver.filter(r=>r.year===y).length),backgroundColor:PAL[2]}],{count:true});
-  const C = D.pre.filter(r=>r.kind!=='prearranged'&&(!hz||r.hz===hz)&&(!rg||r.region===rg));
-  const cy = uniqSorted(C, r=>r.year);
-  mkChart('c6','bar',cy,['cofinancing','non_aa_mobilised'].map((k,i)=>({label:k,
-    data:cy.map(y=>groupSum(C.filter(r=>r.kind===k&&r.year===y),()=>0,r=>r.amount_usd)[0]||0),
-    backgroundColor:PAL[i+3]})),{stacked:true, totals:true});
-  const S = D.split.filter(r=>(!hz||r.hz===hz)&&(!rg||r.region===rg));
+  const V = D.ver.filter(r=>r.year && geo(r) && layerOK(r.g,s) && pairFundOK(r.funds,s));
+  const vy = uniqSorted(V, r=>r.year);
+  mkChart('c5','bar',vy,[{label:'versions',data:vy.map(y=>V.filter(r=>r.year===y).length),backgroundColor:PAL[2]}],{count:true});
+  // co-financing is money from outside the pooled funds: the fund switch cannot split it
+  {
+    const C = D.pre.filter(r=>r.kind!=='prearranged' && geo(r) && layerOK(r.g,s));
+    const cy = uniqSorted(C, r=>r.year);
+    c6.style.display = s.fund ? 'none' : ''; c6x.style.display = s.fund ? '' : 'none';
+    if(!s.fund) mkChart('c6','bar',cy,['cofinancing','non_aa_mobilised'].map((k,i)=>({label:k,
+      data:cy.map(y=>sumOf(C.filter(r=>r.kind===k&&r.year===y), r=>r.amount_usd)),
+      backgroundColor:PAL[i+3]})),{stacked:true, totals:true});
+  }
+  const S = D.split.filter(r=>geo(r) && layerOK(r.g,s) && ftOK(r.ft,s));
   const SA = S.filter(r=>r.agency), SS = S.filter(r=>r.sector);
   stackedBy('c7', SA, r=>r.agency, r=>r.amount_usd, {keys:topKeys(SA,r=>r.agency,r=>r.amount_usd,18), extra:{indexAxis:'y'}});
   stackedBy('c8', SS, r=>r.sector, r=>r.amount_usd, {keys:topKeys(SS,r=>r.sector,r=>r.amount_usd,18), extra:{indexAxis:'y'}});
+  tiles(s, geo, A, N);
+  // UN agencies and partners: CERF sub-grant reports, the fund switch only
+  const un = s.fund!=='pooled';
+  unBox.style.display = un ? '' : 'none'; unNone.style.display = un ? 'none' : '';
+  if(window._flowDraw) _flowDraw();
 }
-// UN vs partners and donors: fixed panels (not filtered)
+// UN vs partners: drawn once (CERF data; hidden when only the CBPFs are selected)
 const UG = ['direct UN spend','INGO','NNGO / local','Red Cross / Red Crescent','government','other'];
 const uy = uniqSorted(D.un, r=>r.year);
 mkChart('c9','bar',uy,UG.map((g,i)=>({label:g, backgroundColor:PAL[i],
   data:uy.map(y=>groupSum(D.un.filter(r=>r.grp===g&&r.year===y),()=>0,r=>r.usd)[0]||0)})).filter(d=>d.data.some(v=>v)),
   {stacked:true, totals:true});
-const dk = topKeys(D.donors, r=>r.donor, r=>r.usd, 10);
-if(dk.length) stackedBy('c10', D.donors, r=>r.donor, r=>r.usd, {keys:dk, extra:{indexAxis:'y'}});
-else document.getElementById('c10').outerHTML = "<p class='meta'>no contribution rows in this snapshot</p>";
+// local and national share of the CERF AA sub-grants, per year (100% bars, local share labelled)
+(function(){
+  const L = D.local.slice().sort((a,b)=>a.year-b.year), yl = L.map(r=>r.year);
+  const tot = r => r.local + r.intl + r.untyped, pc = (r, k) => tot(r) ? 100*r[k]/tot(r) : 0;
+  const parts = [['local','local and national actors','#1baf7a'], ['intl','international NGOs','#9aa3c7'], ['untyped','partner not yet typed','#d9d9d6']];
+  const ch = mkChart('c10','bar',yl, parts.map(([k,lab,col])=>({label:lab, backgroundColor:col, data:L.map(r=>pc(r,k))})), {stacked:true});
+  const localLabel = { id:'localLabel', afterDatasetsDraw(c){ const {ctx, scales:{x, y}} = c;
+    if(!c.isDatasetVisible(0)) return;
+    ctx.save(); ctx.font = '600 11px ' + Chart.defaults.font.family; ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    L.forEach((r,i)=>{ const v = pc(r,'local'); if(v >= 8) ctx.fillText(Math.round(v)+'%', x.getPixelForValue(i), y.getPixelForValue(v)+15); });
+    ctx.restore(); } };
+  ch.config.plugins.push(localLabel);
+  ch.options.scales.y.max = 100; ch.options.scales.y.ticks.callback = v=>v+'%';
+  ch.options.plugins.tooltip.callbacks.label = c=>{ const r = L[c.dataIndex], k = parts[c.datasetIndex][0];
+    return ` ${c.dataset.label}: ${Math.round(c.parsed.y)}% (${money(r[k])} of ${money(tot(r))} sub-granted)`; };
+  ch.update();
+})();
 uniqSorted(D.pre,r=>r.hz).forEach(h=>fHaz.add(new Option(h,h)));
 uniqSorted(D.pre,r=>r.region).forEach(r=>fReg.add(new Option(r,r)));
-[fHaz,fReg,fGho,fCum].forEach(el=>el.addEventListener('change',draw));
-draw();
-// ---- where the money flows: donors -> funds -> agencies -> partner types
-function buildFlow(rows, mode, year, showD, showP, names, topN){
-  const R = rows.filter(r=>r.m===mode && (year==='all' || r.y===+year));
-  const agg = {}; R.forEach(r=>{ const k=r.lv+'\\u0001'+r.s+'\\u0001'+r.t; agg[k]=(agg[k]||0)+r.v; });
-  let L = Object.entries(agg).map(([k,v])=>{ const [lv,s,t]=k.split('\\u0001'); return {lv,s,t,v}; });
-  // top donors; the rest grouped
-  const dt = {}; L.filter(l=>l.lv==='d').forEach(l=>dt[l.s]=(dt[l.s]||0)+l.v);
-  const top = new Set(Object.keys(dt).filter(k=>k!=='d:(donors not recorded)').sort((a,b)=>dt[b]-dt[a]).slice(0,topN||12));
-  top.add('d:(donors not recorded)');
-  const g = {}; L.forEach(l=>{ if(l.lv==='d' && !top.has(l.s)) l.s='d:Other donors';
-    const k=l.lv+'\\u0001'+l.s+'\\u0001'+l.t; g[k]=g[k]?(g[k].v+=l.v,g[k]):{...l}; });
-  L = Object.values(g);
-  if(!showD) L = L.filter(l=>l.lv!=='d');
-  if(!showP) L = L.filter(l=>l.lv!=='a');
-  const lab = id => { const [p, ...rest] = id.split(':'); const n = rest.join(':');
-    return p==='f' ? (names[n]||n) : n; };
-  const cols = []; const seen = {};
-  const col = pre => { const ids = new Set(); L.forEach(l=>{ [l.s,l.t].forEach(x=>{ if(x.startsWith(pre)) ids.add(x); }); });
-    return [...ids].map(id=>({id, label:lab(id)})); };
-  if(showD) cols.push(col('d:'));
-  cols.push(col('f:')); cols.push(col('a:'));
-  if(showP) cols.push(col('p:'));
-  const total = L.filter(l=>l.lv==='f').reduce((s,l)=>s+l.v,0);
-  return {columns:cols, links:L.map(l=>({s:l.s,t:l.t,v:l.v})), total};
-}
-function drawFlow(){
-  const mode = document.querySelector("input[name='flM']:checked").value;
-  const F = buildFlow(D.flow, mode, flY.value, flD.checked, mode==='r' && flP.checked, D.fundNames, 12);
-  const el = document.getElementById('flow');
-  if(!F.links.length){ el.innerHTML = "<p class='empty'>no AA money recorded for this year</p>"; flTot.textContent=''; return; }
-  const n = Math.max(...F.columns.map(c=>c.length));
-  el.innerHTML = sankeySVG({columns:F.columns, links:F.links, width:1100, height:Math.max(260, n*24),
-    fmt:money, labelW:170, label:'AA money from donors through funds and agencies to partners'});
-  el.insertAdjacentHTML('beforeend', "<div class='note'>Hover a band or a box to follow the money; click a box to keep it in focus, click again to clear. Colours: one per fund (CERF blue, pooled funds orange, regional funds green) and one per agency.</div>");
-  flTot.textContent = mode==='p' ? `Pre-arranged, in place at the end of ${flY.value}: ${money(F.total)}` + (+flY.value===new Date().getFullYear() ? ' (today)' : '')
-                                  : `Released ${flY.value==='all' ? 'in all years' : 'in ' + flY.value}: ${money(F.total)}`;
-}
-if(window.sankeySVG){
-  // the year list depends on the view: pre-arranged is one year's stock (no 'all years')
-  function fillYears(){
-    const mode = document.querySelector("input[name='flM']:checked").value, keep = flY.value;
-    flY.innerHTML = '';
-    D.flowYears[mode].slice().reverse().forEach(y=>flY.add(new Option(y, y)));
-    if(mode==='r') flY.add(new Option('all years', 'all'));
-    flY.value = [...flY.options].some(o=>o.value===keep) && keep!=='' ? keep : String(D.flowDefault[mode]);
-    document.getElementById('flYl').textContent = mode==='p' ? 'As at end of' : 'Released in';
-    document.getElementById('flPw').style.display = mode==='r' ? '' : 'none';
-  }
-  document.querySelectorAll("input[name='flM']").forEach(el=>el.addEventListener('change', ()=>{ fillYears(); drawFlow(); }));
-  fillYears();
-  [flY, flD, flP].forEach(el=>el.addEventListener('change', drawFlow));
-  drawFlow();
-}"""
-    _dash_page(page, "dash-funding.html", "Funding",
-               "<b>The funding block of anticipatory action.</b> Pre-arranged and "
-               "disbursed AA money across CERF, CBPFs and regional funds — filter by "
+[fHaz,fReg,fGho,fCum,fCur,fRet,fAdh,fFund].forEach(el=>el.addEventListener('change',draw));
+// the flow chart: the layers and the fund switch filter its rows (donors off: it starts at the funds)
+window._flowDraw = mountFlow({label:'AA money through funds and agencies to partners',
+  keep: r=>{ const s = sel(); return layerOK(r.g, s) && (!s.fund || (s.fund==='cerf') === (r.fu==='c')); }});
+draw();"""
+    _dash_page(page, "dash-funding.html", "Financing",
+               "<b>The financing block of anticipatory action.</b> Pre-arranged and "
+               "released AA money across CERF, CBPFs and regional funds — show current and "
+               "retired frameworks and ad hoc allocations as on the map, pick a fund, filter by "
                "hazard, region, GHO context; toggle cumulative. "
-               "<a href='dash-donors.html'>Donor shares</a> attribute this money to the "
-               "donors of each fund. Donors report their AA funding annually under the "
+               "<a href='dash-donors.html'>Donor shares and donor flows</a> attribute this money "
+               "to the donors of each fund. Donors report their AA funding annually under the "
                "<a href='https://interagencystandingcommittee.org/grand-bargain' "
                "target='_blank' rel='noopener'>Grand Bargain</a>. Internal: "
                "<a href='dash-allocations.html'>allocation explorer</a> · "
@@ -1257,7 +1419,7 @@ def build_learning(page, d):
  <div class='tile'><div class='v'>{len(docs)}</div><div class='l'>learning documents</div></div>
  <div class='tile'><div class='v'>{n_eval}</div><div class='l'>evaluations and impact evaluations</div></div>
  <div class='tile'><div class='v'>{len(fw_with)}</div><div class='l'>frameworks with at least one document</div></div>
- <div class='tile'><div class='v'>{len(act)}</div><div class='l'>activations recorded — {n_fw} framework triggers, {len(act) - n_fw} ad hoc / early action</div></div>
+ <div class='tile'><div class='v'>{len(act)}</div><div class='l'>activations recorded — {n_fw} framework triggers, {len(act) - n_fw} ad hoc allocations</div></div>
 </div>
 <div class='card'><b>What lives here.</b> The evidence on anticipatory action, curated: what the evaluations, after-action reviews and studies say about each of the premises of acting ahead of a shock, the global learning products by type, and the documents per framework. Every activation is a learning event, so the activation records are listed at the bottom.
 <span class='note' style='display:block;margin-top:6px'>Internal documents ({d.get('n_internal_docs', 0)} in the database) are held in the database but not shown here.</span></div>
@@ -1360,7 +1522,7 @@ function draw(){ const R = rows();
      {label:'CBPF/RhPF',data:both.map(x=>x[1].pooled),backgroundColor:FUND_COLORS.cbpf}]);
   const adhoc = D.act.filter(r=>r.event_type!=='framework_aa');
   const byA = Object.entries(groupSum(adhoc,r=>r.country_iso3,r=>r.amount_usd)).sort((a,b)=>b[1]-a[1]);
-  mkChart('a4','bar',byA.map(x=>x[0]),[{label:'ad-hoc AA + EA USD',data:byA.map(x=>x[1]),backgroundColor:PAL[3]}]);
+  mkChart('a4','bar',byA.map(x=>x[0]),[{label:'ad hoc AA USD',data:byA.map(x=>x[1]),backgroundColor:PAL[3]}]);
   const ty = uniqSorted(D.tim,r=>r.year);
   mkChart('a5','line',ty,[{label:'median days',data:ty.map(y=>{
     const v=D.tim.filter(r=>r.year===y).map(r=>r.days).sort((a,b)=>a-b);
@@ -1404,8 +1566,8 @@ def build_delivery(page, d):
    <div class='note'>Yakubu's curated AA subgrant set; local = NNGO+GOV+RedC per his localization tagging.</div></div>
  <div class='panel'><h3>CBPF AA projects: direct funding by org type</h3><canvas id='d2' height='250'></canvas>
    <div class='note'>CBPF pays partners directly — this is the localization view CERF can't show. AA-keyword allocations only.</div></div>
- <div class='panel'><h3>Disbursed by agency (CERF AA projects)</h3><canvas id='d3' height='250'></canvas></div>
- <div class='panel'><h3>Disbursed by sector (CERF AA projects)</h3><canvas id='d4' height='250'></canvas></div>
+ <div class='panel'><h3>Released by agency (CERF AA projects)</h3><canvas id='d3' height='250'></canvas></div>
+ <div class='panel'><h3>Released by sector (CERF AA projects)</h3><canvas id='d4' height='250'></canvas></div>
  <div class='panel'><h3>Pre-arranged by agency (framework budgets)</h3><canvas id='d5' height='250'></canvas>
    <div class='note'>From the Jun-2026 pre-arranged sector budgets (framework docs).</div></div>
  <div class='panel'><h3>Pre-arranged by sector (framework budgets)</h3><canvas id='d6' height='250'></canvas></div>
@@ -1456,7 +1618,7 @@ mkChart('d8','bar',rcY,[['women',0],['men',1],['girls',2],['boys',3]].map(([g,i]
     _dash_page(page, "dash-delivery.html", "Delivery, partners & people",
                "Who the money flows through and who it reaches: subgrants and "
                "localization (CERF AA), direct partner funding (CBPF AA), agency "
-               "and sector splits (disbursed vs pre-arranged), CVA, and people "
+               "and sector splits (released vs pre-arranged), CVA, and people "
                "reached by gender.",
                panels, json.dumps(data, default=str), js)
 
@@ -1465,10 +1627,10 @@ mkChart('d8','bar',rcY,[['women',0],['men',1],['girls',2],['boys',3]].map(([g,i]
 COVERAGE = [
     ("Pre-arranged funding by year, cumulative", "covered", "dash-funding.html", "canonical per framework-year; cumulative toggle"),
     ("Pre-arranged by hazard / region", "covered", "dash-funding.html", ""),
-    ("AA amount disbursed by year, cumulative", "covered", "dash-funding.html", "all pooled funds via activation_funding"),
+    ("AA amount released by year, cumulative", "covered", "dash-funding.html", "all pooled funds via activation_funding"),
     ("Subgrants by partner type / local partners", "covered", "dash-delivery.html", "CERF AA subgrants + CBPF direct org-type funding"),
-    ("Disbursed funds by agency", "covered", "dash-delivery.html", "CERF AA projects"),
-    ("Disbursed funds by sector", "covered", "dash-delivery.html", "CERF AA project sector splits"),
+    ("Released funds by agency", "covered", "dash-delivery.html", "CERF AA projects"),
+    ("Released funds by sector", "covered", "dash-delivery.html", "CERF AA project sector splits"),
     ("Pre-arranged funds by agency / sector", "covered", "dash-delivery.html", "Jun-2026 framework budgets; KB funding_breakdown adds per-version detail"),
     ("Agency participation across the portfolio", "covered", "dash-delivery.html", "agency axis of pre-arranged budgets"),
     ("AA delivered as CVA", "partial", "dash-delivery.html", "totals by year 2020–2026; MPC-vs-sector split only for 2024+ projects (cerf_project_supplement)"),
@@ -1478,10 +1640,10 @@ COVERAGE = [
     ("Calendar of monitoring windows", "covered", "dashboards.html#calendar", "trigger-window months per framework (from planning-sheet colors)"),
     ("Filter by hazard", "covered", "dash-funding.html", "all dashboards filter by hazard"),
     ("Frameworks started/revised/endorsed per year", "covered", "dash-funding.html", "endorsed-document versions per year"),
-    ("Non-framework AA allocations", "covered", "dash-allocations.html", "explicit adhoc_aa / early_action categories"),
+    ("Non-framework AA allocations", "covered", "dash-allocations.html", "explicit ad hoc AA category (ad hoc layer on the Financing page)"),
     ("CERF + Country/Regional Funds complementarity", "covered", "dash-allocations.html", "multi-fund activations from activation_funding"),
     ("AA funding to GHO contexts", "covered", "dash-funding.html", "GHO filter (plan_inclusion)"),
-    ("CERF AA growth (disbursed, people, countries…)", "covered", "dash-funding.html", "cumulative toggles + tiles"),
+    ("CERF AA growth (released, people, countries…)", "covered", "dash-funding.html", "cumulative toggles + tiles"),
     ("Timeliness (activation → approval letters)", "partial", "dash-allocations.html", "ERC endorsement → first project approved works; trigger-date lag needs curated activation datetimes"),
     ("Partner participation beyond CERF (Start, RCRC, WB…)", "missing", "", "only Start Fund alert counts (start_network); no systematic non-OCHA partner data"),
     ("Activities repository", "missing", "", "not tracked anywhere yet — would need framework-doc activity extraction"),
@@ -2183,8 +2345,8 @@ def build_hub(page, d, fw_links):
 <div class='card'><b>Dashboards</b> — interactive views over the tracking DB,
 built to the CERF key-data-points list (<a href='questions.html'>coverage map</a>).
 <div class='tiles'>
-<div class='tile'><a href='dash-funding.html'><b>Funding</b></a><div class='l'>pre-arranged & disbursed, by year/hazard/region/fund, GHO, cumulative</div></div>
-<div class='tile'><a href='dash-donors.html'><b>Donor shares</b></a><div class='l'>each donor's share of AA released / pre-arranged, via their contributions to CERF and the CBPFs; build earmarks</div></div>
+<div class='tile'><a href='dash-funding.html'><b>Financing</b></a><div class='l'>pre-arranged & released, by year/hazard/region/fund, GHO, cumulative; current / retired frameworks and ad hoc allocations as on the map; money flows; localisation</div></div>
+<div class='tile'><a href='dash-donors.html'><b>Donor shares</b></a><div class='l'>each donor's share of AA released / pre-arranged, via their contributions to CERF and the CBPFs; donor flows; build earmarks</div></div>
 <div class='tile'><a href='dash-allocations.html'><b>Allocation explorer</b></a><div class='l'>query every CERF + CBPF allocation 2006→; complementarity; timeliness</div></div>
 <div class='tile'><a href='dash-delivery.html'><b>Delivery & people</b></a><div class='l'>subgrants, localization, agencies, sectors, CVA, people reached</div></div>
 <div class='tile'><a href='pillar-learning.html'><b>Learning</b></a><div class='l'>the evidence by premise, global learning products, documents per framework, activation records</div></div>

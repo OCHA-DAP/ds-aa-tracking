@@ -5,10 +5,10 @@ a donor's share of a pooled fund in a fiscal year = what they paid into it that 
 everything the fund received that year (aa.v_contribution, from the OneGMS mirrors).
 That share is applied to the AA the fund handled the same year, in two buckets:
 
-- released — allocations drawn by activations (framework + ad hoc + EA), from
-  aa.activation_funding; the same series the Funding page charts
+- released — allocations drawn by framework activations, from aa.activation_funding;
+  the same series the Financing page charts with its default layers
 - pre-arranged — framework envelopes per year + AA-tagged CBPF/RhPF allocations
-  (funding_series in dashboards.py; same numbers as the Funding page)
+  (funding_series in dashboards.py; same numbers as the Financing page)
 
 plus a third bucket that is not share-based: "build" money — donor earmarks to the
 OCHA AA project itself (aa.build_contribution, hand-entered).
@@ -18,6 +18,9 @@ on a fund with no contribution rows that year (e.g. sheet-era rows on
 'cbpf-unspecified') cannot be attributed and is shown as such, never spread.
 Everything is computed client-side from the embedded rows so year / fund / donor
 filters recompute the shares.
+
+The page also carries the donor-flows view: the Financing page's 'Where the money flows'
+Sankey with the donors level on (the same _money_flows rows, framework money only).
 """
 
 import datetime as dt
@@ -25,7 +28,7 @@ import json
 
 import pandas as pd
 
-from dashboards import _dash_page, _records, funding_series
+from dashboards import FLOW_JS, _dash_page, _flow_panel, _money_flows, _records, funding_series
 
 
 def build_donors(page, d):
@@ -52,6 +55,9 @@ def build_donors(page, d):
     years = [y for y in years if y >= 2020]
     default_year = min(max(years), dt.date.today().year - 1) if years else dt.date.today().year - 1
     have_data = len(C) > 0
+    # donor flows: the Financing page's Sankey rows, donors first (framework money: the same
+    # released series as the attribution above)
+    flow_rows, flow_years, flow_default, flow_names = _money_flows(d, pre, act)
 
     panels = """
 <div class='fbar'>
@@ -74,9 +80,9 @@ def build_donors(page, d):
 <div class='note' id='gbNote' style='display:none;margin:-6px 0 10px'>Donors report their AA funding annually under the <a href='https://interagencystandingcommittee.org/grand-bargain'>Grand Bargain</a>; these are the figures to use.</div>
 <div class='grid'>
  <div class='panel'><h3 id='c1t'>Donor shares of AA released</h3><canvas id='c1' height='420'></canvas>
-   <div class='note' id='c1n'>Each donor's share of the fund's income that year × the AA the fund released that year (activations: framework, ad hoc, EA). Stacked by fund type.</div></div>
+   <div class='note' id='c1n'>Each donor's share of the fund's income that year × the AA the fund released that year (framework activations). Stacked by fund type.</div></div>
  <div class='panel'><h3 id='c2t'>Donor shares of AA pre-arranged</h3><canvas id='c2' height='420'></canvas>
-   <div class='note' id='c2n'>Same shares × the pre-arranged envelopes / AA-tagged CBPF allocations of that year (the Funding page's annual series).</div></div>
+   <div class='note' id='c2n'>Same shares × the pre-arranged envelopes / AA-tagged CBPF allocations of that year (the Financing page's annual series).</div></div>
  <div class='panel' style='grid-column:1/-1'><h3 id='c3t'>Attributed AA released by year</h3><canvas id='c3' height='260'></canvas>
    <div class='note' id='c3n'>All years; the largest donors over the period, everyone else as "other". Ignores the year filter.</div></div>
 </div>
@@ -97,6 +103,9 @@ def build_donors(page, d):
 </tr></thead><tbody></tbody></table></div></section>
 </div>
 <div id='pview'>
+<h2 id='flows'>Donor flows</h2>
+<p class='meta'>Donors → funds → agencies (→ partner types): each donor's share of a fund's income that year, applied to the fund's AA money and followed on to the agencies and, for released money, the partners they sub-grant to. Framework money, as in the shares above; the <a href='dash-funding.html'>Financing page</a> shows the same chart starting at the funds. The fund filter applies; the year, donor-type and donor filters do not (the chart has its own year).</p>
+""" + _flow_panel(donors_on=True, donor_toggle=False) + """
 <h2>All donors</h2>
 <section><p class='meta'>Pick a donor in the filter bar (or click a name) for that donor's view: their share of each fund, attributed AA by fund and by year, and a fund × year table — the workbook's per-donor tab.</p>
 <div style='display:flex;gap:10px;align-items:center'>
@@ -121,6 +130,8 @@ def build_donors(page, d):
         "FN": fund_names,
         "years": years,
         "defaultYear": default_year,
+        "flow": flow_rows, "flowYears": flow_years, "flowDefault": flow_default,
+        "fundNames": flow_names,
     }
     js = r"""
 const FT = {cerf:'CERF', cbpf:'CBPF', regional_fund:'regional fund'};
@@ -199,10 +210,12 @@ function draw(){
   tR.textContent = money(sum(o=>o.relCerf+o.relCbpf+o.relReg)); tRl.textContent = 'AA released, attributed to donors';
   tP.textContent = money(sum(o=>o.preCerf+o.preCbpf+o.preReg)); tPl.textContent = y==='all' ? `AA pre-arranged, attributed to donors, as at ${PREY} (a stock: never summed across years)` : 'AA pre-arranged, attributed to donors';
   tB.textContent = money(sum(o=>o.build)); tBl.textContent = 'build earmarks (OCHA AA project)';
-  c1t.textContent = 'Donor shares of AA released'; c1n.textContent = "Each donor's share of the fund's income that year × the AA the fund released that year (activations: framework, ad hoc, EA). Stacked by fund type.";
-  c2t.textContent = 'Donor shares of AA pre-arranged' + (y==='all' ? ` — as at ${PREY}` : ''); c2n.textContent = "Same shares × the pre-arranged envelopes / AA-tagged CBPF allocations of that year (the Funding page's annual series)." + (y==='all' ? ' Pre-arranged money is in place on a date, so it is shown for the latest year rather than added up over years.' : '');
+  c1t.textContent = 'Donor shares of AA released'; c1n.textContent = "Each donor's share of the fund's income that year × the AA the fund released that year (framework activations). Stacked by fund type.";
+  c2t.textContent = 'Donor shares of AA pre-arranged' + (y==='all' ? ` — as at ${PREY}` : ''); c2n.textContent = "Same shares × the pre-arranged envelopes / AA-tagged CBPF allocations of that year (the Financing page's annual series)." + (y==='all' ? ' Pre-arranged money is in place on a date, so it is shown for the latest year rather than added up over years.' : '');
   c3t.textContent = 'Attributed AA released by year'; c3n.textContent = 'All years; the largest donors over the period, everyone else as "other". Ignores the year filter.';
-  unattr.innerHTML = (un.rel||un.pre) ? `Not attributable (AA money on a fund with no contribution rows that year — ${un.keys.map(k=>esc(D.FN[k.split('|')[0]]||k.split('|')[0])+' '+k.split('|')[1]).join(', ')}): released ${money(un.rel)}, pre-arranged ${money(un.pre)}. Shown here, never spread across donors.` : 'Every dollar of AA in this selection sits on a fund with known donors.';
+  // pre-arranged is a stock: under 'all years' the unattributable part is as at PREY, not summed
+  const unPre = y==='all' ? attribute(String(PREY), ft).un.pre : un.pre;
+  unattr.innerHTML = (un.rel||unPre) ? `Not attributable (AA money on a fund with no contribution rows that year — ${un.keys.map(k=>esc(D.FN[k.split('|')[0]]||k.split('|')[0])+' '+k.split('|')[1]).join(', ')}): released ${money(un.rel)}, pre-arranged ${money(unPre)}${y==='all'?` (as at ${PREY})`:''}. Shown here, never spread across donors.` : 'Every dollar of AA in this selection sits on a fund with known donors.';
   const stack = (id, key) => { const top = L.filter(o=>o[key+'Cerf']+o[key+'Cbpf']+o[key+'Reg']>0)
       .sort((a,b)=>(b[key+'Cerf']+b[key+'Cbpf']+b[key+'Reg'])-(a[key+'Cerf']+a[key+'Cbpf']+a[key+'Reg'])).slice(0,N);
     mkChart(id,'bar',top.map(o=>o.donor),[
@@ -304,13 +317,19 @@ fD.addEventListener('change', ()=>{ const h = fD.value ? '#donor='+encodeURIComp
   if(h !== location.hash) location.hash = h; else draw(); });     // hashchange → syncFromHash → draw
 [fY,fFT,fDT,fN].forEach(el=>el.addEventListener('change',draw));
 window.addEventListener('hashchange', syncFromHash);
-syncFromHash();"""
+syncFromHash();""" + FLOW_JS + """
+// donor flows: donors first; the fund filter keeps its funds (fu: c CERF, p CBPF, r regional fund)
+const FU = {c:'cerf', p:'cbpf', r:'regional_fund'};
+window._flowDraw = mountFlow({label:'AA money from donors through funds and agencies to partners',
+  keep: r=>!fFT.value || FU[r.fu]===fFT.value});
+fFT.addEventListener('change', ()=>window._flowDraw());"""
     _dash_page(page, "dash-donors.html", "Donor shares of AA",
                "<b>Who funded the anticipatory action.</b> A donor's share of a pooled fund's "
                "income in a fiscal year (their contributions ÷ everything the fund received, "
                "from the OneGMS contribution mirrors), applied to the AA that fund released and "
-               "pre-arranged the same year — the Funding page's own series, so the totals agree. "
+               "pre-arranged the same year — the Financing page's own series, so the totals agree. "
                "Build money (earmarks to the OCHA AA project) is direct, not share-based. "
                "Cash basis: contributions received in the year, pledges excluded. "
-               "<a href='dash-funding.html'>← Funding</a>",
+               "The donor flows, further down, follow that money on to the agencies and "
+               "partners. <a href='dash-funding.html'>← Financing</a>",
                panels, json.dumps(data, default=str), js)

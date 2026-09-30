@@ -96,7 +96,7 @@ function dlcsv(id, name) {
 }
 """
 
-# public-facing nav: the map, then the building blocks of AA (model · plan · funding, with
+# public-facing nav: the map, then the building blocks of AA (model · plan · financing, with
 # donor shares as a sub-link), learning and media; everything internal sits behind one
 # menu on the right
 NAV = """
@@ -106,7 +106,7 @@ NAV = """
    <a href="index.html">Map</a>
    <a href="pillar-model.html">Model</a>
    <a href="pillar-plan.html">Plan</a>
-   <a href="dash-funding.html">Funding</a><a class="sub" href="dash-donors.html" title="each donor's share of the AA money">donor shares</a>
+   <a href="dash-funding.html">Financing</a><a class="sub" href="dash-donors.html" title="each donor's share of the AA money">donor shares</a>
    <a href="pillar-learning.html">Learning</a>
    <a href="media.html">Media</a>
   </nav>
