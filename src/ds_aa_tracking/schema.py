@@ -498,6 +498,16 @@ TABLES = {
 # missing but NEVER drops or truncates them: they are the durable record of
 # human entry, not derived data.
 DURABLE_TABLES = {
+    # data-entry files applied by scripts/apply_entries.py (nightly job): one row per file,
+    # so a file is applied once and later admin-page edits are never overwritten
+    "applied_entries": """
+        CREATE TABLE IF NOT EXISTS aa.applied_entries (
+            name text PRIMARY KEY,
+            sha256 text NOT NULL,
+            n_rows integer NOT NULL,
+            entered_by text,
+            applied_at timestamptz NOT NULL DEFAULT now()
+        )""",
     "entered_version": """
         CREATE TABLE IF NOT EXISTS aa.entered_version (
             country_iso3 text NOT NULL,

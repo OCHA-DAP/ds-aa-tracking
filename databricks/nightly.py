@@ -9,7 +9,11 @@ laptop while access lasts:
 Steps
   1. optional --ensure-schema: scripts/ensure_schema.py (idempotent DDL; off by default so
      a schema change ships deliberately, via a one-off run of this job with the flag)
-  2. scripts/export_snapshot.py: consistent snapshot of schema aa -> dev blob
+  2. scripts/apply_entries.py: apply new data-entry files from the private dev blob
+     (projects/ds-aa-tracking/entries/*.json; each applied once, audited) — the write path
+     for entries prepared off-network since laptops lost DB access (2026-09-30). A failure
+     here is reported but never blocks the snapshot.
+  3. scripts/export_snapshot.py: consistent snapshot of schema aa -> dev blob
      projects/ds-aa-tracking/snapshot/{latest,YYYY-MM-DD}/ (dated copies kept 30 days,
      31-December copies forever)
 
@@ -86,6 +90,10 @@ def main():
         run("scripts/sync_kb.py", "--i-know-the-kb-is-not-a-source", KB_DIR=str(kb))
     if a.ensure_schema:
         run("scripts/ensure_schema.py")
+    try:
+        run("scripts/apply_entries.py")
+    except subprocess.CalledProcessError as ex:  # never block the snapshot on an entry file
+        print(f"!! apply_entries failed ({ex}); continuing to the snapshot", flush=True)
     run("scripts/export_snapshot.py", *(["--no-prune"] if a.no_prune else []))
 
 

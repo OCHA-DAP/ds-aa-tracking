@@ -91,6 +91,15 @@ are kept forever (the year-end official state, for the map's time view).
   for the items below it (`# riverine window — …`), and an item like `Non-endemic provinces
   (all other)` is a rest-of-country tier; tiers render as shades of the hazard colour
 
+## Entering data without database access
+
+Since 2026-09-30 laptops cannot reach the dev DB. Two write paths remain: the admin page
+(its proxy runs in Azure), and **entry files**: JSON on the private dev blob
+(`projects/ds-aa-tracking/entries/`, never in this public repo) that the nightly Databricks
+job applies once each, before the snapshot (`scripts/apply_entries.py`; format in its
+docstring; upload with `--upload FILE`, test against a restored local copy with `--dir`).
+Every row is audited to `aa.entry_audit`; applied files are recorded in `aa.applied_entries`.
+
 ## Running
 
 The dev DB is the single source of truth: data is entered and corrected through the
