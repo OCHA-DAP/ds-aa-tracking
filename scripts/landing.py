@@ -1223,7 +1223,7 @@ def build_landing(page, d, e):
 <div class='hero'>
  <p>Published triggers, windows, pre-arranged financing and activations across the AA
  portfolio — CERF, country-based and regional pooled funds. Pin colour = framework status, inferred from
- the most recent version; each red dot = one past activation; a pulsing ring = monitored this month. <b>Click a country or a pin</b>
+ the most recent version; each red dot = one past activation; an amber ring = in its monitoring season this month. <b>Click a country or a pin</b>
  to zoom in and see the areas each framework covers; the <b>layer toggles</b> in the map legend
  choose what is drawn — the figures below follow them.</p>
  <div class='tiles gtiles' id='gtiles'>
@@ -1267,7 +1267,7 @@ def build_landing(page, d, e):
    <text x='10' y='176' class='sh-h'>FRAMEWORK status (inferred from the most recent version — aa.v_framework_lifecycle)</text>
    <g class='sh-box sh-on'><rect x='10' y='192' width='220' height='34' rx='8'/><text x='120' y='214'>Active</text></g>
    <text x='240' y='206' class='sh-note'>most recent version is endorsed, in validity and has not fully triggered</text>
-   <text x='240' y='220' class='sh-note'>(partial triggers of independent windows keep it active) · pulsing ring = monitored this month</text>
+   <text x='240' y='220' class='sh-note'>(partial triggers of independent windows keep it active) · amber ring = in its monitoring season this month</text>
    <g class='sh-box sh-upd'><rect x='10' y='234' width='220' height='34' rx='8'/><text x='120' y='256'>Being updated</text></g>
    <text x='240' y='248' class='sh-note'>an endorsed framework whose most recent version fully triggered or reached the end of its</text>
    <text x='240' y='262' class='sh-note'>validity, or whose next version is already in development — the framework stands, a new version is coming</text>
@@ -1377,11 +1377,9 @@ LANDING_CSS = r"""
 .iconbox svg.hz { width:15px; height:15px; display:block; }
 /* 'being updated': a diagonal two-tone fill (active on one half, development on the other) */
 .iconbox:hover { transform:scale(1.12); filter:brightness(1.06); }
-@keyframes ablepulse {
-  0%   { box-shadow: 0 0 0 2px #f5a300, 0 0 0 0 rgba(245,163,0,.85), 0 1px 3px rgba(0,0,0,.4); }
-  65%  { box-shadow: 0 0 0 2px #f5a300, 0 0 0 11px rgba(245,163,0,0), 0 1px 3px rgba(0,0,0,.4); }
-  100% { box-shadow: 0 0 0 2px #f5a300, 0 0 0 11px rgba(245,163,0,0), 0 1px 3px rgba(0,0,0,.4); } }
-.iconbox.able-now { box-shadow:0 0 0 2px #f5a300, 0 1px 3px rgba(0,0,0,.4); animation:ablepulse 1.1s ease-out infinite; }
+/* in its monitoring season: a calm, static amber ring — no animation (2026-10-01: the pulse
+   read as false urgency and is a problem for motion-sensitive readers) */
+.iconbox.able-now { box-shadow:0 0 0 2px #fff, 0 0 0 4px #f5a300, 0 1px 3px rgba(0,0,0,.35); }
 .iconbox.able-off { box-shadow:0 0 0 2px #f6c95f, 0 1px 3px rgba(0,0,0,.4); }
 .actdots { position:absolute; right:-4px; bottom:calc(100% - 5px); width:31px; display:flex; flex-direction:row-reverse; flex-wrap:wrap-reverse; gap:1px; pointer-events:none; }
 .rm { display:inline-block; width:9px; height:9px; border-radius:50%; background:#e3322d; box-shadow:0 0 0 1.5px #fff, 0 0 0 2.5px #e3322d; margin:0 3px; vertical-align:-1px; }
@@ -1747,7 +1745,7 @@ function worldLegend(){
     + `<span><span class='dot' style='background:${COLOR.development}'></span>In development <span class='cnt'>${n('development')}</span></span></div>`;
   legend.innerHTML = `<div class='layerctl' role='group' aria-label='Map layers'>` + row('framework') + st + row('adhoc') + row('retired') + row('tech') + `</div>`
     + `<div class='lsub'><span><span class='dot' style='background:#e3322d'></span>Activations <span class='cnt'>${nAct}</span></span>`
-    + `<span><span class='dot' style='background:#fff;border:2.5px solid #f5a300;box-sizing:border-box'></span>Monitored now <span class='cnt'>${nNow}</span></span></div>`;
+    + `<span><span class='dot' style='background:#fff;border:2.5px solid #f5a300;box-sizing:border-box'></span>In monitoring season <span class='cnt'>${nNow}</span></span></div>`;
 }
 // what a list of map entries is called: frameworks, unless some are ad hoc allocations or technical support
 function nounCount(fs){
@@ -2165,7 +2163,7 @@ function adhocBlock(f){
 function groupBy(rows, kf, vf){ const m = {}; rows.forEach(r=>{ const k = kf(r); m[k] = (m[k]||0) + (vf(r)||0); }); return m; }
 function fwHeader(c, f){
   return `<h3 style='display:flex;align-items:center;gap:8px'>${iconHTML(f)}<span>${esc(c.name)} — ${esc(f.hz_label)}</span></h3>
-   <div>${badge(f.disp)}${f.tech?` <span class='badge b-tech'>OCHA technical support</span>`:''} ${f.ring ? `<span class='small' style='color:#c8860a'>&bull; currently monitored (in season)</span>` : ''}
+   <div>${badge(f.disp)}${f.tech?` <span class='badge b-tech'>OCHA technical support</span>`:''} ${f.ring ? `<span class='small' style='color:#c8860a'>&bull; in its monitoring season</span>` : ''}
    ${f.kb?` <span class='muted'>· KB <code>${f.kb}</code></span>`:''}${f.in_force && f.in_force!==f.current ? ` <span class='muted'>· tracking view in force: ${f.in_force}</span>` : ''}</div>`;
 }
 function versionBar(f, v, isCur){
