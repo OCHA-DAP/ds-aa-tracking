@@ -136,14 +136,15 @@ def _kb_git(*args):
 
 
 def cache_provenance(pdf):
-    """(commit, date, url): the KB commit that first cached the file, and the page's
-    framework_doc AT THAT COMMIT — the URL the bytes were actually fetched from. Today's
-    doc_url can differ: pages get corrected after the fetch, the cache never does."""
+    """(commit, date, url): the KB commit that cached the CURRENT bytes (the latest add or
+    modify — a stale file can be removed and re-cached, as bgd-flooding 2020-06-26 was), and
+    the page's framework_doc AT THAT COMMIT — the URL the bytes were actually fetched from.
+    Today's doc_url can differ: pages get corrected after the fetch, the cache never does."""
     rel = pdf.relative_to(KB_DIR).as_posix()
-    added = _kb_git("log", "--diff-filter=A", "--format=%H %cs", "--", rel).split()
+    added = _kb_git("log", "-1", "--diff-filter=AM", "--format=%H %cs", "--", rel).split()
     if not added:
         return None, None, None
-    commit, date = added[-2], added[-1]
+    commit, date = added
     page = _kb_git("show", f"{commit}:frameworks/{pdf.parent.name}/{pdf.stem}.md")
     m = re.match(r"^---\n(.*?)\n---", page, re.S)
     try:
