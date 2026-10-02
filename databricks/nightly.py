@@ -4,11 +4,15 @@ This is the only place that will still reach the dev DB once its public network 
 goes (2026-09). It wraps the ordinary scripts unchanged, so the same steps run from a
 laptop while access lasts:
 
-    python databricks/nightly.py [--ensure-schema] [--no-prune] [--kb-sync]
+    python databricks/nightly.py [--ensure-schema] [--relabel ISO3/HAZARD/OLD NEW] [--no-prune] [--kb-sync]
 
 Steps
   1. optional --ensure-schema: scripts/ensure_schema.py (idempotent DDL; off by default so
      a schema change ships deliberately, via a one-off run of this job with the flag)
+  1b. optional --relabel ISO3/HAZARD/OLD NEW: scripts/relabel_version.py — a version label
+     is part of the key in several tables and entries files can only upsert, so a relabel
+     (placeholder -> endorsement date) runs here, one-off, before the entries that may
+     address the new label. A failure stops the run before the entries are applied.
   2. scripts/apply_entries.py: apply new data-entry files from the private dev blob
      (projects/ds-aa-tracking/entries/*.json; each applied once, audited) — the write path
      for entries prepared off-network since laptops lost DB access (2026-09-30). A failure
@@ -77,6 +81,7 @@ def main():
     ap.add_argument("--kb-sync", action="store_true",
                     help="one-off: sweep KB framework pages into the registry (OFF since the KB flip)")
     ap.add_argument("--ensure-schema", action="store_true")
+    ap.add_argument("--relabel", nargs=2, metavar=("ISO3/HAZARD/OLD", "NEW"))
     ap.add_argument("--no-prune", action="store_true")
     a, _unknown = ap.parse_known_args()  # tolerate stray job parameters
 
@@ -90,6 +95,8 @@ def main():
         run("scripts/sync_kb.py", "--i-know-the-kb-is-not-a-source", KB_DIR=str(kb))
     if a.ensure_schema:
         run("scripts/ensure_schema.py")
+    if a.relabel:
+        run("scripts/relabel_version.py", *a.relabel, "--write", "--by", "nightly --relabel")
     try:
         run("scripts/apply_entries.py")
     except subprocess.CalledProcessError as ex:  # never block the snapshot on an entry file
