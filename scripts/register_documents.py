@@ -380,7 +380,25 @@ def doc_row(d, by):
 def _py(v):
     """JSON-safe scalar: numpy -> python, pandas NA -> None."""
     v = _none(v)
+    if isinstance(v, dt.date):  # incl. datetime / pd.Timestamp
+        return v.isoformat()
     return v.item() if hasattr(v, "item") else v
+
+
+def pending_entries():
+    """Our entries files on the blob that the snapshot doesn't show as applied yet. The plan
+    is checked against the snapshot, which can't see what they will register — so a new
+    file must wait for the nightly job (and its snapshot) to take the previous one."""
+    applied = from_snapshot("applied_entries")
+    done = set() if applied is None else set(applied["name"])
+    names = stratus.list_container_blobs(
+        name_starts_with=f"{ENTRIES}/", stage="dev", container_name=CONTAINER
+    )
+    return [
+        n
+        for n in names
+        if n.endswith("-register-documents.json") and n.rsplit("/", 1)[-1] not in done
+    ]
 
 
 def write_entries(docs, links, by, changed_docs, changed_links, supersede, known):
@@ -548,6 +566,16 @@ def main():
         fv, vp = from_snapshot("framework_version"), from_snapshot("version_page")
         known_docs = from_snapshot("framework_document")
         known_links = from_snapshot("version_document")
+
+    pending = [] if args.write else pending_entries()
+    if pending:
+        msg = (
+            "entries file(s) not applied yet — the snapshot this plan is checked against "
+            "can't see them; wait for the nightly job:\n  " + "\n  ".join(pending)
+        )
+        if args.entries:
+            sys.exit(msg)
+        print(f"  ! {msg}")
 
     if args.register:
         docs, links = plan_register(args, fv)
