@@ -80,7 +80,7 @@ KB_LABEL = {"active": "Active", "updating": "Being updated", "development": "In 
 # drawn as a framework while the framework layer is on).
 LAYER_ORDER = ("framework", "retired", "adhoc", "tech")
 LAYER_COLOR = {"adhoc": "#74c476", "retired": "#9e9e9e", "tech": "#2a9d8f"}
-LAYER_LABEL = {"framework": "Current frameworks", "adhoc": "Ad hoc allocations", "retired": "Retired",
+LAYER_LABEL = {"framework": "Current frameworks", "adhoc": f"Ad hoc allocations {_dt.date.today().year}", "retired": "Retired",
                "tech": "Technical support"}
 DISP_LABEL = {**KB_LABEL, "retired": "Retired", "pipeline": "No framework version yet",
               "adhoc": "Ad hoc allocations only"}
@@ -805,9 +805,12 @@ def assemble(d, e):
 
     # ad hoc AA allocations sit on the (country, hazard) pair, not on a version
     adhoc = _try(f"SELECT country_iso3, hazard, count(*) AS n FROM aa.adhoc_activation "
-                 f"WHERE event_type NOT IN ({excl}) GROUP BY 1, 2",
+                 f"WHERE event_type NOT IN ({excl}) AND left(event_date, 4) = '{TODAY.year}' GROUP BY 1, 2",
                  ["country_iso3", "hazard", "n"])
-    adhoc_cerf = _adhoc_cerf(e, acts, actf, _try)
+    n_adhoc_all = acts[acts["event_type"] == "adhoc_aa"].groupby(["country_iso3", "hazard"]).size().to_dict()  # sidebar counts: every year
+    acts_now = acts[~((acts["event_type"] == "adhoc_aa")
+                      & (acts["event_date"].astype(str).str[:4] != str(TODAY.year)))]
+    adhoc_cerf = _adhoc_cerf(e, acts_now, actf, _try)   # this year's ad hoc allocations only
     n_adhoc = {(a.country_iso3, a.hazard): int(a.n) for a in adhoc.itertuples()}
     learn = _try(
         """SELECT id, title, url, publisher, year, doc_type, country_iso3, hazard, key_stat
@@ -1063,7 +1066,8 @@ def assemble(d, e):
         countries[c]["fws"].append({
             "hazard": h, "status": sheet_status, "kb": kb_fw,
             "disp": disp, "disp_label": DISP_LABEL.get(disp, disp), "ring": ring, "n_act": n_fw_act,
-            "n_act_all": len(activations), "n_adhoc": n_adhoc.get((c, h), 0),
+            "n_act_all": len(activations), "n_adhoc": int(n_adhoc_all.get((c, h), 0)),   # all years (sidebar)
+            "n_adhoc_now": n_adhoc.get((c, h), 0),                                       # this year (the layer)
             "adhoc_cerf": adhoc_cerf.get((c, h), []),
             "layers": layers, "layer": next(l for l in LAYER_ORDER if l in layers),
             "tech": tech,
@@ -1221,11 +1225,6 @@ def build_landing(page, d, e):
 
     body = f"""
 <div class='hero'>
- <p>Published triggers, windows, pre-arranged financing and activations across the AA
- portfolio — CERF, country-based and regional pooled funds. Pin colour = framework status, inferred from
- the most recent version; each red dot = one past activation; an amber ring = in its monitoring season this month. <b>Click a country or a pin</b>
- to zoom in and see the areas each framework covers; the <b>layer toggles</b> in the map legend
- choose what is drawn — the figures below follow them.</p>
  <div class='tiles gtiles' id='gtiles'>
   <div class='gcap' id='gcap'>Global portfolio — all layers currently shown on the map</div>
   <div class='tile' id='t-fw'><div class='v'>{t["n_fw"]}</div><div class='l'>frameworks on the map · {t["n_active"]} active · {t["n_upd"]} being updated · {t["n_dev"]} in development</div></div>
@@ -1247,6 +1246,11 @@ def build_landing(page, d, e):
   frameworks — status, funding, monitoring window, triggers, versions and activations.</div>
  </div>
 </div>
+<p class='maphelp'><b>Reading the map.</b> Published triggers, windows, pre-arranged financing and activations
+ across the AA portfolio — CERF, country-based and regional pooled funds. Pin colour = framework status,
+ inferred from the most recent version; each red dot = one past activation; an amber ring = in its monitoring
+ season this month. <b>Click a country or a pin</b> to zoom in and see the areas each framework covers; the
+ <b>layer toggles</b> in the map legend choose what is drawn, and the figures above follow them.</p>
 <details id='statushelp' class='statushelp'><summary>How statuses work — version lifecycle and the framework status inferred from it</summary>
  <div class='sh-grid'>
   <svg viewBox='0 0 780 362' class='sh-svg' role='img' aria-label='Status diagram'>
@@ -1262,7 +1266,7 @@ def build_landing(page, d, e):
    <line x1='450' y1='55' x2='498' y2='40' class='sh-arr'/><line x1='450' y1='65' x2='498' y2='80' class='sh-arr'/>
    <line x1='630' y1='45' x2='668' y2='56' class='sh-arr'/><line x1='630' y1='78' x2='668' y2='66' class='sh-arr'/>
    <text x='500' y='118' class='sh-note'>inferred, not stored: each window is marked triggered / not triggered; the version is</text>
-   <text x='500' y='132' class='sh-note'>fully triggered when every window fired (any window if all-in). Superseded = a newer</text>
+   <text x='500' y='132' class='sh-note'>fully triggered when every window activated (any window if all-in). Superseded = a newer</text>
    <text x='500' y='146' class='sh-note'>endorsed version exists. The next version starts in development.</text>
    <text x='10' y='176' class='sh-h'>FRAMEWORK status (inferred from the most recent version — aa.v_framework_lifecycle)</text>
    <g class='sh-box sh-on'><rect x='10' y='192' width='220' height='34' rx='8'/><text x='120' y='214'>Active</text></g>
@@ -1278,7 +1282,7 @@ def build_landing(page, d, e):
   </svg>
   <div class='sh-layers'>
    <b>Map layers.</b> <span class='dot' style='background:{KB_COLOR["active"]}'></span><b>Current frameworks</b> — every framework whose status is active, being updated or in development (the default view; the headline figures follow whatever is shown).
-   <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span><b>Ad hoc allocations</b> — countries and hazards that received ad hoc anticipatory-action money without a framework version (light green; a framework that also received ad hoc money stays drawn as a framework).
+   <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span><b>Ad hoc allocations</b> — countries and hazards that received ad hoc anticipatory-action money this calendar year without a framework version (earlier years will come with the year selector) (light green; a framework that also received ad hoc money stays drawn as a framework).
    <span class='dot' style='background:{LAYER_COLOR["retired"]}'></span><b>Retired</b> — frameworks flagged retired in the admin, drawn in grey so past coverage can be compared with today's.
    <span class='dot dot-hollow' style='border-color:{LAYER_COLOR["tech"]}'></span><b>Technical support</b> — countries where OCHA supported the framework technically without a funding commitment, whatever their status (including pipeline ones like Palau and Tonga), drawn as a hollow teal pin.
   </div>
@@ -1482,6 +1486,7 @@ table.bt .bt-c { text-align:center; } table.bt td.lbl { width:70px; }
 .layerctl input { margin:0; accent-color:#2171b5; }
 .layerctl .cnt { color:#64748b; }
 .maplegend .dot-hollow, .sh-layers .dot-hollow { background:#fff !important; border:2.5px solid #2a9d8f; box-sizing:border-box; }
+.maphelp { font-size:13px; color:#334155; line-height:1.55; margin:10px 2px 6px; max-width:980px; }
 .sh-layers { font-size:12px; color:#334155; line-height:1.6; margin:6px 0 4px; }
 .sh-layers .dot { display:inline-block; width:11px; height:11px; border-radius:50%; margin:0 4px 0 6px; vertical-align:-1px; }
 /* technical support: a hollow teal pin (the glyph takes the teal too) */
@@ -2149,7 +2154,7 @@ function sectorBlock(v){
 // the CERF allocations behind a pair's ad hoc AA allocations: amount, agencies, sectors, people
 function adhocBlock(f){
   const A = f.adhoc_cerf || [];
-  if(!A.length) return f.n_adhoc ? `<div class='muted small'>No CERF allocation found for these allocations in the CERF data.</div>` : '';
+  if(!A.length) return f.n_adhoc_now ? `<div class='muted small'>No CERF allocation found for this year's ad hoc allocations in the CERF data.</div>` : '';
   const CW = Math.max(280, Math.min(560, (side.clientWidth || 420) - 36));
   return `<h4>Ad hoc allocations (${A.length})</h4>` + A.map(a => `<div class='trig'>
       <div class='tn'><a href='${esc(a.url)}' target='_blank' rel='noopener'>CERF ${esc(a.code)} ↗</a> <span class='muted'>· ${esc(a.emergency||'')} · ${a.year}</span></div>

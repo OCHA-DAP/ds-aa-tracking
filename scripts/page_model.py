@@ -1,9 +1,9 @@
 """The Model page (pillar-model.html) — split out of dashboards.py on 2026-09-30
 so the page can be reworked on its own. Shared helpers still live in dashboards.
 
-What the page covers: the current (= latest recorded) version of every live framework
-(active, being updated, in development). Trigger windows come from the framework records
-(aa.version_page.triggers, one row per window of the framework's "Trigger windows" table),
+What the page covers: the current (= latest recorded) version of every current framework
+(active, being updated, in development); ad hoc allocations have no trigger and are left
+out. Trigger windows come from the framework records (aa.version_page.triggers, one row per window of the framework's "Trigger windows" table),
 enriched with the older backtest windows (aa.window / aa.v_window_performance) where one
 matches. Activations come from aa.window_activation + aa.window_status."""
 
@@ -186,7 +186,7 @@ def _window_state():
 
 
 def _frameworks(d):
-    """One row per live framework: current version + its framework record (frontmatter, triggers)."""
+    """One row per current framework: current version + its framework record (frontmatter, triggers)."""
     cur = d["current"]
     live = cur[cur["lifecycle"].isin(LIVE)].copy()
     live["version"] = live["latest_version"].astype(str)
@@ -223,7 +223,9 @@ def _life(lc):
     return f"<span class='lf lf-{lc}'>{LIFE_LABEL.get(lc, lc)}</span>"
 
 
-def build_model(page, d):
+def model_windows(d):
+    """The current frameworks and their trigger-window rows, with what each window watches,
+    its basis, lead time, return period and activations (also used by page_model_draft)."""
     fws = _frameworks(d)
     ws, wa = _window_state()
     if ws is None:   # fallback: status joined to aa.window rows, activations without version
@@ -315,7 +317,14 @@ def build_model(page, d):
                             bt=bt, state=state, activated=bool(ad)))
         if not trig:
             win.append(dict(f=f, window=None))
+    return {"fws": fws, "win": win, "ws": ws, "wa": wa, "unmatched": unmatched,
+            "loose_acts": loose_acts, "cat_fw": cat_fw, "cat_win": cat_win}
 
+
+def build_model(page, d):
+    m = model_windows(d)
+    fws, win, ws, wa = m["fws"], m["win"], m["ws"], m["wa"]
+    unmatched, loose_acts, cat_fw, cat_win = m["unmatched"], m["loose_acts"], m["cat_fw"], m["cat_win"]
     wrows = [x for x in win if x["window"] is not None]
     no_trig = [f for f in fws if not f["trig"]]
     n_life = {lc: sum(f["lifecycle"] == lc for f in fws) for lc in LIVE}
@@ -356,6 +365,16 @@ def build_model(page, d):
     cat_order += [c for c in (UNCLASSIFIED, NO_TRIGGER) if c in cat_fw]
     hz = [h for h in ["drought", "flood", "storm", "cholera", "other"] if any(haz(f["hazard"]) == h for f in fws)]
     bases = ["forecast", "observational", "mixed", "not recorded"]
+    n_wb = {}
+    for x in wrows:
+        k = (haz(x["f"]["hazard"]), x["basis"])
+        n_wb[k] = n_wb.get(k, 0) + 1
+    w_bases = [b for b in bases if any(k[1] == b for k in n_wb)]
+    n_wmix = sum(n for (_, b), n in n_wb.items() if b == "mixed")
+    n_fwb = {b: sum(f["basis"] == b for f in fws) for b in bases}
+    mix_note = (f" Mixed = a single window that combines forecast and observed data "
+                f"({n_wmix} window{'s' if n_wmix != 1 else ''})."
+                if n_wmix else "")
     structs = ["single window", "staged: readiness → action",
                "several, not staged", "not recorded"]
     structs = [s for s in structs if any(f["structure"] == s for f in fws)]
@@ -368,9 +387,10 @@ def build_model(page, d):
         lambda t: "framework triggers" if t == "framework_aa" else "ad hoc allocations")
     data = {
         "cat": by_life(cat_order, lambda f, k: k in f["cats"]),
-        "basis": {"labels": hz, "sets": [{"label": b, "data": [sum(1 for f in fws if haz(f["hazard"]) == h
-                                                                   and f["basis"] == b) for h in hz]}
-                                         for b in bases]},
+        # trigger WINDOWS of the current versions (the windows table's rows), not frameworks:
+        # most frameworks mix forecast and observational windows, which a framework count hides
+        "basis": {"labels": hz, "sets": [{"label": b, "data": [n_wb.get((h, b), 0) for h in hz]}
+                                         for b in w_bases]},
         "struct": by_life(structs, lambda f, k: f["structure"] == k),
         "geo": by_life(geos, lambda f, k: f["geo"] == k),
         "rec": by_life(records, lambda f, k: f["record"] == k),
@@ -519,14 +539,14 @@ p.note2 {{ font-size:12px; color:#555; margin:6px 0; }}
 ul.lead {{ margin:0; padding-left:16px; }} ul.lead li {{ font-size:12.5px; margin:4px 0; }}
 </style>
 <div class='tiles'>
- <div class='tile'><div class='v'>{len(fws)}</div><div class='l'>live frameworks · {n_life['active']} active · {n_life['updating']} being updated · {n_life['development']} in development</div></div>
+ <div class='tile'><div class='v'>{len(fws)}</div><div class='l'>current frameworks · {n_life['active']} active · {n_life['updating']} being updated · {n_life['development']} in development</div></div>
  <div class='tile'><div class='v'>{len(fws) - len(no_trig)}</div><div class='l'>with their trigger windows recorded (current version)</div></div>
  <div class='tile'><div class='v'>{len(wrows)}</div><div class='l'>trigger windows on the current versions</div></div>
- <div class='tile'><div class='v'>{n_act}</div><div class='l'>live frameworks activated at least once</div></div>
+ <div class='tile'><div class='v'>{n_act}</div><div class='l'>current frameworks activated at least once (any version)</div></div>
 </div>
-<h2>What the triggers measure</h2>
+<h2>What do the triggers watch?</h2>
 <div class='grid'>
- <div class='panel'><h3>Live frameworks by the variable their triggers measure</h3><canvas id='m1' height='300'></canvas>
+ <div class='panel'><h3>Current frameworks, by what their triggers watch</h3><canvas id='m1' height='300'></canvas>
    <div class='note'>A framework counts once under every variable its triggers use (a cyclone framework
    with a wind window and a rainfall window counts under both), so the bars add up to more than {len(fws)}.</div></div>
  <div class='panel'><h3>Which frameworks, and how many windows</h3>
@@ -540,50 +560,55 @@ ul.lead {{ margin:0; padding-left:16px; }} ul.lead li {{ font-size:12.5px; margi
    <table class='data'><thead><tr><th>variable</th><th>keywords</th></tr></thead><tbody>{map_rows}</tbody></table>
    {uncl_html}</details></div>
 </div>
-<h2>How the triggers are built</h2>
+<h2>How are the triggers built?</h2>
 <div class='grid'>
- <div class='panel'><h3>Live frameworks by hazard × trigger basis</h3><canvas id='m2' height='260'></canvas>
-   <div class='note'>Basis of the framework as a whole, from its framework record: forecast, observational,
-   or mixed (forecast and observational windows).</div></div>
- <div class='panel'><h3>Single window or several</h3><canvas id='m3' height='260'></canvas>
+ <div class='panel'><h3>Forecast or observed data? Trigger windows by hazard</h3><canvas id='m2' height='260'></canvas>
+   <div class='note'>Counts the {len(wrows)} trigger windows of the current versions (the rows of the windows
+   table below), by the basis each window records.{mix_note}
+   Counted by framework instead, from each framework record's overall basis: {n_fwb['forecast']} forecast,
+   {n_fwb['observational']} observational, {n_fwb['mixed']} mixed (forecast and observational windows),
+   {n_fwb['not recorded']} not recorded. A framework count hides the observational windows inside the
+   mixed frameworks, so the chart counts windows.</div></div>
+ <div class='panel'><h3>One window or several?</h3><canvas id='m3' height='260'></canvas>
    <div class='note'>Staged = a readiness window followed by an action window on the same event.
    Several, not staged = windows split by season, lead time, area or data source.</div></div>
- <div class='panel'><h3>Geographic level monitored</h3><canvas id='m4' height='260'></canvas>
+ <div class='panel'><h3>At what geographic level?</h3><canvas id='m4' height='260'></canvas>
    <div class='note'>Administrative level at which the trigger is evaluated, from the framework record
    (admin 4 = union level in Bangladesh).</div></div>
- <div class='panel'><h3>Designed return period of the windows</h3><canvas id='m5' height='260'></canvas>
-   <div class='note'>1-in-N years. From the backtest where one is recorded ({n_bt} windows), otherwise the
+ <div class='panel'><h3>How often would each trigger activate?</h3><canvas id='m5' height='260'></canvas>
+   <div class='note'>Designed return period of each window, 1-in-N years. From the backtest where one is recorded ({n_bt} windows), otherwise the
    return period the framework states ({n_st} windows); ranges and qualitative statements are left out.</div></div>
- <div class='panel span2'><h3>Data and model providers across the portfolio</h3><canvas id='m6' height='320'></canvas>
-   <div class='note'>Number of live frameworks listing each source ({n_with_src} of {len(fws)} list their
+ <div class='panel span2'><h3>Which data and models do they use?</h3><canvas id='m6' height='320'></canvas>
+   <div class='note'>Number of current frameworks listing each source ({n_with_src} of {len(fws)} list their
    sources). The three Dry Corridor countries share one framework record, so its sources count three times.
    Used by one framework only: {_esc(', '.join(prov_single))}.</div>
    <details class='map'><summary>Name variants folded together</summary>
    <table class='data'><thead><tr><th>source name matches</th><th>counted as</th></tr></thead><tbody>{alias_rows}</tbody></table></details></div>
 </div>
-<h2>Activations</h2>
+<h2>Have the triggers activated?</h2>
 <div class='grid'>
- <div class='panel'><h3>Activation record of the live frameworks</h3><canvas id='m7' height='260'></canvas>
+ <div class='panel'><h3>Current frameworks, by activation record</h3><canvas id='m7' height='260'></canvas>
    <div class='note'>Any version of the framework. Partially = only part of the allocation or only the
    readiness window was released.</div></div>
  <div class='panel'><h3>Activations per year — framework triggers vs ad hoc allocations</h3><canvas id='m8' height='260'></canvas></div>
 </div>
 <section><div class='scroll' style='max-height:420px'><table class='data'><thead><tr><th>framework</th><th>status</th><th>record</th><th>activations (month · window · version)</th></tr></thead><tbody>{rec_rows}</tbody></table></div>
 <p class='note2'><i>{NOT_RECORDED}</i> = the activation is on record but which window activated is not — a curation item.</p></section>
-<h2>Trigger windows — current version of every live framework</h2>
-<p class='meta'>One row per window of the latest version of each live framework, from its framework
+<h2>Every trigger window, framework by framework</h2>
+<p class='meta'>One row per window of the latest version of each current framework, from its framework
 record. No structured trigger recorded yet for {len(no_trig)}: {no_trig_html}.</p>
 <section><div class='lfbar'><input class='filter' id='wq' placeholder='filter windows…' oninput='mfilt()'>{life_boxes}</div>
 <div class='scroll'><table class='data' id='wtab'><thead><tr><th>framework</th><th>status</th><th>version</th><th>window</th><th>basis</th><th>measures</th><th>indicator</th><th>lead time</th><th>return period</th><th>backtest</th><th>activated on this version</th></tr></thead><tbody>{''.join(tr)}</tbody></table></div>
 {loose_html}{unm_html}</section>
-<h2>Lead time, as the frameworks state it</h2>
+<h2>How much warning do the triggers give?</h2>
 <p class='meta'>Lead times are written in hours, days, months or relative to landfall, so they are listed
 as stated rather than averaged.</p>
 <div class='grid'>{''.join(lead_panels)}</div>
-<h2>Monitoring calendar</h2>
-<p class='meta'>Green cells = months the framework is monitored (trigger-window months).</p>
-<section><div class='scroll'><table class='data'><thead><tr><th>framework</th><th>status</th><th>monitoring window</th></tr></thead><tbody>{cal_rows}</tbody></table></div></section>
-<h2>Model documentation</h2>
+<h2>When are the triggers monitored?</h2>
+<p class='meta'>Green cells = the months each framework is monitored in a typical year, from its current
+version's record (the planning sheet where the record lists none). Not this year's schedule.</p>
+<section><div class='scroll'><table class='data'><thead><tr><th>framework</th><th>status</th><th>months monitored (typical year)</th></tr></thead><tbody>{cal_rows}</tbody></table></div></section>
+<h2>Where are the models documented?</h2>
 <p class='meta'>Framework document, model report and published analyses, and the analysis code
 (an analysis reference from an earlier version is marked with that version).</p>
 <section><div class='scroll'><table class='data'><thead><tr><th>framework</th><th>status</th><th>version</th><th>documents &amp; analyses</th><th>analysis code</th></tr></thead><tbody>{doc_rows}</tbody></table></div></section>"""
@@ -609,8 +634,10 @@ function mfilt(){
     _dash_page(page, "pillar-model.html", "Model",
                "<b>The model block of anticipatory action</b> — the triggers: what they measure, "
                "where and when they are monitored, on what basis, how often they are designed to "
-               "activate, and what has activated. Covers the current version of every live framework "
-               "(active, being updated, in development).",
+               "activate, and what has activated. Covers every current framework (active, being "
+               "updated or in development), as set out in its latest version. <b>Ad hoc allocations "
+               "are not included</b>: they have no trigger (they appear only as a comparison in the "
+               "activations-per-year chart).",
                panels, json.dumps(data, default=str), js)
 
 

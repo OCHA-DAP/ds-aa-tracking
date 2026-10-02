@@ -104,7 +104,7 @@ NAV = """
   <span class="t"><a href="index.html" style="color:#fff;text-decoration:none">Anticipatory action</a></span>
   <nav class="pub">
    <a href="index.html">Map</a>
-   <a href="pillar-model.html">Model</a>
+   <a href="pillar-model.html">Model</a><a class="sub" href="pillar-history.html" title="simulated and real activations of the current triggers">historical activations</a>
    <a href="pillar-plan.html">Plan</a>
    <a href="dash-funding.html">Financing</a><a class="sub" href="dash-donors.html" title="each donor's share of the AA money">donor shares</a>
    <a href="pillar-learning.html">Learning</a>
@@ -112,6 +112,7 @@ NAV = """
   </nav>
   <details class="intnav"><summary>Internal ▾</summary><div>
    <a href="overview.html">Overview</a>
+   <a href="pillar-model-draft.html">Model visuals (mock-ups)</a>
    <a href="dashboards.html">Dashboards</a>
    <a href="hierarchy.html">Explorer</a>
    <a href="entry.html">Data entry</a>

@@ -26,6 +26,13 @@ POLICY = {
         "can afford to meet (its return period), gives enough lead time for the planned "
         "activities, and has been <b>tested against history</b>: would it have activated for "
         "the past shocks it should catch, and stayed quiet in the years it should not?"),
+    "pillar-history.html": (
+        "Would the triggers have activated in the past?",
+        "Each framework's current triggers are tested against decades of historical data: for "
+        "every past year (or storm), would they have activated? These <b>simulated activations</b> "
+        "show how often a trigger is expected to release money and whether it would have caught "
+        "the shocks that mattered. <b>Real activations</b> (when money actually went out) are "
+        "marked alongside, so the design can be compared with what happened."),
     "pillar-plan.html": (
         "What makes good anticipatory activities?",
         "Good activities are the ones that can be delivered within the lead time the trigger "
