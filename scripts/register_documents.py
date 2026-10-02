@@ -24,10 +24,14 @@ Two modes:
       --supersedes SHA marks the file this one replaces (same keys) as superseded;
       --update corrects an already-registered file or link instead of refusing.
 
-Dry run by default, reading aa.framework_version from the nightly blob snapshot (no DB
-route needed). --write reads and writes the live dev DB — from a laptop that is the SSH
-tunnel (`~/bin/db-tunnel up` + the DSCI_AZ_DB_DEV_HOST override) — creates the two tables
-if missing, uploads to blob, then writes in one transaction.
+Dry run by default, reading aa.framework_version and the registry from the nightly blob
+snapshot (no DB route needed). Two ways to write:
+  --entries — the laptop path (laptops have no DB route since 2026-09-30): uploads the files
+      to blob, then an entries file to projects/ds-aa-tracking/entries/ that the nightly
+      Databricks job applies once, in order, in one transaction (scripts/apply_entries.py).
+      The tables must exist: ship them with a one-off job run with --ensure-schema.
+  --write — straight to the dev DB, for anything that has a route to it: creates the two
+      tables if missing, uploads to blob, then writes in one transaction.
 
 Usage:
   uv run python scripts/register_documents.py                       # dry run, backfill
@@ -39,6 +43,7 @@ Usage:
 """
 
 import argparse
+import datetime as dt
 import getpass
 import hashlib
 import io
@@ -65,6 +70,7 @@ from ds_aa_tracking.versions import KB_DIR  # noqa: E402
 
 CONTAINER = "projects"
 PREFIX = "ds-aa-tracking/raw/framework_documents"
+ENTRIES = "ds-aa-tracking/entries"  # applied by the nightly job (scripts/apply_entries.py)
 PDF_CACHE = KB_DIR / "raw" / ".pdf-cache"
 PUBLISHERS = ("reliefweb.int", "unocha.org")
 ROLES = ("endorsed", "published", "translation", "annex")
@@ -351,11 +357,7 @@ def split_known(docs, links, known_docs, known_links):
     return new_docs, new_links, changed_docs, changed_links, diffs, taken
 
 
-def write(engine, docs, links, by, changed_docs=None, changed_links=(), supersede=None):
-    with engine.begin() as conn:
-        for t in ("framework_document", "version_document"):
-            conn.execute(sa.text(schema.DURABLE_TABLES[t]))
-        conn.execute(sa.text(CURRENT_IDX))
+def upload_files(docs):
     for d in docs.values():  # blob first: a DB row never points at a missing file
         stratus.upload_blob_data(
             d["data"],
@@ -364,15 +366,81 @@ def write(engine, docs, links, by, changed_docs=None, changed_links=(), supersed
             container_name=CONTAINER,
             content_type="application/pdf",
         )
-    rows = [
-        {
-            **{k: d.get(k) for k in DOC_COLS},
-            "blob_path": blob_path(d["sha256"]),
-            "bytes": len(d["data"]),
-            "registered_by": by,
-        }
-        for d in docs.values()
-    ]
+
+
+def doc_row(d, by):
+    return {
+        **{k: d.get(k) for k in DOC_COLS},
+        "blob_path": blob_path(d["sha256"]),
+        "bytes": len(d["data"]),
+        "registered_by": by,
+    }
+
+
+def _py(v):
+    """JSON-safe scalar: numpy -> python, pandas NA -> None."""
+    v = _none(v)
+    return v.item() if hasattr(v, "item") else v
+
+
+def write_entries(docs, links, by, changed_docs, changed_links, supersede, known):
+    """Upload the files, then ONE entries file the nightly job applies in order in one
+    transaction — documents, the links being superseded (before the new current link, for
+    the unique index), new links, corrections. apply_entries upserts whole rows, so a
+    correction is merged onto the stored row here, the same way write() updates it.
+    Returns (blob name, number of rows)."""
+    known_docs, known_links = known
+    upload_files(docs)
+    rows = [{"table": "framework_document", "row": doc_row(d, by)} for d in docs.values()]
+    for sha, d in (changed_docs or {}).items():
+        old = known_docs.set_index("sha256").loc[sha]
+        row = {c: _py(old[c]) for c in DOC_COLS if c != "sha256"} | {"sha256": sha}
+        row["is_public"] = d["is_public"]
+        row |= {c: d[c] for c in ("title", "language", "retrieved_from", "note") if d[c]}
+        rows.append({"table": "framework_document", "row": row})
+    if supersede:
+        old, new, keys, role = supersede
+        live = known_links[known_links.superseded_by.isna()]
+        for iso3, hazard, version in keys:
+            r = live[
+                (live.country_iso3 == iso3)
+                & (live.hazard == hazard)
+                & (live.version == version)
+                & (live.sha256 == old)
+                & (live.role == role)
+            ]
+            if len(r) != 1:  # an upsert would INSERT a phantom row: refuse instead
+                sys.exit(
+                    f"--supersedes: no current {role} {old[:12]} link on {iso3}/{hazard}/{version}"
+                )
+            row = {c: _py(r.iloc[0][c]) for c in LINK_COLS} | {"superseded_by": new}
+            rows.append({"table": "version_document", "row": row})
+    rows += [{"table": "version_document", "row": {c: x[c] for c in LINK_COLS}} for x in links]
+    kl = None if known_links is None else known_links.set_index(KEY)
+    for x in changed_links:
+        old = kl.loc[tuple(x[c] for c in KEY)]
+        row = {c: x[c] for c in LINK_COLS} | {"note": x["note"] or _py(old["note"])}
+        rows.append({"table": "version_document", "row": row})
+    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+    name = f"{ENTRIES}/{stamp}-register-documents.json"
+    payload = {"entered_by": f"{by} via scripts/register_documents.py", "rows": rows}
+    stratus.upload_blob_data(
+        json.dumps(payload, indent=1, default=_py).encode(),
+        name,
+        stage="dev",
+        container_name=CONTAINER,
+        content_type="application/json",
+    )
+    return name, len(rows)
+
+
+def write(engine, docs, links, by, changed_docs=None, changed_links=(), supersede=None):
+    with engine.begin() as conn:
+        for t in ("framework_document", "version_document"):
+            conn.execute(sa.text(schema.DURABLE_TABLES[t]))
+        conn.execute(sa.text(CURRENT_IDX))
+    upload_files(docs)
+    rows = [doc_row(d, by) for d in docs.values()]
     values = ", ".join(
         f"CAST(:{c} AS timestamptz)" if c == "retrieved_at" else f":{c}" for c in DOC_COLS
     )
@@ -433,7 +501,13 @@ def write(engine, docs, links, by, changed_docs=None, changed_links=(), supersed
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--write", action="store_true", help="upload + insert (default: dry run)")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--entries", action="store_true", help="upload + entries file for the nightly job"
+    )
+    mode.add_argument(
+        "--write", action="store_true", help="upload + insert into the dev DB directly"
+    )
     ap.add_argument("--register", metavar="FILE", help="register one file by hand")
     ap.add_argument("--key", action="append", default=[], help="ISO3/hazard/version (repeatable)")
     ap.add_argument("--role", choices=ROLES, default="published")
@@ -569,15 +643,26 @@ def main():
             if (r.country_iso3, r.hazard, r.version) not in covered:
                 print(f"  - no file for {r.country_iso3}/{r.hazard}/{r.version}: {r.doc_url}")
 
-    if args.write:
-        supersede = None
-        if args.supersedes:
-            keys = [tuple(k.split("/", 2)) for k in args.key]
-            supersede = (args.supersedes, reg_sha, keys, args.role)
+    supersede = None
+    if args.supersedes:
+        keys = [tuple(k.split("/", 2)) for k in args.key]
+        supersede = (args.supersedes, reg_sha, keys, args.role)
+    if not (docs or links or changed_docs or changed_links or supersede):
+        print("nothing to register")
+    elif args.write:
         write(engine, docs, links, args.by, changed_docs, changed_links, supersede)
         print("written")
+    elif args.entries:
+        known = (known_docs, known_links)
+        name, n = write_entries(
+            docs, links, args.by, changed_docs, changed_links, supersede, known
+        )
+        print(
+            f"uploaded {len(docs)} file(s) and {CONTAINER}/{name} ({n} rows) — applied by the "
+            "next nightly job; now: databricks bundle run aa_tracking_nightly -t prod -p DEFAULT"
+        )
     else:
-        print("dry run — nothing written (--write to upload and insert)")
+        print("dry run — nothing written (--entries or --write to register)")
 
 
 if __name__ == "__main__":
