@@ -473,7 +473,7 @@ def _fetch(e):
         """SELECT w.country_iso3, r.country_name, w.hazard, w.version, w.window_name,
                   w.basis, w.all_in, w.allocation_usd,
                   p.return_period, p.activation_prob, p.n_activations, p.analysis_years,
-                  s.triggered, s.triggered_on, l.lifecycle,
+                  p.analysis_start, p.analysis_end, s.triggered, s.triggered_on, l.lifecycle,
                   (l.latest_version = w.version) AS is_latest
            FROM aa.window w
            JOIN aa.country_hazard r ON r.country_iso3 = w.country_iso3 AND r.hazard = w.hazard
@@ -2276,6 +2276,31 @@ def sim_before_start(ss, valid_from):
     return ss[keep], int((~keep).sum()), vf_y
 
 
+def backtest_span(ss, wv, vf_y):
+    """(first, last, n or None) years a version's backtest analysed. The windows' analysis_start ..
+    analysis_end when recorded, the end capped at the year before the version took effect
+    (from then on only real activations count); else N analysed years (analysis_years)
+    ending at the later of the last simulated year and the year before the version took
+    effect; else the simulated years themselves. Always spans every simulated year kept.
+    `ss` is sim_before_start's output (has sim_year); `wv` the version's d["windows"] rows."""
+    def num(col):
+        return (pd.to_numeric(wv[col], errors="coerce").dropna()
+                if len(wv) and col in wv.columns else pd.Series(dtype=float))
+    a0, a1, ny = num("analysis_start"), num("analysis_end"), num("analysis_years")
+    smin = int(ss["sim_year"].min()) if len(ss) else None
+    smax = int(ss["sim_year"].max()) if len(ss) else None
+    if len(a1):
+        y1 = int(a1.max()) if not vf_y else min(int(a1.max()), vf_y - 1)
+    else:
+        y1 = int(max(smax or 0, (vf_y - 1) if vf_y else 0))
+    y0 = (int(a0.min()) if len(a0) else int(y1 - ny.max() + 1) if len(ny)
+          else smin if smin is not None else y1)
+    if smin is not None:
+        y0, y1 = min(y0, smin), max(y1, smax)
+    recorded = len(a0) or len(a1) or len(ny)   # n only when the analysis says how long it ran
+    return y0, y1, (y1 - y0 + 1) if recorded else None
+
+
 def sim_after_note(n, vf_y):
     """The small note under a backtest when rows dated after the version's start were left out."""
     return (f"{n} simulated row{'' if n == 1 else 's'} dated after the version's start ({vf_y} or later) "
@@ -2310,15 +2335,12 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
     wins = sorted(set(ss["window_name"].dropna()) | set(wv["window_name"].dropna()))
     # backtest range: N analysed years ending at the later of the last simulated year and
     # the year before the version took effect
-    n_years = pd.to_numeric(wv["analysis_years"], errors="coerce").max() if len(wv) else None
+    n_years = None
     rows = {}   # (year, label) -> {'cell': [...], window: [...]}
     sim_years = set()   # years the historical simulation covers; others are greyed out
     use_years = set()   # from the version's start year: real activations only
     if len(ss) or n_after:
-        y1 = int(max(ss["sim_year"].max() if len(ss) else 0, (vf_y - 1) if vf_y else 0))
-        y0 = (int(y1 - n_years + 1) if n_years and pd.notna(n_years)
-              else int(ss["sim_year"].min()) if len(ss) else y1)
-        y0 = min(y0, int(ss["sim_year"].min())) if len(ss) else y0
+        y0, y1, n_years = backtest_span(ss, wv, vf_y)
         labelled = ss[ss["event_label"].fillna("").astype(str) != ""]
         sim_years = set(range(y0, y1 + 1))
         if vf_y:

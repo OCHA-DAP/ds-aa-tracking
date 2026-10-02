@@ -10,8 +10,10 @@ File format:
     {"entered_by": "who / from what", "note": "...",
      "rows": [{"table": "window_funding", "row": {...column: value...}}, ...]}
 
-Each row is upserted on its table's primary key or first unique constraint (looked up in
-the catalog), and audited to aa.entry_audit with entered_by = the file name. A file is
+Each row is matched on its table's primary key or first unique constraint (looked up in
+the catalog, NULLs equal): an existing row is updated with just the fields given (plus
+updated_at), a new one inserted; every row is audited to aa.entry_audit with entered_by =
+the file name. A file is
 applied ONCE: aa.applied_entries records its name and content hash, so a later edit made
 in the admin page is never overwritten by a re-run. Changing a file's content makes it
 pending again (deliberately).
@@ -88,13 +90,24 @@ def apply_file(conn, name, payload, dry=False):
                 vals.append(f"CAST(:{c} AS {types[c]})")
             else:
                 vals.append(f":{c}")
-        upd = [c for c in cols if c not in keys]
-        sql = (f"INSERT INTO aa.{table} ({', '.join(cols)}) VALUES ({', '.join(vals)}) "
-               f"ON CONFLICT ({', '.join(keys)}) "
-               + (f"DO UPDATE SET {', '.join(f'{c} = EXCLUDED.{c}' for c in upd)}" if upd else "DO NOTHING"))
+        for k in keys:                     # a key column left out means NULL (as an insert would)
+            row.setdefault(k, None)
+        # an existing row is UPDATEd with just the fields given (an INSERT … ON CONFLICT would
+        # trip NOT NULL columns the entry leaves out, e.g. source, before seeing the conflict)
+        where = " AND ".join(f"{k} IS NOT DISTINCT FROM :{k}" for k in keys)
+        exists = conn.execute(sa.text(f"SELECT 1 FROM aa.{table} WHERE {where}"), row).first()
+        upd = [(c, v) for c, v in zip(cols, vals) if c not in keys]
+        if exists:
+            sets = [f"{c} = {v}" for c, v in upd]
+            if "updated_at" in types and "updated_at" not in row:
+                sets.append("updated_at = now()")
+            sql = f"UPDATE aa.{table} SET {', '.join(sets)} WHERE {where}" if upd else None
+        else:
+            sql = f"INSERT INTO aa.{table} ({', '.join(cols)}) VALUES ({', '.join(vals)})"
         row_key = "/".join(str(row.get(k)) for k in keys)
-        print(f"  {'(dry) ' if dry else ''}{table}: {row_key}")
-        if not dry:
+        print(f"  {'(dry) ' if dry else ''}{table}: {row_key}"
+              f"  [{'update' if exists else 'insert'}{'' if sql else ', unchanged'}]")
+        if not dry and sql:
             conn.execute(sa.text(sql), row)
             conn.execute(sa.text(
                 "INSERT INTO aa.entry_audit (entered_by, table_name, row_key, field, old_value, new_value) "

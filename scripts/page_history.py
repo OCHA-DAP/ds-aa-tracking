@@ -23,7 +23,7 @@ import re
 from datetime import date
 
 import pandas as pd
-from dashboards import (HAZARDS, LIFE_LABEL, PAL, _activation_blocks, _dash_page, _event_href,
+from dashboards import (HAZARDS, backtest_span, LIFE_LABEL, PAL, _activation_blocks, _dash_page, _event_href,
                         _event_links, _fmt_usd, _loose, haz, sim_before_start, sim_when)
 
 LIVE = ["active", "updating", "development"]
@@ -76,13 +76,9 @@ def _backtest(d, c, h, version):
     win = d["windows"]
     wv = win[(win["country_iso3"] == c) & (win["hazard"] == h)
              & (win["version"].astype(str) == str(shown))]
-    n_years = pd.to_numeric(wv["analysis_years"], errors="coerce").max() if len(wv) else None
-    y0 = y1 = None
+    y0 = y1 = n_years = None
     if len(ss) or n_after:
-        y1 = int(max(ss["sim_year"].max() if len(ss) else 0, (vf_y - 1) if vf_y else 0))
-        y0 = (int(y1 - n_years + 1) if n_years and pd.notna(n_years)
-              else int(ss["sim_year"].min()) if len(ss) else y1)
-        y0 = min(y0, int(ss["sim_year"].min())) if len(ss) else y0
+        y0, y1, n_years = backtest_span(ss, wv, vf_y)
     return shown, ss, y0, y1, n_years, vf_y, n_after
 
 
@@ -207,13 +203,9 @@ def _tl_detail(d, f):
         ss, n_after, vf_y = sim_before_start(sim[sim["version"] == sv], vf)
         wv = win[win["version"].astype(str) == sv]
         if not len(wv):
-            wv = win[[_vm(str(x), sv) for x in win["version"]]]
-        n_years = pd.to_numeric(wv["analysis_years"], errors="coerce").max() if len(wv) else None
+            wv = win[[_vm(str(x), sv) for x in win["version"]]] if len(win) else win
         if len(ss) or n_after:   # the analysed span, as _backtest
-            y1 = int(max(ss["sim_year"].max() if len(ss) else 0, (vf_y - 1) if vf_y else 0))
-            y0 = (int(y1 - n_years + 1) if n_years and pd.notna(n_years)
-                  else int(ss["sim_year"].min()) if len(ss) else y1)
-            y0 = min(y0, int(ss["sim_year"].min())) if len(ss) else y0
+            y0, y1, _ = backtest_span(ss, wv, vf_y)
             g["cover"] = [y0, y1]
         g.update(bt=True, n_after=g["n_after"] + n_after, vf_y=vf_y, sv=sv)
         for w in sorted({_str(x) for x in wv["window_name"]} - {""}):
