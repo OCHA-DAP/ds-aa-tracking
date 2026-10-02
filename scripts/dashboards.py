@@ -454,19 +454,28 @@ def _fetch(e):
     d["report"] = pd.read_sql(
         """SELECT country_iso3, hazard, report_year, channel, counted
            FROM aa.report_channel_inclusion WHERE counted""", e)
-    # AA-tagged CBPF / regional-fund allocations from the OneGMS mirror. The CBPF modality
-    # allocates up front: an AA-tagged allocation is PRE-ARRANGED money until an activation
-    # draws on it (= a row in activation_funding, entered by hand), then it is disbursed.
+    # AA-tagged CBPF / regional-fund allocations from the OneGMS mirror (tagged by a title
+    # keyword heuristic, not by hand). The CBPF modality allocates up front: an allocation
+    # behind a framework is PRE-ARRANGED money until an activation draws on it (= a row in
+    # activation_funding, entered by hand). Which activations use it (framework / ad hoc or
+    # early action) and what was approved decide whether it counts (funding_series).
     d["cbpf_aa"] = pd.read_sql(
         """SELECT v.allocation_code, v.fund_type, v.fund_name, v.year, v.amount_usd,
                   fu.country_iso3, fu.fund_code, (af.allocation_code IS NOT NULL) AS linked,
+                  coalesce(af.by_framework, false) AS by_framework,
+                  coalesce(af.by_other, false) AS by_other, ca.approved_budget,
                   left(v.title, 120) AS title
            FROM aa.v_allocation v
            LEFT JOIN aa.fund fu
              ON fu.pf_id = (CASE WHEN split_part(v.allocation_code, '-', 2) ~ '^[0-9]+$'
                             THEN split_part(v.allocation_code, '-', 2)::int END)
-           LEFT JOIN (SELECT DISTINCT allocation_code FROM aa.activation_funding) af
+           LEFT JOIN (SELECT allocation_code,
+                             bool_or(event_type = 'framework_aa') AS by_framework,
+                             bool_or(event_type <> 'framework_aa') AS by_other
+                      FROM aa.activation_funding GROUP BY 1) af
              ON af.allocation_code = v.allocation_code
+           LEFT JOIN aa.cbpf_allocation ca
+             ON 'cbpf-' || ca.pooled_fund_id || '-' || ca.allocation_type_id = v.allocation_code
            WHERE v.is_aa AND v.fund_type <> 'cerf'""", e)
     d["vfund"] = prearranged_now(e)
     d["windows"] = pd.read_sql(
@@ -666,8 +675,27 @@ def funding_series(d, released="framework"):
 
     # CBPF / regional-fund pre-arranged money comes from the OneGMS mirror (AA-tagged
     # allocations, allocated up front); sheet-era CBPF rows are kept only for country-years
-    # the mirror does not cover, so the same money is never counted twice
+    # the mirror does not cover, so the same money is never counted twice.
+    # 2026-10-02: only where a framework stood behind the allocation — one drawn by a
+    # framework activation, or one drawn by no activation, approved, in a country with a
+    # framework version in force that year. One drawn by an ad hoc or early-action
+    # allocation is released money (or none), never a stock; one with no framework behind
+    # it (Sudan's) is not pre-arranged; one never approved did not happen.
+    import datetime as _dt
     cb = d["cbpf_aa"].copy()
+    fvm = d["fv_meta"]
+    vf_y = pd.to_datetime(fvm["valid_from"].astype(str), errors="coerce").dt.year
+    vu_y = (pd.to_datetime(fvm["valid_until"].astype(str), errors="coerce").dt.year
+            if "valid_until" in fvm.columns else pd.Series(float("nan"), index=fvm.index))
+    in_force = {(c, int(y)) for c, a, b in zip(fvm["country_iso3"], vf_y, vu_y) if pd.notna(a)
+                for y in range(int(a), (int(b) if pd.notna(b) else _dt.date.today().year) + 1)}
+    by_fw = cb["by_framework"].fillna(False).astype(bool) if "by_framework" in cb else cb["linked"].astype(bool)
+    by_other = cb["by_other"].fillna(False).astype(bool) if "by_other" in cb else pd.Series(False, index=cb.index)
+    approved = (pd.to_numeric(cb["approved_budget"], errors="coerce").fillna(1) > 0
+                if "approved_budget" in cb else pd.Series(True, index=cb.index))
+    standing = pd.Series([(c, int(y)) in in_force for c, y in zip(cb["country_iso3"], cb["year"])],
+                         index=cb.index)
+    cb = cb[by_fw | (~by_other & approved & standing)]
     live = cur[cur["lifecycle"].isin(["active", "updating", "development"])]
     hz_by_c = live.groupby("country_iso3")["hazard"].agg(
         lambda x: x.iloc[0] if x.nunique() == 1 else "multi")
@@ -1119,8 +1147,8 @@ function mountFlow(cfg){
 def build_funding(page, d):
     """The Financing page (dash-funding.html: the file name predates the rename, links keep it).
     Every tile and chart follows the map's layer toggles (current frameworks, retired, ad hoc
-    allocations) and a fund switch; the defaults (current + retired, no ad hoc, both funds)
-    give the framework-only figures the page always showed."""
+    allocations) and a fund switch; the defaults show everything released (current + retired
+    + ad hoc, both funds; since 2026-10-02 — before, framework activations only)."""
     import html as _html
     pre, act = funding_series(d, released="all")   # ad hoc rows ride along, toggled client-side
     cur = d["current"]
@@ -1264,7 +1292,7 @@ def build_funding(page, d):
  <span style='display:inline-flex;gap:10px;align-items:center;padding-right:10px;border-right:1px solid #e0e0e0'>
   <label title='frameworks active, being updated or in development: their money in every year'><input type='checkbox' id='fCur' checked> Current frameworks</label>
   <label title='frameworks since retired: their money in the years they were live'><input type='checkbox' id='fRet' checked> Retired</label>
-  <label title='AA money allocated without a framework: released money only'><input type='checkbox' id='fAdh'> Ad hoc allocations</label></span>
+  <label title='AA money allocated without a framework: released money only'><input type='checkbox' id='fAdh' checked> Ad hoc allocations</label></span>
  {fund_sel}
  <label>Hazard <select id='fHaz'><option value=''>all</option></select></label>
  <label>Region <select id='fReg'><option value=''>all</option></select></label>

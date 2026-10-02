@@ -5,10 +5,10 @@ a donor's share of a pooled fund in a fiscal year = what they paid into it that 
 everything the fund received that year (aa.v_contribution, from the OneGMS mirrors).
 That share is applied to the AA the fund handled the same year, in two buckets:
 
-- released — allocations drawn by framework activations, from aa.activation_funding;
-  the same series the Financing page charts with its default layers
-- pre-arranged — framework envelopes per year + AA-tagged CBPF/RhPF allocations
-  (funding_series in dashboards.py; same numbers as the Financing page)
+- released — allocations drawn by framework activations and ad hoc AA allocations (not
+  early action), from aa.activation_funding; the Financing page's default layers
+- pre-arranged — framework envelopes per year + AA-tagged CBPF/RhPF allocations with a
+  framework behind them (funding_series in dashboards.py; same numbers as Financing)
 
 plus a third bucket that is not share-based: "build" money — donor earmarks to the
 OCHA AA project itself (aa.build_contribution, hand-entered).
@@ -32,7 +32,7 @@ from dashboards import FLOW_JS, _dash_page, _flow_panel, _money_flows, _records,
 
 
 def build_donors(page, d):
-    pre, act = funding_series(d)
+    pre, act = funding_series(d, released="all")   # released: framework + ad hoc, as Financing
     P = (pre[(pre["kind"] == "prearranged") & (pre["fund_code"] != "all")]
          .groupby(["fund_code", "year"], as_index=False)["amount_usd"].sum())
     A = (act.groupby(["fund_code", "year"], as_index=False)["amount_usd"].sum())
@@ -80,7 +80,7 @@ def build_donors(page, d):
 <div class='note' id='gbNote' style='display:none;margin:-6px 0 10px'>Donors report their AA funding annually under the <a href='https://interagencystandingcommittee.org/grand-bargain'>Grand Bargain</a>; these are the figures to use.</div>
 <div class='grid'>
  <div class='panel'><h3 id='c1t'>Donor shares of AA released</h3><canvas id='c1' height='420'></canvas>
-   <div class='note' id='c1n'>Each donor's share of the fund's income that year × the AA the fund released that year (framework activations). Stacked by fund type.</div></div>
+   <div class='note' id='c1n'>Each donor's share of the fund's income that year × the AA the fund released that year (framework activations and ad hoc allocations). Stacked by fund type.</div></div>
  <div class='panel'><h3 id='c2t'>Donor shares of AA pre-arranged</h3><canvas id='c2' height='420'></canvas>
    <div class='note' id='c2n'>Same shares × the pre-arranged envelopes / AA-tagged country and regional fund allocations of that year (the Financing page's annual series).</div></div>
  <div class='panel' style='grid-column:1/-1'><h3 id='c3t'>Attributed AA released by year</h3><canvas id='c3' height='260'></canvas>
@@ -210,7 +210,7 @@ function draw(){
   tR.textContent = money(sum(o=>o.relCerf+o.relCbpf+o.relReg)); tRl.textContent = 'AA released, attributed to donors';
   tP.textContent = money(sum(o=>o.preCerf+o.preCbpf+o.preReg)); tPl.textContent = y==='all' ? `AA pre-arranged, attributed to donors, as at ${PREY} (a stock: never summed across years)` : 'AA pre-arranged, attributed to donors';
   tB.textContent = money(sum(o=>o.build)); tBl.textContent = 'build earmarks (OCHA AA project)';
-  c1t.textContent = 'Donor shares of AA released'; c1n.textContent = "Each donor's share of the fund's income that year × the AA the fund released that year (framework activations). Stacked by fund type.";
+  c1t.textContent = 'Donor shares of AA released'; c1n.textContent = "Each donor's share of the fund's income that year × the AA the fund released that year (framework activations and ad hoc allocations). Stacked by fund type.";
   c2t.textContent = 'Donor shares of AA pre-arranged' + (y==='all' ? ` — as at ${PREY}` : ''); c2n.textContent = "Same shares × the pre-arranged envelopes / AA-tagged country and regional fund allocations of that year (the Financing page's annual series)." + (y==='all' ? ' Pre-arranged money is in place on a date, so it is shown for the latest year rather than added up over years.' : '');
   c3t.textContent = 'Attributed AA released by year'; c3n.textContent = 'All years; the largest donors over the period, everyone else as "other". Ignores the year filter.';
   // pre-arranged is a stock: under 'all years' the unattributable part is as at PREY, not summed
