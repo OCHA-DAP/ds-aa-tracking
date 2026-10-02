@@ -579,9 +579,9 @@ def _fetch(e):
     _opt("vpage", """SELECT kb_framework, version::text AS version, frontmatter, triggers
                      FROM aa.version_page""", ["kb_framework", "version", "frontmatter", "triggers"])
     _opt("fv_meta", """SELECT country_iso3, hazard, version::text AS version, kb_framework,
-                              valid_from, note, analysis_ref, doc_url, doc_title
+                              valid_from, valid_until, note, analysis_ref, doc_url, doc_title
                        FROM aa.framework_version ORDER BY country_iso3, hazard, valid_from""",
-         ["country_iso3", "hazard", "version", "kb_framework", "valid_from", "note",
+         ["country_iso3", "hazard", "version", "kb_framework", "valid_from", "valid_until", "note",
           "analysis_ref", "doc_url", "doc_title"])
     try:   # with the dated columns when the DB has them (event_date, event_time, …)
         d["sim"] = read_simulated(e)
