@@ -1,7 +1,7 @@
 /* Minimal dependency-free Sankey + horizontal-bar renderer (inline SVG strings).
    Shared by the landing map sidebar and the dashboard pages; no CDN, no build step.
 
-   sankeySVG({columns, links, width, height, fmt, color, nodePad, labelW})
+   sankeySVG({columns, links, width, height, fmt, color, nodePad, labelW, labelMax, nodeColor})
      columns: [[{id, label}], ...]  left -> right; a node's value is max(inflow, outflow)
      links:   [{s, t, v}]           s/t are node ids in adjacent (or later) columns
      fmt(v)   value formatter for tooltips; color(node, colIndex) -> fill
@@ -74,7 +74,7 @@
       out += `<rect class='sk-n' data-id='${esc(n.id)}' data-tip='${esc(tip)}' x='${n.x - 2}' y='${n.y}' width='${nodeW + 4}' height='${n.h}' rx='2' fill='${fill}' stroke='#fff' stroke-width='2'></rect>`;
       const lx = i === nc - 1 ? n.x + nodeW + 4 : (i === 0 ? n.x - 4 : n.x + nodeW + 4);
       const anchor = i === 0 ? 'end' : 'start';
-      if (n.h >= 7 || c.length <= 8) out += `<text class='sk-t' data-id='${esc(n.id)}' x='${lx}' y='${n.y + n.h / 2 + 3.5}' text-anchor='${anchor}' fill='#334155' stroke='#fff' stroke-width='3' stroke-linejoin='round' paint-order='stroke'>${esc(String(n.label).length > 22 ? String(n.label).slice(0, 21) + '…' : String(n.label))}</text>`;
+      if (n.h >= 7 || c.length <= 8) out += `<text class='sk-t' data-id='${esc(n.id)}' x='${lx}' y='${n.y + n.h / 2 + 3.5}' text-anchor='${anchor}' fill='#334155' stroke='#fff' stroke-width='3' stroke-linejoin='round' paint-order='stroke'>${esc(String(n.label).length > (o.labelMax || 22) ? String(n.label).slice(0, (o.labelMax || 22) - 1) + '…' : String(n.label))}</text>`;
     }));
     return out + `</svg>`;
   }
