@@ -187,7 +187,7 @@ NOTES = {
     "window_activation": "A framework activation is a WINDOW firing: keyed (country, hazard, version, window, date). <code>window_name</code> should be one of the version's windows — sheet-era rows carry the KB's free-text window until curated (<code>v_trk_activation_window_check</code> lists the ones not in the window registry). <code>event_date</code> is partial ISO at the source's precision.",
     "adhoc_activation": "Ad hoc AA and early-action allocations, off the (country, hazard) pair — no version, no window.",
     "window_status": "Curated trigger state per window: <code>triggered</code> yes/no (+ date, note). The KB loader truncates <code>window</code>, so the flag lives here. A version is <i>fully triggered</i> when any window fired (all-in / exclusive rollup) or every window fired (independent windows); that, with validity, drives the framework status on the map. Seeded once from <code>window_activation</code> — a window is flagged when an activation names it, the version has a single window, or an activation is marked full.",
-    "activation_funding": "One row per activation × fund allocation — the multi-fund reality (e.g. Nigeria floods Sep 2025 = CERF $5.0M + NHF $2.0M under one activation). <code>allocation_code</code> resolves through <code>aa.v_allocation</code> (CERF application codes and CBPF codes alike).",
+    "activation_funding": "One row per activation × fund allocation — the multi-fund reality (e.g. Nigeria floods Sep 2025 = CERF $5.0M + NHF $2.0M under one activation). <code>allocation_code</code> resolves through <code>aa.v_allocation</code> (CERF application codes and country and regional fund codes alike).",
     "report_channel_inclusion": "Which frameworks/countries count toward which external reports per year (A-Hub, UK BCs, SG, CERF/OCHA annual reports, SF KPI, CPC), attributed to the version in force during the report year.",
     "plan_inclusion": "GHO/HNRP plan inclusion + AA feasibility flags per country-year, per source.",
     "start_network": "Start Fund anticipation alerts + Start READY membership per country (from the planning sheet).",
@@ -324,12 +324,12 @@ def main():
         "<code>aa.cerf_project_sector</code>, <code>aa.cerf_project_country</code> — "
         "which the KB only partially documents (the ERD shows ~7 of 48 project columns; "
         "sector taxonomy columns and lifecycle dates are undocumented). NEW (Aug 2026): "
-        "the <b>CBPF/regional-fund mirror</b> — <code>aa.cbpf_allocation</code> (one row "
+        "the <b>country and regional fund mirror</b> — <code>aa.cbpf_allocation</code> (one row "
         "per Standard/Reserve allocation envelope; a set of approved projects), "
         "<code>aa.cbpf_fund</code>, the fund-agnostic union view "
         "<code>aa.v_allocation</code>, and project-level tables: "
         "<code>aa.cbpf_project</code> (one row per project = a grant to ONE "
-        "implementing partner — unlike CERF, NGOs incl. NNGOs receive CBPF projects "
+        "implementing partner — unlike CERF, NGOs incl. NNGOs receive country and regional fund projects "
         "directly), <code>aa.cbpf_project_cluster</code> (sector splits) and "
         "<code>aa.cbpf_project_subip</code> (sub-implementing partners) — all "
         "refreshed daily by the same workflow. Summary below; "

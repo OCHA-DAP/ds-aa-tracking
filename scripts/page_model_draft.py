@@ -10,7 +10,7 @@ import math
 import re
 
 import pandas as pd
-from dashboards import LIFE_LABEL, PAL, _dash_page, haz
+from dashboards import LIFE_LABEL, PAL, _dash_page, haz, sim_at, sim_before_start
 from page_model import MEASURE, NO_TRIGGER, UNCLASSIFIED, _esc, _lead, model_windows
 
 # the map's status colours (landing.KB_COLOR): 'being updated' = half active, half development
@@ -245,8 +245,10 @@ def _rp_strip(fws, wrows):
 
 # ------------------------------------------------ 5. activations: preview of the history grid
 def _hist_rows(d, fws):
-    """(framework, simulated rows, first, last simulated year, real framework activations) per
-    framework — page_history's selection when it imports, else a plain fallback."""
+    """(framework, simulated rows, first, last simulated year, real framework activations,
+    year the version took effect) per framework — page_history's selection when it imports,
+    else a plain fallback. Either way only simulated rows dated before the version's start
+    year count (dashboards.sim_before_start)."""
     cur = d["current"].set_index(["country_iso3", "hazard"])["latest_version"]
     try:
         import page_history as ph
@@ -261,9 +263,9 @@ def _hist_rows(d, fws):
         v = None if v is None or (not isinstance(v, str) and pd.isna(v)) else str(v)
         if ph is not None:
             try:
-                shown, ss, y0, y1, _ = ph._backtest(d, c, h, v)
+                shown, ss, y0, y1, _, vf_y, _ = ph._backtest(d, c, h, v)
                 evs = [(e["year"], e["same"], e["date"], e["win"]) for e in ph._events(d, c, h, shown or v)]
-                out.append((f, ss, y0, y1, evs))
+                out.append((f, ss, y0, y1, evs, vf_y))
                 continue
             except Exception:   # noqa: BLE001
                 how = "fallback"
@@ -271,12 +273,16 @@ def _hist_rows(d, fws):
         vs = sorted(sim["version"].astype(str).unique())
         shown = v if v in vs else (vs[-1] if vs else None)
         ss = sim[sim["version"].astype(str) == shown] if shown else sim.iloc[0:0]
-        y0 = int(ss["event_year"].min()) if len(ss) else None
-        y1 = int(ss["event_year"].max()) if len(ss) else None
+        fvm = d["fv_meta"]
+        vf = fvm.loc[(fvm["country_iso3"] == c) & (fvm["hazard"] == h)
+                     & (fvm["version"].astype(str) == str(shown)), "valid_from"]
+        ss, _, vf_y = sim_before_start(ss, vf)
+        y0 = int(ss["sim_year"].min()) if len(ss) else None
+        y1 = int(ss["sim_year"].max()) if len(ss) else None
         a = act[(act["country_iso3"] == c) & (act["hazard"] == h)]
         evs = [(int(str(r.event_date)[:4]), True, str(r.event_date), str(r.window_name or ""))
                for r in a.itertuples() if str(r.event_date)[:4].isdigit()]
-        out.append((f, ss, y0, y1, evs))
+        out.append((f, ss, y0, y1, evs, vf_y if shown else None))
     return out, how
 
 
@@ -290,19 +296,24 @@ def _hist_preview(d, fws):
         if y % 5 == 0:
             out.append(f"<text x='{LW + i * CW + CW / 2}' y='{TOP - 8}' text-anchor='middle' fill='#52514e'>{y}</text>")
     n_sim = n_real = 0
-    for j, (f, ss, y0, y1, evs) in enumerate(rows):
+    for j, (f, ss, y0, y1, evs, vf_y) in enumerate(rows):
         yy = TOP + j * RH
         name = f"{f['country_name']} — {f['hazard']}"
         out.append(f"<text x='{LW - 8}' y='{yy + 11}' text-anchor='end' fill='#334155'>{_esc(name)}</text>")
         hit = {}
         for r in ss.itertuples():
-            hit.setdefault(int(r.event_year), []).append(str(r.window_name))
+            w = sim_at(r)
+            hit.setdefault(int(r.sim_year), []).append(
+                str(r.window_name) + ("" if w == f"in {r.sim_year}" else f" {w}"))
         for i, y in enumerate(years):
             x = LW + i * CW
-            cov = y0 is not None and y0 <= y <= y1
+            use = vf_y is not None and y >= vf_y          # the version in use: real only
+            cov = not use and y0 is not None and y0 <= y <= y1
             ev = [e for e in evs if e[0] == y]
             tip = [f"{name} · {y}"]
-            if y in hit:
+            if use:
+                tip.append(f"version in use (took effect {vf_y}): real activations only")
+            elif y in hit:
                 tip.append("simulation: would have activated (" + ", ".join(sorted(set(hit[y]))) + ")")
             elif cov:
                 tip.append("simulation: would not have activated")
@@ -310,9 +321,10 @@ def _hist_preview(d, fws):
                 tip.append("not covered by the simulation")
             tip += [f"activated for real {e[2]}" + (f" · {e[3]}" if e[3] else "") for e in ev]
             out.append(f"<rect x='{x + 1}' y='{yy + 1}' width='{CW - 2}' height='{RH - 2}' rx='2' "
-                       f"fill='{'#ffffff' if cov else '#eef1f5'}' stroke='#eceef2' data-tip='{_a(' · '.join(tip))}'/>")
+                       f"fill='{'#fbf6ee' if use else '#ffffff' if cov else '#eef1f5'}' stroke='#eceef2' "
+                       f"data-tip='{_a(' · '.join(tip))}'/>")
             cx, cy = x + CW / 2, yy + RH / 2
-            if y in hit:
+            if y in hit and not use:
                 n_sim += 1
                 out.append(f"<circle cx='{cx - (3 if ev else 0)}' cy='{cy}' r='3.6' fill='{SIM_COL}' "
                            f"pointer-events='none'/>")
@@ -327,10 +339,12 @@ def _hist_preview(d, fws):
               f"have activated (simulation)</span><span><span class='sw' style='background:{ACT_RED};"
               f"border-radius:50%'></span>activated for real</span><span><span class='sw' style='border:1.6px "
               f"solid {ACT_RED};border-radius:50%'></span>for real, under another version</span>"
+              f"<span><span class='sw' style='background:#fbf6ee'></span>version in use: real only</span>"
               f"<span><span class='sw' style='background:#eef1f5'></span>year not simulated</span>")
     return (f"<p class='how'>One row per current framework, one column per year since {FIRST_YEAR}. A blue dot: "
             f"today's trigger, run on past data, would have activated that year. A red dot: it activated for "
-            f"real. Grey: the simulation does not cover that year.</p><div class='lg'>{legend}</div>"
+            f"real. Cream: the version in use since it took effect — real activations only, as its backtest "
+            f"was fixed before. Grey: the simulation does not cover that year.</p><div class='lg'>{legend}</div>"
             f"<div class='hscroll'>{svg}</div>"
             f"<p class='how'><a href='pillar-history.html'><b>Historical activations →</b></a> the full grid, "
             f"with the years before {FIRST_YEAR}, the windows and the money released.</p>"), how, n_sim, n_real

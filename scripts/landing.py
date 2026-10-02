@@ -80,7 +80,7 @@ KB_LABEL = {"active": "Active", "updating": "Being updated", "development": "In 
 # drawn as a framework while the framework layer is on).
 LAYER_ORDER = ("framework", "retired", "adhoc", "tech")
 LAYER_COLOR = {"adhoc": "#74c476", "retired": "#9e9e9e", "tech": "#2a9d8f"}
-LAYER_LABEL = {"framework": "Current frameworks", "adhoc": f"Ad hoc allocations {_dt.date.today().year}", "retired": "Retired",
+LAYER_LABEL = {"framework": "Current frameworks", "adhoc": "Ad hoc allocations", "retired": "Retired",
                "tech": "Technical support"}
 DISP_LABEL = {**KB_LABEL, "retired": "Retired", "pipeline": "No framework version yet",
               "adhoc": "Ad hoc allocations only"}
@@ -770,11 +770,10 @@ def assemble(d, e):
                   agency, sector, amount_usd, provenance
            FROM aa.v_window_funding_split
            WHERE amount_usd IS NOT NULL AND (agency IS NOT NULL OR sector IS NOT NULL)""", e)
-    sim = pd.read_sql(
-        """SELECT country_iso3, hazard, version, window_name, event_year, event_label
-           FROM aa.simulated_activation ORDER BY event_year DESC""", e)
+    from dashboards import (EXCLUDED_EVENT_TYPES, read_simulated, sim_after_note,
+                            sim_before_start, sim_when)
+    sim = read_simulated(e)   # with event_date / event_time when the DB has them
     psb = fb.iloc[0:0]                                    # folded into window_funding
-    from dashboards import EXCLUDED_EVENT_TYPES
     excl = ", ".join(f"'{t}'" for t in EXCLUDED_EVENT_TYPES)
     acts = pd.read_sql(
         f"""SELECT a.country_iso3, a.hazard, a.event_type, a.event_date, a.window_name,
@@ -805,12 +804,9 @@ def assemble(d, e):
 
     # ad hoc AA allocations sit on the (country, hazard) pair, not on a version
     adhoc = _try(f"SELECT country_iso3, hazard, count(*) AS n FROM aa.adhoc_activation "
-                 f"WHERE event_type NOT IN ({excl}) AND left(event_date, 4) = '{TODAY.year}' GROUP BY 1, 2",
+                 f"WHERE event_type NOT IN ({excl}) GROUP BY 1, 2",   # all years (a year selector will filter)
                  ["country_iso3", "hazard", "n"])
-    n_adhoc_all = acts[acts["event_type"] == "adhoc_aa"].groupby(["country_iso3", "hazard"]).size().to_dict()  # sidebar counts: every year
-    acts_now = acts[~((acts["event_type"] == "adhoc_aa")
-                      & (acts["event_date"].astype(str).str[:4] != str(TODAY.year)))]
-    adhoc_cerf = _adhoc_cerf(e, acts_now, actf, _try)   # this year's ad hoc allocations only
+    adhoc_cerf = _adhoc_cerf(e, acts, actf, _try)
     n_adhoc = {(a.country_iso3, a.hazard): int(a.n) for a in adhoc.itertuples()}
     learn = _try(
         """SELECT id, title, url, publisher, year, doc_type, country_iso3, hazard, key_stat
@@ -901,21 +897,40 @@ def assemble(d, e):
             # backtest: which window would have fired in which year (or storm)
             s_v = sim[(sim["country_iso3"] == c) & (sim["hazard"] == h)
                       & kb_key_match(sim["version"], v.version)]
+            # a version's backtest is fixed before it is endorsed and real activations come
+            # after: only rows dated before the year it took effect are simulation
+            s_v, n_after, vf_y = sim_before_start(s_v, v.valid_from)
             backtest = None
-            if len(s_v):
+            if len(s_v) or n_after:
                 wins_bt = list(dict.fromkeys(w.window_name for w in w_v.itertuples())) or sorted(s_v["window_name"].unique())
                 per_event = bool(s_v["event_label"].notna().any())   # numpy bool -> str under default=str
-                rows = {}
+                rows, when = {}, {}
                 for sr in s_v.itertuples():
-                    key = (int(sr.event_year), _s(sr.event_label) if per_event else None)
+                    key = (int(sr.sim_year), _s(sr.event_label) if per_event else None)
                     rows.setdefault(key, set()).add(sr.window_name)
+                    if sim_when(sr) != str(sr.sim_year):   # the day / hour when recorded
+                        when.setdefault(key, {})[sr.window_name] = sim_when(sr)
                 yrs = [int(x) for x in w_v["analysis_start"].dropna()] + [int(x) for x in w_v["analysis_end"].dropna()]
-                y0, y1 = (min(yrs), max(yrs)) if yrs else (int(s_v["event_year"].min()), int(s_v["event_year"].max()))
+                y0, y1 = ((min(yrs), max(yrs)) if yrs else
+                          (int(s_v["sim_year"].min()), int(s_v["sim_year"].max())) if len(s_v) else
+                          (vf_y - 1, vf_y - 1))
+                if vf_y:
+                    y1 = min(y1, vf_y - 1)
+                    y0 = min(y0, y1)
+                # the years the version has been in use: real activations only
+                vu = pd.to_datetime(str(v.valid_until), errors="coerce") if _s(v.valid_until) else None
+                use_end = int(vu.year) if vu is not None and pd.notna(vu) else TODAY.year
                 if not per_event:
                     for y in range(y0, y1 + 1):
                         rows.setdefault((y, None), set())
+                    if vf_y:
+                        for y in range(vf_y, max(vf_y, min(use_end, TODAY.year)) + 1):
+                            rows.setdefault((y, None), set())
                 backtest = {"windows": wins_bt, "per_event": per_event, "start": y0, "end": y1,
-                            "rows": [{"year": k[0], "label": k[1], "fired": sorted(ws)}
+                            "in_use_from": vf_y, "in_use_to": use_end if vu is not None and pd.notna(vu) else None,
+                            "n_after": n_after, "after_note": sim_after_note(n_after, vf_y),
+                            "rows": [{"year": k[0], "label": k[1], "fired": sorted(ws),
+                                      "when": when.get(k, {})}
                                      for k, ws in sorted(rows.items(), key=lambda kv: (-kv[0][0], str(kv[0][1])))]}
             # budget breakdown: KB funding_breakdown for this version, else sheet sector budget
             f_v = fb[(fb["country_iso3"] == c) & (fb["hazard"] == h)
@@ -1066,8 +1081,7 @@ def assemble(d, e):
         countries[c]["fws"].append({
             "hazard": h, "status": sheet_status, "kb": kb_fw,
             "disp": disp, "disp_label": DISP_LABEL.get(disp, disp), "ring": ring, "n_act": n_fw_act,
-            "n_act_all": len(activations), "n_adhoc": int(n_adhoc_all.get((c, h), 0)),   # all years (sidebar)
-            "n_adhoc_now": n_adhoc.get((c, h), 0),                                       # this year (the layer)
+            "n_act_all": len(activations), "n_adhoc": n_adhoc.get((c, h), 0),
             "adhoc_cerf": adhoc_cerf.get((c, h), []),
             "layers": layers, "layer": next(l for l in LAYER_ORDER if l in layers),
             "tech": tech,
@@ -1228,7 +1242,7 @@ def build_landing(page, d, e):
  <div class='tiles gtiles' id='gtiles'>
   <div class='gcap' id='gcap'>Global portfolio — all layers currently shown on the map</div>
   <div class='tile' id='t-fw'><div class='v'>{t["n_fw"]}</div><div class='l'>frameworks on the map · {t["n_active"]} active · {t["n_upd"]} being updated · {t["n_dev"]} in development</div></div>
-  <div class='tile' id='t-pre'><div class='v'>${t["pre"]/1e6:,.0f}M</div><div class='l'>pre-arranged now (CERF + CBPF), frameworks shown</div></div>
+  <div class='tile' id='t-pre'><div class='v'>${t["pre"]/1e6:,.0f}M</div><div class='l'>pre-arranged now (CERF and country and regional funds), frameworks shown</div></div>
   <div class='tile' id='t-act'><div class='v'>{t["n_act"]}</div><div class='l'>activations</div></div>
   <div class='tile' id='t-cov'><div class='v'>{t["covered"]/1e6:,.1f}M</div><div class='l'>people covered, frameworks shown</div></div>
  </div>
@@ -1282,7 +1296,7 @@ def build_landing(page, d, e):
   </svg>
   <div class='sh-layers'>
    <b>Map layers.</b> <span class='dot' style='background:{KB_COLOR["active"]}'></span><b>Current frameworks</b> — every framework whose status is active, being updated or in development (the default view; the headline figures follow whatever is shown).
-   <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span><b>Ad hoc allocations</b> — countries and hazards that received ad hoc anticipatory-action money this calendar year without a framework version (earlier years will come with the year selector) (light green; a framework that also received ad hoc money stays drawn as a framework).
+   <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span><b>Ad hoc allocations</b> — countries and hazards that received ad hoc anticipatory-action money without a framework version (light green; a framework that also received ad hoc money stays drawn as a framework).
    <span class='dot' style='background:{LAYER_COLOR["retired"]}'></span><b>Retired</b> — frameworks flagged retired in the admin, drawn in grey so past coverage can be compared with today's.
    <span class='dot dot-hollow' style='border-color:{LAYER_COLOR["tech"]}'></span><b>Technical support</b> — countries where OCHA supported the framework technically without a funding commitment, whatever their status (including pipeline ones like Palau and Tonga), drawn as a hollow teal pin.
   </div>
@@ -1389,9 +1403,13 @@ LANDING_CSS = r"""
 .rm { display:inline-block; width:9px; height:9px; border-radius:50%; background:#e3322d; box-shadow:0 0 0 1.5px #fff, 0 0 0 2.5px #e3322d; margin:0 3px; vertical-align:-1px; }
 .rm.old { background:#fff; box-shadow:none; border:2px solid #e3322d; width:6px; height:6px; }
 a.rm:hover { transform:scale(1.3); }
-table.bt { table-layout:fixed; width:100%; } table.bt th.bt-c { font-size:10.5px; line-height:1.2; white-space:normal; }
+/* the backtest grid keeps its natural width: year | wt1 | wt2, not spread over the sidebar */
+table.mini.bt { table-layout:auto; width:auto; } table.bt th.bt-c { font-size:10.5px; line-height:1.2; white-space:normal; min-width:40px; max-width:120px; }
 .bt-key { margin:4px 0 8px; color:#64748b; }
 td.bt-na { background:#eef1f5; }
+table.bt td.bt-use { background:#fbf6ee; }
+.bt-usetag { display:inline-block; padding:0 5px; border-radius:8px; font-size:9.5px; font-weight:600; background:#f6ead3; color:#7a5a17; margin-left:3px; vertical-align:1px; }
+.bt-sw { display:inline-block; width:13px; height:10px; border:1px solid #eadcc0; vertical-align:-1px; background:#fbf6ee; }
 table.acttbl { table-layout:fixed; width:100%; } table.acttbl td, table.acttbl th { overflow-wrap:anywhere; vertical-align:top; }
 table.acttbl tr.oldv td { background:#f8fafc; }
 .fhead .actdots, .wl-pin .actdots { display:none; }
@@ -1461,7 +1479,7 @@ table.mini td.num { text-align:right; white-space:nowrap; font-variant-numeric:t
 .chips span { display:inline-block; background:#f0f2f5; border-radius:9px; padding:0 7px; font-size:11px; margin:2px 3px 2px 0; }
 .scopelist { font-size:12px; color:#334; line-height:1.5; margin:3px 0; }
 table.bt th { position:sticky; top:0; } table.bt td { padding:2px 6px; } table.bt tr.bt-on td { background:#fbfcfe; }
-table.bt .bt-c { text-align:center; } table.bt td.lbl { width:70px; }
+table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:auto; min-width:44px; }
 .bt-dot { display:inline-block; width:9px; height:9px; border-radius:50%; }
 /* headline tiles follow the map layers; when a country is open they step back as the GLOBAL
    portfolio (caption + subdued) and the country's own figures sit at the top of the sidebar */
@@ -1778,7 +1796,7 @@ function updateTiles(){
   const set = (id, v, l) => { const el = document.getElementById(id); if(!el) return; el.querySelector('.v').textContent = v; el.querySelector('.l').textContent = l; };
   set('t-fw', fw.length, `frameworks on the map · ${n('active')} active · ${n('updating')} being updated · ${n('development')} in development`);
   const noEnv = []; Object.values(L).forEach(c => c.fws.forEach(f => { if(fw.includes(f) && !f.pre_now) noEnv.push(`${c.name} ${f.hz_label.toLowerCase()}`); }));
-  set('t-pre', '$' + Math.round(fw.reduce((s,f)=>s+(f.pre_now||0),0)/1e6) + 'M', 'pre-arranged now (CERF + CBPFs), all current frameworks incl. in development'
+  set('t-pre', '$' + Math.round(fw.reduce((s,f)=>s+(f.pre_now||0),0)/1e6) + 'M', 'pre-arranged now (CERF and country and regional funds), all current frameworks incl. in development'
       + (noEnv.length ? ` · ${noEnv.length} without an envelope recorded yet: ${noEnv.join(', ')}` : ''));
   set('t-act', shown.reduce((s,f)=>s+f.n_act_all,0), 'activations');
   set('t-cov', (fw.reduce((s,f)=>s+(f.covered||0),0)/1e6).toFixed(1) + 'M', 'people covered, frameworks shown');
@@ -2154,7 +2172,7 @@ function sectorBlock(v){
 // the CERF allocations behind a pair's ad hoc AA allocations: amount, agencies, sectors, people
 function adhocBlock(f){
   const A = f.adhoc_cerf || [];
-  if(!A.length) return f.n_adhoc_now ? `<div class='muted small'>No CERF allocation found for this year's ad hoc allocations in the CERF data.</div>` : '';
+  if(!A.length) return f.n_adhoc ? `<div class='muted small'>No CERF allocation found for these allocations in the CERF data.</div>` : '';
   const CW = Math.max(280, Math.min(560, (side.clientWidth || 420) - 36));
   return `<h4>Ad hoc allocations (${A.length})</h4>` + A.map(a => `<div class='trig'>
       <div class='tn'><a href='${esc(a.url)}' target='_blank' rel='noopener'>CERF ${esc(a.code)} ↗</a> <span class='muted'>· ${esc(a.emergency||'')} · ${a.year}</span></div>
@@ -2279,14 +2297,22 @@ function backtestBlock(f, v){
     if(col) (r.real[col] ??= []).push(a); else r.realYear.push(a);
   });
   rows.sort((a,b) => b.year - a.year || String(a.label||'').localeCompare(String(b.label||'')));
-  const simYears = new Set(bt.rows.map(r => r.year));
-  const dot = `<span class='bt-dot' style='background:${hzColor(f.hazard)}' title='would have fired (simulation)'></span>`;
+  // from the year the version took effect: real activations only (its backtest was fixed before)
+  const use0 = bt.in_use_from || null, inUse = y => use0 != null && y >= use0;
+  const useTip = y => bt.in_use_to && y > bt.in_use_to
+    ? `${y}: after version ${v.v} was replaced (${bt.in_use_to}) — real activations only`
+    : `${y}: version ${v.v} in use (took effect ${v.valid_from || use0}) — real activations only; its simulation covers the years before`;
+  const simYears = new Set(bt.rows.filter(r => !inUse(r.year)).map(r => r.year));
+  const dot = (w, r) => `<span class='bt-dot' style='background:${hzColor(f.hazard)}' title='would have activated ${r && r.when && r.when[w] ? 'on '+esc(r.when[w]) : 'in '+(r ? r.year : 'that year')} (simulation)'></span>`;
+  const cell = (r, w) => inUse(r.year) ? `<td class='bt-c bt-use' title='${esc(useTip(r.year))}'>`
+    : simYears.has(r.year) && !r.extra ? `<td class='bt-c'>`
+    : `<td class='bt-c bt-na' title='${r.year} is not covered by the historical simulation'>`;
   let html = `<h4>Historical activations</h4>
-    <div class='small' style='margin-bottom:4px'>Simulation ${bt.start}–${bt.end}: would each trigger of this version have fired${bt.per_event?' for each storm':' each year'}? Real activations are marked in, linked to their announcement.</div>
+    <div class='small' style='margin-bottom:4px'>Simulation ${bt.start}–${bt.end}: would each trigger of this version have activated${bt.per_event?' for each storm':' each year'}?${use0 ? ` From ${use0}, when the version took effect, real activations only.` : ''} Real activations are marked in, linked to their announcement.${bt.after_note ? ` <span class='muted'>${esc(bt.after_note)}</span>` : ''}</div>
     <table class='mini bt'><thead><tr><th>${bt.per_event?'storm':'year'}</th>${bt.windows.map(w=>`<th class='bt-c'>${trigName(w)}</th>`).join('')}</tr></thead><tbody>`;
-  html += rows.map(r => `<tr class='${r.fired.length?'bt-on':''}'><td class='lbl'>${r.year}${r.label?` <span class='muted'>${esc(r.label)}</span>`:''}${r.realYear.map(a=>realMark(a, v)).join('')}</td>`
-    + bt.windows.map(w => `<td class='bt-c${simYears.has(r.year) && !r.extra ? '' : ' bt-na'}'${simYears.has(r.year) && !r.extra ? '' : ` title='${r.year} is not covered by the historical simulation'`}>${r.fired.includes(w)?dot:''}${(r.real[w]||[]).map(a=>realMark(a, v)).join('')}</td>`).join('') + `</tr>`).join('');
-  return html + `</tbody></table><div class='small bt-key'>${dot} would have fired (simulation) · <span class='rm'></span> activated, money released · <span class='rm old'></span> activated under an earlier version</div>`;
+  html += rows.map(r => `<tr class='${r.fired.length?'bt-on':''}'><td class='lbl'>${r.year}${r.label?` <span class='muted'>${esc(r.label)}</span>`:''}${inUse(r.year) && !r.label && !(bt.in_use_to && r.year > bt.in_use_to) ? ` <span class='bt-usetag' title='${esc(useTip(r.year))}'>in use</span>` : ''}${r.realYear.map(a=>realMark(a, v)).join('')}</td>`
+    + bt.windows.map(w => `${cell(r, w)}${r.fired.includes(w) && !inUse(r.year) ? dot(w, r) : ''}${(r.real[w]||[]).map(a=>realMark(a, v)).join('')}</td>`).join('') + `</tr>`).join('');
+  return html + `</tbody></table><div class='small bt-key'>${dot()} would have activated (simulation) · <span class='rm'></span> activated, money released · <span class='rm old'></span> activated under an earlier version${use0 ? ` · <span class='bt-sw bt-use'></span> version in use: real activations only` : ''}</div>`;
 }
 // the real activations of the framework, all versions: when, which window, how much, links
 function actualBlock(f, v){

@@ -18,7 +18,8 @@ import re
 from datetime import date
 
 import pandas as pd
-from dashboards import HAZARDS, LIFE_LABEL, PAL, _activation_blocks, _dash_page, _fmt_usd, haz
+from dashboards import (HAZARDS, LIFE_LABEL, PAL, _activation_blocks, _dash_page, _event_href,
+                        _event_links, _fmt_usd, haz, sim_before_start, sim_when)
 
 LIVE = ["active", "updating", "development"]
 LIFE_ON = {"active": True, "updating": True, "development": False}   # default filter state
@@ -49,8 +50,10 @@ def _vm(a, b):
 
 
 def _backtest(d, c, h, version):
-    """(shown version, its simulated rows, first year, last year, years analysed) —
-    the same choice and range as dashboards._activation_blocks."""
+    """(shown version, its simulated rows, first year, last year, years analysed, year the
+    version took effect, simulated rows dropped) — the same choice, start-year cut and range as
+    dashboards._activation_blocks. Only rows dated before the version's start year are
+    simulation (sim_before_start); the kept rows carry `sim_year`."""
     sim = d["sim"][(d["sim"]["country_iso3"] == c) & (d["sim"]["hazard"] == h)].copy()
     sim["version"] = sim["version"].astype(str)
     fvm = d["fv_meta"][(d["fv_meta"]["country_iso3"] == c) & (d["fv_meta"]["hazard"] == h)]
@@ -62,19 +65,20 @@ def _backtest(d, c, h, version):
         vs = [v for v in order if v in set(sim["version"])] or sorted(set(sim["version"]))
         shown = vs[-1]
     ss = sim[sim["version"] == shown] if shown else sim.iloc[0:0]
+    vf = (fvm.loc[fvm["version"].astype(str) == str(shown), "valid_from"] if shown
+          else fvm["valid_from"].iloc[0:0])
+    ss, n_after, vf_y = sim_before_start(ss, vf)
     win = d["windows"]
     wv = win[(win["country_iso3"] == c) & (win["hazard"] == h)
              & (win["version"].astype(str) == str(shown))]
     n_years = pd.to_numeric(wv["analysis_years"], errors="coerce").max() if len(wv) else None
     y0 = y1 = None
-    if len(ss):
-        vf = fvm.loc[fvm["version"].astype(str) == shown, "valid_from"]
-        vf_y = pd.to_datetime(vf, errors="coerce").dt.year.max() if len(vf) else None
-        y1 = int(max(ss["event_year"].max(), (vf_y - 1) if vf_y and pd.notna(vf_y) else 0))
+    if len(ss) or n_after:
+        y1 = int(max(ss["sim_year"].max() if len(ss) else 0, (vf_y - 1) if vf_y else 0))
         y0 = (int(y1 - n_years + 1) if n_years and pd.notna(n_years)
-              else int(ss["event_year"].min()))
-        y0 = min(y0, int(ss["event_year"].min()))
-    return shown, ss, y0, y1, n_years
+              else int(ss["sim_year"].min()) if len(ss) else y1)
+        y0 = min(y0, int(ss["sim_year"].min())) if len(ss) else y0
+    return shown, ss, y0, y1, n_years, vf_y, n_after
 
 
 def _frameworks(d):
@@ -91,20 +95,23 @@ def _frameworks(d):
     return out
 
 
-def _events(d, c, h, ref):
-    """Real framework activations of one framework, with the money released."""
+def _events(d, c, h, ref, kb_fw=None, umap=None, slug=None):
+    """Real framework activations of one framework, with the money released and the page
+    each one links to (as the activation tables: announcement, else CERF allocation, else
+    another recorded page — else the framework page `slug`)."""
     act = d["act_all"]
     act = act[(act["country_iso3"] == c) & (act["hazard"] == h)
               & (act["event_type"] == "framework_aa")]
-    fund = d["activation"][(d["activation"]["country_iso3"] == c)
-                           & (d["activation"]["hazard"] == h)]
     evs = []
     for r in act.sort_values("event_date").itertuples():
         ed, wn = _str(r.event_date), _str(r.window_name)
         if not ed[:4].isdigit():
             continue
-        f = fund[(fund["event_date"].astype(str) == ed) & (fund["event_type"] == r.event_type)
-                 & (fund["window_name"].fillna("") == wn)]
+        lk = _event_links(d, c, h, kb_fw, umap or {}, ed, r.window_name, r.event_type)
+        f = lk["fund"]
+        href, goes = _event_href(lk)
+        if not href and slug:
+            href, goes = slug, "the framework page"
         amt = pd.to_numeric(f["amount_usd"], errors="coerce")
         vv = _str(r.version)
         vv = "" if vv in ("nan", "None", "NaT", "<NA>") else vv
@@ -115,7 +122,8 @@ def _events(d, c, h, ref):
                         funds_csv="; ".join(f"{x.fund_code}: {x.amount_usd:.0f}" if pd.notna(x.amount_usd)
                                             else f"{x.fund_code}: not recorded"
                                             for x in f.itertuples() if isinstance(x.fund_code, str)),
-                        same=(not vv) or (ref is not None and _vm(vv, str(ref)))))
+                        same=(not vv) or (ref is not None and _vm(vv, str(ref))),
+                        href=href, goes=goes))
     return evs
 
 
@@ -131,14 +139,16 @@ def build_history(page, d):
     dd = dict(d, act_all=act_all[act_all["event_type"] == "framework_aa"])
 
     for f in fws:
-        f["shown"], f["ss"], f["y0"], f["y1"], f["n_years"] = _backtest(d, f["c"], f["h"], f["version"])
+        (f["shown"], f["ss"], f["y0"], f["y1"], f["n_years"], f["vf_y"],
+         f["n_after"]) = _backtest(d, f["c"], f["h"], f["version"])
         f["ref"] = f["shown"] or f["version"]
-        f["events"] = _events(d, f["c"], f["h"], f["ref"])
-        f["hit"] = {}   # year -> windows (and labels) that would have activated
+        f["events"] = _events(d, f["c"], f["h"], f["ref"], f["kb_fw"], umap, f["slug"])
+        f["hit"] = {}   # year -> windows (and labels, dates) that would have activated
         for r in f["ss"].itertuples():
-            lab = _str(r.event_label)
-            f["hit"].setdefault(int(r.event_year), []).append(
-                _str(r.window_name) + (f" ({lab})" if lab else ""))
+            lab, when = _str(r.event_label), sim_when(r)
+            extra = ", ".join(x for x in (lab, when if when != str(r.sim_year) else "") if x)
+            f["hit"].setdefault(int(r.sim_year), []).append(
+                _str(r.window_name) + (f" ({extra})" if extra else ""))
         f["n_sim"] = (f["y1"] - f["y0"] + 1) if f["y0"] is not None else 0
         f["n_hit"] = len(f["hit"])
     y_min = min([f["y0"] for f in fws if f["y0"] is not None] or [SPLIT_YEAR])
@@ -154,6 +164,9 @@ def build_history(page, d):
             s += f" · backtest of version {f['shown']}"
         elif str(f["shown"]) != str(f["version"]):
             s += f" · backtest of version {f['shown']} (the current version has none)"
+        if f["n_after"]:
+            s += (f" · {f['n_after']} simulated row{'' if f['n_after'] == 1 else 's'} dated after "
+                  f"the version's start not shown")
         return s
 
     def n_real(f):
@@ -170,13 +183,19 @@ def build_history(page, d):
                 + ("" if ev["same"] else f" · under version {ev['version'] or '?'}"))
 
     def markers(evs):
-        """One solid marker for the activations under the version simulated, one hollow for
-        those under another version; a count when a year has several."""
-        out = ""
-        for same, cls in ((True, "real"), (False, "old")):
-            n = sum(1 for ev in evs if ev["same"] is same)
-            if n:
-                out += f"<span class='dot {cls}'></span>" + (f"<sup>{n}</sup>" if n > 1 else "")
+        """Real activations as links to their most relevant page (announcement, else CERF
+        allocation, else the framework page): solid under the version simulated, hollow under
+        another version; activations sharing a page share one marker, with a count."""
+        out, groups = "", {}
+        for ev in evs:
+            groups.setdefault((not ev["same"], ev["href"] or ""), []).append(ev)
+        for (other, href), g in sorted(groups.items(), key=lambda kv: kv[0][0]):
+            tip = " | ".join(ev_tip(ev) for ev in g) + (f" — opens {g[0]['goes']}" if href else "")
+            cnt = f"<sup>{len(g)}</sup>" if len(g) > 1 else ""
+            cls = "old" if other else "real"
+            ext = "" if href.endswith(".html") and "://" not in href else " target='_blank' rel='noopener'"
+            out += (f"<a class='mk' href='{html.escape(href)}'{ext} title='{_esc(tip)}'><span class='dot {cls}'></span>{cnt}</a>"
+                    if href else f"<span class='mk' title='{_esc(tip)}'><span class='dot {cls}'></span>{cnt}</span>")
         return out
 
     # ---- the overview grid
@@ -201,16 +220,23 @@ def build_history(page, d):
         for y in years:
             evs = [ev for ev in f["events"] if ev["year"] == y]
             hit = f["hit"].get(y)
+            in_use = f["vf_y"] is not None and f["shown"] and y >= f["vf_y"]
             tips = [f"{y}"]
-            if hit:
+            if in_use:   # never simulation from the version's start year on
+                tips.append(f"version {f['shown']} in use (took effect {f['vf_y']}): real activations only"
+                            if str(f["shown"]) == str(f["version"]) else
+                            f"from {f['vf_y']}, version {f['shown']} (took effect {f['vf_y']}) and later "
+                            "versions in use: real activations only")
+            elif hit:
                 tips.append("simulation: would have activated — " + ", ".join(sorted(set(hit))))
             elif y in sim_yrs:
                 tips.append("simulation: would not have activated")
             else:
                 tips.append("not covered by the simulation")
             tips += [ev_tip(ev) for ev in evs]
-            mk = ("<span class='dot sim'></span>" if hit else "") + markers(evs)
-            cells += (f"<td class='{'' if y in sim_yrs else 'na'}' title='{_esc(' · '.join(tips))}'>{mk}</td>")
+            mk = ("<span class='dot sim'></span>" if hit and not in_use else "") + markers(evs)
+            cls = "use" if in_use else "" if y in sim_yrs else "na"
+            cells += (f"<td class='{cls}' title='{_esc(' · '.join(tips))}'>{mk}</td>")
         trs.append(
             f"<tr class='hrow' data-life='{f['life']}' data-haz='{_esc(f['h'])}'>"
             f"<th class='fw'><a href='{f['slug']}'>{_esc(f['name'])}</a> {life_tag(f['life'])}"
@@ -238,19 +264,26 @@ def build_history(page, d):
     for f in fws:
         base = dict(framework=f["name"], country_iso3=f["c"], hazard=f["h"],
                     status=LIFE_LABEL.get(f["life"], f["life"]), lifecycle=f["life"])
-        for r in f["ss"].sort_values(["event_year", "window_name"]).itertuples():
+        for r in f["ss"].sort_values(["sim_year", "window_name"]).itertuples():
+            when = sim_when(r)   # the day / hour when recorded (event_date, event_time)
             rows.append(dict(base, kind="simulated", version=f["shown"],
-                             window=_nofire(r.window_name), year=int(r.event_year), event_date="",
+                             window=_nofire(r.window_name), year=int(r.sim_year),
+                             event_date=when if when != str(r.sim_year) else "",
                              event_label=_str(r.event_label), amount_usd=None, funding="",
-                             same_version_as_simulated=""))
+                             same_version_as_simulated="", source_note=_str(r.source_note)))
         for ev in f["events"]:
             rows.append(dict(base, kind="real", version=ev["version"], window=_nofire(ev["win"]),
                              year=ev["year"], event_date=ev["date"], event_label=ev["label"],
                              amount_usd=ev["amount"], funding=ev["funds_csv"],
                              # vs the version simulated; vs the current one without a backtest
-                             same_version_as_simulated="yes" if ev["same"] else "no"))
+                             same_version_as_simulated="yes" if ev["same"] else "no",
+                             source_note=""))
 
     no_bt = [f for f in fws if not f["shown"]]
+    aft = [f for f in fws if f["n_after"]]
+    after_note = (f" {sum(f['n_after'] for f in aft)} simulated rows dated after their version's start are "
+                  f"not shown ({_esc(', '.join(f['name'] + ' ' + str(f['shown']) for f in aft))})."
+                  if aft else "")
     life_boxes = "".join(
         f"<label><input type='checkbox' value='{lc}'{' checked' if LIFE_ON[lc] else ''} "
         f"onchange='hfilt()'> {LIFE_LABEL[lc]} ({sum(f['life'] == lc for f in fws)})</label>"
@@ -280,6 +313,8 @@ table.hgrid td {{ width:34px; min-width:34px; max-width:34px; height:34px; paddi
 table.hgrid td sup {{ font-size:9px; color:#a11; margin-left:-2px; }}
 table.hgrid td + td {{ border-left:1px solid #f4f5f7; }}
 table.hgrid td.na {{ background:#eef1f5; }}
+table.hgrid td.use {{ background:#fbf6ee; }}
+table.hgrid a.mk {{ text-decoration:none; }} table.hgrid a.mk:hover .dot {{ transform:scale(1.25); }}
 table.hgrid td.old, table.hgrid th.old {{ min-width:52px; width:52px; border-right:2px solid #cbd6e2; font-size:11px; }}
 table.hgrid td.old .of {{ color:#888; }}
 table.hgrid tr.hrow:hover th.fw, table.hgrid tr.hrow:hover td:not(.na) {{ background:#f2f7fc; }}
@@ -311,11 +346,15 @@ window-by-window grid.</p>
 <span class='dot real'></span> activated, money released ·
 <span class='dot old'></span> activated under a different version (hover for which) ·
 <sup style='color:#a11'>2</sup> several activations that year ·
+<span class='sw use'></span> the version in use: real activations only ·
 <span class='sw'></span> year not covered by the simulation</p>
 <p class='meta'>The version simulated is the current one; where the current version has no recorded backtest,
 the latest version that has one, as the row says. A solid red marker is an activation under the version
 simulated in that row (under the current version where there is no backtest); a hollow one, under another
-version, whose triggers may differ. Real activations are framework activations only:
+version, whose triggers may differ. Each real-activation marker links to its announcement, else its CERF
+allocation page, else the framework page (hover for which). A version's backtest is fixed before it is
+endorsed, and real activations can only come after: from the year the version took effect, a row shows real
+activations only.{after_note} Real activations are framework activations only:
 the {n_adhoc} ad hoc allocations on record (money released without a pre-agreed trigger) are left out,
 as there is no trigger to simulate them against. No backtest recorded yet for {len(no_bt)} of the
 {len(fws)} frameworks: {_esc(', '.join(f['name'] for f in no_bt)) or 'none'}.</p>
@@ -338,7 +377,8 @@ function hfilt(){
 function histCsv(){
   const {on, hz} = hstate();
   const cols = ['framework','country_iso3','hazard','status','kind','version','window','year',
-                'event_date','event_label','amount_usd','funding','same_version_as_simulated'];
+                'event_date','event_label','amount_usd','funding','same_version_as_simulated',
+                'source_note'];
   const q = v => { if(v == null) return ''; const s = String(v);
     return /[",\\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   const rows = D.rows.filter(r => on.has(r.lifecycle) && (!hz || r.hazard === hz));

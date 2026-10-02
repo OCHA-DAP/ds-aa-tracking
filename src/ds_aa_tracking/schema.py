@@ -643,6 +643,13 @@ ADDITIVE_MIGRATIONS = [
     # 2026-09-21: technical support without a funding commitment, at framework level
     "ALTER TABLE aa.country_hazard ADD COLUMN IF NOT EXISTS technical_support boolean NOT NULL DEFAULT false",
     "ALTER TABLE aa.country_hazard ADD COLUMN IF NOT EXISTS technical_support_note text",
+    # 2026-10-02: a simulated activation can carry the day (or, for storms, the hour) the
+    # trigger would have activated, not only the year; the site reads these when present
+    # and falls back to event_year. time_precision: year | month | day | hour.
+    "ALTER TABLE IF EXISTS aa.simulated_activation ADD COLUMN IF NOT EXISTS event_date date",
+    "ALTER TABLE IF EXISTS aa.simulated_activation ADD COLUMN IF NOT EXISTS event_time timestamptz",
+    "ALTER TABLE IF EXISTS aa.simulated_activation ADD COLUMN IF NOT EXISTS time_precision text",
+    "ALTER TABLE IF EXISTS aa.simulated_activation ADD COLUMN IF NOT EXISTS source_note text",
 ]
 
 INDEXES = [

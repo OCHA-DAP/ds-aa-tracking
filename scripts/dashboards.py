@@ -82,10 +82,16 @@ ul.doclist .who { color:#666; font-size:12px; }
 .dot { display:inline-block; width:12px; height:12px; border-radius:50%; vertical-align:middle; margin:0 2px; }
 .dot.real { background:#e3322d; box-shadow:0 0 0 2px #fff, 0 0 0 3.5px #e3322d; margin:0 4px; }
 .dot.old { background:#fff; border:2px solid #e3322d; width:10px; height:10px; }
-table.hist { width:100%; table-layout:fixed; }
-table.hist td, table.hist th { text-align:center; padding:3px 6px; word-wrap:break-word; }
-table.hist td.yr, table.hist th:first-child { text-align:left; width:150px; }
+table.data.hist { width:auto; table-layout:auto; }   /* compact: year | wt1 | wt2, not spread over the panel */
+table.hist td, table.hist th { text-align:center; padding:3px 10px; white-space:nowrap; min-width:44px; }
+table.hist thead th { white-space:normal; max-width:140px; }   /* long window names wrap, never widen the grid */
+table.hist td.yr, table.hist th:first-child { text-align:left; }
 table.hist tbody tr:nth-child(even) { background:#fafbfc; }
+table.hist td.use, table.data tr:hover td.use { background:#fbf6ee; }
+.usetag { display:inline-block; padding:0 6px; border-radius:8px; font-size:10px; font-weight:600;
+          background:#f6ead3; color:#7a5a17; margin-left:4px; vertical-align:1px; }
+.sw.use, p.legend .sw.use { display:inline-block; width:14px; height:12px; background:#fbf6ee; border:1px solid #eadcc0;
+          vertical-align:middle; margin:0 2px; }
 p.legend { font-size:12px; color:#555; margin:6px 0 0; }
 table.acts { width:100%; table-layout:fixed; }
 table.acts td { white-space:normal; overflow-wrap:anywhere; vertical-align:top; font-size:12.5px; }
@@ -577,9 +583,12 @@ def _fetch(e):
                        FROM aa.framework_version ORDER BY country_iso3, hazard, valid_from""",
          ["country_iso3", "hazard", "version", "kb_framework", "valid_from", "note",
           "analysis_ref", "doc_url", "doc_title"])
-    _opt("sim", """SELECT country_iso3, hazard, version::text AS version, window_name,
-                          event_year, event_label FROM aa.simulated_activation""",
-         ["country_iso3", "hazard", "version", "window_name", "event_year", "event_label"])
+    try:   # with the dated columns when the DB has them (event_date, event_time, …)
+        d["sim"] = read_simulated(e)
+    except Exception as exc:
+        print(f"  sim: unavailable ({exc.__class__.__name__})")
+        d["sim"] = pd.DataFrame(columns=["country_iso3", "hazard", "version", "window_name",
+                                         "event_year", "event_label", *SIM_DATED])
     _opt("wact", """SELECT country_iso3, hazard, event_date::text AS event_date, window_name,
                            full_activation FROM aa.window_activation""",
          ["country_iso3", "hazard", "event_date", "window_name", "full_activation"])
@@ -803,7 +812,7 @@ def _money_flows(d, pre, act):
     else:   # older snapshot: grantee types only, one node per category
         co = d["cbpf_org"].copy()
         co["cat"] = co["org_type"].map(_recipient_cat)
-        co["org_name"] = co["cat"].map(lambda c: "CBPF grantees — " + RECIPIENT_PLURAL[c])
+        co["org_name"] = co["cat"].map(lambda c: "country and regional fund grantees — " + RECIPIENT_PLURAL[c])
     import html as _html
     import re as _re
     placeholder = _re.compile(r"\b(tbd|to be determined|partner to be determined|not recorded)\b", _re.I)
@@ -865,7 +874,7 @@ def _money_flows(d, pre, act):
         o = co[(co.index.get_level_values(0) == fc) & (co.index.get_level_values(1) == y)] if len(co) else co
         osum = float(o.sum()) if len(o) else 0.0
         if osum <= 0:
-            on("nr|CBPF grantees not recorded", amount, "nr|grantee not recorded")
+            on("nr|country and regional fund grantees not recorded", amount, "nr|grantee not recorded")
             return
         for (_, _, node), v in o.items():
             cat = node.split(sep)[0]
@@ -975,20 +984,20 @@ FLOW_NOTE = (
     "<b>Pre-arranged</b>: the envelopes in place at the end of the chosen year (the current year: "
     "today), one per framework and fund — the Financing page's annual series. Never summed over "
     "years: a two-year envelope would count twice. Fund → agency uses the agency split of the "
-    "version in force at that date, scaled to the envelope; CBPF / RhPF allocations go to their "
+    "version in force at that date, scaled to the envelope; country and regional fund allocations go to their "
     "grantee organisations (AA-keyword project budgets). There is no final column: who an agency "
     "sub-grants to is only known once money is released. "
     "<b>Released</b>: money that went out on activations in the chosen year (all years add up). "
     "CERF → agency uses the AA projects approved that year, scaled to the released total; "
     "agency → partner uses the CERF AA sub-grants, and the rest goes to a final node with the "
-    "agency's own name — what it implements itself. CBPF / RhPF go to their grantee organisations "
+    "agency's own name — what it implements itself. Country and regional funds go to their grantee organisations "
     "from the AA-keyword project budgets; a grantee implements directly, so its band runs on, same "
     "amount, to the same organisation in the final column. "
     f"<b>Recipients</b>: the {FLOW_TOP_ORGS} partner and grantee organisations receiving the most in the "
     "view are named, the rest grouped per category (\"other national / local NGOs\"…). Every "
     "recipient node carries its category colour — UN agency, international NGO, national / local "
     "NGO, government, Red Cross / Red Crescent, other, not recorded — from the sub-grant partner "
-    "type or the CBPF organisation type; a band takes the colour of the node it leaves. "
+    "type or the organisation type recorded by the country and regional funds; a band takes the colour of the node it leaves. "
     "<b>Donors → fund</b>: each donor's paid contributions to the fund that year ÷ the fund's "
     "total paid income that year, × the amount — attributed pro rata, since contributions fund "
     "the whole pool. Top 12 donors, the rest grouped.")
@@ -1247,9 +1256,9 @@ def build_funding(page, d):
         """A per-chart method note, collapsed under the chart."""
         return f"<details class='note'><summary style='cursor:pointer'>{title}</summary>{body}</details>"
 
-    fund_sel =("<label>Fund <select id='fFund'><option value=''>CERF and CBPFs</option>"
+    fund_sel =("<label>Fund <select id='fFund'><option value=''>CERF and country and regional funds</option>"
                 "<option value='cerf'>CERF</option>"
-                "<option value='pooled'>CBPFs (incl. regional funds)</option></select></label>")
+                "<option value='pooled'>country and regional funds</option></select></label>")
     panels = f"""
 <div class='fbar'>
  <span style='display:inline-flex;gap:10px;align-items:center;padding-right:10px;border-right:1px solid #e0e0e0'>
@@ -1264,14 +1273,14 @@ def build_funding(page, d):
 </div>
 <div class='tiles'>
  <div class='tile'><div class='v' id='tFw'>{n_active}</div><div class='l' id='tFwl'>active frameworks · {n_upd} being updated · {n_dev} in development{f' · {n_tech} technical support only' if n_tech else ''} · {n_ret} retired</div></div>
- <div class='tile'><div class='v' id='tPre'>${(now_cerf + now_cbpf)/1e6:,.0f}M</div><div class='l' id='tPrel'>pre-arranged now — CERF ${now_cerf/1e6:,.0f}M · CBPF/RhPF ${now_cbpf/1e6:,.0f}M</div></div>
- <div class='tile'><div class='v' id='tRel'>${total_rel/1e6:,.0f}M</div><div class='l' id='tRell'>AA released {rel_years} — framework activations, CERF and CBPFs</div></div>
+ <div class='tile'><div class='v' id='tPre'>${(now_cerf + now_cbpf)/1e6:,.0f}M</div><div class='l' id='tPrel'>pre-arranged now — CERF ${now_cerf/1e6:,.0f}M · country and regional funds ${now_cbpf/1e6:,.0f}M</div></div>
+ <div class='tile'><div class='v' id='tRel'>${total_rel/1e6:,.0f}M</div><div class='l' id='tRell'>AA released {rel_years} — framework activations, CERF and country and regional funds</div></div>
  <div class='tile'><div class='v' id='tCov'>{covered/1e6:,.1f}M</div><div class='l'>people covered (latest per framework)</div></div>
 </div>
 {gaps_html}
 <details class='note' style='margin:0 0 14px;font-size:12px;color:#555'><summary style='cursor:pointer;font-size:12.5px'>How these figures are counted</summary>
-<p><b>Layers</b>, as on the map: <b>current frameworks</b> (active, being updated, in development) and <b>retired</b> frameworks bring their pre-arranged and released money in every year — a framework's layer is its status today, so the past years need the retired ones to be complete (an AA-tagged CBPF allocation in a country with no retired framework counts as current). <b>Ad hoc allocations</b> add the AA money allocated without a framework: released money only, nothing is pre-arranged for it. The <b>fund</b> switch applies to every figure but co-financing; framework counts, people covered and versions then keep the frameworks with money recorded on that fund. There is no technical-support layer here: technical support carries no money. The tiles and the charts follow the layers, the fund and the hazard and region filters (the GHO filter: the annual series and co-financing); the money-flow chart and the sections further down say what they follow.</p>
-<p><b>Pre-arranged now</b> comes from the framework records: for every active, being-updated or in-development framework, the envelope of its most recent version that has one. The same figure is the current year in the annual chart, on the map and on the donor page.{stale_html} Pre-arranged money stays pre-arranged until a framework is <b>retired</b>: a framework being updated keeps its most recent version's envelope. CBPF and regional-fund allocations are made up front, so an AA-tagged allocation counts as pre-arranged until an activation draws on it (then it counts as released as well). Pre-arranged money is a stock (in place on a date) and released money a flow (per year): the two are never added together.</p>
+<p><b>Layers</b>, as on the map: <b>current frameworks</b> (active, being updated, in development) and <b>retired</b> frameworks bring their pre-arranged and released money in every year — a framework's layer is its status today, so the past years need the retired ones to be complete (an AA-tagged country or regional fund allocation in a country with no retired framework counts as current). <b>Ad hoc allocations</b> add the AA money allocated without a framework: released money only, nothing is pre-arranged for it. The <b>fund</b> switch applies to every figure but co-financing; framework counts, people covered and versions then keep the frameworks with money recorded on that fund. There is no technical-support layer here: technical support carries no money. The tiles and the charts follow the layers, the fund and the hazard and region filters (the GHO filter: the annual series and co-financing); the money-flow chart and the sections further down say what they follow.</p>
+<p><b>Pre-arranged now</b> comes from the framework records: for every active, being-updated or in-development framework, the envelope of its most recent version that has one. The same figure is the current year in the annual chart, on the map and on the donor page.{stale_html} Pre-arranged money stays pre-arranged until a framework is <b>retired</b>: a framework being updated keeps its most recent version's envelope. Country and regional fund allocations are made up front, so an AA-tagged allocation counts as pre-arranged until an activation draws on it (then it counts as released as well). Pre-arranged money is a stock (in place on a date) and released money a flow (per year): the two are never added together.</p>
 <p>Donors report their AA funding annually under the <a href='https://interagencystandingcommittee.org/grand-bargain' target='_blank' rel='noopener'>Grand Bargain</a>; the <a href='dash-donors.html'>donor-shares page</a> attributes this money to the donors of each fund.</p>
 </details>
 <h2>Where the money flows</h2>
@@ -1279,9 +1288,9 @@ def build_funding(page, d):
 {_flow_panel(donors_on=False)}
 <div class='grid' style='margin-top:16px'>
  <div class='panel'><h3>Pre-arranged funding in place at year end, by fund</h3><canvas id='c1' height='260'></canvas>
-   {how("A stock: what was committed at each year end, so the bars are not added up (the cumulative switch applies to released money only). CERF: the framework envelopes per year (sheets, framework pages, entries; 'all'-totals excluded where the fund split exists); the current year is pre-arranged now. CBPF / regional funds: AA-tagged allocations in the OneGMS mirror, in the year allocated. Co-financing is shown separately.")}</div>
+   {how("A stock: what was committed at each year end, so the bars are not added up (the cumulative switch applies to released money only). CERF: the framework envelopes per year (sheets, framework pages, entries; 'all'-totals excluded where the fund split exists); the current year is pre-arranged now. Country and regional funds: AA-tagged allocations in the OneGMS mirror, in the year allocated. Co-financing is shown separately.")}</div>
  <div class='panel'><h3>AA released by year, by fund</h3><canvas id='c2' height='260'></canvas>
-   {how("Allocations drawn by a framework activation, all pooled funds — plus the ad hoc AA allocations when that layer is on. A CBPF allocation moves here only once an activation is recorded against it.")}</div>
+   {how("Allocations drawn by a framework activation, all pooled funds — plus the ad hoc AA allocations when that layer is on. A country or regional fund allocation moves here only once an activation is recorded against it.")}</div>
  <div class='panel'><h3>Pre-arranged now, by hazard</h3><canvas id='c3' height='260'></canvas>
    {how("Latest envelope of every framework that is active, being updated or in development.")}</div>
  <div class='panel'><h3>Pre-arranged now, by region</h3><canvas id='c4' height='260'></canvas>
@@ -1290,7 +1299,7 @@ def build_funding(page, d):
    {how("One bar segment per version registered that year (endorsed docs; a version = an endorsed document).")}</div>
  <div class='panel'><h3>Co-financing pre-arranged, by agency</h3><canvas id='c6' height='260'></canvas><p class='empty' id='c6x' style='display:none'></p>
    {f"<div class='note'>{nonaa_html}</div>" if nonaa_html else ""}
-   {how("Pre-arranged co-financing only: money from outside CERF and the CBPFs recorded against a framework (window funding of kind co-financing); how much of it was disbursed is not recorded. A stock, as at the end of each year (the current year: today) — the years sit side by side and are never added up. Grouped by the financier as recorded (most co-financing rows do not record one yet); rows with neither are the <i>not recorded</i> bar. Follows the framework layers and the hazard, region and GHO filters. Does not apply: the fund switch (the money is outside the pooled funds), the ad hoc layer (ad hoc allocations carry no co-financing) and cumulative (a stock).")}</div>
+   {how("Pre-arranged co-financing only: money from outside CERF and the country and regional funds recorded against a framework (window funding of kind co-financing); how much of it was disbursed is not recorded. A stock, as at the end of each year (the current year: today) — the years sit side by side and are never added up. Grouped by the financier as recorded (most co-financing rows do not record one yet); rows with neither are the <i>not recorded</i> bar. Follows the framework layers and the hazard, region and GHO filters. Does not apply: the fund switch (the money is outside the pooled funds), the ad hoc layer (ad hoc allocations carry no co-financing) and cumulative (a stock).")}</div>
 </div>
 <h2>Where the pre-arranged money goes</h2>
 <p class='meta'>The latest version of every current framework, split by agency and sector as the framework documents state it, stacked by fund.</p>
@@ -1356,7 +1365,7 @@ function stackedBy(id, rows, keyFn, valFn, opts){
 function topKeys(rows, keyFn, valFn, n){ const g = groupSum(rows.filter(r=>keyFn(r)!=null), keyFn, valFn);
   return Object.keys(g).sort((a,b)=>g[b]-g[a]).slice(0,n); }
 function tiles(s, geo, A, N){
-  const fundTxt = s.fund==='cerf' ? ' with CERF money' : s.fund==='pooled' ? ' with CBPF money' : '';
+  const fundTxt = s.fund==='cerf' ? ' with CERF money' : s.fund==='pooled' ? ' with country and regional fund money' : '';
   const F = D.fw.filter(r=>geo(r) && layerOK(r.g,s) && pairFundOK(r.funds,s));
   const n = lc => F.filter(r=>r.lifecycle===lc).length, nT = F.filter(r=>r.technical_support).length;
   if(s.cur){ tFw.textContent = n('active');
@@ -1367,12 +1376,12 @@ function tiles(s, geo, A, N){
   const nc = sumOf(N.filter(r=>r.ft==='cerf'), r=>r.total_usd), np = sumOf(N.filter(r=>r.ft!=='cerf'), r=>r.total_usd);
   if(!s.cur){ tPre.textContent = '–'; tPrel.textContent = 'pre-arranged now: select current frameworks (retired frameworks and ad hoc allocations have none)'; }
   else { tPre.textContent = M0(nc+np);
-    tPrel.textContent = 'pre-arranged now — ' + (s.fund==='cerf' ? 'CERF' : s.fund==='pooled' ? 'CBPFs and regional funds' : `CERF ${M0(nc)} · CBPF/RhPF ${M0(np)}`); }
+    tPrel.textContent = 'pre-arranged now — ' + (s.fund==='cerf' ? 'CERF' : s.fund==='pooled' ? 'country and regional funds' : `CERF ${M0(nc)} · country and regional funds ${M0(np)}`); }
   const ys = uniqSorted(A, r=>r.year);
   const what = [(s.cur||s.ret) ? 'framework activations' : null, s.adh ? 'ad hoc allocations' : null].filter(Boolean).join(' + ');
   tRel.textContent = M0(sumOf(A, r=>r.amount_usd));
   tRell.textContent = `AA released ${ys.length ? ys[0]+(ys.length>1 ? '–'+ys[ys.length-1] : '') : '(none in this selection)'} — ${what || 'no layer selected'}, `
-    + (s.fund==='cerf' ? 'CERF' : s.fund==='pooled' ? 'CBPFs and regional funds' : 'CERF and CBPFs') + (s.gho ? ', GHO contexts' : '');
+    + (s.fund==='cerf' ? 'CERF' : s.fund==='pooled' ? 'country and regional funds' : 'CERF and country and regional funds') + (s.gho ? ', GHO contexts' : '');
   tCov.textContent = (sumOf(D.cov.filter(r=>geo(r) && layerOK(r.g,s) && pairFundOK(r.funds,s)), r=>r.people_covered)/1e6).toFixed(1)+'M';
 }
 function draw(){
@@ -1399,7 +1408,7 @@ function draw(){
   // cannot split it; ad hoc allocations carry none.
   {
     const C = D.cof.filter(r=>geo(r) && (!gho||r.in_gho) && layerOK(r.g,s));
-    const why = s.fund ? 'Co-financing is money from outside CERF and the CBPFs: the fund switch does not apply to it — select both funds to see it.'
+    const why = s.fund ? 'Co-financing is money from outside CERF and the country and regional funds: the fund switch does not apply to it — select both funds to see it.'
       : !(s.cur||s.ret) ? 'Co-financing belongs to frameworks: select current or retired frameworks (ad hoc allocations carry none).'
       : !C.length ? 'No pre-arranged co-financing recorded in this selection.' : '';
     c6.style.display = why ? 'none' : ''; c6x.style.display = why ? '' : 'none'; c6x.textContent = why;
@@ -1425,7 +1434,7 @@ function draw(){
   unBox.style.display = un ? '' : 'none'; unNone.style.display = un ? 'none' : '';
   if(window._flowDraw) _flowDraw();
 }
-// UN vs partners: drawn once (CERF data; hidden when only the CBPFs are selected)
+// UN vs partners: drawn once (CERF data; hidden when only the country and regional funds are selected)
 const UG = ['direct UN spend','INGO','NNGO / local','Red Cross / Red Crescent','government','other'];
 const uy = uniqSorted(D.un, r=>r.year);
 mkChart('c9','bar',uy,UG.map((g,i)=>({label:g, backgroundColor:PAL[i],
@@ -1457,7 +1466,7 @@ window._flowDraw = mountFlow({label:'AA money through funds and agencies to part
 draw();"""
     _dash_page(page, "dash-funding.html", "Financing",
                "<b>The money of anticipatory action</b>: pre-arranged and released across CERF, "
-               "CBPFs and regional funds, with the map's layers and a fund, hazard, region and "
+               "country and regional funds, with the map's layers and a fund, hazard, region and "
                "GHO filter. See also <a href='dash-donors.html'>donor shares and donor flows</a>; "
                "internal: <a href='dash-allocations.html'>allocation explorer</a> · "
                "<a href='questions.html'>coverage of the CERF key data points</a>.",
@@ -1664,7 +1673,7 @@ def build_allocations(page, d):
 <div class='grid'>
  <div class='panel'><h3>Allocations by year × fund type</h3><canvas id='a1' height='240'></canvas></div>
  <div class='panel'><h3>Top countries</h3><canvas id='a2' height='240'></canvas></div>
- <div class='panel' style='grid-column:1/-1'><h3>CERF ↔ CBPF/RhPF complementarity (AA activations)</h3><canvas id='a3' height='240'></canvas>
+ <div class='panel' style='grid-column:1/-1'><h3>CERF ↔ country and regional funds complementarity (AA activations)</h3><canvas id='a3' height='240'></canvas>
    <div class='note'>Per activation event: countries funded by more than one pooled fund at once appear in both series (from aa.activation_funding).</div></div>
  <div class='panel'><h3>Non-framework AA (ad-hoc) by country</h3><canvas id='a4' height='240'></canvas></div>
  <div class='panel'><h3>Timeliness: ERC endorsement → first project approved (AA, days)</h3><canvas id='a5' height='240'></canvas>
@@ -1715,7 +1724,7 @@ function draw(){ const R = rows();
     .sort((a,b)=>(b[1].cerf+b[1].pooled)-(a[1].cerf+a[1].pooled));
   mkChart('a3','bar',both.map(x=>x[0]),
     [{label:'CERF',data:both.map(x=>x[1].cerf),backgroundColor:FUND_COLORS.cerf},
-     {label:'CBPF/RhPF',data:both.map(x=>x[1].pooled),backgroundColor:FUND_COLORS.cbpf}]);
+     {label:'country and regional funds',data:both.map(x=>x[1].pooled),backgroundColor:FUND_COLORS.cbpf}]);
   const adhoc = D.act.filter(r=>r.event_type!=='framework_aa');
   const byA = Object.entries(groupSum(adhoc,r=>r.country_iso3,r=>r.amount_usd)).sort((a,b)=>b[1]-a[1]);
   mkChart('a4','bar',byA.map(x=>x[0]),[{label:'ad hoc AA USD',data:byA.map(x=>x[1]),backgroundColor:PAL[3]}]);
@@ -1740,7 +1749,7 @@ fQ.addEventListener('input',draw);
 draw();"""
     _dash_page(page, "dash-allocations.html", "Allocation explorer",
                "Query the full historical allocation universe — every CERF "
-               "application (2006→) and every CBPF/RhPF allocation envelope — with "
+               "application (2006→) and every country and regional fund allocation envelope — with "
                "the AA lens on by default. Complementarity and non-framework AA "
                "views come from the activation record.",
                panels, json.dumps(data, default=str), js)
@@ -1760,8 +1769,8 @@ def build_delivery(page, d):
 <div class='grid'>
  <div class='panel'><h3>CERF AA subgrants by partner type × year</h3><canvas id='d1' height='250'></canvas>
    <div class='note'>Yakubu's curated AA subgrant set; local = NNGO+GOV+RedC per his localization tagging.</div></div>
- <div class='panel'><h3>CBPF AA projects: direct funding by org type</h3><canvas id='d2' height='250'></canvas>
-   <div class='note'>CBPF pays partners directly — this is the localization view CERF can't show. AA-keyword allocations only.</div></div>
+ <div class='panel'><h3>Country and regional fund AA projects: direct funding by org type</h3><canvas id='d2' height='250'></canvas>
+   <div class='note'>Country and regional funds pay partners directly — this is the localization view CERF can't show. AA-keyword allocations only.</div></div>
  <div class='panel'><h3>Released by agency (CERF AA projects)</h3><canvas id='d3' height='250'></canvas></div>
  <div class='panel'><h3>Released by sector (CERF AA projects)</h3><canvas id='d4' height='250'></canvas></div>
  <div class='panel'><h3>Pre-arranged by agency (framework budgets)</h3><canvas id='d5' height='250'></canvas>
@@ -1813,7 +1822,7 @@ mkChart('d8','bar',rcY,[['women',0],['men',1],['girls',2],['boys',3]].map(([g,i]
   backgroundColor:PAL[i]})),{stacked:true,count:true});"""
     _dash_page(page, "dash-delivery.html", "Delivery, partners & people",
                "Who the money flows through and who it reaches: subgrants and "
-               "localization (CERF AA), direct partner funding (CBPF AA), agency "
+               "localization (CERF AA), direct partner funding (country and regional fund AA), agency "
                "and sector splits (released vs pre-arranged), CVA, and people "
                "reached by gender.",
                panels, json.dumps(data, default=str), js)
@@ -1824,7 +1833,7 @@ COVERAGE = [
     ("Pre-arranged funding by year, cumulative", "covered", "dash-funding.html", "canonical per framework-year; cumulative toggle"),
     ("Pre-arranged by hazard / region", "covered", "dash-funding.html", ""),
     ("AA amount released by year, cumulative", "covered", "dash-funding.html", "all pooled funds via activation_funding"),
-    ("Subgrants by partner type / local partners", "covered", "dash-delivery.html", "CERF AA subgrants + CBPF direct org-type funding"),
+    ("Subgrants by partner type / local partners", "covered", "dash-delivery.html", "CERF AA subgrants + country and regional fund direct org-type funding"),
     ("Released funds by agency", "covered", "dash-delivery.html", "CERF AA projects"),
     ("Released funds by sector", "covered", "dash-delivery.html", "CERF AA project sector splits"),
     ("Pre-arranged funds by agency / sector", "covered", "dash-delivery.html", "Jun-2026 framework budgets; KB funding_breakdown adds per-version detail"),
@@ -2159,6 +2168,121 @@ def _cerf_page(code, cy):
             if isinstance(code, str) and code and y is not None and pd.notna(y) else None)
 
 
+def _event_links(d, c, h, kb_fw, umap, ed, window_name, event_type):
+    """The funding rows and recorded pages of one real activation: its announcement
+    (aa.window_activation url), CERF allocations [(code, page)] and other recorded pages
+    (aa.actual_activation, same month and window)."""
+    wn = window_name if isinstance(window_name, str) else ""
+    fund = d["activation"]
+    f = fund[(fund["country_iso3"] == c) & (fund["hazard"] == h)
+             & (fund["event_date"].astype(str) == ed) & (fund["event_type"] == event_type)
+             & (fund["window_name"].fillna("") == wn)]
+    ann = umap.get((c, h, ed, wn or window_name))
+    au = d["actual_url"][d["actual_url"]["kb_framework"] == kb_fw] if kb_fw else d["actual_url"].iloc[0:0]
+    other = [u for u in au.loc[[str(x)[:7] == ed[:7] and (_loose(w, wn) or not wn)
+                                for x, w in zip(au["event_date"], au["window_name"])], "url"]
+             if isinstance(u, str) and u and u != ann]
+    cy = dict(zip(d["cerf_year"]["application_code"], d["cerf_year"]["year"]))
+    cerf = [(x.allocation_code, _cerf_page(x.allocation_code, cy)) for x in f.itertuples()
+            if x.fund_code == "cerf" and isinstance(x.allocation_code, str)]
+    return dict(fund=f, ann=ann if isinstance(ann, str) and ann else None, other=other, cerf=cerf)
+
+
+def _event_href(lk):
+    """The most relevant page for one real activation, as the activation tables link it:
+    the announcement, else the CERF allocation page, else another recorded page.
+    (url, what it is) — (None, None) when nothing is recorded."""
+    if lk["ann"]:
+        return lk["ann"], "the activation announcement"
+    u = next((u for _, u in lk["cerf"] if u), None)
+    if u:
+        return u, "the CERF allocation page"
+    if lk["other"]:
+        return lk["other"][0], "the recorded activation page"
+    return None, None
+
+
+# ---------------- simulated activations (the backtest)
+# Dated columns added 2026-10-02 (schema.ADDITIVE_MIGRATIONS): the day — for storms the
+# hour — the trigger would have activated. Read when present, else event_year.
+SIM_DATED = ("event_date", "event_time", "time_precision", "source_note")
+
+
+def read_simulated(e):
+    """aa.simulated_activation with the dated columns, NULL on a DB that does not have them
+    yet (a missing column must never turn into an empty backtest)."""
+    have = set(pd.read_sql(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = 'aa' AND table_name = 'simulated_activation'", e)["column_name"])
+    fmt = {"event_date": "event_date::text",
+           "event_time": "to_char(event_time AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI')",
+           "time_precision": "time_precision::text", "source_note": "source_note::text"}
+    extra = ", ".join(f"{fmt[c] if c in have else 'NULL::text'} AS {c}" for c in SIM_DATED)
+    return pd.read_sql(
+        f"""SELECT country_iso3, hazard, version::text AS version, window_name, event_year,
+                   event_label, {extra}
+            FROM aa.simulated_activation ORDER BY event_year DESC""", e)
+
+
+def _sim_val(r, k):
+    v = r.get(k) if isinstance(r, dict) else getattr(r, k, None)
+    return v if isinstance(v, str) and v.strip() and v not in ("NaT", "None", "nan") else None
+
+
+def sim_year(r):
+    """The year a simulated activation counts in: of event_time, else event_date, else event_year."""
+    for k in ("event_time", "event_date"):
+        v = _sim_val(r, k)
+        if v and v[:4].isdigit():
+            return int(v[:4])
+    return int(r["event_year"] if isinstance(r, dict) else r.event_year)
+
+
+def sim_when(r):
+    """When a simulated activation would have happened, as precisely as recorded: '2019',
+    '2019-08', '2019-08-12' or '2019-08-12 06:00 UTC' (time_precision, else inferred)."""
+    t, dt = _sim_val(r, "event_time"), _sim_val(r, "event_date")
+    p = (_sim_val(r, "time_precision") or ("hour" if t else "day" if dt else "year")).lower()
+    base = t or dt
+    if base and p == "hour" and t:
+        return t[:16] + " UTC"
+    if base and p in ("day", "hour"):
+        return base[:10]
+    if base and p == "month":
+        return base[:7]
+    return str(sim_year(r))
+
+
+def sim_at(r):
+    """'in 2019' / 'in 2019-08' / 'on 2019-08-12' / 'on 2019-08-12 06:00 UTC'."""
+    w = sim_when(r)
+    return ("on " if len(w) > 7 else "in ") + w
+
+
+def sim_before_start(ss, valid_from):
+    """(rows kept, n rows dropped, start year) for one version's simulated rows. A version's
+    backtest is fixed before it is endorsed and real activations can only come after, so only
+    rows dated strictly before the year the version took effect (valid_from) count as
+    simulation; the years from then on show real activations only. Kept rows get `sim_year`."""
+    s = valid_from if isinstance(valid_from, pd.Series) else pd.Series([valid_from])
+    yrs = pd.to_datetime(s.astype(str), errors="coerce").dt.year.dropna()
+    vf_y = int(yrs.max()) if len(yrs) else None
+    if not len(ss):
+        return ss.assign(sim_year=pd.Series(dtype="int64")), 0, vf_y
+    ss = ss.assign(sim_year=[sim_year(r) for r in ss.itertuples()])
+    if vf_y is None:
+        return ss, 0, None
+    keep = ss["sim_year"] < vf_y
+    return ss[keep], int((~keep).sum()), vf_y
+
+
+def sim_after_note(n, vf_y):
+    """The small note under a backtest when rows dated after the version's start were left out."""
+    return (f"{n} simulated row{'' if n == 1 else 's'} dated after the version's start ({vf_y} or later) "
+            f"{'is' if n == 1 else 'are'} not shown: a version's backtest is fixed before it is endorsed, "
+            f"and from then on only real activations count.") if n else ""
+
+
 def _activation_blocks(d, c, h, kb_fw, version, umap):
     """(Historical activations grid, Actual activations table) for one framework."""
     import html as _h
@@ -2176,6 +2300,11 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
         vs = [v for v in order if v in set(sim["version"])] or sorted(set(sim["version"]))
         shown = vs[-1]
     ss = sim[sim["version"] == shown] if shown else sim.iloc[0:0]
+    # only rows dated before the year the version took effect are simulation; from then on
+    # the version is in use and only real activations count (sim_before_start)
+    vf = fvm.loc[fvm["version"].astype(str) == str(shown), "valid_from"] if shown else fvm["valid_from"].iloc[0:0]
+    ss, n_after, vf_y = sim_before_start(ss, vf)
+    vf_txt = str(vf.dropna().astype(str).max())[:10] if len(vf.dropna()) else str(vf_y)
     win = d["windows"]
     wv = win[(win["country_iso3"] == c) & (win["hazard"] == h) & (win["version"].astype(str) == str(shown))]
     wins = sorted(set(ss["window_name"].dropna()) | set(wv["window_name"].dropna()))
@@ -2184,56 +2313,50 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
     n_years = pd.to_numeric(wv["analysis_years"], errors="coerce").max() if len(wv) else None
     rows = {}   # (year, label) -> {'cell': [...], window: [...]}
     sim_years = set()   # years the historical simulation covers; others are greyed out
-    if len(ss):
-        vf = fvm.loc[fvm["version"].astype(str) == shown, "valid_from"]
-        vf_y = pd.to_datetime(vf, errors="coerce").dt.year.max() if len(vf) else None
-        y1 = int(max(ss["event_year"].max(), (vf_y - 1) if vf_y and pd.notna(vf_y) else 0))
-        y0 = int(y1 - n_years + 1) if n_years and pd.notna(n_years) else int(ss["event_year"].min())
-        y0 = min(y0, int(ss["event_year"].min()))
+    use_years = set()   # from the version's start year: real activations only
+    if len(ss) or n_after:
+        y1 = int(max(ss["sim_year"].max() if len(ss) else 0, (vf_y - 1) if vf_y else 0))
+        y0 = (int(y1 - n_years + 1) if n_years and pd.notna(n_years)
+              else int(ss["sim_year"].min()) if len(ss) else y1)
+        y0 = min(y0, int(ss["sim_year"].min())) if len(ss) else y0
         labelled = ss[ss["event_label"].fillna("").astype(str) != ""]
         sim_years = set(range(y0, y1 + 1))
-        for y in range(y0, y1 + 1):
-            if not (labelled["event_year"] == y).any():
+        if vf_y:
+            use_years = set(range(vf_y, max(vf_y, pd.Timestamp.now().year) + 1))
+        for y in sorted(sim_years | use_years):
+            if not (labelled["sim_year"] == y).any():
                 rows[(y, "")] = {}
         for r in ss.itertuples():
-            key = (int(r.event_year), str(r.event_label) if isinstance(r.event_label, str) else "")
+            key = (int(r.sim_year), str(r.event_label) if isinstance(r.event_label, str) else "")
             rows.setdefault(key, {}).setdefault(r.window_name, []).append(
-                f"<span class='dot sim' style='background:{col}' title='{esc(r.window_name)}: would have activated in {int(r.event_year)} (simulation)'></span>")
+                f"<span class='dot sim' style='background:{col}' title='{esc(r.window_name)}: would have activated "
+                f"{esc(sim_at(r))} (simulation)'></span>")
     # real activations, one entry per event with its funding rows
     act = d["act_all"][(d["act_all"]["country_iso3"] == c) & (d["act_all"]["hazard"] == h)].copy()
-    fund = d["activation"][(d["activation"]["country_iso3"] == c) & (d["activation"]["hazard"] == h)]
-    cy = dict(zip(d["cerf_year"]["application_code"], d["cerf_year"]["year"]))
     wa = d["wact"][(d["wact"]["country_iso3"] == c) & (d["wact"]["hazard"] == h)]
     full = {(str(r.event_date), r.window_name): r.full_activation for r in wa.itertuples()}
-    au = d["actual_url"][d["actual_url"]["kb_framework"] == kb_fw] if kb_fw else d["actual_url"].iloc[0:0]
     events = []
     for r in act.sort_values("event_date", ascending=False).itertuples():
         ed, wn = str(r.event_date), r.window_name
         wn = wn if isinstance(wn, str) else ""
-        f = fund[(fund["event_date"].astype(str) == ed) & (fund["event_type"] == r.event_type)
-                 & (fund["window_name"].fillna("") == wn)]
-        ann = umap.get((c, h, ed, wn or r.window_name))
-        other = [u for u in au.loc[[str(x)[:7] == ed[:7] and (_loose(w, wn) or not wn)
-                                    for x, w in zip(au["event_date"], au["window_name"])], "url"]
-                 if isinstance(u, str) and u and u != ann]
-        cerf = [(x.allocation_code, _cerf_page(x.allocation_code, cy)) for x in f.itertuples()
-                if x.fund_code == "cerf" and isinstance(x.allocation_code, str)]
-        events.append(dict(date=ed, win=wn if isinstance(wn, str) else "", typ=str(r.event_type),
+        lk = _event_links(d, c, h, kb_fw, umap, ed, r.window_name, r.event_type)
+        events.append(dict(date=ed, win=wn, typ=str(r.event_type),
                            label=r.event_label if isinstance(r.event_label, str) else "",
-                           version=str(r.version) if pd.notna(r.version) else "", fund=f,
-                           ann=ann if isinstance(ann, str) and ann else None, other=other,
-                           cerf=cerf, partial=full.get((ed, wn)) is False))
+                           version=str(r.version) if pd.notna(r.version) else "", fund=lk["fund"],
+                           ann=lk["ann"], other=lk["other"], cerf=lk["cerf"],
+                           partial=full.get((ed, wn)) is False))
     for ev in events:
         amt = "; ".join(f"{x.fund_code} {_m(x.amount_usd)}" for x in ev["fund"].itertuples()
                         if pd.notna(x.amount_usd)) or "amount not recorded"
-        href = ev["ann"] or next((u for _, u in ev["cerf"] if u), None) or (ev["other"][0] if ev["other"] else None)
+        href, goes = _event_href(ev)
         vv = "" if ev["version"] is None or str(ev["version"]) in ("nan", "None", "NaT", "<NA>") else str(ev["version"])
         # no version = an ad hoc allocation: neither this version nor an earlier one
         ref = shown if shown is not None else (str(version) if version is not None else None)
         same = (not vv) or (ref is not None and _vm(vv, ref))   # no backtest: compare with the current version
         tip = (f"{ev['date']} · {ev['win'] or ev['typ'].replace('_', ' ')} · {amt}"
                + (" · ad hoc allocation (no framework version)" if not vv else "" if same else f" · under version {vv}")
-               + (" · partial activation" if ev["partial"] else ""))
+               + (" · partial activation" if ev["partial"] else "")
+               + (f" · opens {goes}" if href else ""))
         mk = (f"<span class='dot {'real' if same else 'old'}'></span>")
         mk = (f"<a href='{esc(href)}' target='_blank' rel='noopener' title='{esc(tip)}'>{mk}</a>"
               if href else f"<span title='{esc(tip)}'>{mk}</span>")
@@ -2253,18 +2376,30 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
         hist = "<p class='empty'>No backtest and no activation recorded for this framework.</p>"
     else:
         head = "".join(f"<th>{esc(w)}</th>" for w in wins)
+        use_tip = (f"version {shown} took effect {vf_txt}: from {vf_y} on, real activations only "
+                   "(its simulation covers the years before)") if use_years else ""
         body = ""
         for (y, lab) in sorted(rows, key=lambda k: (-k[0], k[1])):
             cells = rows[(y, lab)]
+            inner = lambda w: "".join(cells.get(w, []))   # noqa: E731
+            if y in use_years:
+                tds = "".join(f"<td class='use' title='{esc(f'{y}: ' + use_tip)}'>{inner(w)}</td>" for w in wins)
+            elif y in sim_years or not sim_years:
+                tds = "".join(f"<td>{inner(w)}</td>" for w in wins)
+            else:
+                tds = "".join(f"<td class='na' title='{y} is not covered by the historical simulation'>{inner(w)}</td>"
+                              for w in wins)
             body += (f"<tr><td class='yr'>{y}{(' <span class=' + chr(39) + 'muted' + chr(39) + '>' + esc(lab) + '</span>') if lab else ''}"
-                     f"{' ' + ''.join(cells.get('__cell', [])) if cells.get('__cell') else ''}</td>"
-                     + "".join((f"<td>{''.join(cells.get(w, []))}</td>" if y in sim_years or not sim_years else
-                                f"<td class='na' title='{y} is not covered by the historical simulation'>{''.join(cells.get(w, []))}</td>")
-                               for w in wins) + "</tr>")
+                     + (f" <span class='usetag' title='{esc(use_tip)}'>in use</span>" if y in use_years and not lab else "")
+                     + f"{' ' + ''.join(cells.get('__cell', [])) if cells.get('__cell') else ''}</td>"
+                     + tds + "</tr>")
         vnote = ("" if shown is None else
                  f"Backtest of version <code>{esc(shown)}</code>"
                  + ("" if str(shown) == str(version) else " (the current version has no recorded backtest)")
-                 + (f", {int(n_years)} years analysed" if n_years and pd.notna(n_years) else "") + ". ")
+                 + (f", {int(n_years)} years analysed" if n_years and pd.notna(n_years) else "")
+                 + (f"; the version took effect {esc(vf_txt)}, so from {vf_y} on the rows show real "
+                    "activations only" if use_years else "") + ". "
+                 + (esc(sim_after_note(n_after, vf_y)) + " " if n_after else ""))
         hist = (f"<p class='meta'>{vnote or 'No backtest recorded for this framework — real activations only. '}"
                 "One row per year, newest first; a real activation whose window does not match a "
                 "column sits in the year cell. Markers link to the announcement or the CERF allocation.</p>"
@@ -2273,6 +2408,7 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
                 f"<span class='dot real'></span> activated, money released · "
                 f"<span class='dot old'></span> activated under "
                 + ("an earlier version" if str(shown) == str(version) else "a different version (hover for which)")
+                + (" · <span class='sw use'></span> version in use: real activations only" if use_years else "")
                 + "</p>")
     # ---- actual activations table
     if not events:
@@ -2544,8 +2680,8 @@ def build_hub(page, d, fw_links):
 built to the CERF key-data-points list (<a href='questions.html'>coverage map</a>).
 <div class='tiles'>
 <div class='tile'><a href='dash-funding.html'><b>Financing</b></a><div class='l'>pre-arranged & released, by year/hazard/region/fund, GHO, cumulative; current / retired frameworks and ad hoc allocations as on the map; money flows; localisation</div></div>
-<div class='tile'><a href='dash-donors.html'><b>Donor shares</b></a><div class='l'>each donor's share of AA released / pre-arranged, via their contributions to CERF and the CBPFs; donor flows; build earmarks</div></div>
-<div class='tile'><a href='dash-allocations.html'><b>Allocation explorer</b></a><div class='l'>query every CERF + CBPF allocation 2006→; complementarity; timeliness</div></div>
+<div class='tile'><a href='dash-donors.html'><b>Donor shares</b></a><div class='l'>each donor's share of AA released / pre-arranged, via their contributions to CERF and the country and regional funds; donor flows; build earmarks</div></div>
+<div class='tile'><a href='dash-allocations.html'><b>Allocation explorer</b></a><div class='l'>query every CERF, country and regional fund allocation 2006→; complementarity; timeliness</div></div>
 <div class='tile'><a href='dash-delivery.html'><b>Delivery & people</b></a><div class='l'>subgrants, localization, agencies, sectors, CVA, people reached</div></div>
 <div class='tile'><a href='pillar-learning.html'><b>Learning</b></a><div class='l'>the evidence by premise, global learning products, documents per framework, activation records</div></div>
 <div class='tile'><a href='media.html'><b>Media & visuals</b></a><div class='l'>videos, photos, social posts and press releases on AA (collection starting)</div></div>

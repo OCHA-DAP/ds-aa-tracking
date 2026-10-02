@@ -49,8 +49,8 @@ POLICY = {
         "the figures here count each framework's envelope once, as at that date, and never add "
         "it up across years. <b>Released</b> money is what actually went out when a framework "
         "activated; it is drawn from the pre-arranged envelopes, so the two are never added "
-        "together. CERF and the country-based and regional pooled funds (CBPFs and RhPFs) both "
-        "pre-arrange money for anticipatory action."),
+        "together. CERF and the country and regional funds both pre-arrange money for "
+        "anticipatory action."),
     "dash-donors.html": (
         "How is AA money attributed to donors?",
         "Donors contribute to the pooled funds as a whole, not to anticipatory action "
