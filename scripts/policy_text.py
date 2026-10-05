@@ -45,8 +45,9 @@ POLICY = {
     "dash-funding.html": (
         "What is pre-arranged financing?",
         "Pre-arranged financing is money committed to a framework before any shock, so it can "
-        "be released as soon as the trigger is met. It is a <b>commitment in place on a date</b>: "
-        "the figures here count each framework's envelope once, as at that date, and never add "
+        "be released as soon as the trigger is met. It is a <b>commitment in place</b>, not a flow: "
+        "the figures here count each framework's envelope once per year (a past year counts every "
+        "framework that was valid at any time in it; this year, those in place today) and never add "
         "it up across years. <b>Released</b> money is what actually went out when a framework "
         "activated; it is drawn from the pre-arranged envelopes, so the two are never added "
         "together. CERF and the country and regional funds both pre-arrange money for "

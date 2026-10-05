@@ -174,8 +174,9 @@ def haz(h):
 
 
 def _backfill_years(pre, e, first_year=2020):
-    """Framework-years with no dated pre-arranged row get the version in force at 31 December
-    (or today, for the current year) and its envelope from aa.v_version_funding — so the
+    """Framework-years with no dated pre-arranged row get the version that was valid AT ANY TIME
+    DURING THE YEAR (the latest of them; 2026-10-05 rule: a version whose validity ended during
+    a year still counts for that year) and its envelope from aa.v_version_funding — so the
     annual series covers 2020→ from the framework record itself (source='version-inferred').
     Sheet / entered rows for a framework-year always win; the official year-end reports,
     once loaded, will replace the inferred rows year by year."""
@@ -230,15 +231,20 @@ def _backfill_years(pre, e, first_year=2020):
         vs = vs.assign(valid_from=pd.to_datetime(vs["valid_from"]),
                        valid_until=pd.to_datetime(vs["valid_until"]))
         cap = last_live.get((c, h), None)
-        last_year = today.year if (c, h) not in last_live else (
-            cap if cap is not None and not pd.isna(cap)
-            else int(vs["valid_from"].min().year))
+        if (c, h) not in last_live:
+            last_year = today.year
+        else:   # retired: to the last year a status report had it live, or its validity ran
+            ends = [int(x) for x in (cap, vs["valid_until"].max().year if vs["valid_until"].notna().any() else None)
+                    if x is not None and not pd.isna(x)]
+            last_year = max(ends) if ends else int(vs["valid_from"].min().year)
         for y in range(first_year, int(last_year) + 1):
             if (c, h, y) in have:
                 continue
             at = pd.Timestamp(min(dt.date(y, 12, 31), today))
+            # valid at any time in the year; the current year: still valid today
+            since = at if y == today.year else pd.Timestamp(dt.date(y, 1, 1))
             inforce = vs[(vs["valid_from"] <= at)
-                         & (vs["valid_until"].isna() | (vs["valid_until"] >= at))]
+                         & (vs["valid_until"].isna() | (vs["valid_until"] >= since))]
             if inforce.empty:
                 continue
             v = inforce.sort_values("valid_from").iloc[-1]
@@ -1012,8 +1018,8 @@ def _money_flows(d, pre, act):
 # ------------------------------------------------- where the money flows (shared Sankey)
 FLOW_TOP_ORGS = 15   # partner / grantee organisations named in a view; the rest grouped per category
 FLOW_NOTE = (
-    "<b>Pre-arranged</b>: the envelopes in place at the end of the chosen year (the current year: "
-    "today), one per framework and fund — the Financing page's annual series. Never summed over "
+    "<b>Pre-arranged</b>: the envelopes in place in the chosen year (a framework counts for a year "
+    "if it was valid at any time in it; the current year: today), one per framework and fund — the Financing page's annual series. Never summed over "
     "years: a two-year envelope would count twice. Fund → agency uses the agency split of the "
     "version in force at that date, scaled to the envelope; country and regional fund allocations go to their "
     "grantee organisations (AA-keyword project budgets). There is no final column: who an agency "
@@ -1046,7 +1052,7 @@ def _flow_panel(donors_on, donor_toggle=True):
   <span role='radiogroup' aria-label='which money' style='display:inline-flex;border:1px solid #cbd5e1;border-radius:6px;overflow:hidden'>
    <label style='padding:3px 10px;cursor:pointer'><input type='radio' name='flM' value='p' checked> pre-arranged</label>
    <label style='padding:3px 10px;cursor:pointer;border-left:1px solid #cbd5e1'><input type='radio' name='flM' value='r'> released</label></span>
-  <label><span id='flYl'>As at end of</span> <select id='flY'></select></label>
+  <label><span id='flYl'>In place in</span> <select id='flY'></select></label>
   {dctl}
   <label id='flPw'><input type='checkbox' id='flP' checked> final recipients</label>
   <span id='flTot' class='muted'></span>
@@ -1124,7 +1130,7 @@ function mountFlow(cfg){
       nodeColor: nd => { const r = flowNode(nd.id); return r ? CAT_COLOR[r.cat] : null; }});
     el.insertAdjacentHTML('beforeend', "<div class='note'>Hover a band or a box to follow the money; click a box to keep it in focus, click again to clear. Funds in their own colour (CERF blue, pooled funds orange, regional funds green); every agency, grantee and recipient in the colour of its category; a band takes the colour of the box it leaves.</div>");
     if(leg) leg.innerHTML = '<b>Recipients</b>' + F.cats.map(c=>`<span style='display:inline-flex;align-items:center;gap:5px'><span style='width:11px;height:11px;border-radius:2px;background:${CAT_COLOR[c]};display:inline-block${c==='nr' ? ';box-shadow:inset 0 0 0 1px #aab2bd' : ''}'></span>${CAT_LABEL[c]}</span>`).join('');
-    flTot.textContent = mode==='p' ? `Pre-arranged, in place at the end of ${flY.value}: ${money(F.total)}` + (+flY.value===new Date().getFullYear() ? ' (today)' : '')
+    flTot.textContent = mode==='p' ? `Pre-arranged, in place in ${flY.value}: ${money(F.total)}` + (+flY.value===new Date().getFullYear() ? ' (today)' : '')
                                     : `Released ${flY.value==='all' ? 'in all years' : 'in ' + flY.value}: ${money(F.total)}`;
   }
   // the year list depends on the view: pre-arranged is one year's stock (no 'all years')
@@ -1134,7 +1140,7 @@ function mountFlow(cfg){
     D.flowYears[mode].slice().reverse().forEach(y=>flY.add(new Option(y, y)));
     if(mode==='r') flY.add(new Option('all years', 'all'));
     flY.value = [...flY.options].some(o=>o.value===keepY) && keepY!=='' ? keepY : String(D.flowDefault[mode]);
-    document.getElementById('flYl').textContent = mode==='p' ? 'As at end of' : 'Released in';
+    document.getElementById('flYl').textContent = mode==='p' ? 'In place in' : 'Released in';
     document.getElementById('flPw').style.display = mode==='r' ? '' : 'none';
   }
   document.querySelectorAll("input[name='flM']").forEach(el=>el.addEventListener('change', ()=>{ fillYears(); drawFlow(); }));
@@ -1318,8 +1324,8 @@ def build_funding(page, d):
 <p class='meta'>Funds → agencies and grantees → the organisations that implement, <b>pre-arranged</b> (the envelopes in place on a date) or <b>released</b> (what went out in a year) — two views never added together. Follows the layers and the fund switch; tick <i>donors</i> to start from each fund's donors.</p>
 {_flow_panel(donors_on=False)}
 <div class='grid' style='margin-top:16px'>
- <div class='panel'><h3>Pre-arranged funding in place at year end, by fund</h3><canvas id='c1' height='260'></canvas>
-   {how("A stock: what was committed at each year end, so the bars are not added up (the cumulative switch applies to released money only). CERF: the framework envelopes per year (sheets, framework pages, entries; 'all'-totals excluded where the fund split exists); the current year is pre-arranged now. Country and regional funds: AA-tagged allocations in the OneGMS mirror, in the year allocated. Co-financing is shown separately.")}</div>
+ <div class='panel'><h3>Pre-arranged funding in place each year, by fund</h3><canvas id='c1' height='260'></canvas>
+   {how("A stock: what was committed in each year (a framework counts for a year if it was valid at any time in it), so the bars are not added up (the cumulative switch applies to released money only). CERF: the framework envelopes per year (sheets, framework pages, entries; 'all'-totals excluded where the fund split exists); the current year is pre-arranged now. Country and regional funds: AA-tagged allocations in the OneGMS mirror, in the year allocated. Co-financing is shown separately.")}</div>
  <div class='panel'><h3>AA released by year, by fund</h3><canvas id='c2' height='260'></canvas>
    {how("Allocations drawn by a framework activation, all pooled funds — plus the ad hoc AA allocations when that layer is on. A country or regional fund allocation moves here only once an activation is recorded against it.")}</div>
  <div class='panel'><h3>Pre-arranged now, by hazard</h3><canvas id='c3' height='260'></canvas>

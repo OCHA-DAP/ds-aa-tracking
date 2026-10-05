@@ -1336,7 +1336,8 @@ def build_landing(page, d, e):
       for y in range(TODAY.year, YEAR_FIRST - 1, -1))}
  </div>
  <p class='yearnote' id='yearnote' hidden>Past years are reconstructed from the framework records (version dates and
-  status history). They will be replaced by the official year-end figures once those are loaded.</p>
+  status history): a framework counts for a year if a version was valid at any time during it. They will
+  be replaced by the official year-end figures once those are loaded.</p>
  <div class='tiles gtiles' id='gtiles'>
   <div class='gcap' id='gcap'>Global portfolio — all layers currently shown on the map</div>
   <div class='tile' id='t-fw'><div class='v'>{t["n_fw"]}</div><div class='l'>frameworks on the map · {t["n_active"]} active · {t["n_upd"]} being updated · {t["n_dev"]} in development</div></div>
@@ -1673,9 +1674,11 @@ function statusAt(f, D){
   const H = f.hist || {}, d10 = s => String(s || '').slice(0, 10);
   const dated = f.versions.filter(v => v.valid_from && d10(v.valid_from) <= D);
   const last = dated[dated.length - 1], ver = last ? last.v : null;
-  if(H.retired && H.ret_on && H.ret_on <= D) return ['retired', ver];
+  // a version (or a framework) whose validity ended DURING the year still counts for that year
+  const S = D.slice(0, 4) + '-01-01';
+  if(H.retired && H.ret_on && H.ret_on <= S) return ['retired', ver];
   if(last){
-    if(last.status === 'endorsed') return [(!last.valid_until || d10(last.valid_until) >= D) ? 'active' : 'updating', ver];
+    if(last.status === 'endorsed') return [(!last.valid_until || d10(last.valid_until) >= S) ? 'active' : 'updating', ver];
     return [dated.some(v => v.status === 'endorsed') ? 'updating' : 'development', ver];
   }
   const s = lastAt(H.sh, D), sc = s ? s[1] : null;
@@ -1979,20 +1982,20 @@ function updateTiles(){
     el.querySelector('.l').innerHTML = esc(l) + (drv ? DRV(drv === true ? null : drv) : ''); };
   const past = pastY(), at = past ? ` at the end of ${YEAR}` : YEAR != null ? ' today' : '';
   set('t-fw', fw.length, `frameworks on the map${at} · ${n('active')} active · ${n('updating')} being updated · ${n('development')} in development`,
-      past && 'Which frameworks existed at 31 December, and their status then, are reconstructed from the version dates and status history');
+      past && 'Which frameworks existed at 31 December, and their status, are reconstructed from the version dates and status history; a framework whose validity ended during the year still counts as active for that year');
   const noEnv = []; Object.values(L).forEach(c => c.fws.forEach(f => { if(fw.includes(f) && !f.pre_now) noEnv.push(`${c.name} ${f.hz_label.toLowerCase()}`); }));
   let pre = fw.reduce((s,f)=>s+(f.pre_now||0),0), preX = 0;
   if(past){   // pooled-fund rows of no single framework count with the country's frameworks shown
     Object.entries(L).forEach(([iso, c]) => { const x = (c.pre_x || {})[String(YEAR)]; if(x && c.fws.some(f => fw.includes(f))) preX += x[0]; }); pre += preX; }
   const ser = (YEARS.series || {})[String(YEAR)];
   set('t-pre', '$' + Math.round(pre/1e6) + 'M', past
-      ? `pre-arranged at the end of ${YEAR}, frameworks shown`
+      ? `pre-arranged in ${YEAR}, frameworks shown`
         + (noEnv.length ? ` · ${noEnv.length} with no figure for ${YEAR}` : '')
       : 'pre-arranged now (CERF and country and regional funds), all current frameworks incl. in development'
         + (noEnv.length ? ` · ${noEnv.length} without an envelope recorded yet: ${noEnv.join(', ')}` : ''),
-      past && fw.some(f => f.pre_drv) && 'Part of this year\'s figure is inferred from the envelope of the version in force at 31 December (no reported figure for that framework-year)');
+      past && fw.some(f => f.pre_drv) && 'Part of this year\'s figure is inferred from the envelope of the version valid during the year (no reported figure for that framework-year)');
   const tp = document.getElementById('t-pre'); if(tp) tp.title = !past ? '' : [
-    `A stock as at 31 December ${YEAR}, never summed over years.`,
+    `A stock for ${YEAR}: each framework valid at any time in the year, counted once; never summed over years.`,
     preX ? `Includes ${money(preX)} of pooled-fund allocations not tied to one hazard.` : '',
     ser != null && Math.abs(ser - pre) >= 5e5 ? `The funding page's ${YEAR} figure (${money(ser)}) also counts AA-tagged pooled-fund allocations in countries without a framework shown here.` : '',
     noEnv.length ? `No figure for ${YEAR}: ${noEnv.join(', ')}.` : ''].filter(Boolean).join(' ');
@@ -2222,7 +2225,7 @@ function countryTiles(c){
   const pre = fw.reduce((s,f)=>s+(f.pre_now||0),0), cov = fw.reduce((s,f)=>s+(f.covered||0),0), nA = fws.reduce((s,f)=>s+f.n_act_all,0);
   return `<div class='ctiles'><div class='ccap'>${esc(c.name)} only</div>
     <div class='ctile'><div class='v'>${fw.length}</div><div class='l'>framework${fw.length===1?'':'s'}${fws.length>fw.length?` · ${fws.length-fw.length} other`:''}</div></div>
-    <div class='ctile'><div class='v'>${pre?money(pre):'—'}</div><div class='l'>pre-arranged ${pastY()?`end of ${YEAR}`:'now'}</div></div>
+    <div class='ctile'><div class='v'>${pre?money(pre):'—'}</div><div class='l'>pre-arranged ${pastY()?`in ${YEAR}`:'now'}</div></div>
     <div class='ctile'><div class='v'>${nA}</div><div class='l'>activation${nA===1?'':'s'}${YEAR!=null?` in ${YEAR}`:''}</div></div>
     <div class='ctile'><div class='v'>${cov?num(cov):'—'}</div><div class='l'>people covered</div></div></div>`;
 }
