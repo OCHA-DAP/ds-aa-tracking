@@ -85,8 +85,9 @@ HEADLINES = [
        "Animal feed distributed ahead of the 2017 drought peak: the benefit to households "
        "for each dollar invested."),
     *[_h(iso, "cost_effectiveness", "$1 early = $1.30 later",
-         "Southern Africa, 2023–2024 El Niño drought: a dollar provided before the drought "
-         "had the same impact as $1.30 provided later (conservative estimate).")
+         "Southern Africa (a study of Lesotho, Madagascar and Mozambique), 2023–2024 "
+         "El Niño drought: a dollar provided before the drought had the same impact as "
+         "$1.30 provided later (conservative estimate).")
       for iso in ("MOZ", "MDG", "LSO")],
     # speed
     _h("BGD", "speed", "16 minutes",
@@ -185,7 +186,7 @@ def _world(on):
 def build_learning(page, d):
     docs = d["learning"]          # public documents only (internal rows never leave _fetch)
     cur = d["current"]
-    cnames = dict(zip(cur["country_iso3"], cur["country_name"]))
+    cnames = {c: _t(n) for c, n in zip(cur["country_iso3"], cur["country_name"])}
     fw_of = {}                    # iso -> hazards of its frameworks (each has a page)
     for r in cur.itertuples():
         fw_of.setdefault(r.country_iso3, []).append(r.hazard)
@@ -199,14 +200,14 @@ def build_learning(page, d):
         recs.append({
             "id": int(r.id), "t": str(r.title).strip(), "u": _url(r.url),
             "pub": _t(r.publisher), "y": int(r.year) if pd.notna(r.year) else None,
-            "ty": DOC_TYPE_LABEL.get(r.doc_type, str(r.doc_type)).capitalize(),
+            "ty": DOC_TYPE_LABEL.get(r.doc_type, _t(r.doc_type) or "document").capitalize(),
             "type": r.doc_type, "iso": isos, "hz": hz,
             "pr": [p for p in _aslist(r.premises) if p in premise_label],
             "ks": _t(r.key_stat), "s": _t(r.summary),
             # the framework pages the document belongs to: its hazard's, or (a document
             # with no hazard) every framework of the country
             "fw": [[f"fw-{c.lower()}-{h}.html",
-                    f"{cnames.get(c, c)} · {HAZARD_LABEL.get(h, str(h).replace('_', ' '))}"]
+                    f"{cnames.get(c) or c} · {HAZARD_LABEL.get(h, str(h).replace('_', ' '))}"]
                    for c in isos for h in fw_of.get(c, []) if hz in (None, h)],
         })
         if _t(r.url):
@@ -297,14 +298,14 @@ def build_learning(page, d):
 
     # ---- the repository's filters
     c_opts = "".join(
-        f"<option value='{c}'>{html.escape(n)} ({n_docs[c]})</option>"
+        f"<option value='{html.escape(c)}'>{html.escape(n)} ({n_docs[c]})</option>"
         for n, c in sorted((name(c), c) for c in n_docs))
     n_global = sum(1 for r in recs if not r["iso"])
     hz_n = {}
     for r in recs:
         hz_n[r["hz"]] = hz_n.get(r["hz"], 0) + 1
     h_opts = "".join(
-        f"<option value='{h}'>{html.escape(HAZARD_LABEL.get(h, h))} ({hz_n[h]})</option>"
+        f"<option value='{html.escape(h)}'>{html.escape(HAZARD_LABEL.get(h, h))} ({hz_n[h]})</option>"
         for h in [*[h for h in HAZARD_LABEL if h in hz_n],
                   *sorted(h for h in hz_n if h and h not in HAZARD_LABEL)])
     n_int = int(d.get("n_internal_docs", 0))
@@ -513,7 +514,7 @@ function spots(Lb, W, H, k, shaded, keepOut){
       const b = {x1:cx-Lb.w/2, y1:cy-Lb.h/2, x2:cx+Lb.w/2, y2:cy+Lb.h/2}, e = edgePt(b, p[0], p[1]);
       let cost = Math.min(i, 16-i) * .08 + Math.hypot(e[0]-p[0], e[1]-p[1]) / 70;     // its preferred side; a short leader
       for(const s of shaded){
-        cost += (s.iso === Lb.iso ? 6 : s.feat ? 4 : 2.5) * inter(b, s.r) / area(s.r);
+        cost += (s.iso === Lb.iso ? 6 : s.feat ? 4 : 2.5) * inter(b, s.r) / Math.max(area(s.r), 1);
         if(s.feat && inside(b, s.x, s.y)) cost += 10;                               // never on a default callout's dot
         if(s.iso !== Lb.iso && segHitsBox(p, e, s.r)) cost += .8;
       }
@@ -608,7 +609,7 @@ function showCountry(iso, pin){
   hcard.innerHTML = countryHTML(iso, pin); hcard.classList.toggle('pinned', !!pin); hcard.hidden = false;
   mapbox.classList.add('hovering'); mark(iso); placeCard(iso);
 }
-function hideCountry(){ hcard.hidden = true; mapbox.classList.remove('hovering'); mark(null); }
+function hideCountry(){ hcard.hidden = true; hcard.classList.remove('pinned'); mapbox.classList.remove('hovering'); mark(null); }
 function unpin(){ pinned = null; hideCountry();
   stack.innerHTML = LD.featured.map(f => hlButton(f, C[f.iso].n, '')).join(''); }
 const isoOf = t => (t && t.dataset && t.dataset.iso && C[t.dataset.iso] && (t.classList.contains('on') || t.classList.contains('ldot'))) ? t.dataset.iso : null;

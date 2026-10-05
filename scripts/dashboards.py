@@ -1539,7 +1539,7 @@ def _aslist(v):
     return list(v)
 
 
-def _doc_li(r, key_stat=True):
+def _doc_li(r):
     """One learning document as a list item: title link · publisher · year · type tag."""
     import html as _h
     title = _h.escape(str(r.title))
@@ -1549,7 +1549,7 @@ def _doc_li(r, key_stat=True):
                                       int(r.year) if pd.notna(r.year) else None] if x)
     tag = f"<span class='doctag'>{DOC_TYPE_LABEL.get(r.doc_type, str(r.doc_type))}</span>"
     ks = (f"<span class='ks'>{_h.escape(str(r.key_stat))}</span>"
-          if key_stat and isinstance(r.key_stat, str) and r.key_stat else "")
+          if isinstance(r.key_stat, str) and r.key_stat else "")
     return f"<li>{t}{(' <span class=' + chr(39) + 'who' + chr(39) + '>· ' + who + '</span>') if who else ''}{tag}{ks}</li>"
 
 
