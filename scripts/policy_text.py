@@ -63,8 +63,9 @@ POLICY = {
         "Every activation is a chance to learn whether acting early worked. Evaluations, "
         "after-action reviews and studies test the core claims of anticipatory action: that it "
         "is faster, more cost-effective and more dignified than responding after the shock, "
-        "and that it protects lives, livelihoods and development gains. This page collects "
-        "that evidence by claim, alongside the learning products for each framework."),
+        "and that it protects lives, livelihoods and development gains. The map shows headline "
+        "findings in the countries they come from; the list below it holds every learning "
+        "document, by country and hazard."),
     "media.html": (
         "Anticipatory action in pictures",
         "Stories, videos and photos from activations: what acting ahead looks like for the "
