@@ -954,7 +954,11 @@ def assemble(d, e):
         countries.setdefault(c, {"name": _s(r["country_name"]), "region": _s(r.get("region")),
                                  "fws": []})
         vs = ver[(ver["country_iso3"] == c) & (ver["hazard"] == h)].copy()
-        vs = vs.sort_values("valid_from", na_position="first")
+        # by start date; an undated version sorts by its label ('2022' -> 2022-01-01)
+        lab = vs["version"].astype(str).str.extract(r"^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?")
+        lab = pd.to_datetime(lab[0] + "-" + lab[1].fillna("01") + "-" + lab[2].fillna("01"), errors="coerce")
+        vs = vs.assign(_k=pd.to_datetime(vs["valid_from"].astype(str), errors="coerce").fillna(lab))
+        vs = vs.sort_values("_k", na_position="first").drop(columns="_k")
         a_f = acts[(acts["country_iso3"] == c) & (acts["hazard"] == h)]
 
         versions = []
