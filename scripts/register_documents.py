@@ -23,6 +23,9 @@ Two modes:
       (--role endorsed). --private keeps it off the public site and the KB.
       --supersedes SHA marks the file this one replaces (same keys) as superseded;
       --update corrects an already-registered file or link instead of refusing.
+  --batch FILE.json — several hand registrations in one go (one entries file):
+      [{"file": "x.pdf", "keys": ["ISO3/hazard/version", ...], "role"?, "retrieved_from"?,
+        "official_url"?, "private"?, "title"?, "language"?, "note"?}, ...]
 
 Dry run by default, reading aa.framework_version and the registry from the nightly blob
 snapshot (no DB route needed). Two ways to write:
@@ -528,6 +531,7 @@ def main():
         "--write", action="store_true", help="upload + insert into the dev DB directly"
     )
     ap.add_argument("--register", metavar="FILE", help="register one file by hand")
+    ap.add_argument("--batch", metavar="JSON", help="several hand registrations (see docstring)")
     ap.add_argument("--key", action="append", default=[], help="ISO3/hazard/version (repeatable)")
     ap.add_argument("--role", choices=ROLES, default="published")
     ap.add_argument("--private", action="store_true", help="not public: never on the site or KB")
@@ -552,6 +556,8 @@ def main():
     args = ap.parse_args()
     if bool(args.register) != bool(args.key):
         ap.error("--register and --key go together")
+    if args.batch and (args.register or args.key):
+        ap.error("--batch replaces --register/--key")
     if (args.supersedes or args.update) and not args.register:
         ap.error("--supersedes and --update need --register")
     if args.supersedes and not re.fullmatch(r"[0-9a-f]{64}", args.supersedes):
@@ -578,12 +584,31 @@ def main():
             sys.exit(msg)
         print(f"  ! {msg}")
 
+    manual = bool(args.register or args.batch)  # hand registrations: refuse, never skip
     if args.register:
         docs, links = plan_register(args, fv)
         reg_sha, held = next(iter(docs)), {}
         if args.supersedes == reg_sha:
             sys.exit("--supersedes names the file being registered")
         report = {"skipped": [], "check": []}
+    elif args.batch:
+        docs, links, held, report = {}, [], {}, {"skipped": [], "check": []}
+        for item in json.loads(Path(args.batch).read_text()):
+            one = argparse.Namespace(
+                register=item["file"],
+                key=item["keys"],
+                role=item.get("role", "published"),
+                private=item.get("private", False),
+                official_url=item.get("official_url"),
+                retrieved_from=item.get("retrieved_from"),
+                retrieved_at=item.get("retrieved_at"),
+                title=item.get("title"),
+                language=item.get("language"),
+                note=item.get("note"),
+            )
+            d, x = plan_register(one, fv)
+            docs.update(d)
+            links += x
     else:
         docs, links, report, held = plan_backfill(fv, vp)
     docs, links, changed_docs, changed_links, diffs, taken = split_known(
@@ -593,14 +618,14 @@ def main():
         key = f"{x['country_iso3']}/{x['hazard']}/{x['version']}"
         if args.register and args.supersedes == other:
             links.append(x)  # the replacement --supersedes asked for
-        elif args.register:
+        elif manual:
             sys.exit(
                 f"{key} already has a current {x['role']} file {other}: "
                 "pass --supersedes with it to replace it, or another --role"
             )
         else:
             report["skipped"].append(f"{key}: already has a current {x['role']} file {other[:12]}")
-    if not args.register:  # a file whose every link was skipped is not registered either
+    if not manual:  # a file whose every link was skipped is not registered either
         docs = {sha: d for sha, d in docs.items() if any(x["sha256"] == sha for x in links)}
     acc = args.accept_checked
     accepted = {
@@ -610,7 +635,7 @@ def main():
     }
     docs = {sha: d for sha, d in docs.items() if sha not in held or sha in accepted}
     links = [x for x in links if x["sha256"] not in held or x["sha256"] in accepted]
-    if diffs and args.register and not args.update:
+    if diffs and manual and not args.update:
         sys.exit(
             "already registered differently (re-run with --update to correct):\n  "
             + "\n  ".join(diffs)
@@ -657,7 +682,7 @@ def main():
         )
     for line in report["skipped"]:
         print(f"  ! skipped {line}")
-    if not args.register:
+    if not manual:
         known = (
             set()
             if known_links is None
