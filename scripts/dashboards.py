@@ -2059,7 +2059,7 @@ def _changes_block(fvm, vpage, c, h):
     if len(v) < 2:
         return ("<div class='blk'><h2>What changed between versions</h2>"
                 "<p class='empty'>Only one version is registered — nothing to compare yet.</p></div>")
-    v["_vf"] = pd.to_datetime(v["valid_from"], errors="coerce")
+    v["_vf"] = version_start(v)
     v = v.sort_values(["_vf", "version"])
     pg = {(r.kb_framework, str(r.version)): (r.frontmatter, r.triggers) for r in vpage.itertuples()}
     items = ""
@@ -2204,6 +2204,14 @@ def sim_before_start(ss, valid_from):
         return ss, 0, None
     keep = ss["sim_year"] < vf_y
     return ss[keep], int((~keep).sum()), vf_y
+
+
+def version_start(df):
+    """Each version's start, for ordering: valid_from, else the date its label gives ('2022' ->
+    2022-01-01), so an undated version sits where its label says instead of first or last."""
+    lab = df["version"].astype(str).str.extract(r"^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?")
+    lab = pd.to_datetime(lab[0] + "-" + lab[1].fillna("01") + "-" + lab[2].fillna("01"), errors="coerce")
+    return pd.to_datetime(df["valid_from"].astype(str), errors="coerce").fillna(lab)
 
 
 def backtest_span(ss, wv, vf_y):
