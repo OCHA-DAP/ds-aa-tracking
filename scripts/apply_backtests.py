@@ -135,11 +135,13 @@ def apply_erratum(conn, eid, payload, source, sha, dry):
                             {"c": c, "h": h, "v": ver}).first():
             raise ValueError(f"{v}: no such version and no backtest rows under that label")
 
-    # the record goes in first: the guard trigger looks it up while the changes are applied
+    # the record goes in first: the guard trigger looks it up while the changes are applied.
+    # `changes` is JSON null until the end of this transaction, the one state in which the
+    # row can still be written (schema: guard_backtest_erratum)
     conn.execute(sa.text("""
         INSERT INTO aa.backtest_erratum (id, kind, versions, reason, evidence, requested_by,
                                          source, sha256, changes)
-        VALUES (:id, :kind, :versions, :reason, :evidence, :by, :source, :sha, '[]'::jsonb)"""),
+        VALUES (:id, :kind, :versions, :reason, :evidence, :by, :source, :sha, 'null'::jsonb)"""),
         {"id": eid, "kind": kind, "versions": sorted(versions), "reason": payload["reason"],
          "evidence": payload.get("evidence"), "by": payload["requested_by"], "source": source,
          "sha": sha})

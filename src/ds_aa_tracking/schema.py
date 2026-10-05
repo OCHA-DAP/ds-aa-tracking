@@ -721,7 +721,8 @@ DURABLE_TABLES = {
             requested_by text NOT NULL,
             source text NOT NULL,          -- backtests/errata/<file> | blob:<path> (private)
             sha256 text NOT NULL,          -- the file as applied (errata are immutable)
-            changes jsonb NOT NULL,        -- each change with the row's before-values
+            changes jsonb NOT NULL,        -- each change with the row's before-values (a
+                                           -- list; JSON null only while being applied)
             applied_at timestamptz NOT NULL DEFAULT now()
         )""",
     # ------------------------------------------------ KB-era record, frozen
@@ -985,11 +986,19 @@ BACKTEST_GUARDS = [
     """CREATE OR REPLACE FUNCTION aa.guard_backtest_erratum()
        RETURNS trigger LANGUAGE plpgsql AS $$
        BEGIN
+         -- the one allowed change: apply_backtests.py completing the erratum it is applying —
+         -- `changes` goes from JSON null (being applied) to the list, and nothing else moves.
+         -- A completed row always holds a list (empty for an analysis-note), so it is closed.
          IF TG_OP = 'UPDATE'
-            AND NEW.id = OLD.id
-            AND OLD.changes = '[]'::jsonb
-            AND nullif(current_setting('aa.erratum_id', true), '') = OLD.id THEN
-           RETURN NEW;            -- apply_backtests.py completing the erratum it is applying
+            AND OLD.changes = 'null'::jsonb
+            AND jsonb_typeof(NEW.changes) = 'array'
+            AND nullif(current_setting('aa.erratum_id', true), '') = OLD.id
+            AND (NEW.id, NEW.kind, NEW.versions, NEW.reason, NEW.evidence, NEW.requested_by,
+                 NEW.source, NEW.sha256, NEW.applied_at)
+                IS NOT DISTINCT FROM
+                (OLD.id, OLD.kind, OLD.versions, OLD.reason, OLD.evidence, OLD.requested_by,
+                 OLD.source, OLD.sha256, OLD.applied_at) THEN
+           RETURN NEW;
          END IF;
          RAISE EXCEPTION 'aa.backtest_erratum is the record of corrections made: rows are never changed or removed (erratum %)',
            coalesce(OLD.id, '?')
