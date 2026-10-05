@@ -17,6 +17,8 @@ Steps
      (projects/ds-aa-tracking/entries/*.json; each applied once, audited) — the write path
      for entries prepared off-network since laptops lost DB access (2026-09-30). A failure
      here is reported but never blocks the snapshot.
+  2b. scripts/stamp_development.py: a development version without development_since gets
+     today's date (in-development frameworks count toward pre-arranged money from then on)
   3. scripts/export_snapshot.py: consistent snapshot of schema aa -> dev blob
      projects/ds-aa-tracking/snapshot/{latest,YYYY-MM-DD}/ (dated copies kept 30 days,
      31-December copies forever)
@@ -101,6 +103,10 @@ def main():
         run("scripts/apply_entries.py")
     except subprocess.CalledProcessError as ex:  # never block the snapshot on an entry file
         print(f"!! apply_entries failed ({ex}); continuing to the snapshot", flush=True)
+    try:   # a development version gets its start date the first night it exists
+        run("scripts/stamp_development.py")
+    except subprocess.CalledProcessError as ex:
+        print(f"!! stamp_development failed ({ex}); continuing to the snapshot", flush=True)
     run("scripts/export_snapshot.py", *(["--no-prune"] if a.no_prune else []))
 
 

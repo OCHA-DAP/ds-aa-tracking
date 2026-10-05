@@ -650,6 +650,10 @@ ADDITIVE_MIGRATIONS = [
     "ALTER TABLE IF EXISTS aa.simulated_activation ADD COLUMN IF NOT EXISTS event_time timestamptz",
     "ALTER TABLE IF EXISTS aa.simulated_activation ADD COLUMN IF NOT EXISTS time_precision text",
     "ALTER TABLE IF EXISTS aa.simulated_activation ADD COLUMN IF NOT EXISTS source_note text",
+    # 2026-10-05: when a version went into development — in-development frameworks count toward
+    # pre-arranged money, also in the yearly figures, FROM this date (the dates before this
+    # column existed are lost; the nightly stamps it the first night a development version exists)
+    "ALTER TABLE IF EXISTS aa.framework_version ADD COLUMN IF NOT EXISTS development_since date",
 ]
 
 INDEXES = [

@@ -182,10 +182,18 @@ def _backfill_years(pre, e, first_year=2020):
     once loaded, will replace the inferred rows year by year."""
     import datetime as dt
 
+    # endorsed versions from their start; a version also counts while it was IN DEVELOPMENT,
+    # from development_since (recorded since 2026-10-05; earlier development dates are lost)
+    has_dev = "development_since" in set(pd.read_sql(
+        "SELECT column_name FROM information_schema.columns WHERE table_schema = 'aa' "
+        "AND table_name = 'framework_version'", e)["column_name"])
+    dev = "development_since" if has_dev else "NULL::date"
     ver = pd.read_sql(
-        """SELECT country_iso3, hazard, version, kb_framework, kb_status, valid_from,
-                  valid_until, prearranged_usd_doc FROM aa.framework_version
-           WHERE kb_status = 'endorsed' AND valid_from IS NOT NULL""", e)
+        f"""SELECT country_iso3, hazard, version, kb_framework, kb_status,
+                   least(valid_from, {dev}) AS valid_from, valid_until, prearranged_usd_doc
+            FROM aa.framework_version
+            WHERE (kb_status = 'endorsed' AND valid_from IS NOT NULL)
+               OR (kb_status IN ('development', 'pre-development') AND {dev} IS NOT NULL)""", e)
     env = pd.read_sql(
         """SELECT country_iso3, hazard, version, fund_code, total_usd
            FROM aa.v_version_funding WHERE kind = 'prearranged' AND fund_code IS NOT NULL""", e)
