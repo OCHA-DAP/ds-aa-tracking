@@ -1,0 +1,119 @@
+{
+  "kind": "transcription",
+  "reason": "Real activations of this version, and the analysis span stretched to cover them, had been appended to its backtest (the KB-era insurance-Excel / gsheet activation history kept adding years after endorsement). A backtest is fixed when the version is endorsed: the real activations stay in window_activation.",
+  "evidence": "Endorsed document https://www.unocha.org/publications/report/chad/cadre-de-laction-anticipatoire-secheresse-au-tchad-version-finale-du-3-mars-2025 p.2 'Années d'analyse : 1999-2024': F1 13 ans / 7% (2010, 2011, 2015), F2 13 ans / 7% (2015), F3 5,2 ans / 19% (2006, 2009, 2011, 2015, 2017). Real activations 2026-04 and 2026-05 under this version.",
+  "requested_by": "Tristan Downing (checked against the endorsed documents, 2026-10-05)",
+  "changes": [
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "TCD",
+        "hazard": "drought",
+        "version": "2025-03-03",
+        "window_name": "wt1",
+        "event_year": 2026
+      },
+      "why": "2026 is a real activation of this version, not a backtest year"
+    },
+    {
+      "op": "update",
+      "table": "window",
+      "key": {
+        "country_iso3": "TCD",
+        "hazard": "drought",
+        "version": "2025-03-03",
+        "window_name": "wt1"
+      },
+      "set": {
+        "analysis_end": 2024
+      },
+      "why": "span 1999-2026 had been extended to cover the appended year"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "TCD",
+        "hazard": "drought",
+        "version": "2025-03-03",
+        "window_name": "wt2",
+        "event_year": 2026
+      },
+      "why": "2026 is a real activation of this version, not a backtest year"
+    },
+    {
+      "op": "update",
+      "table": "window",
+      "key": {
+        "country_iso3": "TCD",
+        "hazard": "drought",
+        "version": "2025-03-03",
+        "window_name": "wt2"
+      },
+      "set": {
+        "analysis_end": 2024
+      },
+      "why": "span 1999-2026 had been extended to cover the appended year"
+    },
+    {
+      "op": "update",
+      "table": "window",
+      "key": {
+        "country_iso3": "TCD",
+        "hazard": "drought",
+        "version": "2025-03-03",
+        "window_name": "wt3"
+      },
+      "set": {
+        "analysis_end": 2024
+      },
+      "why": "span 1999-2026 had been extended to cover the appended year"
+    },
+    {
+      "op": "update",
+      "table": "window",
+      "key": {
+        "country_iso3": "TCD",
+        "hazard": "drought",
+        "version": "2025-03-03",
+        "window_name": "wt1"
+      },
+      "set": {
+        "rp_reported": 13,
+        "prob_reported": 0.07
+      },
+      "why": "as stated"
+    },
+    {
+      "op": "update",
+      "table": "window",
+      "key": {
+        "country_iso3": "TCD",
+        "hazard": "drought",
+        "version": "2025-03-03",
+        "window_name": "wt2"
+      },
+      "set": {
+        "rp_reported": 13,
+        "prob_reported": 0.07
+      },
+      "why": "as stated"
+    },
+    {
+      "op": "update",
+      "table": "window",
+      "key": {
+        "country_iso3": "TCD",
+        "hazard": "drought",
+        "version": "2025-03-03",
+        "window_name": "wt3"
+      },
+      "set": {
+        "rp_reported": 5.2,
+        "prob_reported": 0.19
+      },
+      "why": "as stated"
+    }
+  ]
+}

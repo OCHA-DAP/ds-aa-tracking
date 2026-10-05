@@ -35,9 +35,11 @@ GROUPS = [
      "ds-aa-tracking", ["version_page", "learning_document", "framework_partner"]),
     ("Data entry (entered values win)", "ds-aa-tracking", [
         "entered_version", "entered_window", "entered_window_funding", "entry_audit"]),
-    ("Knowledge base — trigger performance (read-only, frozen at the KB flip)", "ds-knowledge-base", [
-        "window", "simulated_activation", "funding_breakdown", "actual_activation",
-        "activation_allocation", "version_performance_reported"]),
+    ("Backtests (editable while the version is unsealed; a sealed one changes only by an erratum)",
+     "ds-aa-tracking", ["window", "simulated_activation", "version_performance_reported",
+                        "backtest_erratum"]),
+    ("KB-era record (read-only, frozen 2026-10-05)", "ds-aa-tracking", [
+        "funding_breakdown", "actual_activation", "activation_allocation"]),
     ("OneGMS mirrors (read-only)", "ds-cerf-supplement", [
         "cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country",
         "cerf_allocation_storm", "cerf_supplement", "cbpf_fund", "cbpf_allocation",

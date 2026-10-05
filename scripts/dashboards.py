@@ -3168,7 +3168,6 @@ the ingest merges entered values into the registry, and entered values win.
   <label>Entered by <input id='by' size='16' placeholder='your name' required></label>
   <button class='primary' onclick='save()'>Save to database</button>
   <a class='btn-sec' href='#' onclick='downloadJson(); return false'>Download JSON</a>
-  <a class='btn-sec' id='kbbtn' href='#' target='_blank' style='display:none'>Draft KB page →</a>
  </div>
  <div id='result'></div>
 </div>
@@ -3562,7 +3561,6 @@ async function save(){
       headers:{'content-type':'application/json'}, body: JSON.stringify(p)});
     const res = await r.json();
     if(!r.ok || !res.ok) throw new Error(res.error || r.status);
-    const kb = G.frameworks.find(f=>f.iso3===p.country_iso3 && f.hazard===p.hazard);
     out.innerHTML = `<div class='card' style='border-color:#1c6b31; background:#eef7f0'>
       <b>Saved.</b> ${res.changes} field change(s) written to <code>aa.entered_*</code>
       (${res.saved.windows} window(s), ${res.saved.window_funding} window-funding,
@@ -3570,16 +3568,6 @@ async function save(){
       “${esc(p.entered_by)}”. Entered values merge into the registry
       (<code>aa.framework_version</code>) — entered wins; this site's static pages
       show it after the next publish.</div>`;
-    const KBHAZ = {storm:'tropical-cyclone', flood:'flood', drought:'drought',
-                   cholera:'cholera', plague:'plague', locusts:'locusts'};
-    const kbBody = [`country: ${p.country_iso3}`, `hazard: ${KBHAZ[p.hazard]||p.hazard}`,
-      `version: ${p.version}`, `doc: ${p.version_fields.doc_url||''}`,
-      kb && kb.kb ? `slug: ${kb.kb}` : 'slug:', '', `title: ${p.version_fields.doc_title||''}`].join('\n');
-    const kbbtn = document.getElementById('kbbtn');
-    kbbtn.style.display = '';
-    kbbtn.href = 'https://github.com/OCHA-DAP/ds-knowledge-base/issues/new?title=' +
-      encodeURIComponent(`[ingest-doc] ${p.country_iso3}/${p.hazard} ${p.version}`) +
-      '&body=' + encodeURIComponent(kbBody);
     refreshCurrent();
   } catch(err) {
     out.innerHTML = `<div class='dummy-banner'>save failed: ${esc(err.message)}</div>`;

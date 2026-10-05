@@ -4,8 +4,9 @@ DB-first era (2026-09-10): the dev DB is the single source of truth — this
 script never DROPs or TRUNCATEs a table. It:
   1. CREATE TABLE IF NOT EXISTS for every owned table (regular + durable),
   2. applies schema.ADDITIVE_MIGRATIONS (append-only ALTERs),
-  3. creates indexes,
-  4. rebuilds the v_trk_* views (views are derived — DROP+CREATE is safe).
+  3. installs the backtest guards (schema.BACKTEST_GUARDS: the seal + span triggers),
+  4. creates indexes,
+  5. rebuilds the views (views are derived — DROP+CREATE is safe).
 
 Usage: uv run python scripts/ensure_schema.py
 """
@@ -33,6 +34,11 @@ def ensure_schema(engine):
             conn.execute(sa.text(ddl))
         for stmt in schema.ADDITIVE_MIGRATIONS:
             conn.execute(sa.text(stmt))
+        # seal + span triggers (idempotent). Sent verbatim: the RAISE formats use '%', which
+        # psycopg2 would read as placeholders if any parameter collection were passed
+        raw = conn.execution_options(no_parameters=True)
+        for stmt in schema.BACKTEST_GUARDS:
+            raw.exec_driver_sql(stmt)
         seeded = migrations.seed_from_legacy(conn)        # window-first: seeds (once)
         seeded += migrations.collapse_statuses(conn)      # status collapse + window_status seed
         for idx in schema.INDEXES:

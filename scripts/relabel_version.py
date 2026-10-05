@@ -8,7 +8,9 @@ several tables, and entries files (scripts/apply_entries.py) can only upsert, so
 needs a database route: the Databricks job, or a laptop through the SSH tunnel.
 
 Also moves `supersedes` pointers at the old label (same pair) and a `valid_from` that was
-only the old label padded to a date. Never touches the KB-owned or zz_legacy_ tables.
+only the old label padded to a date. Moves the backtest tables too (owned here since
+2026-10-05); a SEALED version can't be relabelled — the database refuses it outside an
+erratum, so relabel before sealing. Never touches the zz_legacy_ tables.
 Refuses when a table holds rows at BOTH labels (merging is a human decision). Each moved
 table is audited to aa.entry_audit (field = the column, old -> new label).
 

@@ -2,9 +2,10 @@
 
 Conventions (shared with the existing `aa` writers):
 - natural text keys; UNIQUE NULLS NOT DISTINCT composites on fact tables
-- this repo is the single writer of every table below; it never writes the
-  KB-owned tables (framework_version_map, window, simulated_activation,
-  funding_breakdown, actual_activation, activation_allocation) or the
+- this repo is the single writer of every table below — since 2026-10-05 that includes
+  the tables the knowledge base's loaders used to write (window, simulated_activation,
+  version_performance_reported, funding_breakdown, actual_activation,
+  activation_allocation; see BACKTEST_TABLES / KB_ERA_TABLES). It never writes the
   ds-cerf-supplement mirror tables (cerf_allocation, cerf_project*, cerf_supplement,
   cerf_allocation_storm)
 - full-refresh loads (truncate + insert in one transaction)
@@ -58,6 +59,15 @@ TABLES = {
                                            -- revision, same validity + budget)
             supersedes text,
             prearranged_usd_doc numeric,   -- from KB frontmatter (cross-check)
+            backtest_sealed_at timestamptz,  -- set = the backtest (window, simulated_
+                                           -- activation, version_performance_reported
+                                           -- rows) is verified against the endorsed
+                                           -- document and frozen: changing it needs an
+                                           -- erratum (backtests/errata/, applied by
+                                           -- scripts/apply_backtests.py)
+            backtest_sealed_by text,
+            backtest_sealed_against text,  -- what it was verified against: the document
+                                           -- (title / sha256 / table page) or the analysis
             doc_title text,
             doc_url text,                  -- endorsed framework document (PDF)
             analysis_ref text,             -- trigger analysis, e.g. repo@branch:path
@@ -629,7 +639,144 @@ DURABLE_TABLES = {
             old_value text,
             new_value text
         )""",
+    # ------------------------------------------- backtests (simulated activations)
+    # Written by the knowledge base's load_aa_performance.py until 2026-10-05 (from its
+    # gsheet / insurance-Excel crosswalk); owned here since. Shapes are the live ones.
+    # A version's backtest = its aa.window rows + aa.simulated_activation rows + its
+    # aa.version_performance_reported row. While the version is unsealed (development,
+    # or endorsed but not yet verified) it is edited freely — entries files with
+    # op: replace, the admin page. Once framework_version.backtest_sealed_at is set, the
+    # guard_sealed trigger refuses every change except inside an erratum (backtests/errata/,
+    # scripts/apply_backtests.py). Simulated activations must fall inside their window's
+    # analysis span (deferred constraint trigger simulated_in_span).
+    "window": """
+        CREATE TABLE IF NOT EXISTS aa.window (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,
+            window_name text NOT NULL,
+            kb_framework text,             -- attribute (KB folder slug), not part of the key
+            all_in boolean NOT NULL DEFAULT false,
+            basis text,                    -- forecast | observational | mixed
+            allocation_usd bigint,         -- legacy envelope; budgets live in window_funding
+            analysis_start integer,        -- the backtest's analysed years: the RP
+            analysis_end integer,          --   denominator (wrong span = wrong RP)
+            rp_reported numeric,           -- as published; a cross-check, never substituted
+            prob_reported numeric,
+            source text,                   -- where the backtest came from: report (the
+                                           -- endorsed document) | repo (the analysis code)
+                                           -- | gsheet | excel (KB-era crosswalk) | recon-*
+            note text,                     -- reported-vs-derived discrepancies etc.
+            PRIMARY KEY (country_iso3, hazard, version, window_name)
+        )""",
+    "simulated_activation": """
+        CREATE TABLE IF NOT EXISTS aa.simulated_activation (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,
+            window_name text NOT NULL,
+            event_year integer NOT NULL,   -- the year the trigger would have fired, as the
+                                           -- document labels it (seasons that straddle two
+                                           -- calendar years are labelled either way: MOZ
+                                           -- by end year, NER floods by start year) —
+                                           -- never a real activation of the version itself
+            event_label text,
+            kb_framework text,
+            event_date date,
+            event_time timestamptz,
+            time_precision text,           -- year | month | day | hour
+            source_note text,
+            PRIMARY KEY (country_iso3, hazard, version, window_name, event_year)
+        )""",
+    "version_performance_reported": """
+        CREATE TABLE IF NOT EXISTS aa.version_performance_reported (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,
+            kb_framework text,
+            kb_status text,
+            gsheet_tab text,               -- provenance of the reported numbers
+            excel_fv text,
+            overall_rp_reported numeric,   -- published overall return period
+            overall_prob_reported numeric,
+            overall_spend_reported bigint,
+            flag text,                     -- KB-era crosswalk flag (PRE_KB, EXCEL_SOURCE, …)
+            PRIMARY KEY (country_iso3, hazard, version)
+        )""",
+    # corrections to sealed backtests: one row per applied errata file. The guard_sealed
+    # trigger lets a change through only while aa.erratum_id (SET LOCAL) names a row here
+    # whose `versions` covers the row being changed. Written only by apply_backtests.py.
+    "backtest_erratum": """
+        CREATE TABLE IF NOT EXISTS aa.backtest_erratum (
+            id text PRIMARY KEY,           -- the file name stem
+            kind text NOT NULL CHECK (kind IN ('transcription', 'analysis-note')),
+                                           -- transcription: the DB did not match the
+                                           --   endorsed document (fixed in place);
+                                           -- analysis-note: the endorsed backtest itself
+                                           --   is wrong — recorded, never edited in place
+                                           --   (the fix is a new version)
+            versions text[] NOT NULL,      -- 'ISO3/hazard/version' keys it may change
+            reason text NOT NULL,
+            evidence text,                 -- document + page / table, links
+            requested_by text NOT NULL,
+            source text NOT NULL,          -- backtests/errata/<file> | blob:<path> (private)
+            sha256 text NOT NULL,          -- the file as applied (errata are immutable)
+            changes jsonb NOT NULL,        -- each change with the row's before-values
+            applied_at timestamptz NOT NULL DEFAULT now()
+        )""",
+    # ------------------------------------------------ KB-era record, frozen
+    # Written by the knowledge base until its pages stopped being a source (the KB flip,
+    # 2026-09-28); owned here since 2026-10-05 and no longer loaded by anything.
+    # funding_breakdown -> superseded by window_funding (+ v_window_funding_split);
+    # actual_activation -> window_activation; activation_allocation -> activation_funding.
+    # Kept because views and pages still read them (announcement URLs, v_aa_allocation).
+    "funding_breakdown": """
+        CREATE TABLE IF NOT EXISTS aa.funding_breakdown (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,
+            window_name text,              -- null = whole-framework envelope
+            fund_source text,              -- CERF | AHF | NHF | … ; null = unspecified
+            agency text,
+            sector text,
+            amount_usd bigint NOT NULL,
+            provenance text NOT NULL DEFAULT 'stated',   -- stated | imputed-5-95
+            kb_framework text
+        )""",
+    "actual_activation": """
+        CREATE TABLE IF NOT EXISTS aa.actual_activation (
+            kb_framework text NOT NULL,
+            event_date text NOT NULL,
+            window_name text NOT NULL,     -- 'unspecified' when the page did not say
+            country_iso3 text,
+            hazard text,
+            version text,
+            full_activation boolean NOT NULL,
+            released_usd bigint,
+            url text,                      -- the announcement
+            note text,
+            PRIMARY KEY (kb_framework, event_date, window_name)
+        )""",
+    # three row kinds: link (kb_framework, event_date, application_code), NO_CERF
+    # (kb_framework, event_date, NULL), ADHOC_AA (NULL, NULL, application_code). The live
+    # table also carries FOREIGN KEY (application_code) REFERENCES aa.cerf_allocation —
+    # not repeated here: that table belongs to the ds-cerf-supplement mirror.
+    "activation_allocation": """
+        CREATE TABLE IF NOT EXISTS aa.activation_allocation (
+            kb_framework text,
+            event_date text,
+            application_code text,
+            flag text,                     -- SHARED_APP | NO_CERF | ADHOC_AA
+            note text,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            CHECK (kb_framework IS NOT NULL OR application_code IS NOT NULL),
+            CHECK ((kb_framework IS NULL) = (event_date IS NULL))
+        )""",
 }
+
+# the backtest tables the seal guards, and the KB-era tables kept read-only
+BACKTEST_TABLES = ["window", "simulated_activation", "version_performance_reported"]
+KB_ERA_TABLES = ["funding_breakdown", "actual_activation", "activation_allocation"]
 
 # ------------------------------------------------------------ additive migrations
 # DB-first era (2026-09-10): the dev DB is the single source of truth — nothing
@@ -650,9 +797,181 @@ ADDITIVE_MIGRATIONS = [
     "ALTER TABLE IF EXISTS aa.simulated_activation ADD COLUMN IF NOT EXISTS event_time timestamptz",
     "ALTER TABLE IF EXISTS aa.simulated_activation ADD COLUMN IF NOT EXISTS time_precision text",
     "ALTER TABLE IF EXISTS aa.simulated_activation ADD COLUMN IF NOT EXISTS source_note text",
+    # 2026-10-05: backtests owned here; a verified backtest is sealed (see BACKTEST_GUARDS)
+    "ALTER TABLE aa.framework_version ADD COLUMN IF NOT EXISTS backtest_sealed_at timestamptz",
+    "ALTER TABLE aa.framework_version ADD COLUMN IF NOT EXISTS backtest_sealed_by text",
+    "ALTER TABLE aa.framework_version ADD COLUMN IF NOT EXISTS backtest_sealed_against text",
+    "ALTER TABLE aa.window ADD COLUMN IF NOT EXISTS note text",
+    """DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'window_span_order'
+                        AND conrelid = 'aa.window'::regclass) THEN
+           ALTER TABLE aa.window ADD CONSTRAINT window_span_order
+             CHECK (analysis_start IS NULL OR analysis_end IS NULL
+                    OR analysis_start <= analysis_end);
+         END IF;
+         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'window_allocation_nonneg'
+                        AND conrelid = 'aa.window'::regclass) THEN
+           ALTER TABLE aa.window ADD CONSTRAINT window_allocation_nonneg
+             CHECK (allocation_usd IS NULL OR allocation_usd >= 0);
+         END IF;
+       END $$""",
+]
+
+# ------------------------------------------------------- backtest guards (2026-10-05)
+# Applied by ensure_schema after the additive migrations; every statement is idempotent.
+#
+# 1. The seal. framework_version.backtest_sealed_at set = the version's backtest is
+#    verified against its endorsed document and frozen. guard_sealed (BEFORE INSERT /
+#    UPDATE / DELETE on each BACKTEST_TABLES table) refuses a change that touches a sealed
+#    version — on either the old or the new row, so a row can't be moved in or out — unless
+#    the transaction has SET LOCAL aa.erratum_id to an aa.backtest_erratum row covering that
+#    version. Only scripts/apply_backtests.py does that, for a file committed to
+#    backtests/errata/ (or, for versions whose document is not public, a file on the
+#    private dev blob under projects/ds-aa-tracking/errata/). Setting a seal on an
+#    unsealed version is free (the act of sealing); changing or clearing a seal, relabelling
+#    or deleting a sealed version needs an erratum too (guard_seal on framework_version).
+#    Every writer — the admin page's proxy, entries files, the Databricks job, a laptop on
+#    the tunnel — meets the same rule, because it lives in the database.
+# 2. The span. A simulated activation must fall inside its window's analysis span (and its
+#    window must exist): checked at COMMIT (deferred), so a file can change the span and
+#    the years in any order. This is the rule the KB-era data broke — real activations
+#    appended to backtests past the analysed years.
+BACKTEST_GUARDS = [
+    """CREATE OR REPLACE FUNCTION aa.backtest_sealed(c text, h text, v text)
+       RETURNS boolean LANGUAGE sql STABLE AS $$
+         SELECT EXISTS (SELECT 1 FROM aa.framework_version
+                        WHERE country_iso3 = c AND hazard = h AND version = v
+                          AND backtest_sealed_at IS NOT NULL)
+       $$""",
+    """CREATE OR REPLACE FUNCTION aa.require_backtest_erratum(c text, h text, v text, what text)
+       RETURNS void LANGUAGE plpgsql AS $$
+       DECLARE
+         eid text := nullif(current_setting('aa.erratum_id', true), '');
+       BEGIN
+         IF eid IS NOT NULL AND EXISTS (
+              SELECT 1 FROM aa.backtest_erratum e
+              WHERE e.id = eid AND (c || '/' || h || '/' || v) = ANY (e.versions)) THEN
+           RETURN;
+         END IF;
+         RAISE EXCEPTION 'the backtest of %/%/% is sealed: % needs an erratum', c, h, v, what
+           USING HINT = 'Write a backtests/errata/ file in ds-aa-tracking (see backtests/README.md); '
+                        'the nightly job applies it. A changed analysis is a new version.';
+       END $$""",
+    """CREATE OR REPLACE FUNCTION aa.guard_sealed_backtest()
+       RETURNS trigger LANGUAGE plpgsql AS $$
+       BEGIN
+         -- an update that changes nothing (a re-read confirming the record) is not a change
+         IF TG_OP = 'UPDATE' AND NEW IS NOT DISTINCT FROM OLD THEN
+           RETURN NEW;
+         END IF;
+         IF TG_OP IN ('UPDATE', 'DELETE')
+            AND aa.backtest_sealed(OLD.country_iso3, OLD.hazard, OLD.version) THEN
+           PERFORM aa.require_backtest_erratum(OLD.country_iso3, OLD.hazard, OLD.version,
+                                               lower(TG_OP) || ' on aa.' || TG_TABLE_NAME);
+         END IF;
+         IF TG_OP IN ('INSERT', 'UPDATE')
+            AND aa.backtest_sealed(NEW.country_iso3, NEW.hazard, NEW.version) THEN
+           PERFORM aa.require_backtest_erratum(NEW.country_iso3, NEW.hazard, NEW.version,
+                                               lower(TG_OP) || ' on aa.' || TG_TABLE_NAME);
+         END IF;
+         IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+         RETURN NEW;
+       END $$""",
+    *[f"""CREATE OR REPLACE TRIGGER guard_sealed
+          BEFORE INSERT OR UPDATE OR DELETE ON aa.{t}
+          FOR EACH ROW EXECUTE FUNCTION aa.guard_sealed_backtest()""" for t in BACKTEST_TABLES],
+    """CREATE OR REPLACE FUNCTION aa.guard_version_seal()
+       RETURNS trigger LANGUAGE plpgsql AS $$
+       BEGIN
+         IF OLD.backtest_sealed_at IS NULL THEN
+           IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+           RETURN NEW;
+         END IF;
+         IF TG_OP = 'DELETE' THEN
+           PERFORM aa.require_backtest_erratum(OLD.country_iso3, OLD.hazard, OLD.version,
+                                               'deleting the version');
+           RETURN OLD;
+         END IF;
+         IF (NEW.country_iso3, NEW.hazard, NEW.version)
+              IS DISTINCT FROM (OLD.country_iso3, OLD.hazard, OLD.version)
+            OR (NEW.backtest_sealed_at, NEW.backtest_sealed_by, NEW.backtest_sealed_against)
+              IS DISTINCT FROM
+               (OLD.backtest_sealed_at, OLD.backtest_sealed_by, OLD.backtest_sealed_against) THEN
+           PERFORM aa.require_backtest_erratum(OLD.country_iso3, OLD.hazard, OLD.version,
+                                               'relabelling it or changing its seal');
+         END IF;
+         RETURN NEW;
+       END $$""",
+    """CREATE OR REPLACE TRIGGER guard_seal
+       BEFORE UPDATE OR DELETE ON aa.framework_version
+       FOR EACH ROW EXECUTE FUNCTION aa.guard_version_seal()""",
+    """CREATE OR REPLACE FUNCTION aa.check_simulated_in_span()
+       RETURNS trigger LANGUAGE plpgsql AS $$
+       DECLARE
+         w record;
+       BEGIN
+         IF TG_TABLE_NAME = 'simulated_activation' THEN
+           -- the row may be gone by commit time (deleted later in the transaction)
+           IF NOT EXISTS (SELECT 1 FROM aa.simulated_activation s
+                          WHERE (s.country_iso3, s.hazard, s.version, s.window_name,
+                                 s.event_year)
+                              = (NEW.country_iso3, NEW.hazard, NEW.version, NEW.window_name,
+                                 NEW.event_year)) THEN
+             RETURN NULL;
+           END IF;
+           SELECT analysis_start, analysis_end INTO w FROM aa.window
+           WHERE (country_iso3, hazard, version, window_name)
+               = (NEW.country_iso3, NEW.hazard, NEW.version, NEW.window_name);
+           IF NOT FOUND THEN
+             RAISE EXCEPTION 'simulated activation %/%/% "%" %: the window is not in aa.window',
+               NEW.country_iso3, NEW.hazard, NEW.version, NEW.window_name, NEW.event_year;
+           END IF;
+           IF NEW.event_year < coalesce(w.analysis_start, NEW.event_year)
+              OR NEW.event_year > coalesce(w.analysis_end, NEW.event_year) THEN
+             RAISE EXCEPTION 'simulated activation %/%/% "%" %: outside the analysis span %-%',
+               NEW.country_iso3, NEW.hazard, NEW.version, NEW.window_name, NEW.event_year,
+               w.analysis_start, w.analysis_end
+               USING HINT = 'A year after the analysed span is a real activation: record it '
+                            'in window_activation, not in the backtest.';
+           END IF;
+         ELSE
+           SELECT s.event_year INTO w FROM aa.simulated_activation s
+           JOIN aa.window x USING (country_iso3, hazard, version, window_name)
+           WHERE (x.country_iso3, x.hazard, x.version, x.window_name)
+               = (NEW.country_iso3, NEW.hazard, NEW.version, NEW.window_name)
+             AND (s.event_year < coalesce(x.analysis_start, s.event_year)
+                  OR s.event_year > coalesce(x.analysis_end, s.event_year))
+           LIMIT 1;
+           IF FOUND THEN
+             RAISE EXCEPTION 'window %/%/% "%": span %-% leaves simulated year % outside',
+               NEW.country_iso3, NEW.hazard, NEW.version, NEW.window_name,
+               NEW.analysis_start, NEW.analysis_end, w.event_year;
+           END IF;
+         END IF;
+         RETURN NULL;
+       END $$""",
+    """DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'simulated_in_span'
+                        AND tgrelid = 'aa.simulated_activation'::regclass) THEN
+           CREATE CONSTRAINT TRIGGER simulated_in_span
+             AFTER INSERT OR UPDATE ON aa.simulated_activation
+             DEFERRABLE INITIALLY DEFERRED
+             FOR EACH ROW EXECUTE FUNCTION aa.check_simulated_in_span();
+         END IF;
+         IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'window_span_covers'
+                        AND tgrelid = 'aa.window'::regclass) THEN
+           CREATE CONSTRAINT TRIGGER window_span_covers
+             AFTER UPDATE OF analysis_start, analysis_end ON aa.window
+             DEFERRABLE INITIALLY DEFERRED
+             FOR EACH ROW EXECUTE FUNCTION aa.check_simulated_in_span();
+         END IF;
+       END $$""",
 ]
 
 INDEXES = [
+    # KB-era: one row per (activation, allocation) pair, any of the three row kinds
+    """CREATE UNIQUE INDEX IF NOT EXISTS activation_allocation_uniq ON aa.activation_allocation
+       (COALESCE(kb_framework, ''), COALESCE(event_date, ''), COALESCE(application_code, ''))""",
     "CREATE INDEX IF NOT EXISTS cerf_subgrant_project_idx ON aa.cerf_subgrant (project_code)",
     "CREATE INDEX IF NOT EXISTS cerf_subgrant_app_idx ON aa.cerf_subgrant (application_code)",
     """CREATE UNIQUE INDEX IF NOT EXISTS cerf_subgrant_uniq ON aa.cerf_subgrant
@@ -670,6 +989,124 @@ LEGACY_TABLES = [   # renamed zz_legacy_<name> by the window-first migration; re
 ]
 
 VIEWS = {
+    # ---- backtest performance (moved from the KB's load_aa_performance.py, 2026-10-05).
+    # Weibull: RP = (analysed years + 1) / activations; overall = any window firing in a year.
+    # Names and columns unchanged — the CERF trigger-allocations app and old ERDs read them.
+    "v_window_performance": """
+        CREATE OR REPLACE VIEW aa.v_window_performance AS
+        SELECT w.country_iso3, w.hazard, w.version, w.window_name, w.kb_framework,
+               w.version AS kb_version, w.all_in,
+               w.allocation_usd, w.analysis_start, w.analysis_end,
+               (w.analysis_end - w.analysis_start + 1)              AS analysis_years,
+               count(a.event_year)                                  AS n_activations,
+               round((w.analysis_end - w.analysis_start + 1 + 1.0)
+                     / nullif(count(a.event_year), 0), 2)           AS return_period,
+               round(count(a.event_year)::numeric
+                     / nullif(w.analysis_end - w.analysis_start + 1, 0), 3) AS activation_prob,
+               w.rp_reported, w.prob_reported
+        FROM aa.window w
+        LEFT JOIN aa.simulated_activation a
+          ON (a.country_iso3, a.hazard, a.version, a.window_name)
+           = (w.country_iso3, w.hazard, w.version, w.window_name)
+        GROUP BY w.country_iso3, w.hazard, w.version, w.window_name, w.kb_framework, w.all_in,
+                 w.allocation_usd, w.analysis_start, w.analysis_end, w.rp_reported,
+                 w.prob_reported
+    """,
+    "v_framework_performance": """
+        CREATE OR REPLACE VIEW aa.v_framework_performance AS
+        WITH act AS (
+            SELECT country_iso3, hazard, version, event_year
+            FROM aa.simulated_activation GROUP BY 1, 2, 3, 4
+        ),
+        dims AS (
+            SELECT country_iso3, hazard, version, max(kb_framework) AS kb_framework,
+                   min(analysis_start) AS a0, max(analysis_end) AS a1,
+                   bool_or(all_in) AS all_in, sum(allocation_usd) AS total_budget
+            FROM aa.window GROUP BY 1, 2, 3
+        )
+        SELECT d.country_iso3, d.hazard, d.version, d.kb_framework, d.version AS kb_version,
+               d.a1 - d.a0 + 1                                    AS analysis_years,
+               count(a.event_year)                                AS n_activation_years,
+               round((d.a1 - d.a0 + 1 + 1.0)
+                     / nullif(count(a.event_year), 0), 2)         AS overall_return_period,
+               round(count(a.event_year)::numeric
+                     / nullif(d.a1 - d.a0 + 1, 0), 3)             AS overall_activation_prob,
+               d.all_in, d.total_budget
+        FROM dims d
+        LEFT JOIN act a
+          ON (a.country_iso3, a.hazard, a.version) = (d.country_iso3, d.hazard, d.version)
+        GROUP BY d.country_iso3, d.hazard, d.version, d.kb_framework, d.a0, d.a1, d.all_in,
+                 d.total_budget
+    """,
+    # the old crosswalk shape, for readers still keyed (kb_framework, kb_version, country_iso3)
+    "framework_version_map": """
+        CREATE OR REPLACE VIEW aa.framework_version_map AS
+        SELECT kb_framework, version AS kb_version, country_iso3, kb_status, gsheet_tab,
+               excel_fv, overall_rp_reported, overall_prob_reported, overall_spend_reported,
+               flag
+        FROM aa.version_performance_reported
+    """,
+    # ---- KB-era record (frozen tables), views unchanged
+    "v_funding_by_sector": """
+        CREATE OR REPLACE VIEW aa.v_funding_by_sector AS
+        SELECT country_iso3, hazard, version, kb_framework, version AS kb_version,
+               sector, sum(amount_usd) AS amount_usd
+        FROM aa.funding_breakdown WHERE sector IS NOT NULL
+        GROUP BY 1, 2, 3, 4, 6
+    """,
+    "v_funding_by_agency": """
+        CREATE OR REPLACE VIEW aa.v_funding_by_agency AS
+        SELECT country_iso3, hazard, version, kb_framework, version AS kb_version,
+               agency, sum(amount_usd) AS amount_usd
+        FROM aa.funding_breakdown WHERE agency IS NOT NULL
+        GROUP BY 1, 2, 3, 4, 6
+    """,
+    "v_funding_by_window": """
+        CREATE OR REPLACE VIEW aa.v_funding_by_window AS
+        SELECT country_iso3, hazard, version, kb_framework, version AS kb_version, window_name,
+               bool_or(provenance <> 'stated') AS any_imputed, sum(amount_usd) AS amount_usd
+        FROM aa.funding_breakdown WHERE window_name IS NOT NULL
+        GROUP BY 1, 2, 3, 4, 6
+    """,
+    "v_aa_allocation": """
+        CREATE OR REPLACE VIEW aa.v_aa_allocation AS
+        SELECT ca.application_code, ca.year, ca.country_iso3, ca.emergency_type, ca.title,
+               ca.amount_approved, ca.individuals_planned, ca.individuals_reached,
+               ca.allocation_status, l.kb_framework, l.event_date,
+               l.flag = 'ADHOC_AA' AS aa_adhoc, l.note AS aa_note
+        FROM aa.activation_allocation l
+        JOIN aa.cerf_allocation ca USING (application_code)
+    """,
+    "v_activation_funding": """
+        CREATE OR REPLACE VIEW aa.v_activation_funding AS
+        WITH ev AS (
+            SELECT kb_framework, event_date,
+                   max(country_iso3) AS country_iso3, max(hazard) AS hazard,
+                   max(version) AS version,
+                   string_agg(DISTINCT window_name, ' + ' ORDER BY window_name) AS window_name,
+                   bool_or(full_activation) AS full_activation,
+                   sum(released_usd) AS released_usd
+            FROM aa.actual_activation
+            GROUP BY kb_framework, event_date
+        )
+        SELECT ev.kb_framework, ev.event_date, ev.version, ev.version AS kb_version,
+               ev.country_iso3, ev.hazard, ev.window_name, ev.full_activation,
+               ev.released_usd,
+               count(ca.application_code) AS n_allocations,
+               string_agg(ca.application_code, ' + ' ORDER BY ca.application_code)
+                   AS application_codes,
+               bool_or(l.flag = 'SHARED_APP') AS shared_app,
+               sum(ca.amount_approved) AS cerf_amount_approved,
+               sum(ca.individuals_planned) AS individuals_planned,
+               sum(ca.individuals_reached) AS individuals_reached,
+               min(ca.allocation_status) AS allocation_status,
+               min(ca.erc_endorsement_date) AS erc_endorsement_date
+        FROM ev
+        LEFT JOIN aa.activation_allocation l USING (kb_framework, event_date)
+        LEFT JOIN aa.cerf_allocation ca USING (application_code)
+        GROUP BY ev.kb_framework, ev.event_date, ev.version, ev.country_iso3, ev.hazard,
+                 ev.window_name, ev.full_activation, ev.released_usd
+    """,
     # ---- compatibility names (one release): the old table names as views
     "framework_registry": """
         CREATE OR REPLACE VIEW aa.framework_registry AS SELECT * FROM aa.country_hazard
@@ -1039,5 +1476,57 @@ VIEWS = {
         FROM aa.v_version_funding vf
         JOIN aa.framework_version fv USING (country_iso3, hazard, version)
         WHERE vf.kind = 'prearranged' AND vf.fund_code = 'cerf'
+    """,
+    # the backtest curation queue: error = breaks a rule the database enforces on new rows
+    # (rows from before the guards); warn = worth a look; info = the sealing queue
+    "v_trk_backtest_check": """
+        CREATE OR REPLACE VIEW aa.v_trk_backtest_check AS
+        SELECT 'error' AS severity, 'simulated year outside the analysis span' AS "check",
+               s.country_iso3, s.hazard, s.version, s.window_name,
+               s.event_year || ' outside ' || w.analysis_start || '-' || w.analysis_end AS detail
+        FROM aa.simulated_activation s
+        JOIN aa.window w USING (country_iso3, hazard, version, window_name)
+        WHERE s.event_year NOT BETWEEN w.analysis_start AND w.analysis_end
+        UNION ALL
+        SELECT 'error', 'backtest under a label that is no version',
+               w.country_iso3, w.hazard, w.version, w.window_name, 'not in framework_version'
+        FROM aa.window w
+        LEFT JOIN aa.framework_version f USING (country_iso3, hazard, version)
+        WHERE f.version IS NULL
+        UNION ALL
+        SELECT 'warn', 'window without an analysis span',
+               country_iso3, hazard, version, window_name, 'the RP has no denominator'
+        FROM aa.window WHERE analysis_start IS NULL OR analysis_end IS NULL
+        UNION ALL
+        SELECT 'warn', 'simulated year in or after the year the version took effect',
+               s.country_iso3, s.hazard, s.version, s.window_name,
+               s.event_year || ' vs valid from ' || f.valid_from
+               || ' (a real activation, unless the document labels seasons by start year)'
+        FROM aa.simulated_activation s
+        JOIN aa.framework_version f USING (country_iso3, hazard, version)
+        WHERE s.event_year >= extract(year FROM f.valid_from)
+        UNION ALL
+        SELECT 'warn', 'computed RP differs from the reported one by more than a tenth',
+               country_iso3, hazard, version, window_name,
+               return_period || ' computed (Weibull) vs ' || rp_reported || ' reported'
+        FROM aa.v_window_performance
+        WHERE rp_reported IS NOT NULL AND return_period IS NOT NULL
+          AND abs(return_period - rp_reported) > 0.1 * rp_reported
+        UNION ALL
+        SELECT 'info', 'endorsed backtest not yet checked against its document (unsealed)',
+               f.country_iso3, f.hazard, f.version, NULL,
+               count(*) || ' window(s)'
+        FROM aa.framework_version f
+        JOIN aa.window w USING (country_iso3, hazard, version)
+        WHERE f.kb_status = 'endorsed' AND f.backtest_sealed_at IS NULL
+        GROUP BY f.country_iso3, f.hazard, f.version
+        UNION ALL
+        SELECT 'info', 'endorsed version with no backtest recorded',
+               f.country_iso3, f.hazard, f.version, NULL, NULL
+        FROM aa.framework_version f
+        WHERE f.kb_status = 'endorsed'
+          AND NOT EXISTS (SELECT 1 FROM aa.window w
+                          WHERE (w.country_iso3, w.hazard, w.version)
+                              = (f.country_iso3, f.hazard, f.version))
     """,
 }

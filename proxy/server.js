@@ -30,7 +30,11 @@
  * viewer) and EDITOR_TOKEN (editor — never embedded; the pages prompt for it
  * once and keep it in localStorage). Reads need viewer; /extract, /entry, /save
  * and /delete need editor. Generic writes are refused on tables other writers
- * own (KB loaders, OneGMS mirrors) and on the append-only audit table.
+ * own (OneGMS mirrors), on the frozen KB-era record, on the backtest errata (the
+ * errata job writes those) and on the append-only audit table. Backtests (window,
+ * simulated_activation, version_performance_reported) are editable here while their
+ * version is unsealed; the database's guard_sealed trigger refuses changes to a sealed
+ * one, and its message comes back to the page as is.
  *
  * Other guards: origin allowlist, model allowlist, size cap, per-IP rate limits.
  * The Anthropic key can never be used for arbitrary requests.
@@ -51,9 +55,10 @@ const READONLY_TABLES = new Set([
   "entry_audit",
   // document registry: content-addressed, written only by scripts/register_documents.py
   "framework_document", "version_document",
-  // ds-knowledge-base loaders
-  "window", "simulated_activation", "funding_breakdown", "actual_activation",
-  "activation_allocation", "version_performance_reported",
+  // corrections to sealed backtests: written only by scripts/apply_backtests.py
+  "backtest_erratum",
+  // the KB-era record, frozen since the KB loaders stopped (2026-10-05)
+  "funding_breakdown", "actual_activation", "activation_allocation",
   // ds-cerf-supplement OneGMS mirrors
   "cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country",
   "cerf_allocation_storm", "cerf_supplement", "cerf_contribution",
@@ -64,9 +69,10 @@ const TABLE_OWNER = (t) =>
   READONLY_PREFIXES.some((p) => t.startsWith(p)) || t.startsWith("cerf_allocation_storm") ||
   ["cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country", "cerf_supplement", "cerf_contribution"].includes(t)
     ? "ds-cerf-supplement"
-    : ["window", "simulated_activation", "funding_breakdown", "actual_activation",
-       "activation_allocation", "version_performance_reported"].includes(t)
-      ? "ds-knowledge-base" : "ds-aa-tracking";
+    : ["funding_breakdown", "actual_activation", "activation_allocation"].includes(t)
+      ? "nobody — the frozen KB-era record"
+      : t === "backtest_erratum" ? "the errata job (backtests/errata/)"
+      : "ds-aa-tracking";
 const isReadonly = (t) => READONLY_TABLES.has(t) || READONLY_PREFIXES.some((p) => t.startsWith(p));
 const hits = new Map();
 

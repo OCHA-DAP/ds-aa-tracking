@@ -1,0 +1,36 @@
+{
+  "kind": "transcription",
+  "reason": "The 2025 year is in the endorsed table: this document labels seasons by their END year (Chido, Dec 2024, is '2025'), so 2025 is the 2024/25 season, before this version took effect. The span stopped at 2024; the document states none, so only its end moves, to the last season the table covers.",
+  "evidence": "Endorsed document https://reliefweb.int/report/mozambique/mozambique-anticipatory-action-framework-cyclones-2026 p.26 Figure 4 (season labels: Idai 2019, Eloise 2021, Chido 2025) and p.28 Table 5.",
+  "requested_by": "Tristan Downing (checked against the endorsed documents, 2026-10-05)",
+  "changes": [
+    {
+      "op": "update",
+      "table": "window",
+      "key": {
+        "country_iso3": "MOZ",
+        "hazard": "storm",
+        "version": "2026-01-09",
+        "window_name": "Action"
+      },
+      "set": {
+        "analysis_end": 2025
+      },
+      "why": "covers the 2024/25 season the table lists"
+    },
+    {
+      "op": "update",
+      "table": "window",
+      "key": {
+        "country_iso3": "MOZ",
+        "hazard": "storm",
+        "version": "2026-01-09",
+        "window_name": "Observational"
+      },
+      "set": {
+        "analysis_end": 2025
+      },
+      "why": "covers the 2024/25 season the table lists"
+    }
+  ]
+}

@@ -33,9 +33,17 @@ months, trigger facets, data sources, agencies, the "Trigger windows" table, the
 and are edited here; the nightly KB sweep (`scripts/sync_kb.py`) is off; the site build
 reads only the database snapshot (no KB checkout). The KB's job is now the other way
 round: read this DB (registry, versions, statuses, funding) and find the code, monitoring
-and published documents for each framework. The KB-loader tables (`window`,
-`simulated_activation`, `funding_breakdown`, `actual_activation`) stay as frozen inputs
-until their loaders are pointed at this DB.
+and published documents for each framework.
+
+**AA management moved here (2026-10-05).** The tables the KB's loaders used to write are
+owned here now (DDL and views in `schema.py`; the KB loaders, its activation-link flow and
+its KB→DB workflows are retired): the **backtests** — `window`, `simulated_activation`,
+`version_performance_reported` — are edited here, and `funding_breakdown`,
+`actual_activation`, `activation_allocation` are the frozen KB-era record (superseded by
+`window_funding`, `window_activation`, `activation_funding`). A backtest is edited freely
+while its version is unsealed and changes only through a reviewed erratum once it is
+**sealed** (checked against the endorsed document) — the database enforces it for every
+writer. See `backtests/README.md`.
 
 Two more DB-first tables came with the flip: `aa.learning_document` (the AA Compendium of
 Available Resources, Sept 2026, plus the website to-add list; `scripts/import_learning.py`;
@@ -99,6 +107,13 @@ Since 2026-09-30 laptops cannot reach the dev DB. Two write paths remain: the ad
 job applies once each, before the snapshot (`scripts/apply_entries.py`; format in its
 docstring; upload with `--upload FILE`, test against a restored local copy with `--dir`).
 Every row is audited to `aa.entry_audit`; applied files are recorded in `aa.applied_entries`.
+Besides upserts, an item can `delete` a row or `replace` a version's rows in a table (a
+re-run backtest of a version in development). A file that fails — e.g. one touching a sealed
+backtest — stays pending and never blocks the others.
+
+Backtest **errata and seals** are the one write path in git (public data, reviewed in a pull
+request): `backtests/errata/` and `backtests/seals/`, applied by the same nightly job right
+after the entries (`scripts/apply_backtests.py`; `backtests/README.md`).
 
 ## Running
 

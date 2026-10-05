@@ -1,0 +1,34 @@
+{
+  "kind": "transcription",
+  "reason": "Real activations of this version, and the analysis span stretched to cover them, had been appended to its backtest (the KB-era insurance-Excel / gsheet activation history kept adding years after endorsement). A backtest is fixed when the version is endorsed: the real activations stay in window_activation. The document states no year-by-year backtest (only 'about one occurrence every six months'), so the remaining 2020-2024 years are the Excel's and are left as they are; the span ends at 2024, the last year before the version took effect.",
+  "evidence": "Endorsed document https://reliefweb.int/report/democratic-republic-congo/dr-congo-anticipatory-action-framework-cholera-2025-enfr (text lines ~298-300: no backtest table). Real activations 2025-03, 2025-05, 2025-07 under this version.",
+  "requested_by": "Tristan Downing (checked against the endorsed documents, 2026-10-05)",
+  "changes": [
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "COD",
+        "hazard": "cholera",
+        "version": "2025-03-11",
+        "window_name": "ws",
+        "event_year": 2025
+      },
+      "why": "2025 is a real activation of this version, not a backtest year"
+    },
+    {
+      "op": "update",
+      "table": "window",
+      "key": {
+        "country_iso3": "COD",
+        "hazard": "cholera",
+        "version": "2025-03-11",
+        "window_name": "ws"
+      },
+      "set": {
+        "analysis_end": 2024
+      },
+      "why": "span 2020-2025 had been extended to cover the appended year"
+    }
+  ]
+}
