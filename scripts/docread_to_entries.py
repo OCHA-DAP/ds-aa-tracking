@@ -40,6 +40,8 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 import ocha_stratus as stratus  # noqa: E402
 
 SOURCE = "docread-2026-10"
+HAZARD_WORDS = {"tropical-cyclone": "storm", "tropical cyclone": "storm", "cyclone": "storm",
+                "typhoon": "storm", "hurricane": "storm", "floods": "flood", "flooding": "flood"}
 FUND_ALIASES = {"CERF": "cerf"}
 
 
@@ -110,14 +112,30 @@ def fund_code(label, iso3, funds):
     return None   # an agency's own money, a donor, government: co-financing, named by financier
 
 
+def _storm_names(label):
+    """'PABLO / BOPHA (Scenario 2): readiness reached …' -> 'PABLO / BOPHA';
+    'Harold 2019/20; Yasa 2020/21 (…)' -> 'Harold; Yasa'."""
+    if not label:
+        return None
+    text = re.sub(r"\([^()]*\)?", "", str(label))      # bracketed asides, even unclosed
+    text = re.split(r":", text, maxsplit=1)[0]           # 'NAME: what happened'
+    parts = []
+    for part in text.split(";"):
+        x = re.split(r"\s+-\s+|\s+—\s+|,", part.strip(), maxsplit=1)[0]
+        x = re.sub(r"\s+\d{4}(/\d{2,4})?$", "", x).strip()
+        if x:
+            parts.append(x)
+    return "; ".join(parts) or None
+
+
 def _checks(read, fm):
     """Internal consistency of a read: rows add up, windows named, sims inside the analysed span."""
     out = []
     wins = {w.get("window_name") for w in read.get("windows") or []}
-    rows = read.get("funding_rows") or []
-    for r in rows:
-        if r.get("window") and r["window"] not in wins:
-            out.append(f"funding row names undeclared window {r['window']!r}")
+    rows = [r for r in read.get("funding_rows") or [] if not (r.get("alternative_scenario") or r.get("scenario"))]
+    areas = sorted({r["window"] for r in read.get("funding_rows") or [] if r.get("window") and r["window"] not in wins})
+    if areas:
+        out.append(f"funding split by area, not by window ({', '.join(areas)}): loaded as 'unattributed' with the area noted")
     for s_ in read.get("simulated_activations") or []:
         if s_.get("window") and s_["window"] not in wins:
             out.append(f"backtest row names undeclared window {s_['window']!r}")
@@ -129,11 +147,17 @@ def _checks(read, fm):
             out.append(f"backtest year {y} outside the analysed {a}-{b} ({s_.get('window')})")
     env = [r for r in rows if not r.get("agency") and not r.get("sector") and (r.get("kind") or "prearranged") == "prearranged"]
     brk = [r for r in rows if (r.get("agency") or r.get("sector")) and (r.get("kind") or "prearranged") == "prearranged"]
+    # each breakdown on its own: by agency, by sector, by agency x sector (a doc may give two
+    # independent splits of the same money)
+    groups = {"agency": [r for r in brk if r.get("agency") and not r.get("sector")],
+              "sector": [r for r in brk if r.get("sector") and not r.get("agency")],
+              "agency x sector": [r for r in brk if r.get("agency") and r.get("sector")]}
     for w in {r.get("window") for r in env}:
         e = sum(_num(r.get("amount_usd")) or 0 for r in env if r.get("window") == w)
-        b = sum(_num(r.get("amount_usd")) or 0 for r in brk if r.get("window") == w)
-        if b and abs(e - b) > 1:
-            out.append(f"window {w!r}: envelope {e:,.0f} vs agency/sector rows {b:,.0f}")
+        for g, rs in groups.items():
+            b = sum(_num(r.get("amount_usd")) or 0 for r in rs if r.get("window") == w)
+            if b and abs(e - b) > 1:
+                out.append(f"window {w!r}: envelope {e:,.0f} vs {g} rows {b:,.0f}")
     tot = _num((read.get("framework_version") or {}).get("prearranged_usd_doc"))
     if tot and env and abs(sum(_num(r.get("amount_usd")) or 0 for r in env) - tot) > 1:
         out.append(f"envelope rows sum {sum(_num(r.get('amount_usd')) or 0 for r in env):,.0f} vs stated total {tot:,.0f}")
@@ -181,12 +205,14 @@ def load(engine):
 def convert(read, body, db):
     """(entries rows, summary dict) for one doc read."""
     rows, changes, dropped = [], [], []
-    kb, ver, hz = read["kb_framework"], str(read["version"]), read["hazard"]
+    kb, ver = read["kb_framework"], str(read["version"])
+    hz = HAZARD_WORDS.get(str(read["hazard"]).lower(), read["hazard"])
     quality = read.get("source_quality") or "published-final"
     final = quality == "published-final"
     fvr = read.get("framework_version") or {}
     fm = dict(read.get("frontmatter") or {})
     countries = read.get("countries") or []
+    multi = len(countries) > 1
     add = lambda t, r: rows.append({"table": t, "row": r})  # noqa: E731
 
     vf = _date_start(fvr.get("valid_from"))
@@ -201,9 +227,15 @@ def convert(read, body, db):
         upd = {}
         basis = fvr.get("valid_until_basis") or ("stated" if fvr.get("valid_until") else "none")
         vu = _date_end(fvr.get("valid_until")) if basis == "stated" else _date_end(fvr.get("valid_until_inferred"))
+        env_doc = _num(fvr.get("prearranged_usd_doc"))
+        if multi:   # a multi-country total is not each country's envelope: its own stated rows
+            own = [_num(r.get("amount_usd")) or 0 for r in read.get("funding_rows") or []
+                   if r.get("country") == c and not r.get("agency") and not r.get("sector")
+                   and (r.get("kind") or "prearranged") == "prearranged"]
+            env_doc = sum(own) if own else None
         want = {
             "valid_from": vf, "valid_until": vu,
-            "endorsed_by": fvr.get("endorsed_by"), "prearranged_usd_doc": _num(fvr.get("prearranged_usd_doc")),
+            "endorsed_by": fvr.get("endorsed_by"), "prearranged_usd_doc": env_doc,
             "doc_title": fvr.get("doc_title") or (read.get("identity") or {}).get("doc_title"),
             "window_rollup": fvr.get("window_rollup"), "supersedes": fvr.get("supersedes"),
         }
@@ -247,13 +279,16 @@ def convert(read, body, db):
 
     # ---- windows, funding, backtest, people: per country of the version
     n_win = n_fund = n_sim = 0
+    skipped_sc, notes = set(), []
     for c in countries:
         if db["fv"][(db["fv"]["country_iso3"] == c) & (db["fv"]["hazard"] == hz)
                     & (db["fv"]["version"] == ver)].empty:
             continue
         all_in = fm.get("all_in")
-        mine = lambda r: not r.get("country") or r.get("country") == c  # noqa: E731
-        for w in [w for w in read.get("windows") or [] if mine(w)]:
+        mine = lambda r: r.get("country") == c if multi else True  # noqa: E731
+        mine_w = lambda r: not r.get("country") or r.get("country") == c  # noqa: E731
+        declared = {w.get("window_name") for w in read.get("windows") or []}
+        for w in [w for w in read.get("windows") or [] if mine_w(w)]:
             add("window", {"country_iso3": c, "hazard": hz, "version": ver, "window_name": w["window_name"],
                            "kb_framework": kb, "all_in": bool(all_in) if all_in is not None else False,
                            "basis": w.get("basis"), "allocation_usd": _num(w.get("allocation_usd")),
@@ -262,26 +297,74 @@ def convert(read, body, db):
                            "source": SOURCE})
             n_win += 1
         stated_env = set()
-        for r in [r for r in read.get("funding_rows") or [] if mine(r)]:
+        frows = [r for r in read.get("funding_rows") or [] if mine(r)]
+        # alternative scenarios (only one draws per event) are never added up: the breakdown
+        # keeps the largest scenario; the others stay on the page and in the summary
+        alts = [r for r in frows if r.get("alternative_scenario") or r.get("scenario")]
+        if alts:
+            by_sc = {}
+            for r in alts:
+                by_sc[str(r.get("scenario"))] = by_sc.get(str(r.get("scenario")), 0) + (_num(r.get("amount_usd")) or 0)
+            keep = max(by_sc, key=by_sc.get)
+            skipped_sc.update(k for k in by_sc if k != keep)
+            frows = [r for r in frows if not (r.get("alternative_scenario") or r.get("scenario"))
+                     or str(r.get("scenario")) == keep]
+        # window envelopes that add up to MORE than the version's stated total are caps for
+        # alternative combinations, not parts: load the stated total ('unattributed') instead
+        # and keep the per-window figures on the windows (allocation_usd) and the page
+        tot = _num(fvr.get("prearranged_usd_doc"))
+        envw = [r for r in frows if r.get("window") and not r.get("agency") and not r.get("sector")
+                and (r.get("kind") or "prearranged") == "prearranged"]
+        per_act = [r for r in envw if r.get("per_activation")]
+        if per_act:
+            # amounts PER ACTIVATION (a window that can fire several times) are not parts of
+            # the envelope: the stated total goes to 'unattributed'
+            notes.append(f"{len(per_act)} per-activation window amounts kept as caps, envelope = stated total")
+            frows = [r for r in frows if r not in per_act]
+            envw = [r for r in envw if r not in per_act]
+        if tot and envw and sum(_num(r.get("amount_usd")) or 0 for r in envw) > tot + 1:
+            notes.append(f"window envelopes sum {sum(_num(r.get('amount_usd')) or 0 for r in envw):,.0f} > "
+                         f"stated total {tot:,.0f}: loaded the total, window figures kept as caps")
+            frows = [r for r in frows if r not in envw]
+        # the agency breakdown at ONE level: version-level rows (no window) that cover the total
+        # win over window-level agency rows (else both would count the same money)
+        ver_ag = [r for r in frows if r.get("agency") and not r.get("window")
+                  and (r.get("kind") or "prearranged") == "prearranged"]
+        if ver_ag and tot and abs(sum(_num(r.get("amount_usd")) or 0 for r in ver_ag) - tot) <= 1:
+            win_ag = [r for r in frows if r.get("agency") and r.get("window")
+                      and (r.get("kind") or "prearranged") == "prearranged"]
+            if win_ag:
+                notes.append(f"{len(win_ag)} window-level agency rows kept on the page only "
+                             "(the version-level agency split covers the envelope)")
+                frows = [r for r in frows if r not in win_ag]
+        for r in frows:
             amt = _num(r.get("amount_usd"))
             if amt is None:
                 continue
             kind = r.get("kind") or "prearranged"
             fc = fund_code(r.get("fund"), c, db["fund"]) if kind == "prearranged" else None
             if kind == "prearranged" and fc is None:
-                kind = "cofinancing"
+                if not r.get("fund") and not r.get("financier"):
+                    fc = "all"            # a split of the whole envelope, funds not named
+                else:
+                    kind = "cofinancing"  # an agency's own money, a donor, government
             fin = None if fc else (r.get("financier") or r.get("fund"))
             win = r.get("window") or "unattributed"
+            area = None
+            if win != "unattributed" and win not in declared:
+                area, win = win, "unattributed"   # a split by area/basin, not by trigger window
             if not r.get("agency") and not r.get("sector"):
                 stated_env.add(fc)
             add("window_funding", {"country_iso3": c, "hazard": hz, "version": ver, "window_name": win,
                                    "kind": kind, "fund_code": fc, "financier": fin,
                                    "agency": r.get("agency"), "sector": r.get("sector"),
                                    "amount_usd": amt, "year": None, "provenance": "doc-stated",
-                                   "source": SOURCE, "note": f"p.{r.get('page')}" if r.get("page") else None})
+                                   "source": SOURCE,
+                                   "note": "; ".join(x for x in (f"p.{r.get('page')}" if r.get("page") else None,
+                                                                  f"area: {area}" if area else None) if x) or None})
             n_fund += 1
         # a fund's envelope stated only as a total (funding_by_source) -> window 'unattributed'
-        for label, amt in (fm.get("funding_by_source") or {}).items():
+        for label, amt in ({} if multi else (fm.get("funding_by_source") or {})).items():
             fc = fund_code(label, c, db["fund"])
             if fc and fc not in stated_env and _num(amt):
                 add("window_funding", {"country_iso3": c, "hazard": hz, "version": ver,
@@ -298,12 +381,17 @@ def convert(read, body, db):
                 dropped.append(f"{c} {s.get('window')} {y}")
                 continue
             d = s.get("event_date")
+            # the grid shows one row per (year, label): a label is a storm's name, nothing else;
+            # any other wording goes to the source note
+            raw = s.get("event_label")
+            lab = _storm_names(raw) if hz == "storm" else None
+            extra = raw if raw and raw != lab else None
             add("simulated_activation", {"country_iso3": c, "hazard": hz, "version": ver,
                                          "window_name": s.get("window") or "window not recorded",
-                                         "event_year": int(y), "event_label": s.get("event_label"),
+                                         "event_year": int(y), "event_label": lab,
                                          "kb_framework": kb, "event_date": d or None,
                                          "time_precision": "day" if d else "year",
-                                         "source_note": f"framework document p.{s.get('page')}"})
+                                         "source_note": "; ".join(x for x in (f"framework document p.{s.get('page')}", extra) if x)})
             n_sim += 1
         tp = _num(fm.get("target_people"))
         if isinstance(fm.get("target_people_by_country"), dict):
@@ -330,6 +418,10 @@ def convert(read, body, db):
     new_partners = [p["name"] for p in read.get("partners") or []
                     if str(p.get("name", "")).lower() not in have_names
                     and str(p.get("acronym") or "").lower() not in have_names]
+    if multi:
+        regional = [r for r in read.get("funding_rows") or [] if not r.get("country")]
+        if regional:
+            notes.append(f"{len(regional)} regional funding rows (no country) kept on the page only")
     checks = _checks(read, fm)
     if fm.get("all_in") is None:
         checks.append("all_in not stated in the read (window all_in written as false)")
@@ -341,6 +433,7 @@ def convert(read, body, db):
         "key": f"{kb}/{ver}", "countries": countries, "quality": quality,
         "valid_until_basis": (read.get("framework_version") or {}).get("valid_until_basis"),
         "db_envelope_before": before, "checks": checks,
+        "alternative_scenarios_not_loaded": sorted(skipped_sc), "load_notes": sorted(set(notes)),
         "partners_inserted": bool(have.empty and read.get("partners")),
         "identity_ok": (read.get("identity") or {}).get("matches_version"),
         "valid_from": vf,
