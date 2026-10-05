@@ -4,9 +4,9 @@ Single authoritative tracking system for OCHA's anticipatory action (AA) portfol
 superseding the team-member spreadsheets it was seeded from — and, since 2026-09-28,
 the knowledge base's framework pages (see "The KB flip").
 
-This repo owns a set of tables in the dev Postgres `aa` schema, alongside (never
-overlapping with) the KB-owned trigger-performance tables (`ds-knowledge-base`) and the
-CERF OneGMS mirror (`ds-cerf-supplement`). It adds:
+This repo owns every table in the dev Postgres `aa` schema except the CERF / CBPF OneGMS
+mirrors (`ds-cerf-supplement`) — since 2026-10-05 including the backtest tables the
+knowledge base's loaders used to write (see "AA management moved here" below). It holds:
 
 - **framework lifecycle**: registry of every (country, hazard) framework incl. the
   pipeline (early conversations → active → dormant/expired), status snapshots over time,

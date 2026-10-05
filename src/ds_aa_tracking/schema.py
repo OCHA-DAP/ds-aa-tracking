@@ -661,7 +661,7 @@ DURABLE_TABLES = {
             allocation_usd bigint,         -- legacy envelope; budgets live in window_funding
             analysis_start integer,        -- the backtest's analysed years: the RP
             analysis_end integer,          --   denominator (wrong span = wrong RP)
-            rp_reported numeric,           -- as published; a cross-check, never substituted
+            rp_reported numeric,           -- as published (compare v_window_performance)
             prob_reported numeric,
             source text,                   -- where the backtest came from: report (the
                                            -- endorsed document) | repo (the analysis code)
