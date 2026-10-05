@@ -27,6 +27,9 @@ See backtests/README.md for when to write which file.
     Sealing an unsealed version is idempotent and needs no erratum; a version already
     sealed differently is reported and left alone (changing a seal is an erratum).
 
+After the files, the backtest foreign keys still marked NOT VALID are validated (a backtest
+row belongs to a registered version, a simulated year to a window — schema.BACKTEST_FKS).
+
 Each file is one transaction: all of it or none. An erratum is recorded in
 aa.backtest_erratum (id = file stem) with the before-values of every row it changed, and
 each change is audited to aa.entry_audit (entered_by 'errata:<id>'). An applied erratum is
@@ -188,11 +191,14 @@ def apply_seals(conn, name, payload, dry):
             raise ValueError(f"{item['version']}: 'against' (what it was verified against) is required")
         p = {"c": c, "h": h, "v": v}
         cur = conn.execute(sa.text(
-            "SELECT backtest_sealed_at, backtest_sealed_by, backtest_sealed_against "
+            "SELECT backtest_sealed_at, backtest_sealed_by, backtest_sealed_against, kb_status "
             "FROM aa.framework_version WHERE country_iso3 = :c AND hazard = :h AND version = :v"),
             p).first()
         if cur is None:
             raise ValueError(f"{item['version']} is not in aa.framework_version")
+        if cur.kb_status != "endorsed":
+            raise ValueError(f"{item['version']} is {cur.kb_status}: only an endorsed version's "
+                             "backtest is sealed")
         if cur.backtest_sealed_at is not None:
             same = (cur.backtest_sealed_by, cur.backtest_sealed_against) == (by, against)
             print(f"  {item['version']}: already sealed"
@@ -241,6 +247,32 @@ def _files(root, use_blob):
     return out
 
 
+def validate_fks(engine, dry):
+    """Validate the backtest foreign keys that are still NOT VALID (schema.BACKTEST_FKS are
+    added that way because rows from before the guards may break them): once the errata have
+    cleaned those rows, this makes the rule hold for every row. Idempotent; returns failures."""
+    with engine.connect() as conn:
+        pending = conn.execute(sa.text(
+            "SELECT conrelid::regclass::text AS tbl, conname FROM pg_constraint "
+            "WHERE connamespace = 'aa'::regnamespace AND contype = 'f' AND NOT convalidated "
+            "AND conname = ANY(:names) ORDER BY conname"),
+            {"names": [name for _, name, _ in schema.BACKTEST_FKS]}).fetchall()
+    failed = 0
+    for tbl, name in pending:
+        if dry:
+            print(f"{name}: not validated yet (the real run tries)")
+            continue
+        try:
+            with engine.begin() as conn:
+                conn.execute(sa.text(f"ALTER TABLE {tbl} VALIDATE CONSTRAINT {name}"))
+            print(f"{name}: validated — every row satisfies it now")
+        except Exception as ex:  # rows from before still break it: report, try again next run
+            print(f"!! {name}: {str(ex).splitlines()[0]} — see the error rows of "
+                  "aa.v_trk_backtest_check")
+            failed += 1
+    return failed
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--dir", help="read errata/ and seals/ under DIR (no blob)")
@@ -281,8 +313,9 @@ def main():
         except Exception as ex:  # report, carry on with the next file
             print(f"!! {source}: {str(ex).splitlines()[0]}")
             failed += 1
+    failed += validate_fks(engine, a.dry_run)
     if failed:
-        sys.exit(f"{failed} backtest file(s) failed")
+        sys.exit(f"{failed} backtest step(s) failed")
 
 
 if __name__ == "__main__":

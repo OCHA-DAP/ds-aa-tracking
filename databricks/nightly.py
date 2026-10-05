@@ -20,8 +20,9 @@ Steps
   2b. scripts/apply_backtests.py: backtest errata and seals committed to backtests/ (plus
      errata for non-public documents from the private blob) — after the entries, so a
      version's pending entries land before a seal freezes it. A sealed backtest changes
-     only through an erratum: the database refuses anything else, from any writer. A
-     failure here is reported but never blocks the snapshot.
+     only through an erratum: the database refuses anything else, from any writer. Then
+     validates the backtest foreign keys still marked NOT VALID (once the errata have
+     cleaned the rows from before). A failure here is reported but never blocks the snapshot.
   3. scripts/export_snapshot.py: consistent snapshot of schema aa -> dev blob
      projects/ds-aa-tracking/snapshot/{latest,YYYY-MM-DD}/ (dated copies kept 30 days,
      31-December copies forever)

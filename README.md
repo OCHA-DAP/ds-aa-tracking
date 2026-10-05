@@ -107,12 +107,15 @@ Since 2026-09-30 laptops cannot reach the dev DB. Two write paths remain: the ad
 job applies once each, before the snapshot (`scripts/apply_entries.py`; format in its
 docstring; upload with `--upload FILE`, test against a restored local copy with `--dir`).
 Every row is audited to `aa.entry_audit`; applied files are recorded in `aa.applied_entries`.
-Besides upserts, an item can `delete` a row or `replace` a version's rows in a table (a
-re-run backtest of a version in development). A file that fails — e.g. one touching a sealed
-backtest — stays pending and never blocks the others. The same file can be applied
-**immediately** through the proxy (`POST /entries`, editor token; `dry_run: true` checks it
-against the live database and rolls back) — the path the `record-simulated-activations` skill
-uses from any repo.
+Besides upserts, an item can `"delete"` one row by its full key or `"op": "replace"` a
+version's rows in a table (a re-run backtest of a version in development). A file that fails
+— e.g. one touching a sealed backtest, or a version that isn't registered — stays pending and
+never blocks the others. The same file can be applied **immediately** through the proxy
+(`POST /entries`, editor token; `dry_run: true` checks it against the live database and rolls
+back) — the path the KB skill `record-simulated-activations` uses from any repo. A backtest
+write there names its target: the reply lists the versions it touches and their state
+(`GET /versions` is the lookup), and an **endorsed** version is written only when the request
+confirms it by name (`backtests/README.md`).
 
 Backtest **errata and seals** are the one write path in git (public data, reviewed in a pull
 request): `backtests/errata/` and `backtests/seals/`, applied by the same nightly job right

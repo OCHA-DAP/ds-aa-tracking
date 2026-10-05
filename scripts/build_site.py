@@ -989,9 +989,9 @@ ERD_EDGES = [
     ("activation_funding", "adhoc_activation", "", "many0", "one0", False),
     ("activation_funding", "fund", "fund_code", "many", "one", False),
     ("report_channel_inclusion", "framework_version", "", "many0", "one0", False),
-    ("version_performance_reported", "framework_version", "country_iso3 · hazard · version", "one0", "one0", False),
-    ("window", "framework_version", "country_iso3 · hazard · version", "many", "one", False),
-    ("simulated_activation", "window", "", "many", "one", False),
+    ("version_performance_reported", "framework_version", "FK · country_iso3 · hazard · version", "one0", "one", True),
+    ("window", "framework_version", "FK · country_iso3 · hazard · version", "many0", "one", True),
+    ("simulated_activation", "window", "FK", "many0", "one", True),
     ("funding_breakdown", "window", "", "many0", "one0", False),
     ("actual_activation", "window", "country · hazard · version · window_name", "many0", "one0", False),
     ("window_activation", "actual_activation", "kb_framework+event_date+window", "many0", "one0", False),
@@ -1182,7 +1182,9 @@ def build_schema_page(e):
         "<span class='badge b-mirror'>ds-cerf-supplement</span> · "
         "Crow's-foot notation: crow = many, double bar = exactly one, bar+circle = "
         "zero-or-one, crow+circle = zero-or-many. Solid green edges = declared "
-        "foreign keys (the schema's only two, on <code>activation_allocation</code>); "
+        "foreign keys (the backtest tables to their version and window, so a "
+        "backtest can't sit under a label that is no version; and "
+        "<code>activation_allocation</code> to the CERF mirror); "
         "dashed = joins by convention, checked at load time. "
         "<b>Version-first:</b> every framework-level fact attaches to "
         "<code>framework_version</code> (the approved unit) — the registry holds only "

@@ -814,6 +814,19 @@ ADDITIVE_MIGRATIONS = [
            ALTER TABLE aa.window ADD CONSTRAINT window_allocation_nonneg
              CHECK (allocation_usd IS NULL OR allocation_usd >= 0);
          END IF;
+         -- a seal always says who set it and against what
+         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'backtest_seal_complete'
+                        AND conrelid = 'aa.framework_version'::regclass) THEN
+           ALTER TABLE aa.framework_version ADD CONSTRAINT backtest_seal_complete
+             CHECK (backtest_sealed_at IS NULL
+                    OR (backtest_sealed_by IS NOT NULL AND backtest_sealed_against IS NOT NULL));
+         END IF;
+         -- only an endorsed version is sealed (and a sealed one can't be set back to development)
+         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'backtest_seal_endorsed'
+                        AND conrelid = 'aa.framework_version'::regclass) THEN
+           ALTER TABLE aa.framework_version ADD CONSTRAINT backtest_seal_endorsed
+             CHECK (backtest_sealed_at IS NULL OR kb_status = 'endorsed');
+         END IF;
        END $$""",
 ]
 
@@ -836,6 +849,26 @@ ADDITIVE_MIGRATIONS = [
 #    window must exist): checked at COMMIT (deferred), so a file can change the span and
 #    the years in any order. This is the rule the KB-era data broke — real activations
 #    appended to backtests past the analysed years.
+# 3. The target. A backtest row belongs to a REGISTERED version: BACKTEST_FKS — window and
+#    version_performance_reported reference framework_version, simulated_activation
+#    references its window. Deferred (a relabel or an erratum moves rows table by table in
+#    one transaction) and NO ACTION (replacing a version's windows without its years fails
+#    instead of silently dropping them). So no writer can leave a backtest under a label
+#    that is no version — how the KB-era '2025' orphans came about. Added NOT VALID: rows
+#    from before are checked once the first errata have cleaned them, by
+#    scripts/apply_backtests.py (VALIDATE CONSTRAINT, idempotent).
+BACKTEST_FKS = [
+    ("window", "window_version_fk",
+     "FOREIGN KEY (country_iso3, hazard, version) "
+     "REFERENCES aa.framework_version (country_iso3, hazard, version)"),
+    ("version_performance_reported", "version_performance_reported_version_fk",
+     "FOREIGN KEY (country_iso3, hazard, version) "
+     "REFERENCES aa.framework_version (country_iso3, hazard, version)"),
+    ("simulated_activation", "simulated_activation_window_fk",
+     "FOREIGN KEY (country_iso3, hazard, version, window_name) "
+     'REFERENCES aa."window" (country_iso3, hazard, version, window_name)'),
+]
+
 BACKTEST_GUARDS = [
     """CREATE OR REPLACE FUNCTION aa.backtest_sealed(c text, h text, v text)
        RETURNS boolean LANGUAGE sql STABLE AS $$
@@ -966,6 +999,13 @@ BACKTEST_GUARDS = [
              FOR EACH ROW EXECUTE FUNCTION aa.check_simulated_in_span();
          END IF;
        END $$""",
+    *[f"""DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '{name}'
+                           AND conrelid = 'aa."{table}"'::regclass) THEN
+              ALTER TABLE aa."{table}" ADD CONSTRAINT {name} {ddl}
+                DEFERRABLE INITIALLY DEFERRED NOT VALID;
+            END IF;
+          END $$""" for table, name, ddl in BACKTEST_FKS],
 ]
 
 INDEXES = [
@@ -1491,6 +1531,18 @@ VIEWS = {
         SELECT 'error', 'backtest under a label that is no version',
                w.country_iso3, w.hazard, w.version, w.window_name, 'not in framework_version'
         FROM aa.window w
+        LEFT JOIN aa.framework_version f USING (country_iso3, hazard, version)
+        WHERE f.version IS NULL
+        UNION ALL
+        SELECT 'error', 'simulated year without its window',
+               s.country_iso3, s.hazard, s.version, s.window_name, s.event_year::text
+        FROM aa.simulated_activation s
+        LEFT JOIN aa.window w USING (country_iso3, hazard, version, window_name)
+        WHERE w.window_name IS NULL
+        UNION ALL
+        SELECT 'error', 'reported performance under a label that is no version',
+               r.country_iso3, r.hazard, r.version, NULL, 'not in framework_version'
+        FROM aa.version_performance_reported r
         LEFT JOIN aa.framework_version f USING (country_iso3, hazard, version)
         WHERE f.version IS NULL
         UNION ALL

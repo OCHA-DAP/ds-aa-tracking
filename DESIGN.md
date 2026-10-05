@@ -350,11 +350,24 @@ What a version's backtest may do depends on where the version is (user requireme
 iterate while a framework is developed or revised, very hard — not impossible — to change
 once endorsed):
 
-- **Unsealed** (development, or endorsed and not yet checked): edited freely — entries files
-  (`op: replace` / `op: delete`), applied at once through the proxy's `POST /entries` (dry run
-  first; the KB skill `record-simulated-activations` calls it from any repo) or nightly from
-  the blob; the admin page. A re-run backtest replaces the version's years as a set. The proxy
-  owns the semantics and the database owns the rules, so a client never carries schema.
+- **In development**: edited freely — an entries file (`op: replace` re-enters a version's
+  windows and years as a set; a `delete` removes a row), applied at once through the proxy's
+  `POST /entries` (dry run first; the KB skill `record-simulated-activations` calls it from any
+  repo) or nightly from the blob; or the admin page.
+- **Endorsed, not sealed**: the same write, but it is a backfill of the endorsed record, so
+  through the proxy it must name the version (`confirm_endorsed`) — development work can't
+  land on the endorsed record by accident, and a wrong belief the other way (confirming a
+  version that is in development) is refused too. `seal: {version, against}` in the same
+  request seals it once it matches the document.
+- **The target is always explicit** (2026-10-05, user: a write can come from anywhere, so it
+  must land on the right version): the registry is the only source of "which version" —
+  `GET /versions` lists a pair's versions with status, role, document and seal; every
+  `/entries` reply carries those cards with the touched versions marked; and foreign keys
+  (`BACKTEST_FKS`: window → framework_version, simulated_activation → window, reported →
+  framework_version; deferred, NO ACTION) make a backtest under an unregistered label
+  impossible for every writer — how the KB-era `2025` orphans arose. No write path creates a
+  version as a side effect. The proxy owns the semantics and the database owns the rules, so
+  a client never carries schema.
 - **Sealed** (`framework_version.backtest_sealed_at/_by/_against`): set once the backtest has
   been checked against the endorsed document. The seal is a deliberate act, not
   `kb_status = 'endorsed'`: most endorsed versions have no backtest yet, and entering one is a
@@ -374,8 +387,8 @@ The 2026-10-05 cleanup is the first set of errata: real activations appended to 
 versions' backtests, Haiti 2024's post-Melissa recomputation, two short spans and two
 backtests under year labels. Four versions now match their documents in full and are
 sealed; the rest wait for the document-read pass (`docread_to_entries.py`) and then a seal
-file. Not done here: foreign keys (the relabel script covers the key moves), multi-event
-years in `simulated_activation` (PK is per window-year; `event_label` carries the names).
+file. Not done here: multi-event years in `simulated_activation` (PK is per window-year;
+`event_label` carries the names); foreign keys on the other version-keyed tables.
 
 ## Migration phases
 
