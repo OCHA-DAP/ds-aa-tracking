@@ -23,6 +23,9 @@
  *   POST /save       {table, key|null, row, by} -> UPDATE (key given) or INSERT,
  *                    field-level audit to aa.entry_audit
  *   POST /delete     {table, key, by} -> DELETE one row, audited
+ *   POST /entries    {entered_by, rows: [entries-file items], dry_run?} -> applied NOW in
+ *                    one transaction (dry_run: checked by every trigger, then rolled back);
+ *                    the immediate write path for skills working off the network
  *   GET  /whoami     -> {role}
  *
  * Two roles, two shared secrets in header x-site-token: SITE_TOKEN (viewer —
@@ -82,7 +85,7 @@ const pool = process.env.DSCI_AZ_DB_DEV_HOST
       user: process.env.DSCI_AZ_DB_DEV_UID_WRITE,
       password: process.env.DSCI_AZ_DB_DEV_PW_WRITE,
       database: "postgres",
-      ssl: { rejectUnauthorized: false },
+      ssl: process.env.DB_SSL === "disable" ? false : { rejectUnauthorized: false },  // disable: a local test DB
       max: 3,
     })
   : null;
@@ -705,6 +708,107 @@ async function adminDelete(req, res) {
   } finally { client.release(); }
 }
 
+// ------------------------------------------------------------------ /entries
+// An entries file (the format of scripts/apply_entries.py — upsert / delete / replace items)
+// applied NOW, in one transaction: the immediate path for the record-simulated-activations
+// skill and anything else working off the network. dry_run applies it, runs every check (the
+// seal and span triggers, CHECKs, deferred constraints) and rolls back — the reply is the plan
+// with each row as it is now. Same table rules as /save (owned, keyed, not read-only); every
+// change audited as 'entries-api: <entered_by>'. A sealed backtest is refused by the database
+// here as anywhere: corrections to those are errata (backtests/README.md).
+const SCOPE_COLS = ["country_iso3", "hazard", "version"];
+const param = (v) => (v !== null && typeof v === "object" ? JSON.stringify(v) : v);
+async function applyEntries(req, res) {
+  if (limited(req, res, "write")) return;
+  const p = await readBody(req, res); if (!p) return;
+  const by = String(p.entered_by || "").trim();
+  if (!by) return send(res, 400, { error: "'entered_by' (who, from what) is required" });
+  if (!Array.isArray(p.rows) || !p.rows.length) return send(res, 400, { error: "'rows' is empty" });
+  const dry = p.dry_run === true;
+  const sch = await schema();
+  const client = await pool.connect();
+  const plan = [];
+  try {
+    await client.query("BEGIN");
+    const audit = (t, k, oldv, newv) => client.query(
+      `INSERT INTO aa.entry_audit (entered_by, table_name, row_key, field, old_value, new_value)
+       VALUES ($1,$2,$3,'(row)',$4,$5)`,
+      [`entries-api: ${by}`, t, k, oldv == null ? null : JSON.stringify(oldv).slice(0, 4000),
+       newv == null ? null : JSON.stringify(newv).slice(0, 4000)]);
+    const match = (obj, from = 1) => {
+      const ks = Object.keys(obj);
+      return [ks.map((c, j) => `${q(c)} IS NOT DISTINCT FROM $${from + j}`).join(" AND "),
+              ks.map((c) => param(obj[c]))];
+    };
+    for (const [i, item] of p.rows.entries()) {
+      const op = item.op || "upsert";
+      const t = IDENT.test(item.table || "") ? sch[item.table] : null;
+      if (!t) throw new Error(`item ${i}: unknown table ${item.table}`);
+      if (!t.writable) throw new Error(`item ${i}: aa.${t.name} is read-only here (owned by ${t.owner})`);
+      const cols = new Set(t.columns.map((c) => c.name));
+      const known = (obj) => {
+        const bad = Object.keys(obj || {}).filter((c) => !cols.has(c));
+        if (bad.length) throw new Error(`item ${i}: aa.${t.name} has no column(s) ${bad.join(", ")}`);
+      };
+      const insert = async (row) => {
+        known(row);
+        const cs = Object.keys(row);
+        await client.query(`INSERT INTO aa.${q(t.name)} (${cs.map(q).join(", ")})
+                            VALUES (${cs.map((_, j) => `$${j + 1}`).join(", ")})`, cs.map((c) => param(row[c])));
+        await audit(t.name, rowKey(t, row), null, row);
+      };
+      if (op === "replace") {
+        const scope = item.scope || {};
+        if (!SCOPE_COLS.every((c) => cols.has(c) && scope[c] != null))
+          throw new Error(`item ${i}: replace needs a scope with ${SCOPE_COLS.join(", ")}`);
+        known(scope);
+        const rows = item.rows || [];
+        for (const r of rows)
+          for (const c of Object.keys(scope))
+            if (r[c] !== scope[c]) throw new Error(`item ${i}: a row is outside the scope (${c})`);
+        const [w, vals] = match(scope);
+        const before = (await client.query(`DELETE FROM aa.${q(t.name)} WHERE ${w} RETURNING *`, vals)).rows;
+        for (const b of before) await audit(t.name, rowKey(t, b), b, "deleted (replace)");
+        for (const r of rows) await insert(r);
+        plan.push({ op, table: t.name, scope, before, after: rows });
+      } else if (op === "delete" || op === "upsert") {
+        const row = item.row || {};
+        known(row);
+        const key = Object.fromEntries(t.key.map((k) => [k, row[k] ?? null]));
+        const [w, vals] = match(key);
+        const cur = (await client.query(`SELECT * FROM aa.${q(t.name)} WHERE ${w}`, vals)).rows;
+        if (cur.length > 1) throw new Error(`item ${i}: key matches ${cur.length} rows in aa.${t.name}`);
+        if (op === "delete") {
+          if (cur.length) {
+            await client.query(`DELETE FROM aa.${q(t.name)} WHERE ${w}`, vals);
+            await audit(t.name, rowKey(t, cur[0]), cur[0], "deleted");
+          }
+          plan.push({ op, table: t.name, key, before: cur[0] || null });
+        } else if (cur.length) {
+          const sets = Object.keys(row).filter((c) => !t.key.includes(c));
+          if (sets.length) {
+            const upd = sets.map((c, j) => `${q(c)} = $${vals.length + j + 1}`);
+            if (cols.has("updated_at") && !sets.includes("updated_at")) upd.push("updated_at = now()");
+            await client.query(`UPDATE aa.${q(t.name)} SET ${upd.join(", ")} WHERE ${w}`,
+                               [...vals, ...sets.map((c) => param(row[c]))]);
+            await audit(t.name, rowKey(t, cur[0]), cur[0], row);
+          }
+          plan.push({ op: "update", table: t.name, key, before: cur[0], after: row });
+        } else {
+          await insert(row);
+          plan.push({ op: "insert", table: t.name, key, after: row });
+        }
+      } else throw new Error(`item ${i}: unknown op ${op} (upsert | delete | replace)`);
+    }
+    await client.query("SET CONSTRAINTS ALL IMMEDIATE");   // the deferred span check, now
+    await client.query(dry ? "ROLLBACK" : "COMMIT");
+    send(res, 200, { ok: true, dry_run: dry, applied: !dry, items: plan.length, plan });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    send(res, 400, { error: String(e.message || e), hint: e.hint || undefined, dry_run: dry });
+  } finally { client.release(); }
+}
+
 // ------------------------------------------------------------------- server
 const server = http.createServer(async (req, res) => {
   const allowed = cors(req, res);
@@ -720,17 +824,18 @@ const server = http.createServer(async (req, res) => {
   if (!r) return send(res, 401, { error: "bad site token" });
   if (req.method === "GET" && url.pathname === "/whoami") return send(res, 200, { ok: true, role: r });
   if (req.method === "GET" && url.pathname === "/framework") return framework(req, res, url.searchParams);
-  if (!pool && ["/schema", "/rows", "/distinct", "/save", "/delete"].includes(url.pathname))
+  if (!pool && ["/schema", "/rows", "/distinct", "/save", "/delete", "/entries"].includes(url.pathname))
     return send(res, 500, { error: "DB not configured" });
   if (req.method === "GET" && url.pathname === "/schema") return adminSchema(req, res, url.searchParams);
   if (req.method === "GET" && url.pathname === "/rows") return adminRows(req, res, url.searchParams);
   if (req.method === "GET" && url.pathname === "/distinct") return adminDistinct(req, res, url.searchParams);
-  if (r !== "editor" && ["/extract", "/entry", "/save", "/delete"].includes(url.pathname))
+  if (r !== "editor" && ["/extract", "/entry", "/save", "/delete", "/entries"].includes(url.pathname))
     return send(res, 401, { error: "editor token required" });   // 401: pages prompt for it
   if (req.method === "POST" && url.pathname === "/extract") return extract(req, res);
   if (req.method === "POST" && url.pathname === "/entry") return entry(req, res);
   if (req.method === "POST" && url.pathname === "/save") return adminSave(req, res);
   if (req.method === "POST" && url.pathname === "/delete") return adminDelete(req, res);
+  if (req.method === "POST" && url.pathname === "/entries") return applyEntries(req, res);
   send(res, 404, { error: "not found" });
 });
 

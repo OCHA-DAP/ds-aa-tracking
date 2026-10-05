@@ -351,8 +351,10 @@ iterate while a framework is developed or revised, very hard — not impossible 
 once endorsed):
 
 - **Unsealed** (development, or endorsed and not yet checked): edited freely — entries files
-  (`op: replace` / `op: delete`), the admin page. A re-run backtest replaces the version's
-  years as a set.
+  (`op: replace` / `op: delete`), applied at once through the proxy's `POST /entries` (dry run
+  first; the KB skill `record-simulated-activations` calls it from any repo) or nightly from
+  the blob; the admin page. A re-run backtest replaces the version's years as a set. The proxy
+  owns the semantics and the database owns the rules, so a client never carries schema.
 - **Sealed** (`framework_version.backtest_sealed_at/_by/_against`): set once the backtest has
   been checked against the endorsed document. The seal is a deliberate act, not
   `kb_status = 'endorsed'`: most endorsed versions have no backtest yet, and entering one is a

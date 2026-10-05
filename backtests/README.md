@@ -20,7 +20,7 @@ files, the Databricks job, a laptop on the tunnel):
 
 | The version is… | To change its backtest |
 |---|---|
-| in development, or endorsed but unsealed | an **entries file** (`scripts/apply_entries.py`): `op: replace` with a `scope` of `country_iso3/hazard/version` makes the given rows the version's rows (years that dropped out go too); `op: delete` removes one row. Or the admin page. Applied by the nightly job. |
+| in development, or endorsed but unsealed | an **entries file**: `op: replace` with a `scope` of `country_iso3/hazard/version` makes the given rows the version's rows (years that dropped out go too); `op: delete` removes one row. **Immediately** through the proxy's `POST /entries` (dry run first — what the `record-simulated-activations` skill does, from any repo), or on the private blob for the nightly job (`scripts/apply_entries.py --upload`). Or the admin page. |
 | endorsed and checked against its document | add it to a **seal** file here (`seals/`). |
 | sealed, and the database doesn't match the document | an **erratum**, kind `transcription` (`errata/`). |
 | sealed, and the endorsed backtest itself is wrong | an **erratum**, kind `analysis-note` (no changes; it's recorded and shown). The fix is a **new version**: a changed analysis after endorsement is a revision, not an edit. |

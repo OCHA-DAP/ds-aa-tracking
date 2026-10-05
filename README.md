@@ -109,7 +109,10 @@ docstring; upload with `--upload FILE`, test against a restored local copy with 
 Every row is audited to `aa.entry_audit`; applied files are recorded in `aa.applied_entries`.
 Besides upserts, an item can `delete` a row or `replace` a version's rows in a table (a
 re-run backtest of a version in development). A file that fails — e.g. one touching a sealed
-backtest — stays pending and never blocks the others.
+backtest — stays pending and never blocks the others. The same file can be applied
+**immediately** through the proxy (`POST /entries`, editor token; `dry_run: true` checks it
+against the live database and rolls back) — the path the `record-simulated-activations` skill
+uses from any repo.
 
 Backtest **errata and seals** are the one write path in git (public data, reviewed in a pull
 request): `backtests/errata/` and `backtests/seals/`, applied by the same nightly job right
