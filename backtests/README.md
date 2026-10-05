@@ -72,6 +72,10 @@ uv run python scripts/apply_backtests.py --dry-run   # applies each file in a tr
 uv run python scripts/apply_backtests.py
 ```
 
+A dry run checks each file against the database *as it is*: a seal that depends on an erratum
+in the same batch (a span fixed first) fails in the dry run and passes in the real one, where
+the errata are applied before the seals.
+
 `aa.v_trk_backtest_check` is the curation queue: simulated years outside a span or after the
 version took effect, windows without a span, computed-vs-reported RP drift, and the endorsed
 backtests not yet sealed.
