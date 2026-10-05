@@ -25,7 +25,7 @@ proxy, entries files, the Databricks job, a laptop on the tunnel):
 
 The target of a backtest write is one exact key, `ISO3/hazard/version`, taken from the
 registry — the proxy's `GET /versions?iso3=&hazard=` lists a framework's versions with their
-status, role (in force / superseded / a revision in development), document, seal and the
+status, role (the latest endorsed / superseded / a revision in development), document, seal and the
 backtest recorded now. What a write may do depends on the state of that version:
 
 | The version is… | To change its backtest |

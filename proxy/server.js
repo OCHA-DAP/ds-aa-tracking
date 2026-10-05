@@ -23,8 +23,8 @@
  *   POST /save       {table, key|null, row, by} -> UPDATE (key given) or INSERT,
  *                    field-level audit to aa.entry_audit
  *   POST /delete     {table, key, by} -> DELETE one row, audited
- *   GET  /versions   ?iso3=[&hazard=] -> every version of the pair(s): status, role (in
- *                    force / superseded / a revision in development), document, seal, and
+ *   GET  /versions   ?iso3=[&hazard=] -> every version of the pair(s): status, role (the
+ *                    latest endorsed / superseded / a revision in development), document, seal, and
  *                    the backtest recorded now — how a writer finds the RIGHT version
  *   POST /entries    {entered_by, rows: [entries-file items], dry_run?, confirm_endorsed?,
  *                    seal?} -> applied NOW in one transaction (dry_run: every check, then
@@ -715,7 +715,7 @@ async function adminDelete(req, res) {
 
 // ----------------------------------------------------------------- /versions
 // What a writer must know before touching a backtest: every version of a (country, hazard)
-// pair with its status, role (which endorsed one is in force, what a development one
+// pair with its status, role (which endorsed one is the latest, what a development one
 // revises), validity, document, seal, and the backtest recorded now. /entries puts the same
 // cards in every reply, so a dry run always says WHICH version it is about to change.
 const BACKTEST_TABLES = ["window", "simulated_activation", "version_performance_reported"];
@@ -730,6 +730,7 @@ async function versionCards(db, pairs) {
   const vs = (await db.query(
     `SELECT f.country_iso3, f.hazard, f.version, f.kb_status AS status,
             f.valid_from::text AS valid_from, f.valid_until::text AS valid_until,
+            (f.valid_until IS NOT NULL AND f.valid_until < CURRENT_DATE) AS lapsed,
             f.endorsed_by,
             coalesce(f.doc_title, d.title) AS doc_title, coalesce(d.official_url, f.doc_url) AS doc_url,
             f.backtest_sealed_at::text AS sealed_at,
@@ -765,8 +766,8 @@ async function versionCards(db, pairs) {
     const endorsed = pair.versions.filter((v) => v.status === "endorsed");
     const current = endorsed[endorsed.length - 1];
     endorsed.forEach((v, i) => {
-      v.role = v === current ? "endorsed — in force (the latest endorsed version)"
-                             : `endorsed — superseded by ${endorsed[i + 1].version}`;
+      v.role = v !== current ? `endorsed — superseded by ${endorsed[i + 1].version}`
+        : "endorsed — the latest endorsed version" + (v.lapsed ? ` (validity ended ${v.valid_until})` : "");
     });
     for (const v of pair.versions) {
       if (DEV_STATUSES.has(v.status))

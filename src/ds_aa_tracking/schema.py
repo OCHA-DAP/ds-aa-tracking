@@ -842,7 +842,8 @@ ADDITIVE_MIGRATIONS = [
 #    backtests/errata/ (or, for versions whose document is not public, a file on the
 #    private dev blob under projects/ds-aa-tracking/errata/). Setting a seal on an
 #    unsealed version is free (the act of sealing); changing or clearing a seal, relabelling
-#    or deleting a sealed version needs an erratum too (guard_seal on framework_version).
+#    or deleting a sealed version needs an erratum too (guard_seal on framework_version);
+#    TRUNCATE of these tables is refused while any version is sealed (guard_truncate).
 #    Every writer — the admin page's proxy, entries files, the Databricks job, a laptop on
 #    the tunnel — meets the same rule, because it lives in the database.
 # 2. The span. A simulated activation must fall inside its window's analysis span (and its
@@ -938,6 +939,21 @@ BACKTEST_GUARDS = [
     """CREATE OR REPLACE TRIGGER guard_seal
        BEFORE UPDATE OR DELETE ON aa.framework_version
        FOR EACH ROW EXECUTE FUNCTION aa.guard_version_seal()""",
+    # TRUNCATE fires no row trigger: refuse it outright while any backtest is sealed
+    """CREATE OR REPLACE FUNCTION aa.guard_backtest_truncate()
+       RETURNS trigger LANGUAGE plpgsql AS $$
+       BEGIN
+         IF EXISTS (SELECT 1 FROM aa.framework_version WHERE backtest_sealed_at IS NOT NULL) THEN
+           RAISE EXCEPTION 'aa.% holds sealed backtests: it cannot be truncated', TG_TABLE_NAME
+             USING HINT = 'Change rows, not the table: unsealed versions by an entries file, '
+                          'sealed ones by an erratum (backtests/README.md).';
+         END IF;
+         RETURN NULL;
+       END $$""",
+    *[f"""CREATE OR REPLACE TRIGGER guard_truncate
+          BEFORE TRUNCATE ON aa.{t}
+          FOR EACH STATEMENT EXECUTE FUNCTION aa.guard_backtest_truncate()"""
+      for t in [*BACKTEST_TABLES, "framework_version"]],
     """CREATE OR REPLACE FUNCTION aa.check_simulated_in_span()
        RETURNS trigger LANGUAGE plpgsql AS $$
        DECLARE
