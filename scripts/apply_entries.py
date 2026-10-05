@@ -8,7 +8,8 @@ it takes the snapshot the site is built from.
 
 File format:
     {"entered_by": "who / from what", "note": "...",
-     "rows": [{"table": "window_funding", "row": {...column: value...}}, ...]}
+     "rows": [{"table": "window_funding", "row": {...column: value...}}, ...,
+              {"table": "framework_partner", "delete": {...the row's full key...}}]}
 
 Each row is matched on its table's primary key or first unique constraint (looked up in
 the catalog, NULLs equal): an existing row is updated with just the fields given (plus
@@ -17,6 +18,10 @@ the file name. A file is
 applied ONCE: aa.applied_entries records its name and content hash, so a later edit made
 in the admin page is never overwritten by a re-run. Changing a file's content makes it
 pending again (deliberately).
+
+A "delete" item removes ONE row by its full key — for a row that is wrong (drawn from the
+wrong document), not one that changed. A missing row fails the file (all or nothing), and
+the deleted row is written whole to the audit (field '(delete)'), so it can be put back.
 
 Usage:
     uv run python scripts/apply_entries.py                 # pending files from the blob
@@ -72,10 +77,32 @@ def _col_types(conn, table):
         "WHERE table_schema = 'aa' AND table_name = :t"), {"t": table}).fetchall())
 
 
+def _delete(conn, name, by, table, key, dry):
+    keys = _key_cols(conn, table)
+    if set(key) != set(keys):
+        raise SystemExit(f"{name}: a delete on aa.{table} must give exactly its key {keys}")
+    where = " AND ".join(f"{k} IS NOT DISTINCT FROM :{k}" for k in keys)
+    row_key = "/".join(str(key.get(k)) for k in keys)
+    old = conn.execute(sa.text(f"SELECT to_jsonb(t) FROM aa.{table} t WHERE {where}"), key).scalar()
+    if old is None:
+        raise SystemExit(f"{name}: no aa.{table} row {row_key} to delete")
+    print(f"  {'(dry) ' if dry else ''}{table}: {row_key}  [delete]")
+    if not dry:
+        conn.execute(sa.text(f"DELETE FROM aa.{table} WHERE {where}"), key)
+        conn.execute(sa.text(
+            "INSERT INTO aa.entry_audit (entered_by, table_name, row_key, field, old_value, new_value) "
+            "VALUES (:by, :t, :k, '(delete)', :v, NULL)"),
+            {"by": by, "t": table, "k": row_key, "v": json.dumps(old, default=str)})
+
+
 def apply_file(conn, name, payload, dry=False):
     by = f"entries:{name}" + (f" ({payload['entered_by']})" if payload.get("entered_by") else "")
     n = 0
     for item in payload["rows"]:
+        if "delete" in item:
+            _delete(conn, name, by, item["table"], item["delete"], dry)
+            n += 1
+            continue
         table, row = item["table"], dict(item["row"])
         types = _col_types(conn, table)
         unknown = set(row) - set(types)
