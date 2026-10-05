@@ -954,7 +954,11 @@ def assemble(d, e):
         countries.setdefault(c, {"name": _s(r["country_name"]), "region": _s(r.get("region")),
                                  "fws": []})
         vs = ver[(ver["country_iso3"] == c) & (ver["hazard"] == h)].copy()
-        vs = vs.sort_values("valid_from", na_position="first")
+        # by start date; an undated version sorts by its label ('2022' -> 2022-01-01)
+        lab = vs["version"].astype(str).str.extract(r"^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?")
+        lab = pd.to_datetime(lab[0] + "-" + lab[1].fillna("01") + "-" + lab[2].fillna("01"), errors="coerce")
+        vs = vs.assign(_k=pd.to_datetime(vs["valid_from"].astype(str), errors="coerce").fillna(lab))
+        vs = vs.sort_values("_k", na_position="first").drop(columns="_k")
         a_f = acts[(acts["country_iso3"] == c) & (acts["hazard"] == h)]
 
         versions = []
@@ -1047,6 +1051,7 @@ def assemble(d, e):
                              if not re.match(r"^[A-Z]{3}[:/]", str(x)) or str(x).startswith(c)]
             versions.append({
                 "v": v.version, "status": _s(v.kb_status), "valid_from": _s(v.valid_from),
+                "dev_since": _s(getattr(v, "development_since", None)),
                 "valid_until": _s(v.valid_until), "valid_until_source": _s(v.valid_until_source),
                 "endorsed_by": _s(v.endorsed_by), "supersedes": _s(v.supersedes),
                 "doc_url": _s(v.doc_url), "doc_title": _s(v.doc_title),
@@ -1672,14 +1677,19 @@ function lastAt(rows, D){ let x = null; for(const r of rows || []){ if(r[0] <= D
 // derived retirement date has passed. [status, version shown] — status null = did not exist yet.
 function statusAt(f, D){
   const H = f.hist || {}, d10 = s => String(s || '').slice(0, 10);
-  const dated = f.versions.filter(v => v.valid_from && d10(v.valid_from) <= D);
+  // a version exists from its start, or from the day it went into development when recorded;
+  // one marked retired was never (or is no longer) a framework version
+  const since = v => [v.valid_from, v.dev_since].filter(Boolean).map(d10).sort()[0];
+  const dated = f.versions.filter(v => v.status !== 'retired' && since(v) && since(v) <= D);
   const last = dated[dated.length - 1], ver = last ? last.v : null;
-  // a version (or a framework) whose validity ended DURING the year still counts for that year
+  // the yearly view shows a framework as ACTIVE if it was ever active in the year: an endorsed
+  // version in force at any time in it (validity that ended during the year still counts)
   const S = D.slice(0, 4) + '-01-01';
   if(H.retired && H.ret_on && H.ret_on <= S) return ['retired', ver];
   if(last){
-    if(last.status === 'endorsed') return [(!last.valid_until || d10(last.valid_until) >= S) ? 'active' : 'updating', ver];
-    return [dated.some(v => v.status === 'endorsed') ? 'updating' : 'development', ver];
+    const endorsed = dated.filter(v => v.status === 'endorsed' && v.valid_from && d10(v.valid_from) <= D);
+    if(endorsed.some(v => !v.valid_until || d10(v.valid_until) >= S)) return ['active', endorsed[endorsed.length - 1].v];
+    return [endorsed.length ? 'updating' : 'development', ver];
   }
   const s = lastAt(H.sh, D), sc = s ? s[1] : null;
   if(!sc || sc === 'pipeline' || sc === 'retired') return [null, null];

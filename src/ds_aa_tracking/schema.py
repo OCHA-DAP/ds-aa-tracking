@@ -650,6 +650,10 @@ ADDITIVE_MIGRATIONS = [
     "ALTER TABLE IF EXISTS aa.simulated_activation ADD COLUMN IF NOT EXISTS event_time timestamptz",
     "ALTER TABLE IF EXISTS aa.simulated_activation ADD COLUMN IF NOT EXISTS time_precision text",
     "ALTER TABLE IF EXISTS aa.simulated_activation ADD COLUMN IF NOT EXISTS source_note text",
+    # 2026-10-05: when a version went into development — in-development frameworks count toward
+    # pre-arranged money, also in the yearly figures, FROM this date (the dates before this
+    # column existed are lost; the nightly stamps it the first night a development version exists)
+    "ALTER TABLE IF EXISTS aa.framework_version ADD COLUMN IF NOT EXISTS development_since date",
 ]
 
 INDEXES = [
@@ -701,10 +705,16 @@ VIEWS = {
     "v_version_funding": """
         CREATE OR REPLACE VIEW aa.v_version_funding AS
         WITH votes AS (    -- how many sources report the same amount for the same window/year
-            SELECT *, count(*) OVER (PARTITION BY country_iso3, hazard, version, kind, fund_code,
-                                                  financier, window_name, year, amount_usd) AS n_agree
-            FROM aa.window_funding
-            WHERE agency IS NULL AND sector IS NULL AND amount_usd IS NOT NULL
+            SELECT wf.*, count(*) OVER (PARTITION BY wf.country_iso3, wf.hazard, wf.version, wf.kind,
+                                                     wf.fund_code, wf.financier, wf.window_name,
+                                                     wf.year, wf.amount_usd) AS n_agree,
+                   -- a row dated after the version's validity ended (a later sheet attached to
+                   -- the only version then on record) never outranks one from its own years
+                   (wf.year IS NOT NULL AND v.valid_until IS NOT NULL
+                    AND wf.year > extract(year FROM v.valid_until)) AS after_validity
+            FROM aa.window_funding wf
+            LEFT JOIN aa.framework_version v USING (country_iso3, hazard, version)
+            WHERE wf.agency IS NULL AND wf.sector IS NULL AND wf.amount_usd IS NOT NULL
         ),
         ranked AS (   -- ONE amount per window: latest year, best provenance, then the amount
                       -- most sources agree on (2026-09-29: a lone co-financing sheet's 6.0M
@@ -714,7 +724,7 @@ VIEWS = {
                    amount_usd
             FROM votes
             ORDER BY country_iso3, hazard, version, kind, fund_code, financier, window_name,
-                     year DESC NULLS LAST,
+                     after_validity, year DESC NULLS LAST,
                      CASE provenance WHEN 'entered' THEN 0 WHEN 'doc-stated' THEN 1
                                      WHEN 'kb' THEN 2 WHEN 'sheet' THEN 3 ELSE 4 END,
                      n_agree DESC, amount_usd DESC
@@ -725,8 +735,15 @@ VIEWS = {
         ),
         usable AS (     -- version-level leftovers only count when no named window carries the fund
             SELECT r.* FROM ranked r
-            LEFT JOIN named n USING (country_iso3, hazard, version, kind, fund_code, financier)
-            WHERE r.window_name NOT IN ('single', 'unattributed') OR n.version IS NULL
+            WHERE r.window_name NOT IN ('single', 'unattributed')
+               OR NOT EXISTS (      -- null-safe: fund_code / financier are often NULL, and a
+                                    -- plain join then never matched (2026-10-05: Afghanistan
+                                    -- 2025 showed its windows PLUS a sheet row, $42M for $20M)
+                   SELECT 1 FROM named n
+                   WHERE n.country_iso3 = r.country_iso3 AND n.hazard = r.hazard
+                     AND n.version = r.version AND n.kind = r.kind
+                     AND n.fund_code IS NOT DISTINCT FROM r.fund_code
+                     AND n.financier IS NOT DISTINCT FROM r.financier)
         ),
         w AS (
             SELECT country_iso3, hazard, version, kind, fund_code, financier,
