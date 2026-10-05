@@ -24,8 +24,11 @@ See backtests/README.md for when to write which file.
   backtests/seals/<name>.json  versions verified against their document:
       {"sealed_by": "…", "note": "…",
        "versions": [{"version": "ISO3/hazard/version", "against": "…"}, …]}
-    Sealing an unsealed version is idempotent and needs no erratum; a version already
-    sealed differently is reported and left alone (changing a seal is an erratum).
+    Sealing an unsealed version needs no erratum; a version already sealed is left alone
+    (changing a seal is an erratum), and a file seals a version ONCE: if an erratum has
+    unsealed it since, it stays unsealed until a new seals file lists it. The database
+    checks every seal: the version is endorsed, has windows, each with a span, and no
+    simulated year outside it.
 
 After the files, the backtest foreign keys still marked NOT VALID are validated (a backtest
 row belongs to a registered version, a simulated year to a window — schema.BACKTEST_FKS).
@@ -82,6 +85,15 @@ def _pk(conn, table):
         {"t": f'aa."{table}"'})]
 
 
+def _check_cols(conn, table, *objs):
+    known = {r[0] for r in conn.execute(sa.text(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = 'aa' AND table_name = :t"), {"t": table})}
+    bad = sorted({c for o in objs for c in (o or {})} - known)
+    if bad:
+        raise ValueError(f"aa.{table} has no column(s) {bad}")
+
+
 def _where(key, prefix="k_"):
     return " AND ".join(f'"{c}" = :{prefix}{c}' for c in key), {f"{prefix}{c}": v for c, v in key.items()}
 
@@ -136,6 +148,7 @@ def apply_erratum(conn, eid, payload, source, sha, dry):
     done = []
     for ch in changes:
         op, table = ch.get("op"), ch["table"]
+        _check_cols(conn, table, ch.get("key"), ch.get("set"), ch.get("row"))
         if op in ("delete", "update"):
             key = ch.get("key") or {}
             _check_key(conn, table, key)
@@ -204,6 +217,13 @@ def apply_seals(conn, name, payload, dry):
             print(f"  {item['version']}: already sealed"
                   + ("" if same else f" by {cur.backtest_sealed_by!r} against "
                      f"{cur.backtest_sealed_against!r} — left alone (changing a seal is an erratum)"))
+            continue
+        if conn.execute(sa.text(
+                "SELECT 1 FROM aa.entry_audit WHERE entered_by = :by AND table_name = 'framework_version' "
+                "AND row_key = :k AND field = 'backtest_sealed_against' LIMIT 1"),
+                {"by": f"seals:{name}", "k": item["version"]}).first():
+            print(f"  {item['version']}: this file sealed it before and an erratum has unsealed it "
+                  "since — left unsealed (to seal it again, list it in a new seals file)")
             continue
         nwin = conn.execute(sa.text('SELECT count(*) FROM aa."window" WHERE country_iso3 = :c '
                                     "AND hazard = :h AND version = :v"), p).scalar()
@@ -281,6 +301,11 @@ def main():
     files = _files(Path(a.dir) if a.dir else ROOT, use_blob=not a.dir)
     engine = stratus.get_engine(stage="dev", write=True)
     with engine.connect() as conn:
+        if conn.execute(sa.text("SELECT to_regclass('aa.backtest_erratum') IS NULL")).scalar():
+            print("the backtest tables and guards are not installed in this database yet "
+                  "(scripts/ensure_schema.py — the nightly job's one-off --ensure-schema run): "
+                  f"{len(files)} backtest file(s) left pending, nothing applied")
+            return
         applied = dict(conn.execute(sa.text("SELECT id, sha256 FROM aa.backtest_erratum")).fetchall())
     failed = 0
     for kind, name, raw, source in files:

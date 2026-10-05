@@ -105,7 +105,8 @@ Since 2026-09-30 laptops cannot reach the dev DB. Two write paths remain: the ad
 (its proxy runs in Azure), and **entry files**: JSON on the private dev blob
 (`projects/ds-aa-tracking/entries/`, never in this public repo) that the nightly Databricks
 job applies once each, before the snapshot (`scripts/apply_entries.py`; format in its
-docstring; upload with `--upload FILE`, test against a restored local copy with `--dir`).
+docstring; upload with `--upload FILE`, test against a restored local copy with `--dir`;
+`--dry-run` applies each file in its transaction, lets the database check it, and rolls back).
 Every row is audited to `aa.entry_audit`; applied files are recorded in `aa.applied_entries`.
 Besides upserts, an item can `"delete"` one row by its full key or `"op": "replace"` a
 version's rows in a table (a re-run backtest of a version in development). A file that fails

@@ -844,6 +844,9 @@ ADDITIVE_MIGRATIONS = [
 #    unsealed version is free (the act of sealing); changing or clearing a seal, relabelling
 #    or deleting a sealed version needs an erratum too (guard_seal on framework_version);
 #    TRUNCATE of these tables is refused while any version is sealed (guard_truncate).
+#    Sealing itself is checked here too, whoever does it: the version has windows, every
+#    window has a span, no simulated year lies outside it; no version is registered already
+#    sealed; aa.backtest_erratum is append-only (guard_erratum).
 #    Every writer — the admin page's proxy, entries files, the Databricks job, a laptop on
 #    the tunnel — meets the same rule, because it lives in the database.
 # 2. The span. A simulated activation must fall inside its window's analysis span (and its
@@ -916,9 +919,47 @@ BACKTEST_GUARDS = [
           FOR EACH ROW EXECUTE FUNCTION aa.guard_sealed_backtest()""" for t in BACKTEST_TABLES],
     """CREATE OR REPLACE FUNCTION aa.guard_version_seal()
        RETURNS trigger LANGUAGE plpgsql AS $$
+       DECLARE
+         bad text;
        BEGIN
+         IF TG_OP = 'INSERT' THEN
+           IF NEW.backtest_sealed_at IS NOT NULL THEN
+             RAISE EXCEPTION 'version %/%/% cannot be registered already sealed: a seal follows a recorded, checked backtest',
+               NEW.country_iso3, NEW.hazard, NEW.version;
+           END IF;
+           RETURN NEW;
+         END IF;
          IF OLD.backtest_sealed_at IS NULL THEN
            IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+           IF NEW.backtest_sealed_at IS NOT NULL THEN
+             -- the act of sealing: there must be a backtest, and it must be sound, whoever seals
+             IF (NEW.country_iso3, NEW.hazard, NEW.version)
+                  IS DISTINCT FROM (OLD.country_iso3, OLD.hazard, OLD.version) THEN
+               RAISE EXCEPTION 'seal %/%/% and relabel it in separate steps (relabel first)',
+                 OLD.country_iso3, OLD.hazard, OLD.version;
+             END IF;
+             IF NOT EXISTS (SELECT 1 FROM aa."window" w WHERE (w.country_iso3, w.hazard, w.version)
+                              = (OLD.country_iso3, OLD.hazard, OLD.version)) THEN
+               RAISE EXCEPTION '%/%/% has no backtest windows: nothing to seal',
+                 OLD.country_iso3, OLD.hazard, OLD.version;
+             END IF;
+             SELECT string_agg(w.window_name, ', ') INTO bad FROM aa."window" w
+             WHERE (w.country_iso3, w.hazard, w.version) = (OLD.country_iso3, OLD.hazard, OLD.version)
+               AND (w.analysis_start IS NULL OR w.analysis_end IS NULL);
+             IF bad IS NOT NULL THEN
+               RAISE EXCEPTION '%/%/% cannot be sealed: window(s) without an analysis span (%)',
+                 OLD.country_iso3, OLD.hazard, OLD.version, bad;
+             END IF;
+             SELECT string_agg(s.window_name || ' ' || s.event_year, ', ') INTO bad
+             FROM aa.simulated_activation s
+             JOIN aa."window" w USING (country_iso3, hazard, version, window_name)
+             WHERE (s.country_iso3, s.hazard, s.version) = (OLD.country_iso3, OLD.hazard, OLD.version)
+               AND s.event_year NOT BETWEEN w.analysis_start AND w.analysis_end;
+             IF bad IS NOT NULL THEN
+               RAISE EXCEPTION '%/%/% cannot be sealed: simulated year(s) outside the analysis span (%)',
+                 OLD.country_iso3, OLD.hazard, OLD.version, bad;
+             END IF;
+           END IF;
            RETURN NEW;
          END IF;
          IF TG_OP = 'DELETE' THEN
@@ -937,8 +978,34 @@ BACKTEST_GUARDS = [
          RETURN NEW;
        END $$""",
     """CREATE OR REPLACE TRIGGER guard_seal
-       BEFORE UPDATE OR DELETE ON aa.framework_version
+       BEFORE INSERT OR UPDATE OR DELETE ON aa.framework_version
        FOR EACH ROW EXECUTE FUNCTION aa.guard_version_seal()""",
+    # the errata record is append-only: a row is written once, by the transaction applying
+    # the erratum (which fills in `changes` at its end), and never changed or removed after
+    """CREATE OR REPLACE FUNCTION aa.guard_backtest_erratum()
+       RETURNS trigger LANGUAGE plpgsql AS $$
+       BEGIN
+         IF TG_OP = 'UPDATE'
+            AND NEW.id = OLD.id
+            AND OLD.changes = '[]'::jsonb
+            AND nullif(current_setting('aa.erratum_id', true), '') = OLD.id THEN
+           RETURN NEW;            -- apply_backtests.py completing the erratum it is applying
+         END IF;
+         RAISE EXCEPTION 'aa.backtest_erratum is the record of corrections made: rows are never changed or removed (erratum %)',
+           coalesce(OLD.id, '?')
+           USING HINT = 'A further correction is a new erratum file.';
+       END $$""",
+    """CREATE OR REPLACE TRIGGER guard_erratum
+       BEFORE UPDATE OR DELETE ON aa.backtest_erratum
+       FOR EACH ROW EXECUTE FUNCTION aa.guard_backtest_erratum()""",
+    """CREATE OR REPLACE FUNCTION aa.guard_backtest_erratum_truncate()
+       RETURNS trigger LANGUAGE plpgsql AS $$
+       BEGIN
+         RAISE EXCEPTION 'aa.backtest_erratum is the record of corrections made: it cannot be truncated';
+       END $$""",
+    """CREATE OR REPLACE TRIGGER guard_erratum_truncate
+       BEFORE TRUNCATE ON aa.backtest_erratum
+       FOR EACH STATEMENT EXECUTE FUNCTION aa.guard_backtest_erratum_truncate()""",
     # TRUNCATE fires no row trigger: refuse it outright while any backtest is sealed
     """CREATE OR REPLACE FUNCTION aa.guard_backtest_truncate()
        RETURNS trigger LANGUAGE plpgsql AS $$
@@ -999,22 +1066,19 @@ BACKTEST_GUARDS = [
          END IF;
          RETURN NULL;
        END $$""",
-    """DO $$ BEGIN
-         IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'simulated_in_span'
-                        AND tgrelid = 'aa.simulated_activation'::regclass) THEN
-           CREATE CONSTRAINT TRIGGER simulated_in_span
-             AFTER INSERT OR UPDATE ON aa.simulated_activation
-             DEFERRABLE INITIALLY DEFERRED
-             FOR EACH ROW EXECUTE FUNCTION aa.check_simulated_in_span();
-         END IF;
-         IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'window_span_covers'
-                        AND tgrelid = 'aa.window'::regclass) THEN
-           CREATE CONSTRAINT TRIGGER window_span_covers
-             AFTER UPDATE OF analysis_start, analysis_end ON aa.window
-             DEFERRABLE INITIALLY DEFERRED
-             FOR EACH ROW EXECUTE FUNCTION aa.check_simulated_in_span();
-         END IF;
-       END $$""",
+    # constraint triggers have no CREATE OR REPLACE: dropped and created each run, so the
+    # definition here is always the one installed. The window trigger fires on INSERT too:
+    # replacing a version's windows deletes and re-inserts them, which is no UPDATE.
+    "DROP TRIGGER IF EXISTS simulated_in_span ON aa.simulated_activation",
+    """CREATE CONSTRAINT TRIGGER simulated_in_span
+       AFTER INSERT OR UPDATE ON aa.simulated_activation
+       DEFERRABLE INITIALLY DEFERRED
+       FOR EACH ROW EXECUTE FUNCTION aa.check_simulated_in_span()""",
+    'DROP TRIGGER IF EXISTS window_span_covers ON aa."window"',
+    """CREATE CONSTRAINT TRIGGER window_span_covers
+       AFTER INSERT OR UPDATE OF analysis_start, analysis_end ON aa."window"
+       DEFERRABLE INITIALLY DEFERRED
+       FOR EACH ROW EXECUTE FUNCTION aa.check_simulated_in_span()""",
     *[f"""DO $$ BEGIN
             IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '{name}'
                            AND conrelid = 'aa."{table}"'::regclass) THEN

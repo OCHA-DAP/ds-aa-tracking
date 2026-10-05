@@ -18,8 +18,11 @@ proxy, entries files, the Databricks job, a laptop on the tunnel):
    version can be sealed, and a seal always says by whom and against what); from then on the
    `guard_sealed` trigger refuses any insert, update or delete touching that version — unless it
    runs inside an erratum applied by `scripts/apply_backtests.py`. Clearing or changing a seal,
-   relabelling or deleting a sealed version is refused the same way. An update that changes
-   nothing (a re-read confirming the record) passes.
+   relabelling or deleting a sealed version is refused the same way, and so is `TRUNCATE`. An
+   update that changes nothing (a re-read confirming the record) passes. Sealing itself is
+   checked, whoever does it: the version has windows, each with an analysis span, and no
+   simulated year outside it; no version is registered already sealed. The errata record
+   (`aa.backtest_erratum`) is append-only.
 
 ## Which version, and which path
 
@@ -34,6 +37,7 @@ backtest recorded now. What a write may do depends on the state of that version:
 | **endorsed, not sealed** | The same file, as a *backfill of the endorsed record* from the endorsed document. Through the proxy it must be **named**: `confirm_endorsed: ["ISO3/hazard/version"]` — without it the write is refused, so work on a revision can't land on the endorsed record by accident (and naming a version that is in development is refused too). When the record matches the document in full, **seal** it: `"seal": {"version": …, "against": "document + page"}` in the same request, or a `seals/` file here. |
 | **sealed**, and the database doesn't match the document | an **erratum**, kind `transcription` (`errata/`). |
 | **sealed**, and the endorsed backtest itself is wrong | an **erratum**, kind `analysis-note` (no changes; it's recorded and shown). The fix is a **new version**: a changed analysis after endorsement is a revision, not an edit. |
+| **sealed**, and it needs reopening (more than a row fix) | an **erratum** that clears the seal (an update of `framework_version` setting the three `backtest_sealed_*` columns to null), then entries as for an unsealed endorsed version, then a **new** seals file — a seals file seals a version once and will not re-seal what an erratum has opened. |
 | about to be endorsed under a new label | relabel **before** sealing (`nightly.py --relabel ISO3/HAZARD/OLD NEW`). |
 | not registered | register it on the entry / admin page first (status `development` for a revision). Nothing creates a version as a side effect of a backtest. |
 
@@ -70,8 +74,10 @@ audited in `aa.entry_audit` as `errata:<id>`.
  "versions": [{"version": "ISO3/hazard/version", "against": "the document (link) + page / table"}]}
 ```
 
-A version is sealed only if it has windows and no simulated year outside its span; one already
-sealed is left alone.
+A version is sealed only if it is endorsed, has windows, each with a span, and no simulated
+year outside it (the database checks this for every seal); one already sealed is left alone;
+and a file seals a version **once** — if an erratum has unsealed it since, it stays unsealed
+until a new seals file lists it.
 
 **This repo is public.** An erratum for a version whose framework document is not public goes
 on the private dev blob instead (`projects/ds-aa-tracking/errata/<id>.json`, same format; the

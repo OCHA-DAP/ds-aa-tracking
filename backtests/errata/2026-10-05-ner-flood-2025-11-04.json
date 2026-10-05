@@ -67,7 +67,8 @@
       },
       "set": {
         "rp_reported": 3.0,
-        "prob_reported": 0.34
+        "prob_reported": 0.34,
+        "note": "Reported RP is seasons / activations over the 46 seasons 1979-2024 (46/15 = 3,0 and 46/9 = 5,1), not the Weibull (n+1)/k the views compute (3.13 and 5.22)."
       },
       "why": "as stated (Mobilisation)"
     },
@@ -82,7 +83,8 @@
       },
       "set": {
         "rp_reported": 5.1,
-        "prob_reported": 0.2
+        "prob_reported": 0.2,
+        "note": "Reported RP is seasons / activations over the 46 seasons 1979-2024 (46/15 = 3,0 and 46/9 = 5,1), not the Weibull (n+1)/k the views compute (3.13 and 5.22)."
       },
       "why": "as stated (Action)"
     }

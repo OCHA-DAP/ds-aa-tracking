@@ -812,7 +812,10 @@ async function versions(req, res, qs) {
 //   * a version that is not in aa.framework_version is refused, with the pair's real ones;
 //   * an ENDORSED version's backtest is written only when confirm_endorsed names it (and
 //     only it): development work can't land on the endorsed record by accident — and
-//     confirm_endorsed naming a version that is not endorsed is refused as well;
+//     confirm_endorsed naming a version that is not endorsed is refused as well; a version
+//     with no status set is refused until it has one;
+//   * aa.framework_version itself is not written here (status and registration belong to
+//     the entry / admin pages), so a file can't change what its own target is;
 //   * a sealed one is refused here as anywhere (the database's guard): errata only.
 // "seal": {"version": "ISO3/hazard/version", "against": "the document + page"} seals an
 // endorsed version in the same transaction, after the changes and the checks.
@@ -847,6 +850,9 @@ async function applyEntries(req, res) {
     };
     items.forEach((item, i) => {
       if (!item || typeof item !== "object") throw new Refusal(`item ${i}: not an object`);
+      if (item.table === "framework_version")
+        throw new Refusal(`item ${i}: aa.framework_version is not written through /entries — nothing written`, {
+          hint: "A version is registered, and its status changed, on the tracking site (entry / admin page). Sealing goes through \"seal\"." });
       if (!BACKTEST_TABLES.includes(item.table)) return;
       if (item.delete) touch(i, item.delete);
       else if (item.op === "replace") { touch(i, item.scope || {}); (item.rows || []).forEach((r) => touch(i, r)); }
@@ -890,6 +896,9 @@ async function applyEntries(req, res) {
       if (v.sealed) throw new Refusal(`the backtest of ${k} is SEALED (checked against: ${v.sealed_against}) — nothing written`, {
         hint: "A sealed backtest changes only through an erratum: backtests/errata/ in ds-aa-tracking (backtests/README.md). A changed analysis is a new version." });
       const isDev = DEV_STATUSES.has(v.status);
+      if (!isDev && v.status !== "endorsed")
+        throw new Refusal(`${k} has no usable status (${v.status}) — nothing written`, {
+          hint: "Set the version's status (development or endorsed) on the tracking site's admin page first: what a backtest write may do depends on it." });
       if (!isDev) needsConfirm.push(k);
       if (isDev && confirmed.has(k)) throw new Refusal(`${k} was confirmed as the endorsed version to write, but it is in ${v.status} — check which version you mean. Nothing written`);
     }
@@ -1003,13 +1012,15 @@ async function applyEntries(req, res) {
       if (!mine.length) throw new Refusal(`${sealKey} has no backtest windows to seal`);
       const open = mine.filter((w) => w.analysis_start == null || w.analysis_end == null);
       if (open.length) throw new Refusal(`${sealKey}: window(s) without an analysis span (${open.map((w) => w.window_name).join(", ")}) — complete before sealing`);
-      if (!dry) {
-        await client.query(
-          `UPDATE aa.framework_version SET backtest_sealed_at = now(), backtest_sealed_by = $4,
-                  backtest_sealed_against = $5
-           WHERE country_iso3 = $1 AND hazard = $2 AND version = $3`, [...sv, by, String(seal.against).trim()]);
-        await audit("framework_version", sealKey, "backtest_sealed_against", null, String(seal.against).trim());
-      }
+      const out = mine.flatMap((w) => (w.years || []).filter((y) => y < w.analysis_start || y > w.analysis_end)
+                                                      .map((y) => `${w.window_name} ${y}`));
+      if (out.length) throw new Refusal(`${sealKey}: simulated year(s) outside the analysis span (${out.join(", ")}) — fix before sealing`);
+      // done for real in a dry run too (then rolled back): the database checks every seal
+      await client.query(
+        `UPDATE aa.framework_version SET backtest_sealed_at = now(), backtest_sealed_by = $4,
+                backtest_sealed_against = $5
+         WHERE country_iso3 = $1 AND hazard = $2 AND version = $3`, [...sv, by, String(seal.against).trim()]);
+      await audit("framework_version", sealKey, "backtest_sealed_against", null, String(seal.against).trim());
       sealed = { version: sealKey, against: String(seal.against).trim() };
     }
     await client.query(dry ? "ROLLBACK" : "COMMIT");

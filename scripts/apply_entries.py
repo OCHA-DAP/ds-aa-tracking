@@ -36,6 +36,7 @@ The database has the last word on backtests (schema.BACKTEST_GUARDS): a sealed b
 refuses every change (corrections are errata, backtests/README.md), a window must belong to
 a registered version, a simulated year to a window and inside its analysis span. A file that
 breaks a rule fails as a whole, stays pending, and never blocks the files after it.
+--dry-run applies each file in its transaction, lets the database check it, and rolls back.
 
 Usage:
     uv run python scripts/apply_entries.py                 # pending files from the blob
@@ -101,12 +102,11 @@ def _delete(conn, name, by, table, key, dry):
     if old is None:
         raise SystemExit(f"{name}: no aa.{table} row {row_key} to delete")
     print(f"  {'(dry) ' if dry else ''}{table}: {row_key}  [delete]")
-    if not dry:
-        conn.execute(sa.text(f"DELETE FROM aa.{table} WHERE {where}"), key)
-        conn.execute(sa.text(
-            "INSERT INTO aa.entry_audit (entered_by, table_name, row_key, field, old_value, new_value) "
-            "VALUES (:by, :t, :k, '(delete)', :v, NULL)"),
-            {"by": by, "t": table, "k": row_key, "v": json.dumps(old, default=str)})
+    conn.execute(sa.text(f"DELETE FROM aa.{table} WHERE {where}"), key)
+    conn.execute(sa.text(
+        "INSERT INTO aa.entry_audit (entered_by, table_name, row_key, field, old_value, new_value) "
+        "VALUES (:by, :t, :k, '(delete)', :v, NULL)"),
+        {"by": by, "t": table, "k": row_key, "v": json.dumps(old, default=str)})
 
 
 SCOPE_MIN = {"country_iso3", "hazard", "version"}
@@ -130,7 +130,7 @@ def _replace(conn, name, by, table, scope, rows, dry):
         sa.text(f"SELECT to_jsonb(t) FROM aa.{table} t WHERE {where}"), scope)]
     scope_key = "/".join(str(v) for v in scope.values())
     print(f"  {'(dry) ' if dry else ''}{table}: {scope_key}  [replace: {len(old)} out, {len(rows)} in]")
-    if not dry and old:
+    if old:
         conn.execute(sa.text(f"DELETE FROM aa.{table} WHERE {where}"), scope)
         for o in old:
             conn.execute(sa.text(
@@ -186,7 +186,7 @@ def apply_file(conn, name, payload, dry=False):
         row_key = "/".join(str(row.get(k)) for k in keys)
         print(f"  {'(dry) ' if dry else ''}{table}: {row_key}"
               f"  [{'update' if exists else 'insert'}{'' if sql else ', unchanged'}]")
-        if not dry and sql:
+        if sql:
             conn.execute(sa.text(sql), row)
             conn.execute(sa.text(
                 "INSERT INTO aa.entry_audit (entered_by, table_name, row_key, field, old_value, new_value) "
@@ -230,24 +230,29 @@ def main():
         try:
             payload = json.loads(raw)
             print(f"{name}: {len(payload['rows'])} item(s)")
-            with engine.begin() as conn:   # one transaction per file: all or nothing
+            with engine.connect() as conn:  # one transaction per file: all or nothing
+                tx = conn.begin()
                 n = apply_file(conn, name, payload, dry=a.dry_run)
                 # deferred checks (span, foreign keys) now, so a failure names this file
                 conn.execute(sa.text("SET CONSTRAINTS ALL IMMEDIATE"))
-                if not a.dry_run:
+                if a.dry_run:               # applied and checked by the database, then undone
+                    tx.rollback()
+                else:
                     conn.execute(sa.text(
                         "INSERT INTO aa.applied_entries (name, sha256, n_rows, entered_by) "
                         "VALUES (:n, :s, :r, :b) ON CONFLICT (name) DO UPDATE SET "
                         "sha256 = EXCLUDED.sha256, n_rows = EXCLUDED.n_rows, "
                         "entered_by = EXCLUDED.entered_by, applied_at = now()"),
                         {"n": name, "s": sha, "r": n, "b": payload.get("entered_by")})
+                    tx.commit()
         except (Exception, SystemExit) as ex:   # one bad file never blocks the ones after it
             msg = str(ex).splitlines()[0] if str(ex) else repr(ex)
             print(f"!! {name}: not applied — {msg}")
             failed += 1
             continue
         applied += 1
-    print(f"{applied} entries file(s) applied" + (" (dry run)" if a.dry_run else ""))
+    print(f"{applied} entries file(s) " + ("checked against the database and rolled back (dry run)"
+                                          if a.dry_run else "applied"))
     if failed:
         sys.exit(f"{failed} entries file(s) failed (they stay pending)")
 

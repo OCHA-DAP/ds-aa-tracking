@@ -81,7 +81,8 @@
       },
       "set": {
         "rp_reported": 13,
-        "prob_reported": 0.07
+        "prob_reported": 0.07,
+        "note": "Reported RP (13 years, 7%) is the document's pooled estimate, not a per-window count: it assumes one return period for all four forecast publication months — 5 triggers in 104 month-observations (3.8%), two months per window = 7.5%, about 13 years (document annex, pp.36–37). The Weibull figure computed from the years listed for this window differs by construction."
       },
       "why": "as stated"
     },
@@ -96,7 +97,8 @@
       },
       "set": {
         "rp_reported": 13,
-        "prob_reported": 0.07
+        "prob_reported": 0.07,
+        "note": "Reported RP (13 years, 7%) is the document's pooled estimate, not a per-window count: it assumes one return period for all four forecast publication months — 5 triggers in 104 month-observations (3.8%), two months per window = 7.5%, about 13 years (document annex, pp.36–37). The Weibull figure computed from the years listed for this window differs by construction."
       },
       "why": "as stated"
     },
