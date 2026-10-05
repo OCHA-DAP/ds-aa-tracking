@@ -8,26 +8,34 @@ it takes the snapshot the site is built from.
 
 File format:
     {"entered_by": "who / from what", "note": "...",
-     "rows": [{"table": "window_funding", "row": {...column: value...}}, ...]}
+     "rows": [{"table": "window_funding", "row": {...column: value...}}, ...,
+              {"table": "framework_partner", "delete": {...the row's full key...}}]}
 
 Each row is matched on its table's primary key or first unique constraint (looked up in
 the catalog, NULLs equal): an existing row is updated with just the fields given (plus
 updated_at), a new one inserted; every row is audited to aa.entry_audit with entered_by =
-the file name. Two more item kinds, for records that are re-entered as a whole (a backtest
-re-run while its framework version is in development):
-    {"op": "delete", "table": T, "row": {...key columns...}}
-        removes that one row (already absent = nothing to do);
-    {"op": "replace", "table": T, "scope": {"country_iso3": …, "hazard": …, "version": …},
-     "rows": [{...}, ...]}
-        the given rows BECOME the scope's rows in T: everything in the scope is deleted, then
-        the rows are inserted (each must sit inside the scope). E.g. a version's
-        simulated_activation after a new backtest run — years that dropped out go too.
-A sealed backtest (framework_version.backtest_sealed_at) refuses all three: the database
-trigger fails the file; corrections to sealed backtests are errata (backtests/README.md).
-A file is
+the file name. A file is
 applied ONCE: aa.applied_entries records its name and content hash, so a later edit made
 in the admin page is never overwritten by a re-run. Changing a file's content makes it
 pending again (deliberately).
+
+A "delete" item removes ONE row by its full key — for a row that is wrong (drawn from the
+wrong document), not one that changed. A missing row fails the file (all or nothing), and
+the deleted row is written whole to the audit (field '(delete)'), so it can be put back.
+
+A "replace" item re-enters a record as a whole — a backtest re-run while its framework
+version is unsealed:
+    {"op": "replace", "table": T,
+     "scope": {"country_iso3": …, "hazard": …, "version": …[, "window_name": …]},
+     "rows": [{...}, ...]}
+The given rows BECOME the scope's rows in T: every row in the scope is deleted (each audited
+whole, like a delete) and the rows are inserted (each must sit inside the scope), so years
+that dropped out of the re-run go too. The scope must name one version.
+
+The database has the last word on backtests (schema.BACKTEST_GUARDS): a sealed backtest
+refuses every change (corrections are errata, backtests/README.md), a window must belong to
+a registered version, a simulated year to a window and inside its analysis span. A file that
+breaks a rule fails as a whole, stays pending, and never blocks the files after it.
 
 Usage:
     uv run python scripts/apply_entries.py                 # pending files from the blob
@@ -83,61 +91,72 @@ def _col_types(conn, table):
         "WHERE table_schema = 'aa' AND table_name = :t"), {"t": table}).fetchall())
 
 
-def _audit(conn, by, table, row_key, new_value, old_value=None):
-    conn.execute(sa.text(
-        "INSERT INTO aa.entry_audit (entered_by, table_name, row_key, field, old_value, new_value) "
-        "VALUES (:by, :t, :k, '(row)', :o, :v)"),
-        {"by": by, "t": table, "k": row_key, "o": old_value, "v": new_value})
+def _delete(conn, name, by, table, key, dry):
+    keys = _key_cols(conn, table)
+    if set(key) != set(keys):
+        raise SystemExit(f"{name}: a delete on aa.{table} must give exactly its key {keys}")
+    where = " AND ".join(f"{k} IS NOT DISTINCT FROM :{k}" for k in keys)
+    row_key = "/".join(str(key.get(k)) for k in keys)
+    old = conn.execute(sa.text(f"SELECT to_jsonb(t) FROM aa.{table} t WHERE {where}"), key).scalar()
+    if old is None:
+        raise SystemExit(f"{name}: no aa.{table} row {row_key} to delete")
+    print(f"  {'(dry) ' if dry else ''}{table}: {row_key}  [delete]")
+    if not dry:
+        conn.execute(sa.text(f"DELETE FROM aa.{table} WHERE {where}"), key)
+        conn.execute(sa.text(
+            "INSERT INTO aa.entry_audit (entered_by, table_name, row_key, field, old_value, new_value) "
+            "VALUES (:by, :t, :k, '(delete)', :v, NULL)"),
+            {"by": by, "t": table, "k": row_key, "v": json.dumps(old, default=str)})
 
 
-def _delete_where(conn, name, table, match, types, dry, by):
-    """Delete the rows of aa.<table> matching `match` (column -> value, NULLs equal)."""
-    unknown = set(match) - set(types)
+SCOPE_MIN = {"country_iso3", "hazard", "version"}
+
+
+def _replace(conn, name, by, table, scope, rows, dry):
+    """Delete every row of aa.<table> in `scope`; the caller then inserts `rows`."""
+    types = _col_types(conn, table)
+    if not SCOPE_MIN <= set(scope) or any(scope[c] is None for c in SCOPE_MIN):
+        raise SystemExit(f"{name}: a replace on aa.{table} needs a scope naming one version "
+                         f"({', '.join(sorted(SCOPE_MIN))})")
+    unknown = set(scope) - set(types)
     if unknown:
         raise SystemExit(f"{name}: aa.{table} has no column(s) {sorted(unknown)}")
-    where = " AND ".join(f'"{k}" IS NOT DISTINCT FROM :{k}' for k in match)
-    gone = conn.execute(sa.text(f'SELECT * FROM aa."{table}" WHERE {where}'), match).mappings().all()
-    if not dry and gone:
-        conn.execute(sa.text(f'DELETE FROM aa."{table}" WHERE {where}'), match)
-        for g in gone:
-            _audit(conn, by, table, "/".join(str(match[k]) for k in match), "deleted",
-                   json.dumps(dict(g), default=str)[:4000])
-    return len(gone)
+    for r in rows:
+        off = sorted(c for c in scope if r.get(c) != scope[c])
+        if off:
+            raise SystemExit(f"{name}: replace on aa.{table}: row {r} is outside the scope ({off})")
+    where = " AND ".join(f"{c} IS NOT DISTINCT FROM :{c}" for c in scope)
+    old = [r[0] for r in conn.execute(
+        sa.text(f"SELECT to_jsonb(t) FROM aa.{table} t WHERE {where}"), scope)]
+    scope_key = "/".join(str(v) for v in scope.values())
+    print(f"  {'(dry) ' if dry else ''}{table}: {scope_key}  [replace: {len(old)} out, {len(rows)} in]")
+    if not dry and old:
+        conn.execute(sa.text(f"DELETE FROM aa.{table} WHERE {where}"), scope)
+        for o in old:
+            conn.execute(sa.text(
+                "INSERT INTO aa.entry_audit (entered_by, table_name, row_key, field, old_value, new_value) "
+                "VALUES (:by, :t, :k, '(delete)', :v, NULL)"),
+                {"by": by, "t": table, "k": scope_key, "v": json.dumps(o, default=str)})
 
 
 def apply_file(conn, name, payload, dry=False):
     by = f"entries:{name}" + (f" ({payload['entered_by']})" if payload.get("entered_by") else "")
     n = 0
     for item in payload["rows"]:
-        table, op = item["table"], item.get("op", "upsert")
-        types = _col_types(conn, table)
-        if op == "delete":
-            keys = _key_cols(conn, table)
-            key = {k: item["row"].get(k) for k in keys}
-            k = _delete_where(conn, name, table, key, types, dry, by)
-            print(f"  {'(dry) ' if dry else ''}{table}: {'/'.join(str(v) for v in key.values())}"
-                  f"  [delete{'' if k else ', already absent'}]")
+        if "delete" in item:
+            _delete(conn, name, by, item["table"], item["delete"], dry)
             n += 1
             continue
-        if op == "replace":
-            scope = item.get("scope") or {}
-            if not {"country_iso3", "hazard", "version"} <= set(scope):
-                raise SystemExit(f"{name}: replace on aa.{table} needs a scope with at least "
-                                 "country_iso3, hazard and version")
-            for r in item.get("rows") or []:
-                off = {c: r.get(c) for c in scope if r.get(c) != scope[c]}
-                if off:
-                    raise SystemExit(f"{name}: replace on aa.{table}: row {r} is outside the scope {off}")
-            k = _delete_where(conn, name, table, scope, types, dry, by)
-            print(f"  {'(dry) ' if dry else ''}{table}: {'/'.join(str(v) for v in scope.values())}"
-                  f"  [replace: {k} out, {len(item.get('rows') or [])} in]")
-            for r in item.get("rows") or []:
-                n += apply_file(conn, name, {"entered_by": payload.get("entered_by"),
-                                             "rows": [{"table": table, "row": r}]}, dry)
+        if item.get("op") == "replace":
+            rows = item.get("rows") or []
+            _replace(conn, name, by, item["table"], dict(item.get("scope") or {}), rows, dry)
+            n += 1 + apply_file(conn, name, {"entered_by": payload.get("entered_by"),
+                                             "rows": [{"table": item["table"], "row": r} for r in rows]}, dry)
             continue
-        if op != "upsert":
-            raise SystemExit(f"{name}: unknown op {op!r} (upsert | delete | replace)")
-        row = dict(item["row"])
+        if item.get("op") not in (None, "upsert"):
+            raise SystemExit(f"{name}: unknown op {item['op']!r} (a row, a delete, or op: replace)")
+        table, row = item["table"], dict(item["row"])
+        types = _col_types(conn, table)
         unknown = set(row) - set(types)
         if unknown:
             raise SystemExit(f"{name}: aa.{table} has no column(s) {sorted(unknown)}")
@@ -208,12 +227,13 @@ def main():
         sha = hashlib.sha256(raw).hexdigest()
         if done.get(name) == sha:
             continue
-        payload = json.loads(raw)
-        print(f"{name}: {len(payload['rows'])} item(s)")
         try:
+            payload = json.loads(raw)
+            print(f"{name}: {len(payload['rows'])} item(s)")
             with engine.begin() as conn:   # one transaction per file: all or nothing
                 n = apply_file(conn, name, payload, dry=a.dry_run)
-                conn.execute(sa.text("SET CONSTRAINTS ALL IMMEDIATE"))  # deferred checks now
+                # deferred checks (span, foreign keys) now, so a failure names this file
+                conn.execute(sa.text("SET CONSTRAINTS ALL IMMEDIATE"))
                 if not a.dry_run:
                     conn.execute(sa.text(
                         "INSERT INTO aa.applied_entries (name, sha256, n_rows, entered_by) "
@@ -221,8 +241,9 @@ def main():
                         "sha256 = EXCLUDED.sha256, n_rows = EXCLUDED.n_rows, "
                         "entered_by = EXCLUDED.entered_by, applied_at = now()"),
                         {"n": name, "s": sha, "r": n, "b": payload.get("entered_by")})
-        except (Exception, SystemExit) as ex:   # one bad file never blocks the others
-            print(f"!! {name}: not applied — {str(ex).splitlines()[0] if str(ex) else ex!r}")
+        except (Exception, SystemExit) as ex:   # one bad file never blocks the ones after it
+            msg = str(ex).splitlines()[0] if str(ex) else repr(ex)
+            print(f"!! {name}: not applied — {msg}")
             failed += 1
             continue
         applied += 1
