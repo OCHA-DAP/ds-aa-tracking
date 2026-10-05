@@ -1,0 +1,36 @@
+{
+  "kind": "transcription",
+  "reason": "The 2025 year in Window B is in the endorsed table (a year before this version took effect), but the span stopped at 2024. The document's table header says 1984-2024 while its text says 1984-2025 and its return periods (6.14 = 43/7, 3.91 = 43/11) need 42 years: the span is 1984-2025.",
+  "evidence": "Endorsed document https://reliefweb.int/report/afghanistan/afghanistan-anticipatory-action-framework-drought-2026 p.1 'Trigger Mechanism Statistics' (Window B years include 2025); text 'analysis period of 1984-2025' and '42 years of historical data (1984 to 2025)'.",
+  "requested_by": "Tristan Downing (checked against the endorsed documents, 2026-10-05)",
+  "changes": [
+    {
+      "op": "update",
+      "table": "window",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2026-04-04",
+        "window_name": "Window A"
+      },
+      "set": {
+        "analysis_end": 2025
+      },
+      "why": "42 analysed years, as the document's RPs require"
+    },
+    {
+      "op": "update",
+      "table": "window",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2026-04-04",
+        "window_name": "Window B"
+      },
+      "set": {
+        "analysis_end": 2025
+      },
+      "why": "42 analysed years, as the document's RPs require"
+    }
+  ]
+}

@@ -334,6 +334,62 @@ aa.activation_funding         one row per activation × fund, either kind of act
 - The migration is `ds_aa_tracking.migrations`, run by `scripts/ensure_schema.py`,
   idempotent and non-destructive.
 
+## Backtests owned here; sealed once checked (2026-10-05)
+
+The KB's `load_aa_performance.py` (and `load_aa_cerf.py`, the aa-links confirm flow) wrote
+`window`, `simulated_activation`, `version_performance_reported`, `funding_breakdown`,
+`actual_activation` and `activation_allocation` from a gsheet / insurance-Excel crosswalk and
+framework-page frontmatter. After the KB flip none of those sources is live, GitHub runners
+can't reach the DB, and the tables' DDL lived only in the KB scripts. Ruling (user,
+2026-10-05): **all AA management moves to this repo.** The six tables and their views are
+`DURABLE_TABLES` / `VIEWS` here (unchanged names and shapes — the CERF trigger-allocations app
+reads `framework_version_map` and the performance views); the KB scripts and workflows are
+retired; the last three tables are frozen.
+
+What a version's backtest may do depends on where the version is (user requirement: easy to
+iterate while a framework is developed or revised, very hard — not impossible — to change
+once endorsed):
+
+- **In development**: edited freely — an entries file (`op: replace` re-enters a version's
+  windows and years as a set; a `delete` removes a row), applied at once through the proxy's
+  `POST /entries` (dry run first; the KB skill `record-simulated-activations` calls it from any
+  repo) or nightly from the blob; or the admin page.
+- **Endorsed, not sealed**: the same write, but it is a backfill of the endorsed record, so
+  through the proxy it must name the version (`confirm_endorsed`) — development work can't
+  land on the endorsed record by accident, and a wrong belief the other way (confirming a
+  version that is in development) is refused too. `seal: {version, against}` in the same
+  request seals it once it matches the document.
+- **The target is always explicit** (2026-10-05, user: a write can come from anywhere, so it
+  must land on the right version): the registry is the only source of "which version" —
+  `GET /versions` lists a pair's versions with status, role, document and seal; every
+  `/entries` reply carries those cards with the touched versions marked; and foreign keys
+  (`BACKTEST_FKS`: window → framework_version, simulated_activation → window, reported →
+  framework_version; deferred, NO ACTION) make a backtest under an unregistered label
+  impossible for every writer — how the KB-era `2025` orphans arose. No write path creates a
+  version as a side effect. The proxy owns the semantics and the database owns the rules, so
+  a client never carries schema.
+- **Sealed** (`framework_version.backtest_sealed_at/_by/_against`): set once the backtest has
+  been checked against the endorsed document. The seal is a deliberate act, not
+  `kb_status = 'endorsed'`: most endorsed versions have no backtest yet, and entering one is a
+  backfill, not a correction. A sealed backtest changes only inside an erratum
+  (`backtests/errata/`, PR-reviewed, applied by the nightly job, recorded in
+  `aa.backtest_erratum` with before-values) — enforced by triggers, so every writer meets
+  the same rule. Two kinds: *transcription* (the DB didn't match the endorsed document —
+  fixed in place) and *analysis-note* (the endorsed backtest itself is wrong — recorded,
+  never edited: the fix is a new version, because the endorsed numbers are what the ERC /
+  CERF approved and budgets were sized on).
+- **Always**: a simulated year lies inside its window's analysis span (deferred constraint
+  trigger) — a year after the span is a real activation, and belongs in `window_activation`.
+- Endorsement of a version entered under a placeholder label: relabel
+  (`relabel_version.py`, which now moves the backtest tables too) **before** sealing.
+
+The 2026-10-05 cleanup is the first set of errata: real activations appended to six
+versions' backtests, Haiti 2024's post-Melissa recomputation, two short spans and two
+backtests under year labels. Four versions now match their documents in full and are
+sealed; the rest wait for the document-read pass (`docread_to_entries.py`) and then a seal
+file. Not done here: multi-event years in `simulated_activation` (PK is per window-year;
+`event_label` carries the names); foreign keys on the other version-keyed tables.
+
 ## Migration phases
 
 | # | What | Where | Breaks anything? |
@@ -351,9 +407,8 @@ Ordering notes: 0 and 1 are independent and immediate; 2–3 need a KB PR cycle;
 
 ## Open questions
 
-2. **Writer of the unified registry**: this plan keeps `framework_version` written by
-   ds-aa-tracking (sourced from KB frontmatter + sweeps + sheets). The KB repo then
-   *reads* it — acceptable, or should the registry loader move into the KB repo?
+2. ~~**Writer of the unified registry**~~ — settled: this repo writes it, and since
+   2026-10-05 every other AA table the KB used to write (see "Backtests owned here").
 3. **Event labels**: for same-month multi-event cases the `event_label` needs a
    convention (e.g. storm name, 'phase-2') — propose curating during the activation
    adjudication pass.

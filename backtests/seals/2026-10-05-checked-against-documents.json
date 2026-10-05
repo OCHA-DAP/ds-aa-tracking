@@ -1,0 +1,22 @@
+{
+  "sealed_by": "Tristan Downing (2026-10-05 check of the KB-era backtests against the endorsed documents)",
+  "note": "Only versions whose stored backtest now matches its endorsed document's table — every window, its analysed years and its activation years. Where the document's own return period is computed differently from the views' Weibull figure (TCD pooled, NER n/k), window.note says how. The rest stay unsealed until checked: the full read of the framework documents (docread-2026-10) is under way.",
+  "versions": [
+    {
+      "version": "AFG/drought/2026-04-04",
+      "against": "endorsed document https://reliefweb.int/report/afghanistan/afghanistan-anticipatory-action-framework-drought-2026 p.1 Trigger Mechanism Statistics (span 1984-2025 per its text and RPs)"
+    },
+    {
+      "version": "HTI/storm/2024-08-23",
+      "against": "endorsed document https://reliefweb.int/report/haiti/cadre-daction-anticipatoire-pilote-en-haiti-tempetesouragans Tableau 1 p.2 + p.20 historical analysis (span end 2022 inferred from its RPs)"
+    },
+    {
+      "version": "NER/flood/2025-11-04",
+      "against": "endorsed document https://reliefweb.int/report/niger/cadre-daction-anticipatoire-au-niger-inondations-2025 p.3 (Saisons d'analyse 1979-2024); years and span as stated — its RPs are seasons/activations, see window.note"
+    },
+    {
+      "version": "TCD/drought/2025-03-03",
+      "against": "endorsed document https://www.unocha.org/publications/report/chad/cadre-de-laction-anticipatoire-secheresse-au-tchad-version-finale-du-3-mars-2025 p.2 (Années d'analyse 1999-2024); years and span as stated — its F1/F2 return period of 13 years is a pooled estimate (annex, pp.36–37), see window.note"
+    }
+  ]
+}

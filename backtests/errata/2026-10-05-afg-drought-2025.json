@@ -1,0 +1,316 @@
+{
+  "kind": "transcription",
+  "reason": "A backtest stored under the label '2025', which is no version (the gsheet tab year): it is the 2025-04-01 version's, matching that document exactly. The document read of 2025-04-01 (entries 2026-10-05-framework-docreads.json) enters the same years under the document's own window names, so these rows go and the reported headline figures move to 2025-04-01.",
+  "evidence": "Endorsed document https://reliefweb.int/report/afghanistan/afghanistan-anticipatory-action-framework-drought-2025 p.1 'Analysis years: 1984-2024': Window A 3.2 yrs / 31% (13 years), Window B 3.5 yrs / 29% (12 years).",
+  "requested_by": "Tristan Downing (checked against the endorsed documents, 2026-10-05)",
+  "changes": [
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window A",
+        "event_year": 1984
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window A",
+        "event_year": 1985
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window A",
+        "event_year": 1986
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window A",
+        "event_year": 1988
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window A",
+        "event_year": 1989
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window A",
+        "event_year": 2001
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window A",
+        "event_year": 2008
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window A",
+        "event_year": 2012
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window A",
+        "event_year": 2013
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window A",
+        "event_year": 2014
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window A",
+        "event_year": 2018
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window A",
+        "event_year": 2021
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window A",
+        "event_year": 2022
+      }
+    },
+    {
+      "op": "delete",
+      "table": "window",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window A"
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window B",
+        "event_year": 1986
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window B",
+        "event_year": 1989
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window B",
+        "event_year": 2000
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window B",
+        "event_year": 2001
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window B",
+        "event_year": 2004
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window B",
+        "event_year": 2006
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window B",
+        "event_year": 2008
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window B",
+        "event_year": 2011
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window B",
+        "event_year": 2018
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window B",
+        "event_year": 2021
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window B",
+        "event_year": 2022
+      }
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window B",
+        "event_year": 2023
+      }
+    },
+    {
+      "op": "delete",
+      "table": "window",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Window B"
+      }
+    },
+    {
+      "op": "update",
+      "table": "version_performance_reported",
+      "key": {
+        "country_iso3": "AFG",
+        "hazard": "drought",
+        "version": "2025"
+      },
+      "set": {
+        "version": "2025-04-01"
+      },
+      "why": "the version these headline figures belong to"
+    }
+  ]
+}

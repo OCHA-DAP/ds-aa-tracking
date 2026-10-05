@@ -1,0 +1,295 @@
+{
+  "kind": "transcription",
+  "reason": "The stored backtest was the gsheet's recomputation after Hurricane Melissa (Oct 2025, a real activation of this version): it added 2025 and differs from the endorsed table in other years too (its RPs reproduce only as 24/k with 2025 included). Restored to the endorsed document's table. The span's end year is inferred: the document says 'since 2000' and its RPs work out as 24/k (23 seasons, 2000-2022), as does the analysis code (ds-aa-hti-hurricanes src/datasources/nhc.py range(2000, 2023)). Probabilities are cleared: the document states return periods only.",
+  "evidence": "Endorsed document https://reliefweb.int/report/haiti/cadre-daction-anticipatoire-pilote-en-haiti-tempetesouragans Tableau 1 p.2 (Mobilisation 3.4, Action 4.8, Observation 4.0, global 3.0 ans) and p.20 'Analyses historiques du déclencheur' (Mobilisation: Ivan 2004, Ike 2008, Tomas 2010, Irene 2011, Isaac 2012, Matthew 2016, Irma 2017; Action: Ivan 2004, Tomas 2010, Irene 2011, Isaac 2012, Matthew 2016; Observationnel: Noel 2007, Ike/Gustav/Hanna 2008, Tomas 2010, Sandy/Isaac 2012, Matthew 2016, Laura 2020).",
+  "requested_by": "Tristan Downing (checked against the endorsed documents, 2026-10-05)",
+  "changes": [
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23",
+        "window_name": "Readiness",
+        "event_year": 2005
+      },
+      "why": "not in the document's table"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23",
+        "window_name": "Readiness",
+        "event_year": 2021
+      },
+      "why": "not in the document's table"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23",
+        "window_name": "Readiness",
+        "event_year": 2025
+      },
+      "why": "real activation of this version (Melissa)"
+    },
+    {
+      "op": "update",
+      "table": "window",
+      "key": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23",
+        "window_name": "Readiness"
+      },
+      "set": {
+        "analysis_start": 2000,
+        "analysis_end": 2022,
+        "rp_reported": 3.4,
+        "prob_reported": null
+      },
+      "why": "the document's analysis (Atlantic systems since 2000; 23 seasons) and stated RP"
+    },
+    {
+      "op": "insert",
+      "table": "simulated_activation",
+      "row": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23",
+        "window_name": "Readiness",
+        "event_year": 2004,
+        "kb_framework": "hti-hurricanes",
+        "time_precision": "year",
+        "source_note": "framework document p.20"
+      },
+      "why": "in the document's table"
+    },
+    {
+      "op": "insert",
+      "table": "simulated_activation",
+      "row": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23",
+        "window_name": "Readiness",
+        "event_year": 2011,
+        "kb_framework": "hti-hurricanes",
+        "time_precision": "year",
+        "source_note": "framework document p.20"
+      },
+      "why": "in the document's table"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23",
+        "window_name": "Action",
+        "event_year": 2005
+      },
+      "why": "not in the document's table"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23",
+        "window_name": "Action",
+        "event_year": 2008
+      },
+      "why": "not in the document's table"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23",
+        "window_name": "Action",
+        "event_year": 2017
+      },
+      "why": "not in the document's table"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23",
+        "window_name": "Action",
+        "event_year": 2021
+      },
+      "why": "not in the document's table"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23",
+        "window_name": "Action",
+        "event_year": 2025
+      },
+      "why": "real activation of this version (Melissa)"
+    },
+    {
+      "op": "update",
+      "table": "window",
+      "key": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23",
+        "window_name": "Action"
+      },
+      "set": {
+        "analysis_start": 2000,
+        "analysis_end": 2022,
+        "rp_reported": 4.8,
+        "prob_reported": null
+      },
+      "why": "the document's analysis (Atlantic systems since 2000; 23 seasons) and stated RP"
+    },
+    {
+      "op": "insert",
+      "table": "simulated_activation",
+      "row": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23",
+        "window_name": "Action",
+        "event_year": 2004,
+        "kb_framework": "hti-hurricanes",
+        "time_precision": "year",
+        "source_note": "framework document p.20"
+      },
+      "why": "in the document's table"
+    },
+    {
+      "op": "insert",
+      "table": "simulated_activation",
+      "row": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23",
+        "window_name": "Action",
+        "event_year": 2011,
+        "kb_framework": "hti-hurricanes",
+        "time_precision": "year",
+        "source_note": "framework document p.20"
+      },
+      "why": "in the document's table"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23",
+        "window_name": "Observational",
+        "event_year": 2002
+      },
+      "why": "not in the document's table"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23",
+        "window_name": "Observational",
+        "event_year": 2006
+      },
+      "why": "not in the document's table"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23",
+        "window_name": "Observational",
+        "event_year": 2025
+      },
+      "why": "real activation of this version (Melissa)"
+    },
+    {
+      "op": "update",
+      "table": "window",
+      "key": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23",
+        "window_name": "Observational"
+      },
+      "set": {
+        "analysis_start": 2000,
+        "analysis_end": 2022,
+        "rp_reported": 4.0,
+        "prob_reported": null
+      },
+      "why": "the document's analysis (Atlantic systems since 2000; 23 seasons) and stated RP"
+    },
+    {
+      "op": "insert",
+      "table": "simulated_activation",
+      "row": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23",
+        "window_name": "Observational",
+        "event_year": 2007,
+        "kb_framework": "hti-hurricanes",
+        "time_precision": "year",
+        "source_note": "framework document p.20"
+      },
+      "why": "in the document's table"
+    },
+    {
+      "op": "insert",
+      "table": "simulated_activation",
+      "row": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23",
+        "window_name": "Observational",
+        "event_year": 2020,
+        "kb_framework": "hti-hurricanes",
+        "time_precision": "year",
+        "source_note": "framework document p.20"
+      },
+      "why": "in the document's table"
+    },
+    {
+      "op": "update",
+      "table": "version_performance_reported",
+      "key": {
+        "country_iso3": "HTI",
+        "hazard": "storm",
+        "version": "2024-08-23"
+      },
+      "set": {
+        "overall_rp_reported": 3.0,
+        "overall_prob_reported": null
+      },
+      "why": "the document's overall return period (Tableau 1)"
+    }
+  ]
+}

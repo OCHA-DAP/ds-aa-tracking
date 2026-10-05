@@ -1,0 +1,34 @@
+{
+  "kind": "transcription",
+  "reason": "Real activations of this version, and the analysis span stretched to cover them, had been appended to its backtest (the KB-era insurance-Excel / gsheet activation history kept adding years after endorsement). A backtest is fixed when the version is endorsed: the real activations stay in window_activation. The document states no backtest (only 'about once every three years'); the other years are the Excel's and are left as they are.",
+  "evidence": "Endorsed document https://reliefweb.int/report/madagascar/cadre-de-laction-anticipatoire-pilote-madagascar-cyclones-version-finale-du-13-decembre-2024 (text line ~289). Real activation 2026-02 (Gezani) under this version.",
+  "requested_by": "Tristan Downing (checked against the endorsed documents, 2026-10-05)",
+  "changes": [
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "MDG",
+        "hazard": "storm",
+        "version": "2024-12-13",
+        "window_name": "ws",
+        "event_year": 2026
+      },
+      "why": "2026 is a real activation of this version, not a backtest year"
+    },
+    {
+      "op": "update",
+      "table": "window",
+      "key": {
+        "country_iso3": "MDG",
+        "hazard": "storm",
+        "version": "2024-12-13",
+        "window_name": "ws"
+      },
+      "set": {
+        "analysis_end": 2024
+      },
+      "why": "span 1982-2026 had been extended to cover the appended year"
+    }
+  ]
+}

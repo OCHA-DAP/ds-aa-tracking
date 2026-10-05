@@ -1,0 +1,92 @@
+{
+  "kind": "transcription",
+  "reason": "Real activations of this version, and the analysis span stretched to cover them, had been appended to its backtest (the KB-era insurance-Excel / gsheet activation history kept adding years after endorsement). A backtest is fixed when the version is endorsed: the real activations stay in window_activation.",
+  "evidence": "Endorsed document https://reliefweb.int/report/niger/cadre-daction-anticipatoire-au-niger-inondations-2025 p.3 'Saisons d'analyse : 1979-2024': Mobilisation 3,0 ans / 34% (the action years plus 1979, 1994, 1995, 2016, 2017, 2022), Action 5,1 ans / 20% (1998, 1999, 2010, 2012, 2013, 2015, 2019, 2020, 2024). Real activation 2026-01 (season 2025) under this version.",
+  "requested_by": "Tristan Downing (checked against the endorsed documents, 2026-10-05)",
+  "changes": [
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "NER",
+        "hazard": "flood",
+        "version": "2025-11-04",
+        "window_name": "wt1",
+        "event_year": 2025
+      },
+      "why": "2025 is a real activation of this version, not a backtest year"
+    },
+    {
+      "op": "update",
+      "table": "window",
+      "key": {
+        "country_iso3": "NER",
+        "hazard": "flood",
+        "version": "2025-11-04",
+        "window_name": "wt1"
+      },
+      "set": {
+        "analysis_end": 2024
+      },
+      "why": "span 1979-2025 had been extended to cover the appended year"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "NER",
+        "hazard": "flood",
+        "version": "2025-11-04",
+        "window_name": "wt2",
+        "event_year": 2025
+      },
+      "why": "2025 is a real activation of this version, not a backtest year"
+    },
+    {
+      "op": "update",
+      "table": "window",
+      "key": {
+        "country_iso3": "NER",
+        "hazard": "flood",
+        "version": "2025-11-04",
+        "window_name": "wt2"
+      },
+      "set": {
+        "analysis_end": 2024
+      },
+      "why": "span 1979-2025 had been extended to cover the appended year"
+    },
+    {
+      "op": "update",
+      "table": "window",
+      "key": {
+        "country_iso3": "NER",
+        "hazard": "flood",
+        "version": "2025-11-04",
+        "window_name": "wt1"
+      },
+      "set": {
+        "rp_reported": 3.0,
+        "prob_reported": 0.34,
+        "note": "Reported RP is seasons / activations over the 46 seasons 1979-2024 (46/15 = 3,0 and 46/9 = 5,1), not the Weibull (n+1)/k the views compute (3.13 and 5.22)."
+      },
+      "why": "as stated (Mobilisation)"
+    },
+    {
+      "op": "update",
+      "table": "window",
+      "key": {
+        "country_iso3": "NER",
+        "hazard": "flood",
+        "version": "2025-11-04",
+        "window_name": "wt2"
+      },
+      "set": {
+        "rp_reported": 5.1,
+        "prob_reported": 0.2,
+        "note": "Reported RP is seasons / activations over the 46 seasons 1979-2024 (46/15 = 3,0 and 46/9 = 5,1), not the Weibull (n+1)/k the views compute (3.13 and 5.22)."
+      },
+      "why": "as stated (Action)"
+    }
+  ]
+}

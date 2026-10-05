@@ -17,6 +17,12 @@ Steps
      (projects/ds-aa-tracking/entries/*.json; each applied once, audited) — the write path
      for entries prepared off-network since laptops lost DB access (2026-09-30). A failure
      here is reported but never blocks the snapshot.
+  2b. scripts/apply_backtests.py: backtest errata and seals committed to backtests/ (plus
+     errata for non-public documents from the private blob) — after the entries, so a
+     version's pending entries land before a seal freezes it. A sealed backtest changes
+     only through an erratum: the database refuses anything else, from any writer. Then
+     validates the backtest foreign keys still marked NOT VALID (once the errata have
+     cleaned the rows from before). A failure here is reported but never blocks the snapshot.
   3. scripts/export_snapshot.py: consistent snapshot of schema aa -> dev blob
      projects/ds-aa-tracking/snapshot/{latest,YYYY-MM-DD}/ (dated copies kept 30 days,
      31-December copies forever)
@@ -65,7 +71,7 @@ def _checkout_root() -> Path:
 # Copy the scripts + package onto local disk and run from there.
 _SRC = _checkout_root()
 ROOT = Path("/local_disk0" if Path("/local_disk0").is_dir() else tempfile.gettempdir()) / "aa_tracking_run"
-for _sub in ("src", "scripts"):
+for _sub in ("src", "scripts", "backtests"):
     shutil.copytree(_SRC / _sub, ROOT / _sub, dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
@@ -101,6 +107,10 @@ def main():
         run("scripts/apply_entries.py")
     except subprocess.CalledProcessError as ex:  # never block the snapshot on an entry file
         print(f"!! apply_entries failed ({ex}); continuing to the snapshot", flush=True)
+    try:
+        run("scripts/apply_backtests.py")
+    except subprocess.CalledProcessError as ex:  # nor on a backtest erratum / seal file
+        print(f"!! apply_backtests failed ({ex}); continuing to the snapshot", flush=True)
     run("scripts/export_snapshot.py", *(["--no-prune"] if a.no_prune else []))
 
 

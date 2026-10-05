@@ -1,0 +1,413 @@
+{
+  "kind": "transcription",
+  "reason": "Version 2025-02 held a copy of the 2026 backtest (gsheet tab 'gtm-drought-startNetwork-2026', 1991-2024), while its own backtest sat under the label '2025' (no such version). The 2025 Guatemala country annex states the '2025' one exactly; the umbrella document has none. Swapped. The annex's Postrera window is not in the database yet (to be entered).",
+  "evidence": "Guatemala annex to the 2025 Dry Corridor framework https://www.unocha.org/attachments/2f817056-fdb7-4367-a168-3a702f0025cd/27.02.25_Guatemala%20AA%20Framework%20Dry%20Corridor%20Updated%202025.pdf p.2 'Analysis years: 1981-2024': Primera 2.6 yrs / 38% (1982, 1985, 1986, 1989, 1991, 1992, 1994, 1997, 2001, 2009, 2012, 2014, 2015, 2017, 2018, 2019, 2021). The 2026-03-13 document states the 1991-2024 one.",
+  "requested_by": "Tristan Downing (checked against the endorsed documents, 2026-10-05)",
+  "changes": [
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025-02",
+        "window_name": "Primera",
+        "event_year": 1991
+      },
+      "why": "the 2026 backtest, copied onto 2025-02"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025-02",
+        "window_name": "Primera",
+        "event_year": 1994
+      },
+      "why": "the 2026 backtest, copied onto 2025-02"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025-02",
+        "window_name": "Primera",
+        "event_year": 1997
+      },
+      "why": "the 2026 backtest, copied onto 2025-02"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025-02",
+        "window_name": "Primera",
+        "event_year": 2009
+      },
+      "why": "the 2026 backtest, copied onto 2025-02"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025-02",
+        "window_name": "Primera",
+        "event_year": 2014
+      },
+      "why": "the 2026 backtest, copied onto 2025-02"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025-02",
+        "window_name": "Primera",
+        "event_year": 2015
+      },
+      "why": "the 2026 backtest, copied onto 2025-02"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025-02",
+        "window_name": "Primera",
+        "event_year": 2018
+      },
+      "why": "the 2026 backtest, copied onto 2025-02"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025-02",
+        "window_name": "Primera",
+        "event_year": 2019
+      },
+      "why": "the 2026 backtest, copied onto 2025-02"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025-02",
+        "window_name": "Primera",
+        "event_year": 2021
+      },
+      "why": "the 2026 backtest, copied onto 2025-02"
+    },
+    {
+      "op": "delete",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025-02",
+        "window_name": "Primera",
+        "event_year": 2023
+      },
+      "why": "the 2026 backtest, copied onto 2025-02"
+    },
+    {
+      "op": "delete",
+      "table": "window",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025-02",
+        "window_name": "Primera"
+      },
+      "why": "the 2026 window (1991-2024), copied onto 2025-02"
+    },
+    {
+      "op": "delete",
+      "table": "version_performance_reported",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025-02"
+      },
+      "why": "headline figures of the Start Network 2026 tab, not this version"
+    },
+    {
+      "op": "update",
+      "table": "window",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Primera"
+      },
+      "set": {
+        "version": "2025-02"
+      },
+      "why": "the 2025 country annex's backtest"
+    },
+    {
+      "op": "update",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Primera",
+        "event_year": 1982
+      },
+      "set": {
+        "version": "2025-02"
+      }
+    },
+    {
+      "op": "update",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Primera",
+        "event_year": 1985
+      },
+      "set": {
+        "version": "2025-02"
+      }
+    },
+    {
+      "op": "update",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Primera",
+        "event_year": 1986
+      },
+      "set": {
+        "version": "2025-02"
+      }
+    },
+    {
+      "op": "update",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Primera",
+        "event_year": 1989
+      },
+      "set": {
+        "version": "2025-02"
+      }
+    },
+    {
+      "op": "update",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Primera",
+        "event_year": 1991
+      },
+      "set": {
+        "version": "2025-02"
+      }
+    },
+    {
+      "op": "update",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Primera",
+        "event_year": 1992
+      },
+      "set": {
+        "version": "2025-02"
+      }
+    },
+    {
+      "op": "update",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Primera",
+        "event_year": 1994
+      },
+      "set": {
+        "version": "2025-02"
+      }
+    },
+    {
+      "op": "update",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Primera",
+        "event_year": 1997
+      },
+      "set": {
+        "version": "2025-02"
+      }
+    },
+    {
+      "op": "update",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Primera",
+        "event_year": 2001
+      },
+      "set": {
+        "version": "2025-02"
+      }
+    },
+    {
+      "op": "update",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Primera",
+        "event_year": 2009
+      },
+      "set": {
+        "version": "2025-02"
+      }
+    },
+    {
+      "op": "update",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Primera",
+        "event_year": 2012
+      },
+      "set": {
+        "version": "2025-02"
+      }
+    },
+    {
+      "op": "update",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Primera",
+        "event_year": 2014
+      },
+      "set": {
+        "version": "2025-02"
+      }
+    },
+    {
+      "op": "update",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Primera",
+        "event_year": 2015
+      },
+      "set": {
+        "version": "2025-02"
+      }
+    },
+    {
+      "op": "update",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Primera",
+        "event_year": 2017
+      },
+      "set": {
+        "version": "2025-02"
+      }
+    },
+    {
+      "op": "update",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Primera",
+        "event_year": 2018
+      },
+      "set": {
+        "version": "2025-02"
+      }
+    },
+    {
+      "op": "update",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Primera",
+        "event_year": 2019
+      },
+      "set": {
+        "version": "2025-02"
+      }
+    },
+    {
+      "op": "update",
+      "table": "simulated_activation",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025",
+        "window_name": "Primera",
+        "event_year": 2021
+      },
+      "set": {
+        "version": "2025-02"
+      }
+    },
+    {
+      "op": "update",
+      "table": "version_performance_reported",
+      "key": {
+        "country_iso3": "GTM",
+        "hazard": "drought",
+        "version": "2025"
+      },
+      "set": {
+        "version": "2025-02"
+      }
+    }
+  ]
+}

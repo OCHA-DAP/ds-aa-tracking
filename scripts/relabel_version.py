@@ -8,10 +8,12 @@ several tables, and entries files (scripts/apply_entries.py) can only add or upd
 a relabel needs a database route: the Databricks job (nightly.py --relabel), or a laptop
 through the SSH tunnel.
 
-Covers every BASE table with a text country_iso3 + hazard + version — the KB-loader tables
-too (window, simulated_activation, funding_breakdown, …: frozen since the KB flip, so only
-this database keeps them; left behind they would dangle) — but never the zz_legacy_ history,
-and never a view. aa.version_page is keyed by the KB slug instead: its row moves with the
+Covers every BASE table with a text country_iso3 + hazard + version — the backtest tables
+(window, simulated_activation, version_performance_reported) and the frozen KB-era record
+too (left behind they would dangle, and the backtest tables' foreign keys to the version
+would fail the transaction) — but never the zz_legacy_ history, and never a view. A version
+whose backtest is SEALED can't be relabelled: the database refuses it outside an erratum,
+so relabel to the endorsement date before sealing. aa.version_page is keyed by the KB slug instead: its row moves with the
 version unless another country still uses the same slug at the old label (a shared regional
 page stays). Also moves `supersedes` pointers at the old label (same pair) and a
 `valid_from` that was only the old label padded to a date. Refuses when a table holds rows

@@ -51,7 +51,7 @@ resources:
         databricks: job
         type: schema-owner
         kb: aa-tracking
-        output_schema: aa (snapshot only; no table writes since the KB flip)
+        output_schema: aa (entries files, backtest errata + seals, then the snapshot)
         output_blob: projects/ds-aa-tracking/snapshot
       email_notifications:
         on_failure:

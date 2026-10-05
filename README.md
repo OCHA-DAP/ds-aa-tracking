@@ -4,9 +4,9 @@ Single authoritative tracking system for OCHA's anticipatory action (AA) portfol
 superseding the team-member spreadsheets it was seeded from — and, since 2026-09-28,
 the knowledge base's framework pages (see "The KB flip").
 
-This repo owns a set of tables in the dev Postgres `aa` schema, alongside (never
-overlapping with) the KB-owned trigger-performance tables (`ds-knowledge-base`) and the
-CERF OneGMS mirror (`ds-cerf-supplement`). It adds:
+This repo owns every table in the dev Postgres `aa` schema except the CERF / CBPF OneGMS
+mirrors (`ds-cerf-supplement`) — since 2026-10-05 including the backtest tables the
+knowledge base's loaders used to write (see "AA management moved here" below). It holds:
 
 - **framework lifecycle**: registry of every (country, hazard) framework incl. the
   pipeline (early conversations → active → dormant/expired), status snapshots over time,
@@ -33,9 +33,17 @@ months, trigger facets, data sources, agencies, the "Trigger windows" table, the
 and are edited here; the nightly KB sweep (`scripts/sync_kb.py`) is off; the site build
 reads only the database snapshot (no KB checkout). The KB's job is now the other way
 round: read this DB (registry, versions, statuses, funding) and find the code, monitoring
-and published documents for each framework. The KB-loader tables (`window`,
-`simulated_activation`, `funding_breakdown`, `actual_activation`) stay as frozen inputs
-until their loaders are pointed at this DB.
+and published documents for each framework.
+
+**AA management moved here (2026-10-05).** The tables the KB's loaders used to write are
+owned here now (DDL and views in `schema.py`; the KB loaders, its activation-link flow and
+its KB→DB workflows are retired): the **backtests** — `window`, `simulated_activation`,
+`version_performance_reported` — are edited here, and `funding_breakdown`,
+`actual_activation`, `activation_allocation` are the frozen KB-era record (superseded by
+`window_funding`, `window_activation`, `activation_funding`). A backtest is edited freely
+while its version is unsealed and changes only through a reviewed erratum once it is
+**sealed** (checked against the endorsed document) — the database enforces it for every
+writer. See `backtests/README.md`.
 
 Two more DB-first tables came with the flip: `aa.learning_document` (the AA Compendium of
 Available Resources, Sept 2026, plus the website to-add list; `scripts/import_learning.py`;
@@ -97,8 +105,22 @@ Since 2026-09-30 laptops cannot reach the dev DB. Two write paths remain: the ad
 (its proxy runs in Azure), and **entry files**: JSON on the private dev blob
 (`projects/ds-aa-tracking/entries/`, never in this public repo) that the nightly Databricks
 job applies once each, before the snapshot (`scripts/apply_entries.py`; format in its
-docstring; upload with `--upload FILE`, test against a restored local copy with `--dir`).
+docstring; upload with `--upload FILE`, test against a restored local copy with `--dir`;
+`--dry-run` applies each file in its transaction, lets the database check it, and rolls back).
 Every row is audited to `aa.entry_audit`; applied files are recorded in `aa.applied_entries`.
+Besides upserts, an item can `"delete"` one row by its full key or `"op": "replace"` a
+version's rows in a table (a re-run backtest of a version in development). A file that fails
+— e.g. one touching a sealed backtest, or a version that isn't registered — stays pending and
+never blocks the others. The same file can be applied **immediately** through the proxy
+(`POST /entries`, editor token; `dry_run: true` checks it against the live database and rolls
+back) — the path the KB skill `record-simulated-activations` uses from any repo. A backtest
+write there names its target: the reply lists the versions it touches and their state
+(`GET /versions` is the lookup), and an **endorsed** version is written only when the request
+confirms it by name (`backtests/README.md`).
+
+Backtest **errata and seals** are the one write path in git (public data, reviewed in a pull
+request): `backtests/errata/` and `backtests/seals/`, applied by the same nightly job right
+after the entries (`scripts/apply_backtests.py`; `backtests/README.md`).
 
 ## Running
 

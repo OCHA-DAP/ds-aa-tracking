@@ -23,6 +23,14 @@
  *   POST /save       {table, key|null, row, by} -> UPDATE (key given) or INSERT,
  *                    field-level audit to aa.entry_audit
  *   POST /delete     {table, key, by} -> DELETE one row, audited
+ *   GET  /versions   ?iso3=[&hazard=] -> every version of the pair(s): status, role (the
+ *                    latest endorsed / superseded / a revision in development), document, seal, and
+ *                    the backtest recorded now — how a writer finds the RIGHT version
+ *   POST /entries    {entered_by, rows: [entries-file items], dry_run?, confirm_endorsed?,
+ *                    seal?} -> applied NOW in one transaction (dry_run: every check, then
+ *                    rolled back). Backtest writes name their target: the reply carries the
+ *                    version cards, an unregistered version is refused, an endorsed one
+ *                    needs confirm_endorsed naming it, a sealed one is refused
  *   GET  /whoami     -> {role}
  *
  * Two roles, two shared secrets in header x-site-token: SITE_TOKEN (viewer —
@@ -30,7 +38,11 @@
  * viewer) and EDITOR_TOKEN (editor — never embedded; the pages prompt for it
  * once and keep it in localStorage). Reads need viewer; /extract, /entry, /save
  * and /delete need editor. Generic writes are refused on tables other writers
- * own (KB loaders, OneGMS mirrors) and on the append-only audit table.
+ * own (OneGMS mirrors), on the frozen KB-era record, on the backtest errata (the
+ * errata job writes those) and on the append-only audit table. Backtests (window,
+ * simulated_activation, version_performance_reported) are editable here while their
+ * version is unsealed; the database's guard_sealed trigger refuses changes to a sealed
+ * one, and its message comes back to the page as is.
  *
  * Other guards: origin allowlist, model allowlist, size cap, per-IP rate limits.
  * The Anthropic key can never be used for arbitrary requests.
@@ -51,9 +63,10 @@ const READONLY_TABLES = new Set([
   "entry_audit",
   // document registry: content-addressed, written only by scripts/register_documents.py
   "framework_document", "version_document",
-  // ds-knowledge-base loaders
-  "window", "simulated_activation", "funding_breakdown", "actual_activation",
-  "activation_allocation", "version_performance_reported",
+  // corrections to sealed backtests: written only by scripts/apply_backtests.py
+  "backtest_erratum",
+  // the KB-era record, frozen since the KB loaders stopped (2026-10-05)
+  "funding_breakdown", "actual_activation", "activation_allocation",
   // ds-cerf-supplement OneGMS mirrors
   "cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country",
   "cerf_allocation_storm", "cerf_supplement", "cerf_contribution",
@@ -64,9 +77,10 @@ const TABLE_OWNER = (t) =>
   READONLY_PREFIXES.some((p) => t.startsWith(p)) || t.startsWith("cerf_allocation_storm") ||
   ["cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country", "cerf_supplement", "cerf_contribution"].includes(t)
     ? "ds-cerf-supplement"
-    : ["window", "simulated_activation", "funding_breakdown", "actual_activation",
-       "activation_allocation", "version_performance_reported"].includes(t)
-      ? "ds-knowledge-base" : "ds-aa-tracking";
+    : ["funding_breakdown", "actual_activation", "activation_allocation"].includes(t)
+      ? "nobody — the frozen KB-era record"
+      : t === "backtest_erratum" ? "the errata job (backtests/errata/)"
+      : "ds-aa-tracking";
 const isReadonly = (t) => READONLY_TABLES.has(t) || READONLY_PREFIXES.some((p) => t.startsWith(p));
 const hits = new Map();
 
@@ -76,7 +90,7 @@ const pool = process.env.DSCI_AZ_DB_DEV_HOST
       user: process.env.DSCI_AZ_DB_DEV_UID_WRITE,
       password: process.env.DSCI_AZ_DB_DEV_PW_WRITE,
       database: "postgres",
-      ssl: { rejectUnauthorized: false },
+      ssl: process.env.DB_SSL === "disable" ? false : { rejectUnauthorized: false },  // disable: a local test DB
       max: 3,
     })
   : null;
@@ -699,6 +713,332 @@ async function adminDelete(req, res) {
   } finally { client.release(); }
 }
 
+// ----------------------------------------------------------------- /versions
+// What a writer must know before touching a backtest: every version of a (country, hazard)
+// pair with its status, role (which endorsed one is the latest, what a development one
+// revises), validity, document, seal, and the backtest recorded now. /entries puts the same
+// cards in every reply, so a dry run always says WHICH version it is about to change.
+const BACKTEST_TABLES = ["window", "simulated_activation", "version_performance_reported"];
+const DEV_STATUSES = new Set(["development", "pre-development"]);
+const VERSION_COLS = ["country_iso3", "hazard", "version"];
+const vkey = (o) => VERSION_COLS.map((c) => o[c]).join("/");
+
+async function versionCards(db, pairs) {
+  if (!pairs.length) return [];
+  const args = [pairs.map((x) => x.country_iso3), pairs.map((x) => x.hazard)];
+  const P = `(SELECT DISTINCT * FROM unnest($1::text[], $2::text[]) AS p(country_iso3, hazard))`;
+  const vs = (await db.query(
+    `SELECT f.country_iso3, f.hazard, f.version, f.kb_status AS status,
+            f.valid_from::text AS valid_from, f.valid_until::text AS valid_until,
+            (f.valid_until IS NOT NULL AND f.valid_until < CURRENT_DATE) AS lapsed,
+            f.endorsed_by,
+            coalesce(f.doc_title, d.title) AS doc_title, coalesce(d.official_url, f.doc_url) AS doc_url,
+            f.backtest_sealed_at::text AS sealed_at,
+            f.backtest_sealed_by AS sealed_by, f.backtest_sealed_against AS sealed_against
+     FROM aa.framework_version f JOIN ${P} p USING (country_iso3, hazard)
+     LEFT JOIN LATERAL (                      -- the version's current document, if registered
+       SELECT fd.title, vd.official_url FROM aa.version_document vd
+       JOIN aa.framework_document fd USING (sha256)
+       WHERE (vd.country_iso3, vd.hazard, vd.version) = (f.country_iso3, f.hazard, f.version)
+         AND vd.superseded_by IS NULL AND vd.role IN ('endorsed', 'published')
+       ORDER BY (vd.role = 'endorsed') DESC LIMIT 1) d ON true
+     ORDER BY f.country_iso3, f.hazard, coalesce(f.valid_from::text, f.version), f.version`, args)).rows;
+  const ws = (await db.query(
+    `SELECT w.country_iso3, w.hazard, w.version, w.window_name, w.analysis_start, w.analysis_end,
+            w.source,
+            (SELECT array_agg(s.event_year ORDER BY s.event_year) FROM aa.simulated_activation s
+             WHERE (s.country_iso3, s.hazard, s.version, s.window_name)
+                 = (w.country_iso3, w.hazard, w.version, w.window_name)) AS years
+     FROM aa."window" w JOIN ${P} p USING (country_iso3, hazard)
+     ORDER BY w.window_name`, args)).rows;
+  const byPair = new Map();
+  for (const v of vs) {
+    const k = `${v.country_iso3}/${v.hazard}`;
+    if (!byPair.has(k)) byPair.set(k, { country_iso3: v.country_iso3, hazard: v.hazard, versions: [] });
+    byPair.get(k).versions.push({
+      ...v, key: vkey(v), sealed: v.sealed_at != null,
+      windows: ws.filter((w) => vkey(w) === vkey(v)).map((w) => ({
+        window_name: w.window_name, analysis_start: w.analysis_start,
+        analysis_end: w.analysis_end, source: w.source, years: w.years || [] })),
+    });
+  }
+  for (const pair of byPair.values()) {      // versions arrive oldest first
+    const endorsed = pair.versions.filter((v) => v.status === "endorsed");
+    const current = endorsed[endorsed.length - 1];
+    endorsed.forEach((v, i) => {
+      v.role = v !== current ? `endorsed — superseded by ${endorsed[i + 1].version}`
+        : "endorsed — the latest endorsed version" + (v.lapsed ? ` (validity ended ${v.valid_until})` : "");
+    });
+    for (const v of pair.versions) {
+      if (DEV_STATUSES.has(v.status))
+        v.role = current ? `${v.status} — a revision of ${current.version}, not endorsed`
+                         : `${v.status} — no endorsed version of this framework yet`;
+      else if (!v.role) v.role = `status not set (${v.status}) — set it on the tracking site`;
+    }
+  }
+  return [...byPair.values()];
+}
+
+async function versions(req, res, qs) {
+  if (limited(req, res, "read")) return;
+  const iso3 = (qs.get("iso3") || "").toUpperCase(), hazard = qs.get("hazard") || "";
+  if (!ISO_RE.test(iso3) || (hazard && !IDENT.test(hazard)))
+    return send(res, 400, { error: "iso3 (and optionally hazard) required" });
+  try {
+    const pairs = (await pool.query(
+      `SELECT country_iso3, hazard FROM aa.country_hazard WHERE country_iso3 = $1
+       UNION SELECT country_iso3, hazard FROM aa.framework_version WHERE country_iso3 = $1`, [iso3])).rows;
+    const want = hazard ? pairs.filter((x) => x.hazard === hazard) : pairs;
+    const cards = await versionCards(pool, want);
+    if (hazard && !cards.length)
+      return send(res, 404, {
+        error: `no framework version registered for ${iso3}/${hazard}`,
+        hint: pairs.length ? `hazards registered for ${iso3}: ${pairs.map((x) => x.hazard).sort().join(", ")}`
+                           : `nothing is registered for ${iso3}`,
+        versions: await versionCards(pool, pairs) });
+    send(res, 200, { ok: true, versions: cards });
+  } catch (e) { send(res, 502, { error: String(e.message || e) }); }
+}
+
+// ------------------------------------------------------------------ /entries
+// An entries file (the format of scripts/apply_entries.py: a row to upsert, a "delete" by
+// full key, an "op": "replace" of a version's rows) applied NOW, in one transaction — the
+// immediate path for the KB skill record-simulated-activations, from any repo. dry_run
+// applies it, runs every check (seal, span, foreign keys, CHECKs) and rolls back.
+//
+// Backtests get four things on top, because a write can come from anywhere:
+//   * the reply always carries the version cards of every pair the file touches, the
+//     touched versions marked — the caller shows them before anyone says yes;
+//   * a version that is not in aa.framework_version is refused, with the pair's real ones;
+//   * an ENDORSED version's backtest is written only when confirm_endorsed names it (and
+//     only it): development work can't land on the endorsed record by accident — and
+//     confirm_endorsed naming a version that is not endorsed is refused as well; a version
+//     with no status set is refused until it has one;
+//   * aa.framework_version itself is not written here (status and registration belong to
+//     the entry / admin pages), so a file can't change what its own target is;
+//   * a sealed one is refused here as anywhere (the database's guard): errata only.
+// "seal": {"version": "ISO3/hazard/version", "against": "the document + page"} seals an
+// endorsed version in the same transaction, after the changes and the checks.
+// The reply's `performance` is the recomputed backtest (aa.v_window_performance) as it
+// stands inside the transaction. Every change is audited as 'entries-api: <entered_by>'.
+const param = (v) => (v !== null && typeof v === "object" ? JSON.stringify(v) : v);
+class Refusal extends Error {
+  constructor(message, extra) { super(message); this.extra = extra || {}; }
+}
+
+async function applyEntries(req, res) {
+  if (limited(req, res, "write")) return;
+  const p = await readBody(req, res); if (!p) return;
+  const by = String(p.entered_by || "").trim();
+  if (!by) return send(res, 400, { error: "'entered_by' (who, from what) is required" });
+  const items = Array.isArray(p.rows) ? p.rows : [];
+  const seal = p.seal && typeof p.seal === "object" ? p.seal : null;
+  if (!items.length && !seal) return send(res, 400, { error: "'rows' is empty" });
+  const dry = p.dry_run === true;
+  const confirmed = new Set(Array.isArray(p.confirm_endorsed) ? p.confirm_endorsed.map(String) : []);
+  const sch = await schema();
+  const client = await pool.connect();
+  const plan = [];
+  let cards = [];
+  try {
+    // ---- which backtest versions does this touch?
+    const touched = new Map();
+    const touch = (i, obj) => {
+      if (VERSION_COLS.some((c) => typeof obj[c] !== "string" || !obj[c]))
+        throw new Refusal(`item ${i}: a backtest row needs ${VERSION_COLS.join(", ")}`);
+      touched.set(vkey(obj), Object.fromEntries(VERSION_COLS.map((c) => [c, obj[c]])));
+    };
+    items.forEach((item, i) => {
+      if (!item || typeof item !== "object") throw new Refusal(`item ${i}: not an object`);
+      if (item.table === "framework_version")
+        throw new Refusal(`item ${i}: aa.framework_version is not written through /entries — nothing written`, {
+          hint: "A version is registered, and its status changed, on the tracking site (entry / admin page). Sealing goes through \"seal\"." });
+      if (!BACKTEST_TABLES.includes(item.table)) return;
+      if (item.delete) touch(i, item.delete);
+      else if (item.op === "replace") { touch(i, item.scope || {}); (item.rows || []).forEach((r) => touch(i, r)); }
+      else touch(i, item.row || {});
+    });
+    let sealKey = null;
+    if (seal) {
+      const m = /^([A-Z]{3})\/([a-z_]+)\/(.+)$/.exec(String(seal.version || ""));
+      if (!m) throw new Refusal("seal.version must be 'ISO3/hazard/version'");
+      if (!String(seal.against || "").trim())
+        throw new Refusal("seal.against is required: the endorsed document (link) + page / table the record was checked against");
+      sealKey = m[0];
+      touched.set(sealKey, { country_iso3: m[1], hazard: m[2], version: m[3] });
+    }
+
+    await client.query("BEGIN");
+    const pairs = [...new Map([...touched.values()].map((t) => [`${t.country_iso3}/${t.hazard}`, t])).values()];
+    cards = await versionCards(client, pairs);
+    const cardOf = new Map();
+    for (const pair of cards) for (const v of pair.versions) {
+      v.target = touched.has(v.key);
+      cardOf.set(v.key, v);
+    }
+    // ---- the target must be a registered version, unsealed; endorsed only when named
+    const needsConfirm = [];
+    for (const k of touched.keys()) {
+      const v = cardOf.get(k);
+      const t0 = touched.get(k);
+      if (!v && !cards.some((pr) => pr.country_iso3 === t0.country_iso3 && pr.hazard === t0.hazard)) {
+        const others = (await client.query(           // wrong hazard word? show the country's pairs
+          `SELECT country_iso3, hazard FROM aa.country_hazard WHERE country_iso3 = $1
+           UNION SELECT country_iso3, hazard FROM aa.framework_version WHERE country_iso3 = $1`,
+          [t0.country_iso3])).rows;
+        cards = await versionCards(client, others);
+        throw new Refusal(`${k}: no framework is registered for ${t0.country_iso3}/${t0.hazard} — nothing written`, {
+          hint: others.length ? `hazards registered for ${t0.country_iso3}: ${others.map((x) => x.hazard).sort().join(", ")}`
+                              : `nothing is registered for ${t0.country_iso3}` });
+      }
+      if (!v) throw new Refusal(`${k} is not a registered framework version — nothing written`, {
+        hint: "Pick one of the registered versions below (the label must match exactly), or register the version on the tracking site (entry page) first. Never write a backtest under a label that is no version." });
+      if (v.sealed) throw new Refusal(`the backtest of ${k} is SEALED (checked against: ${v.sealed_against}) — nothing written`, {
+        hint: "A sealed backtest changes only through an erratum: backtests/errata/ in ds-aa-tracking (backtests/README.md). A changed analysis is a new version." });
+      const isDev = DEV_STATUSES.has(v.status);
+      if (!isDev && v.status !== "endorsed")
+        throw new Refusal(`${k} has no usable status (${v.status}) — nothing written`, {
+          hint: "Set the version's status (development or endorsed) on the tracking site's admin page first: what a backtest write may do depends on it." });
+      if (!isDev) needsConfirm.push(k);
+      if (isDev && confirmed.has(k)) throw new Refusal(`${k} was confirmed as the endorsed version to write, but it is in ${v.status} — check which version you mean. Nothing written`);
+    }
+    for (const k of confirmed)
+      if (!touched.has(k)) throw new Refusal(`${k} was confirmed as the endorsed version to write, but this file does not touch it — check which version the file is for. Nothing written`);
+    const unconfirmed = needsConfirm.filter((k) => !confirmed.has(k));
+    if (!dry && unconfirmed.length)
+      throw new Refusal(`${unconfirmed.join(", ")}: an ENDORSED version — its backtest is the record of what was endorsed. Nothing written`, {
+        hint: "If the endorsed version is really the one to change (a backfill from the endorsed document), confirm it by name (confirm_endorsed). If you are iterating on a revision, write to the development version instead." });
+    if (sealKey && cardOf.get(sealKey).status !== "endorsed")
+      throw new Refusal(`${sealKey} is not endorsed: only an endorsed version's backtest is sealed`);
+
+    const audit = (t, k, field, oldv, newv) => client.query(
+      `INSERT INTO aa.entry_audit (entered_by, table_name, row_key, field, old_value, new_value)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [`entries-api: ${by}`, t, k, field, oldv == null ? null : JSON.stringify(oldv).slice(0, 4000),
+       newv == null ? null : JSON.stringify(newv).slice(0, 4000)]);
+    const match = (obj) => {
+      const ks = Object.keys(obj);
+      return [ks.map((c, j) => `${q(c)} IS NOT DISTINCT FROM $${j + 1}`).join(" AND "),
+              ks.map((c) => param(obj[c]))];
+    };
+    for (const [i, item] of items.entries()) {
+      const t = IDENT.test(item.table || "") ? sch[item.table] : null;
+      if (!t) throw new Refusal(`item ${i}: unknown table ${item.table}`);
+      if (!t.writable) throw new Refusal(`item ${i}: aa.${t.name} is read-only here (owned by ${t.owner})`);
+      const cols = new Set(t.columns.map((c) => c.name));
+      const known = (obj) => {
+        const bad = Object.keys(obj || {}).filter((c) => !cols.has(c));
+        if (bad.length) throw new Refusal(`item ${i}: aa.${t.name} has no column(s) ${bad.join(", ")}`);
+      };
+      const insert = async (row) => {
+        known(row);
+        const cs = Object.keys(row);
+        if (!cs.length) throw new Refusal(`item ${i}: empty row`);
+        await client.query(`INSERT INTO aa.${q(t.name)} (${cs.map(q).join(", ")})
+                            VALUES (${cs.map((_, j) => `$${j + 1}`).join(", ")})`, cs.map((c) => param(row[c])));
+        await audit(t.name, rowKey(t, row), "(row)", null, row);
+      };
+      if (item.delete) {                       // one row by its full key; a missing row fails
+        const key = item.delete;
+        known(key);
+        if (Object.keys(key).length !== t.key.length || !t.key.every((k) => k in key))
+          throw new Refusal(`item ${i}: a delete on aa.${t.name} must give exactly its key (${t.key.join(", ")})`);
+        const [w, vals] = match(key);
+        const gone = (await client.query(`DELETE FROM aa.${q(t.name)} WHERE ${w} RETURNING *`, vals)).rows;
+        if (gone.length !== 1) throw new Refusal(`item ${i}: no aa.${t.name} row ${rowKey(t, key)} to delete`);
+        await audit(t.name, rowKey(t, gone[0]), "(delete)", gone[0], null);
+        plan.push({ op: "delete", table: t.name, key, before: gone[0] });
+      } else if (item.op === "replace") {      // the rows BECOME the scope's rows
+        const scope = item.scope || {};
+        known(scope);
+        if (!VERSION_COLS.every((c) => cols.has(c) && scope[c] != null))
+          throw new Refusal(`item ${i}: a replace needs a scope naming one version (${VERSION_COLS.join(", ")})`);
+        const rows = item.rows || [];
+        for (const r of rows)
+          for (const c of Object.keys(scope))
+            if (r[c] !== scope[c]) throw new Refusal(`item ${i}: a row is outside the scope (${c})`);
+        const [w, vals] = match(scope);
+        const before = (await client.query(`DELETE FROM aa.${q(t.name)} WHERE ${w} RETURNING *`, vals)).rows;
+        for (const b of before) await audit(t.name, rowKey(t, b), "(delete)", b, null);
+        for (const r of rows) await insert(r);
+        plan.push({ op: "replace", table: t.name, scope, before, after: rows });
+      } else if (item.op == null || item.op === "upsert") {
+        const row = item.row || {};
+        known(row);
+        const key = Object.fromEntries(t.key.map((k) => [k, row[k] ?? null]));
+        const [w, vals] = match(key);
+        const cur = (await client.query(`SELECT * FROM aa.${q(t.name)} WHERE ${w}`, vals)).rows;
+        if (cur.length > 1) throw new Refusal(`item ${i}: key matches ${cur.length} rows in aa.${t.name}`);
+        if (cur.length) {
+          const sets = Object.keys(row).filter((c) => !t.key.includes(c));
+          if (sets.length) {
+            const upd = sets.map((c, j) => `${q(c)} = $${vals.length + j + 1}`);
+            if (cols.has("updated_at") && !sets.includes("updated_at")) upd.push("updated_at = now()");
+            await client.query(`UPDATE aa.${q(t.name)} SET ${upd.join(", ")} WHERE ${w}`,
+                               [...vals, ...sets.map((c) => param(row[c]))]);
+            await audit(t.name, rowKey(t, cur[0]), "(row)", cur[0], row);
+          }
+          plan.push({ op: "update", table: t.name, key, before: cur[0], after: row });
+        } else {
+          await insert(row);
+          plan.push({ op: "insert", table: t.name, key, after: row });
+        }
+      } else throw new Refusal(`item ${i}: unknown op ${item.op} (a row, a delete, or op: replace)`);
+    }
+    await client.query("SET CONSTRAINTS ALL IMMEDIATE");   // span + foreign keys, now
+
+    // ---- the backtest as it now stands (inside the transaction)
+    const tk = [...touched.values()];
+    const targ = [tk.map((x) => x.country_iso3), tk.map((x) => x.hazard), tk.map((x) => x.version)];
+    const T = `(SELECT * FROM unnest($1::text[], $2::text[], $3::text[]) AS t(country_iso3, hazard, version))`;
+    const windows = tk.length ? (await client.query(
+      `SELECT pf.country_iso3, pf.hazard, pf.version, pf.window_name, pf.analysis_start, pf.analysis_end,
+              pf.analysis_years, pf.n_activations::int AS n_activations, pf.return_period::float8 AS return_period,
+              pf.activation_prob::float8 AS activation_prob, pf.rp_reported::float8 AS rp_reported,
+              (SELECT array_agg(s.event_year ORDER BY s.event_year) FROM aa.simulated_activation s
+               WHERE (s.country_iso3, s.hazard, s.version, s.window_name)
+                   = (pf.country_iso3, pf.hazard, pf.version, pf.window_name)) AS years
+       FROM aa.v_window_performance pf JOIN ${T} t USING (country_iso3, hazard, version)
+       ORDER BY 1, 2, 3, 4`, targ)).rows : [];
+    const overall = tk.length ? (await client.query(
+      `SELECT fp.country_iso3, fp.hazard, fp.version, fp.analysis_years, fp.n_activation_years::int AS n_activation_years,
+              fp.overall_return_period::float8 AS overall_return_period
+       FROM aa.v_framework_performance fp JOIN ${T} t USING (country_iso3, hazard, version)`, targ)).rows : [];
+
+    let sealed = null;
+    if (sealKey) {
+      const s = touched.get(sealKey), sv = [s.country_iso3, s.hazard, s.version];
+      const mine = windows.filter((w) => vkey(w) === sealKey);
+      if (!mine.length) throw new Refusal(`${sealKey} has no backtest windows to seal`);
+      const open = mine.filter((w) => w.analysis_start == null || w.analysis_end == null);
+      if (open.length) throw new Refusal(`${sealKey}: window(s) without an analysis span (${open.map((w) => w.window_name).join(", ")}) — complete before sealing`);
+      const out = mine.flatMap((w) => (w.years || []).filter((y) => y < w.analysis_start || y > w.analysis_end)
+                                                      .map((y) => `${w.window_name} ${y}`));
+      if (out.length) throw new Refusal(`${sealKey}: simulated year(s) outside the analysis span (${out.join(", ")}) — fix before sealing`);
+      // done for real in a dry run too (then rolled back): the database checks every seal
+      await client.query(
+        `UPDATE aa.framework_version SET backtest_sealed_at = now(), backtest_sealed_by = $4,
+                backtest_sealed_against = $5
+         WHERE country_iso3 = $1 AND hazard = $2 AND version = $3`, [...sv, by, String(seal.against).trim()]);
+      await audit("framework_version", sealKey, "backtest_sealed_against", null, String(seal.against).trim());
+      sealed = { version: sealKey, against: String(seal.against).trim() };
+    }
+    await client.query(dry ? "ROLLBACK" : "COMMIT");
+    send(res, 200, { ok: true, dry_run: dry, applied: !dry, items: plan.length, versions: cards,
+                     needs_confirm_endorsed: needsConfirm, sealed, performance: { windows, overall }, plan });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    const FK_HINT = {
+      simulated_activation_window_fk: "Simulated years and their window go together: replace simulated_activation for the same version in the same file (a year needs its window; a window can't be dropped from under its years).",
+      window_version_fk: "A window belongs to a registered framework version.",
+      version_performance_reported_version_fk: "Reported performance belongs to a registered framework version.",
+    };
+    send(res, 400, { error: String(e.message || e),
+                     hint: (e.extra && e.extra.hint) || e.hint || FK_HINT[e.constraint] || undefined,
+                     detail: e.detail || undefined, versions: cards.length ? cards : undefined, dry_run: dry });
+  } finally { client.release(); }
+}
+
 // ------------------------------------------------------------------- server
 const server = http.createServer(async (req, res) => {
   const allowed = cors(req, res);
@@ -714,17 +1054,19 @@ const server = http.createServer(async (req, res) => {
   if (!r) return send(res, 401, { error: "bad site token" });
   if (req.method === "GET" && url.pathname === "/whoami") return send(res, 200, { ok: true, role: r });
   if (req.method === "GET" && url.pathname === "/framework") return framework(req, res, url.searchParams);
-  if (!pool && ["/schema", "/rows", "/distinct", "/save", "/delete"].includes(url.pathname))
+  if (!pool && ["/schema", "/rows", "/distinct", "/save", "/delete", "/entries", "/versions"].includes(url.pathname))
     return send(res, 500, { error: "DB not configured" });
   if (req.method === "GET" && url.pathname === "/schema") return adminSchema(req, res, url.searchParams);
   if (req.method === "GET" && url.pathname === "/rows") return adminRows(req, res, url.searchParams);
   if (req.method === "GET" && url.pathname === "/distinct") return adminDistinct(req, res, url.searchParams);
-  if (r !== "editor" && ["/extract", "/entry", "/save", "/delete"].includes(url.pathname))
+  if (req.method === "GET" && url.pathname === "/versions") return versions(req, res, url.searchParams);
+  if (r !== "editor" && ["/extract", "/entry", "/save", "/delete", "/entries"].includes(url.pathname))
     return send(res, 401, { error: "editor token required" });   // 401: pages prompt for it
   if (req.method === "POST" && url.pathname === "/extract") return extract(req, res);
   if (req.method === "POST" && url.pathname === "/entry") return entry(req, res);
   if (req.method === "POST" && url.pathname === "/save") return adminSave(req, res);
   if (req.method === "POST" && url.pathname === "/delete") return adminDelete(req, res);
+  if (req.method === "POST" && url.pathname === "/entries") return applyEntries(req, res);
   send(res, 404, { error: "not found" });
 });
 
