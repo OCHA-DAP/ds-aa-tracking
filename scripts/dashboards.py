@@ -98,13 +98,6 @@ table.acts td { white-space:normal; overflow-wrap:anywhere; vertical-align:top; 
 .vchg { background:#fff; border:1px solid #e0e0e0; border-radius:6px; padding:8px 14px; margin:8px 0; }
 .vchg h4 { margin:2px 0 4px; font-size:13px; } .vchg ul { margin:4px 0; padding-left:20px; }
 .vchg li { font-size:13px; margin:2px 0; } .vnote { font-size:12px; color:#555; margin:4px 0; }
-ul.claims { list-style:none; padding:0; margin:4px 0 8px; }
-ul.claims li { font-size:13px; padding:6px 0 6px 10px; border-left:3px solid #2a78d6; background:#f3f8ff;
-               margin:0 0 6px; border-radius:0 4px 4px 0; }
-ul.claims .claim { color:#1a1a1a; }
-ul.claims .src { color:#666; font-size:11.5px; }
-.morehd { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:#889; margin:8px 0 2px; }
-ul.doclist.compact li { padding:3px 0; font-size:12px; }
 .empty { color:#777; font-size:13px; font-style:italic; padding:8px 0; }
 .blk { margin-top:30px; } .blk > h2 { margin-top:0; padding-bottom:6px; border-bottom:2px solid #e3e8ef; }
 .blk h3.sub { font-size:14px; margin:18px 0 6px; color:#334; }
@@ -1571,122 +1564,8 @@ def _fw_docs(docs, c, h):
 
 
 def build_learning(page, d):
-    import html as _h
-    docs = d["learning"].copy()   # internal rows are excluded at the source (_fetch)
-    cur = d["current"]
-    act = d["act_all"].copy()
-    urls = d["act_url"]
-    umap = {(r.country_iso3, r.hazard, str(r.event_date), r.window_name): r.url
-            for r in urls.itertuples()}
-    act["url"] = [umap.get((c, h, str(e), w)) for c, h, e, w in
-                  zip(act["country_iso3"], act["hazard"], act["event_date"], act["window_name"])]
-    act["year"] = act["event_date"].astype(str).str[:4]
-    act = act[act["year"].str.match(r"^\d{4}$")].copy()
-    act["kind"] = act["event_type"].map(
-        lambda t: "framework" if t == "framework_aa" else str(t).replace("_", " "))
-    n_fw = int((act["kind"] == "framework").sum())
-
-    # per-framework document counts (a hazard-less country document counts for every
-    # framework of that country)
-    fw_docs = {(r.country_iso3, r.hazard): _fw_docs(docs, r.country_iso3, r.hazard)
-               for r in cur.itertuples()}
-    fw_with = {k for k, v in fw_docs.items() if len(v)}
-    n_eval = int(docs["doc_type"].isin(["evaluation", "impact_evaluation"]).sum()) if len(docs) else 0
-
-    def _link(u):
-        return f"<a href='{u}' target='_blank' rel='noopener'>record ↗</a>" if isinstance(u, str) and u else ""
-    rows = "".join(
-        f"<tr><td>{r.event_date}</td><td>{r.country_name or r.country_iso3} — {str(r.hazard).replace('_', ' ')}</td>"
-        f"<td>{r.kind}</td><td>{r.version or ''}</td>"
-        f"<td>{r.window_name or ''}{(' · ' + r.event_label) if isinstance(r.event_label, str) and r.event_label else ''}</td>"
-        f"<td class='num'>{int(r.people_targeted) if pd.notna(r.people_targeted) else ''}</td>"
-        f"<td>{_link(r.url)}</td></tr>"
-        for r in act.itertuples())
-
-    # (b) what the evidence says — one panel per premise: each claim sits right next to
-    # the document it comes from (key_stat — title · publisher · year), documents with a
-    # headline figure first, the rest as a compact "more evidence" list
-    def _claim_li(r):
-        title = _h.escape(str(r.title))
-        t = (f"<a href='{_h.escape(str(r.url))}' target='_blank' rel='noopener'>{title}</a>"
-             if isinstance(r.url, str) and r.url else title)
-        who = " · ".join(str(x) for x in [
-            _h.escape(r.publisher) if isinstance(r.publisher, str) else None,
-            int(r.year) if pd.notna(r.year) else None] if x)
-        return (f"<li><span class='claim'>{_h.escape(str(r.key_stat))}</span> "
-                f"<span class='src'>— {t}{(' · ' + who) if who else ''}</span></li>")
-    prem_panels = ""
-    for key, label in PREMISES:
-        sub = docs[[key in _aslist(p) for p in docs["premises"]]] if len(docs) else docs
-        has_ks = [isinstance(k, str) and bool(k.strip()) for k in sub["key_stat"]] if len(sub) else []
-        with_ks = sub[has_ks] if len(sub) else sub
-        rest = sub[[not x for x in has_ks]] if len(sub) else sub
-        claims = "".join(_claim_li(r) for r in with_ks.itertuples())
-        more = "".join(_doc_li(r, key_stat=False) for r in rest.itertuples())
-        body = ((f"<ul class='claims'>{claims}</ul>" if claims else "")
-                + (f"<div class='morehd'>{'More evidence' if claims else 'Documents'}</div>"
-                   f"<ul class='doclist compact'>{more}</ul>" if more else "")
-                + ("" if len(sub) else "<div class='empty'>no documents tagged yet</div>"))
-        prem_panels += f"<div class='panel'><h3>{label} <span class='doctag'>{len(sub)}</span></h3>{body}</div>"
-
-    # (c) global learning by document type
-    glob = docs[docs["scope"] == "global"] if len(docs) else docs
-    glob_html = ""
-    for dt in DOC_TYPE_LABEL:
-        g = glob[glob["doc_type"] == dt] if len(glob) else glob
-        if len(g):
-            glob_html += (f"<h3 class='sub'>{DOC_TYPE_LABEL[dt].capitalize()} · {len(g)}</h3>"
-                          f"<ul class='doclist'>{''.join(_doc_li(r) for r in g.itertuples())}</ul>")
-    if len(glob):
-        other = glob[~glob["doc_type"].isin(DOC_TYPE_LABEL)]
-        if len(other):
-            glob_html += (f"<h3 class='sub'>Untyped · {len(other)}</h3>"
-                          f"<ul class='doclist'>{''.join(_doc_li(r) for r in other.itertuples())}</ul>")
-    if not glob_html:
-        glob_html = "<div class='empty'>no global documents yet</div>"
-
-    # (d) by framework
-    fw_rows = ""
-    for r in cur.sort_values("country_name").itertuples():
-        v = fw_docs[(r.country_iso3, r.hazard)]
-        if not len(v):
-            continue
-        latest = int(v["year"].max()) if v["year"].notna().any() else ""
-        fw_rows += (f"<tr><td><a href='fw-{r.country_iso3.lower()}-{r.hazard}.html'>{r.country_name}</a></td>"
-                    f"<td>{str(r.hazard).replace('_', ' ')}</td><td class='num'>{len(v)}</td>"
-                    f"<td class='num'>{latest}</td></tr>")
-
-    panels = f"""
-<div class='tiles'>
- <div class='tile'><div class='v'>{len(docs)}</div><div class='l'>learning documents</div></div>
- <div class='tile'><div class='v'>{n_eval}</div><div class='l'>evaluations and impact evaluations</div></div>
- <div class='tile'><div class='v'>{len(fw_with)}</div><div class='l'>frameworks with at least one document</div></div>
- <div class='tile'><div class='v'>{len(act)}</div><div class='l'>activations recorded — {n_fw} framework triggers, {len(act) - n_fw} ad hoc allocations</div></div>
-</div>
-<div class='card'><b>What lives here.</b> The evidence on anticipatory action, curated: what the evaluations, after-action reviews and studies say about each of the premises of acting ahead of a shock, the global learning products by type, and the documents per framework. Every activation is a learning event, so the activation records are listed at the bottom.
-<span class='note' style='display:block;margin-top:6px'>Internal documents ({d.get('n_internal_docs', 0)} in the database) are held in the database but not shown here.</span></div>
-<div class='blk'><h2>What the evidence says</h2>
-<p class='meta'>One panel per premise; each headline figure is the document's own key statistic, followed by its source.</p>
-<div class='grid'>{prem_panels}</div></div>
-<div class='blk'><h2>Global learning</h2>
-<p class='meta'>Documents with a global scope, by type.</p>
-<section>{glob_html}</section></div>
-<div class='blk'><h2>By framework</h2>
-<section><div class='scroll' style='max-height:60vh'><table class='data'><thead><tr><th>country</th><th>hazard</th><th>documents</th><th>latest year</th></tr></thead>
-<tbody>{fw_rows or '<tr><td colspan=4 class="empty">no framework has a document yet</td></tr>'}</tbody></table></div></section></div>
-<div class='blk'><h2>Activation records</h2>
-<div class='grid'><div class='panel' style='grid-column:1/-1'><h3>Activations per year</h3><canvas id='l1' height='240'></canvas></div></div>
-<section><input class='filter' placeholder='filter…' oninput='filt(this)'>
-<div class='scroll'><table class='data'><thead><tr><th>date</th><th>framework</th><th>kind</th><th>version</th><th>window</th><th>people targeted</th><th>record</th></tr></thead><tbody>{rows}</tbody></table></div></section></div>"""
-    data = {"act": json.loads(_records(act, ["year", "kind"]))}
-    js = """
-const yrs = uniqSorted(D.act, r=>r.year), kinds = uniqSorted(D.act, r=>r.kind);
-mkChart('l1','bar',yrs,kinds.map(k=>({label:k, data:yrs.map(y=>D.act.filter(r=>r.year===y&&r.kind===k).length)})),{stacked:true,count:true,totals:true});"""
-    _dash_page(page, "pillar-learning.html", "Learning",
-               "<b>The learning block of anticipatory action</b> — what the evidence "
-               "says, premise by premise; the global learning products; the documents "
-               "per framework; and the activation records.",
-               panels, json.dumps(data, default=str), js)
+    import page_learning
+    return page_learning.build_learning(page, d)
 
 
 # ------------------------------------------------------------- allocations
@@ -2742,7 +2621,7 @@ built to the CERF key-data-points list (<a href='questions.html'>coverage map</a
 <div class='tile'><a href='dash-donors.html'><b>Donor shares</b></a><div class='l'>each donor's share of AA released / pre-arranged, via their contributions to CERF and the country and regional funds; donor flows; build earmarks</div></div>
 <div class='tile'><a href='dash-allocations.html'><b>Allocation explorer</b></a><div class='l'>query every CERF, country and regional fund allocation 2006→; complementarity; timeliness</div></div>
 <div class='tile'><a href='dash-delivery.html'><b>Delivery & people</b></a><div class='l'>subgrants, localization, agencies, sectors, CVA, people reached</div></div>
-<div class='tile'><a href='pillar-learning.html'><b>Learning</b></a><div class='l'>the evidence by premise, global learning products, documents per framework, activation records</div></div>
+<div class='tile'><a href='pillar-learning.html'><b>Learning</b></a><div class='l'>headline findings on the map, and every learning document by country and hazard</div></div>
 <div class='tile'><a href='media.html'><b>Media & visuals</b></a><div class='l'>videos, photos, social posts and press releases on AA (collection starting)</div></div>
 </div></div>
 <h2 id='frameworks'>Per-framework pages</h2>
