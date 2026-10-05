@@ -606,7 +606,24 @@ def main():
                 language=item.get("language"),
                 note=item.get("note"),
             )
+            if one.role not in ROLES:
+                sys.exit(f"--batch: role {one.role!r} for {item['file']} is not one of {ROLES}")
             d, x = plan_register(one, fv)
+            for sha, doc in d.items():  # one file, one set of document fields
+                prev = docs.get(sha)
+                fields = (
+                    "title",
+                    "language",
+                    "is_public",
+                    "retrieved_from",
+                    "retrieved_at",
+                    "note",
+                )
+                if prev and any(prev[f] != doc[f] for f in fields):
+                    sys.exit(
+                        f"--batch: {item['file']} appears twice with different document "
+                        "fields — give it one item with all its keys"
+                    )
             docs.update(d)
             links += x
     else:
