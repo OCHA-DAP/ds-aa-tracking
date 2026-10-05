@@ -247,6 +247,9 @@ def _backfill_years(pre, e, first_year=2020):
             by_source, pre_doc = page_by.get((fw_slug.get((c, h)), str(v["version"])), (None, None))
             amounts = []
             if len(e_v):
+                # an 'all' total only where no per-fund split exists (as prearranged_now)
+                if (e_v["fund_code"] != "all").any():
+                    e_v = e_v[e_v["fund_code"] != "all"]
                 amounts = [(x.fund_code, float(x.total_usd)) for x in e_v.itertuples()]
             elif isinstance(by_source, dict) and by_source:
                 amounts = [(resolve(k, c), float(a))
@@ -2896,7 +2899,7 @@ def build_hierarchy(page, d, e):
             f"<td>{_fmt_usd(w.allocation_usd)}</td>"
             f"<td>{f'{w.return_period:.1f} yr' if pd.notna(w.return_period) else ''}</td>"
             f"<td>{f'{w.activation_prob:.0%}' if pd.notna(w.activation_prob) else ''}</td>"
-            f"<td>{f'{int(w.sim_activations)} in {int(w.analysis_years)} yrs' if pd.notna(w.sim_activations) else ''}</td></tr>"
+            f"<td>{f'{int(w.sim_activations)} in {int(w.analysis_years)} yrs' if pd.notna(w.sim_activations) and pd.notna(w.analysis_years) else ''}</td></tr>"
             for w in wins_v.itertuples())
         trig_rows = "".join(
             f"<div class='hint' style='margin:2px 0'><b>{w.window_name}:</b> "
