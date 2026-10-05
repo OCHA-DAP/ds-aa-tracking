@@ -580,7 +580,7 @@ ul.lead {{ margin:0; padding-left:16px; }} ul.lead li {{ font-size:12.5px; margi
    return period the framework states ({n_st} windows); ranges and qualitative statements are left out.</div></div>
  <div class='panel span2'><h3>Which data and models do they use?</h3><canvas id='m6' height='320'></canvas>
    <div class='note'>Number of current frameworks listing each source ({n_with_src} of {len(fws)} list their
-   sources). The three Dry Corridor countries share one framework record, so its sources count three times.
+   sources).
    Used by one framework only: {_esc(', '.join(prov_single))}.</div>
    <details class='map'><summary>Name variants folded together</summary>
    <table class='data'><thead><tr><th>source name matches</th><th>counted as</th></tr></thead><tbody>{alias_rows}</tbody></table></details></div>

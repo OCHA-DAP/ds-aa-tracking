@@ -201,10 +201,14 @@ def _backfill_years(pre, e, first_year=2020):
     # that never got envelope rows — older versions, mostly
     pages = pd.read_sql(
         """SELECT kb_framework, version, frontmatter -> 'funding_by_source' AS by_source,
-                  (frontmatter ->> 'prearranged_funding_usd')::numeric AS pre_doc
+                  (frontmatter ->> 'prearranged_funding_usd')::numeric AS pre_doc,
+                  frontmatter -> 'extra' -> 'shared_pool' ->> 'with' AS shared_with
            FROM aa.version_page""", e)
     page_by = {(r.kb_framework, str(r.version)): (r.by_source, r.pre_doc)
                for r in pages.itertuples()}
+    # a version whose envelope sits inside ANOTHER framework's pool (Bangladesh cyclones 2023
+    # with floods, Niger floods 2024 under the drought cap) is counted there, once
+    shared = {(r.kb_framework, str(r.version)) for r in pages.itertuples() if isinstance(r.shared_with, str)}
     fw_slug = dict(zip(zip(ver["country_iso3"], ver["hazard"]), ver["kb_framework"]))
     # a retired framework is inferred only up to the last year a status report still had it
     # live (no retirement date is recorded)
@@ -256,6 +260,8 @@ def _backfill_years(pre, e, first_year=2020):
             if inforce.empty:
                 continue
             v = inforce.sort_values("valid_from").iloc[-1]
+            if (fw_slug.get((c, h)), str(v["version"])) in shared:
+                continue
             e_v = env[(env["country_iso3"] == c) & (env["hazard"] == h)
                       & (env["version"] == v["version"])]
             by_source, pre_doc = page_by.get((fw_slug.get((c, h)), str(v["version"])), (None, None))
