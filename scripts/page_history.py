@@ -24,7 +24,7 @@ from datetime import date
 
 import pandas as pd
 from dashboards import (HAZARDS, backtest_span, LIFE_LABEL, PAL, _activation_blocks, _dash_page, _event_href,
-                        _event_links, _fmt_usd, _loose, haz, sim_before_start, sim_when)
+                        _event_links, _fmt_usd, _loose, haz, sim_before_start, sim_when, version_start)
 
 LIVE = ["active", "updating", "development"]
 LIFE_ON = {"active": True, "updating": True, "development": False}   # default filter state
@@ -62,7 +62,7 @@ def _backtest(d, c, h, version):
     sim = d["sim"][(d["sim"]["country_iso3"] == c) & (d["sim"]["hazard"] == h)].copy()
     sim["version"] = sim["version"].astype(str)
     fvm = d["fv_meta"][(d["fv_meta"]["country_iso3"] == c) & (d["fv_meta"]["hazard"] == h)]
-    order = list(fvm.assign(_vf=pd.to_datetime(fvm["valid_from"], errors="coerce"))
+    order = list(fvm.assign(_vf=version_start(fvm))
                  .sort_values("_vf")["version"].astype(str))
     shown = next((sv for sv in set(sim["version"])
                   if version is not None and _vm(sv, str(version))), None)
