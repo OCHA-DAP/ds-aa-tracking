@@ -214,7 +214,7 @@ def _key(u):
 def _restates(text, bigs):
     """Whether a key statistic carries the figure of a headline finding already shown next
     to it ('36% less likely…' beside '−36%'), so that it is not said twice."""
-    return any(re.search(rf"(?<![\d.]){re.escape(n)}(?!\d|\.\d)", text)
+    return any(re.search(rf"(?<![\d.,]){re.escape(n)}(?!\d|[.,]\d)", text)
                for b in bigs for n in re.findall(r"\d+(?:\.\d+)?", b))
 
 
@@ -487,7 +487,7 @@ LEARNING_CSS = r"""
 .lmapbox.tight .callout .hl-b { font-size:17px; } .lmapbox.tight .callout .hl-t { font-size:10.5px; }
 /* a country hovered or pinned: its own callouts stay lit, the others step back */
 .lmapbox.hovering .callout:not(.keep), .lmapbox.hovering .leader:not(.keep) { opacity:.14; }
-.lmapbox.hovering .callout:not(.keep) { pointer-events:none; }
+.lmapbox.hovering:not(.pin) .callout:not(.keep) { pointer-events:none; }   /* a preview lets the pointer through to the countries */
 /* the hovered / pinned country's further headlines */
 .hcard { position:absolute; z-index:5; width:290px; background:#fff; border:1px solid #cfd8e3; border-radius:10px; padding:10px 12px;
   pointer-events:none; box-shadow:0 2px 6px rgba(15,23,42,.16), 0 14px 30px -10px rgba(15,23,42,.4); }
@@ -767,9 +767,9 @@ function showCountry(iso, pin){
     stack.innerHTML = countryHTML(iso, true, true) + `<div class='hc-f'><button type='button' class='hc-more' data-back='1'>← The headline findings</button></div>`;
     mark(iso); return; }
   hcard.innerHTML = countryHTML(iso, pin, false); hcard.classList.toggle('pinned', !!pin); hcard.hidden = false;
-  mapbox.classList.add('hovering'); mark(iso); lit(iso); placeCard(iso);
+  mapbox.classList.add('hovering'); mapbox.classList.toggle('pin', !!pin); mark(iso); lit(iso); placeCard(iso);
 }
-function hideCountry(){ hcard.hidden = true; hcard.classList.remove('pinned'); mapbox.classList.remove('hovering'); mark(null); lit(null); }
+function hideCountry(){ hcard.hidden = true; hcard.classList.remove('pinned'); mapbox.classList.remove('hovering', 'pin'); mark(null); lit(null); }
 function unpin(){ pinned = null; hideCountry();
   stack.innerHTML = F.map((f, i) => featButton(i, true)).join(''); }
 const isoOf = t => (t && t.dataset && t.dataset.iso && C[t.dataset.iso] && (t.classList.contains('on') || t.classList.contains('ldot'))) ? t.dataset.iso : null;
