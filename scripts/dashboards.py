@@ -33,6 +33,15 @@ SOURCE_PRIORITY = [
 # every activation query filters on this. Remove the value to bring EA back.
 EXCLUDED_EVENT_TYPES = ("early_action",)
 _EXCL_SQL = ", ".join(f"'{t}'" for t in EXCLUDED_EVENT_TYPES)
+# The CERF AA allocations the site counts: the ones the activation record draws on (framework
+# and ad hoc; early action excluded), as the Financing page and the Plan page count them — not
+# the mirror's title keyword (aa_keyword), which also flags early-action allocations and misses
+# ad hoc AA with a plain title (2026-10-02 meeting: released by agency and by sector did not
+# match the curated figures). An activation whose CERF allocation code is not recorded yet
+# cannot be split; the Delivery page lists those.
+_CERF_AA_CODES_SQL = ("SELECT DISTINCT allocation_code FROM aa.activation_funding "
+                      "WHERE fund_code = 'cerf' AND allocation_code IS NOT NULL "
+                      "AND event_type NOT IN (" + _EXCL_SQL + ")")
 
 
 def canonical(df, keys):
@@ -402,18 +411,14 @@ def _fetch(e):
            FROM aa.cerf_project_sector s
            JOIN aa.cerf_project p USING (project_code)
            JOIN aa.cerf_allocation c ON c.application_code = p.application_code
-           WHERE c.aa_keyword AND s.sector_amount IS NOT NULL""", e)
+           WHERE c.application_code IN (""" + _CERF_AA_CODES_SQL + """)
+             AND s.sector_amount IS NOT NULL""", e)
     d["agency"] = pd.read_sql(
         """SELECT c.year, c.country_iso3, p.agency_short_name AS agency,
                   p.amount_approved
            FROM aa.cerf_project p
            JOIN aa.cerf_allocation c ON c.application_code = p.application_code
-           WHERE c.aa_keyword""", e)
-    d["pre_sector"] = pd.read_sql(
-        """SELECT country_iso3, hazard, window_name, agency, sector, amount_usd,
-                  coalesce(year::text, 'Prearranged') AS year_label
-           FROM aa.v_window_funding_split
-           WHERE amount_usd IS NOT NULL AND (agency IS NOT NULL OR sector IS NOT NULL)""", e)
+           WHERE c.application_code IN (""" + _CERF_AA_CODES_SQL + ")", e)
     d["cva"] = pd.read_sql(
         """SELECT year, country_iso3, agency, emergency_type, cva_usd,
                   people_receiving_cash FROM aa.cerf_cva_history
@@ -423,7 +428,7 @@ def _fetch(e):
            FROM aa.cerf_application_people p
            JOIN aa.cerf_allocation c ON c.application_code = p.application_code
            WHERE p.phase = 'reached' AND p.disaggregation = 'sex_age'
-             AND c.aa_keyword""", e)
+             AND c.application_code IN (""" + _CERF_AA_CODES_SQL + ")", e)
     d["covered"] = pd.read_sql(
         """SELECT DISTINCT ON (country_iso3, hazard) country_iso3, hazard,
                   people_covered
@@ -630,7 +635,7 @@ def _fetch(e):
                         LEFT JOIN aa.fund fu ON fu.pf_id = p.pooled_fund_id
                         WHERE a.aa_keyword AND p.budget IS NOT NULL GROUP BY 1, 2, 3""",
          ["year", "fund_code", "org_type", "usd"])
-    d["fund_names"] = pd.read_sql("SELECT fund_code, fund_type, name FROM aa.fund", e)
+    d["fund_names"] = pd.read_sql("SELECT fund_code, fund_type, name, country_iso3 FROM aa.fund", e)
     # Financing money flows: CBPF AA project budgets by grantee organisation (named grantees;
     # cbpf_org above keeps the type-only split for an older snapshot)
     _opt("cbpf_org_name", """SELECT p.allocation_year AS year, fu.fund_code,
@@ -643,7 +648,26 @@ def _fetch(e):
                              WHERE a.aa_keyword AND p.budget IS NOT NULL
                              GROUP BY 1, 2, 3, 4""",
          ["year", "fund_code", "org_name", "org_type", "usd"])
+    _resolve_pooled_fund(d)
     return d
+
+
+def _resolve_pooled_fund(d):
+    """'cbpf-unspecified' (a sheet row that named no pooled fund) -> the country's own pooled
+    fund, where the registry knows exactly one for that country (a CBPF, or a regional fund's
+    country window). 2026-10-02 meeting: the 2023 ad hoc allocations of Somalia, South Sudan
+    and Yemen sat in one 'CBPF (fund not recorded)' node with no donors, so Yemen looked
+    missing. A country with no registered fund, or several, keeps 'cbpf-unspecified'."""
+    reg = d["fund_names"]
+    pf = reg[(reg["fund_type"] != "cerf") & reg["country_iso3"].notna()]
+    one = {c: g.iloc[0] for c, g in pf.groupby("country_iso3")["fund_code"] if len(g) == 1}
+    for k in ("prearranged", "activation"):
+        df = d[k]
+        m = (df["fund_code"] == "cbpf-unspecified") & df["country_iso3"].isin(one)
+        df.loc[m, "fund_code"] = df.loc[m, "country_iso3"].map(one)
+    # a resolved row can now meet a row that named the fund: one per key, by source priority
+    d["prearranged"] = canonical(d["prearranged"], ["country_iso3", "hazard", "year", "kind",
+                                                    "fund_code", "financier"])
 
 
 def _dash_page(page, name, title, intro, panels_html, data_json, js_body):
@@ -1042,6 +1066,10 @@ FLOW_NOTE = (
     "recipient node carries its category colour — UN agency, international NGO, national / local "
     "NGO, government, Red Cross / Red Crescent, other, not recorded — from the sub-grant partner "
     "type or the organisation type recorded by the country and regional funds; a band takes the colour of the node it leaves. "
+    "<b>Recipient types</b>: a stage just before the last column groups every band by the category "
+    "of the organisation it reaches — UN agencies, international NGOs, national / local NGOs, Red "
+    "Cross / Red Crescent, government, other — so one pathway shows the groups and the last column "
+    "the named organisations (untick <i>recipient types</i> to hide it). "
     "<b>Donors → fund</b>: each donor's paid contributions to the fund that year ÷ the fund's "
     "total paid income that year, × the amount — attributed pro rata, since contributions fund "
     "the whole pool. Top 12 donors, the rest grouped.")
@@ -1061,6 +1089,7 @@ def _flow_panel(donors_on, donor_toggle=True):
    <label style='padding:3px 10px;cursor:pointer;border-left:1px solid #cbd5e1'><input type='radio' name='flM' value='r'> released</label></span>
   <label><span id='flYl'>In place in</span> <select id='flY'></select></label>
   {dctl}
+  <label title='a stage that groups the recipients by type (UN agencies, NGOs, Red Cross / Red Crescent, government, other) before the named ones'><input type='checkbox' id='flK' checked> recipient types</label>
   <label id='flPw'><input type='checkbox' id='flP' checked> final recipients</label>
   <span id='flTot' class='muted'></span>
  </div>
@@ -1084,13 +1113,16 @@ const CAT_OTHER = {un:'other UN agencies', ingo:'other international NGOs', nngo
 // RhPF green); the five hues validated as a set (all pairs: CVD dE >= 13.5, normal >= 19.6) and
 // against the fund colours (normal >= 15.6); the two greys are the neutral categories
 const CAT_COLOR = {un:'#65389f', ingo:'#70b6e7', nngo:'#ceaa3e', gov:'#8a4f0e', rc:'#c3518d', oth:'#3a3f47', nr:'#d6dae0'};
-function flowNode(id){ const m = /^([ap]):([a-z]+)([|~])(.*)$/.exec(id);
+// the recipient-type stage: one node per category, just before the last column
+const CAT_GROUP = {un:'UN agencies', ingo:'International NGOs', nngo:'National / local NGOs', gov:'Government',
+  rc:'Red Cross / Red Crescent', oth:'Other', nr:'Type not recorded'};
+function flowNode(id){ const m = /^([apk]):([a-z]+)([|~])(.*)$/.exec(id);
   return m ? {p:m[1], cat:m[2], org:m[3]==='~', name:m[4]} : null; }
 function flowRegroup(L, f){ const g = {};
   L.forEach(l=>{ const s = f(l.s, l), t = f(l.t, l), k = l.lv+'\\u0001'+s+'\\u0001'+t;
     if(g[k]) g[k].v += l.v; else g[k] = {lv:l.lv, s, t, v:l.v}; });
   return Object.values(g); }
-function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs){
+function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, showK){
   const R = rows.filter(r=>r.m===mode && (year==='all' || r.y===+year) && keep(r));
   let L = flowRegroup(R, x=>x);
   // top donors; the rest grouped
@@ -1108,13 +1140,29 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs){
   L = flowRegroup(L, x=>{ const n = flowNode(x); return n && n.org && !named.has(n.name) ? `${n.p}:${n.cat}|${CAT_OTHER[n.cat]}` : x; });
   if(!showD) L = L.filter(l=>l.lv!=='d');
   if(!showP) L = L.filter(l=>l.lv!=='a');
+  // recipient types (2026-10-02 meeting): every band into the last column passes through its
+  // category first — UN agencies, international / national NGOs, Red Cross / Red Crescent,
+  // government, other — so one pathway shows the groups and the last column the named ones.
+  // After the naming above (the ranking reads agency -> organisation links), and the first
+  // half keeps its level so the total (the 'f' links) is unchanged.
+  if(showK){
+    const last = showP ? 'p:' : 'a:', lv = showP ? 'a' : 'f', S = [];
+    L.forEach(l=>{ const n = l.lv===lv && l.t.startsWith(last) ? flowNode(l.t) : null;
+      if(!n){ S.push(l); return; }
+      const k = `k:${n.cat}|${CAT_GROUP[n.cat]}`;
+      S.push({lv, s:l.s, t:k, v:l.v}, {lv:'k', s:k, t:l.t, v:l.v}); });
+    L = flowRegroup(S, x=>x);
+  }
   const lab = id => { const [p, ...rest] = id.split(':'); const n = rest.join(':');
     if(p==='f') return names[n]||n; const r = flowNode(id); return r ? r.name : n; };
   const cols = [];
   const col = pre => { const ids = new Set(); L.forEach(l=>{ [l.s,l.t].forEach(x=>{ if(x.startsWith(pre)) ids.add(x); }); });
     return [...ids].map(id=>({id, label:lab(id)})); };
   if(showD) cols.push(col('d:'));
-  cols.push(col('f:')); cols.push(col('a:'));
+  cols.push(col('f:'));
+  if(showK && !showP) cols.push(col('k:'));
+  cols.push(col('a:'));
+  if(showK && showP) cols.push(col('k:'));
   if(showP) cols.push(col('p:'));
   const seen = new Set(); cols.forEach(c=>c.forEach(n=>{ const r = flowNode(n.id); if(r) seen.add(r.cat); }));
   const total = L.filter(l=>l.lv==='f').reduce((s,l)=>s+l.v,0);
@@ -1128,7 +1176,7 @@ function mountFlow(cfg){
   const modeOf = () => document.querySelector("input[name='flM']:checked").value;
   function drawFlow(){
     const mode = modeOf();
-    const F = buildFlow(D.flow, mode, flY.value, flD.checked, mode==='r' && flP.checked, D.fundNames, 12, keep, cfg.topOrgs);
+    const F = buildFlow(D.flow, mode, flY.value, flD.checked, mode==='r' && flP.checked, D.fundNames, 12, keep, cfg.topOrgs, flK.checked);
     const el = document.getElementById('flow'), leg = document.getElementById('flLeg');
     if(!F.links.length){ el.innerHTML = "<p class='empty'>no AA money in this selection for this year</p>"; flTot.textContent=''; if(leg) leg.innerHTML=''; return; }
     const n = Math.max(...F.columns.map(c=>c.length));
@@ -1152,7 +1200,7 @@ function mountFlow(cfg){
   }
   document.querySelectorAll("input[name='flM']").forEach(el=>el.addEventListener('change', ()=>{ fillYears(); drawFlow(); }));
   fillYears();
-  [flY, flD, flP].forEach(el=>el.addEventListener('change', drawFlow));
+  [flY, flD, flP, flK].forEach(el=>el.addEventListener('change', drawFlow));
   drawFlow();
   return drawFlow;
 }
@@ -1224,7 +1272,14 @@ def build_funding(page, d):
 
     fw = frame_rows(cur[["country_iso3", "hazard", "lifecycle", "technical_support"]])
     fw["technical_support"] = fw["technical_support"].fillna(False).astype(bool)
-    cov = frame_rows(d["covered"])
+    # people covered is a NOW figure, like pre-arranged now: the current frameworks' latest
+    # figures only (a retired framework covers no one) — the map's figure (2026-10-02 meeting:
+    # Financing showed 10.5M with the retired ones, the map 5.4M). k: the pair, so the tile can
+    # say how many current frameworks have no figure yet (in development, mostly)
+    live_lc = ("active", "updating", "development")
+    cov = d["covered"].merge(cur[["country_iso3", "hazard", "lifecycle"]], on=["country_iso3", "hazard"])
+    cov = frame_rows(cov[cov["lifecycle"].isin(live_lc)])
+    cov["k"] = cov["country_iso3"] + "|" + cov["hazard"]
     ver = frame_rows(d["versions"])
     ver["year"] = pd.to_datetime(ver["valid_from"]).dt.year
 
@@ -1236,7 +1291,9 @@ def build_funding(page, d):
     fw_act = act[act["g"] != "a"]
     total_rel = fw_act["amount_usd"].sum()
     rel_years = f"{int(fw_act['year'].min())}–{int(fw_act['year'].max())}" if len(fw_act) else ""
-    covered = d["covered"]["people_covered"].sum()
+    covered = cov["people_covered"].sum()
+    n_live = int(fw["lifecycle"].isin(live_lc).sum())
+    n_cov = int(cov["k"].nunique())
 
     # agency × sector split of the live frameworks' latest versions (one source per version)
     pr = d["plan_rows"].merge(cur[["country_iso3", "hazard", "region"]],
@@ -1319,12 +1376,13 @@ def build_funding(page, d):
  <div class='tile'><div class='v' id='tFw'>{n_active}</div><div class='l' id='tFwl'>active frameworks · {n_upd} being updated · {n_dev} in development{f' · {n_tech} technical support only' if n_tech else ''} · {n_ret} retired</div></div>
  <div class='tile'><div class='v' id='tPre'>${(now_cerf + now_cbpf)/1e6:,.0f}M</div><div class='l' id='tPrel'>pre-arranged now — CERF ${now_cerf/1e6:,.0f}M · country and regional funds ${now_cbpf/1e6:,.0f}M</div></div>
  <div class='tile'><div class='v' id='tRel'>${total_rel/1e6:,.0f}M</div><div class='l' id='tRell'>AA released {rel_years} — framework activations, CERF and country and regional funds</div></div>
- <div class='tile'><div class='v' id='tCov'>{covered/1e6:,.1f}M</div><div class='l'>people covered (latest per framework)</div></div>
+ <div class='tile'><div class='v' id='tCov'>{covered/1e6:,.1f}M</div><div class='l' id='tCovl'>people covered now — current frameworks, latest figure each ({n_cov} of {n_live} have one) · not people reached</div></div>
 </div>
 {gaps_html}
 <details class='note' style='margin:0 0 14px;font-size:12px;color:#555'><summary style='cursor:pointer;font-size:12.5px'>How these figures are counted</summary>
 <p><b>Layers</b>, as on the map: <b>current frameworks</b> (active, being updated, in development) and <b>retired</b> frameworks bring their pre-arranged and released money in every year — a framework's layer is its status today, so the past years need the retired ones to be complete (an AA-tagged country or regional fund allocation in a country with no retired framework counts as current). <b>Ad hoc allocations</b> add the AA money allocated without a framework: released money only, nothing is pre-arranged for it. The <b>fund</b> switch applies to every figure but co-financing; framework counts, people covered and versions then keep the frameworks with money recorded on that fund. There is no technical-support layer here: technical support carries no money. The tiles and the charts follow the layers, the fund and the hazard and region filters (the GHO filter: the annual series and co-financing); the money-flow chart and the sections further down say what they follow.</p>
 <p><b>Pre-arranged now</b> comes from the framework records: for every active, being-updated or in-development framework, the envelope of its most recent version that has one. The same figure is the current year in the annual chart, on the map and on the donor page.{stale_html} Pre-arranged money stays pre-arranged until a framework is <b>retired</b>: a framework being updated keeps its most recent version's envelope. Country and regional fund allocations are made up front, so an AA-tagged allocation counts as pre-arranged until an activation draws on it (then it counts as released as well). Pre-arranged money is a stock (in place on a date) and released money a flow (per year): the two are never added together.</p>
+<p><b>People covered now</b> is the latest figure recorded for each current framework — the people its pre-arranged plan covers, not the people reached once it activated (those come from the final reports, on the Plan page). Retired frameworks cover no one now and are left out, as on the map. A framework still in development usually has no figure until its projects are planned; an early estimate can be entered in the admin (people_covered) until then.</p>
 <p>Donors report their AA funding annually under the <a href='https://interagencystandingcommittee.org/grand-bargain' target='_blank' rel='noopener'>Grand Bargain</a>; the <a href='dash-donors.html'>donor-shares page</a> attributes this money to the donors of each fund.</p>
 </details>
 <h2>Where the money flows</h2>
@@ -1364,7 +1422,7 @@ def build_funding(page, d):
 </div>
 <div class='grid'>
  <div class='panel'><h3>CERF AA allocations by year — direct UN spend vs sub-granted to partners</h3><canvas id='c9' height='280'></canvas>
-   {how("Direct UN spend = CERF AA project budgets (OneGMS mirror, AA-flagged allocations) minus the sub-grants reported for the same year (aa.cerf_subgrant, curated AA set). Partner groups from the sub-grant partner type; 'other' includes partners not yet typed. CERF's sub-grant reports cover framework and ad hoc allocations together and carry no hazard: this section follows the fund switch only.")}</div>
+   {how("Direct UN spend = CERF AA project budgets (OneGMS mirror; the allocations the activation record draws on, framework and ad hoc) minus the sub-grants reported for the same year (aa.cerf_subgrant, curated AA set). Partner groups from the sub-grant partner type; 'other' includes partners not yet typed. CERF's sub-grant reports cover framework and ad hoc allocations together and carry no hazard: this section follows the fund switch only.")}</div>
  <div class='panel'><h3>Share of CERF AA sub-grants to local and national actors, by year</h3><canvas id='c10' height='280'></canvas>
    {how("Each bar is one year's CERF AA sub-grants (100%): to local and national actors (national / local NGOs, government, national Red Cross / Red Crescent societies), to international NGOs, and to partners not yet typed in the reports. The label is the local and national share; the recent years fill in as partners are typed. Follows the fund switch only.")}</div>
 </div>
@@ -1380,7 +1438,7 @@ def build_funding(page, d):
         "ver": json.loads(_records(ver, ["year", "kb_status", "hz", "region", "g", "funds"])),
         "now": json.loads(_records(vf, ["country_iso3", "hz", "region", "ft", "total_usd", "g"])),
         "fw": json.loads(_records(fw, ["hz", "region", "lifecycle", "technical_support", "g", "funds"])),
-        "cov": json.loads(_records(cov, ["hz", "region", "people_covered", "g", "funds"])),
+        "cov": json.loads(_records(cov, ["k", "hz", "region", "people_covered", "g", "funds"])),
         "split": json.loads(_records(pr, ["hz", "region", "agency", "sector", "ft",
                                           "amount_usd", "g"])),
         "cof": json.loads(_records(cof, ["hz", "region", "year", "in_gho", "g", "who", "amount_usd"])),
@@ -1426,7 +1484,12 @@ function tiles(s, geo, A, N){
   tRel.textContent = M0(sumOf(A, r=>r.amount_usd));
   tRell.textContent = `AA released ${ys.length ? ys[0]+(ys.length>1 ? '–'+ys[ys.length-1] : '') : '(none in this selection)'} — ${what || 'no layer selected'}, `
     + (s.fund==='cerf' ? 'CERF' : s.fund==='pooled' ? 'country and regional funds' : 'CERF and country and regional funds') + (s.gho ? ', GHO contexts' : '');
-  tCov.textContent = (sumOf(D.cov.filter(r=>geo(r) && layerOK(r.g,s) && pairFundOK(r.funds,s)), r=>r.people_covered)/1e6).toFixed(1)+'M';
+  // people covered: a now figure, current frameworks only (as pre-arranged now and the map)
+  if(!s.cur){ tCov.textContent = '–'; tCovl.textContent = 'people covered now: select current frameworks (a retired framework covers no one now)'; }
+  else { const C = D.cov.filter(r=>geo(r) && pairFundOK(r.funds,s));
+    const live = F.filter(r=>['active','updating','development'].includes(r.lifecycle)).length;
+    tCov.textContent = (sumOf(C, r=>r.people_covered)/1e6).toFixed(1)+'M';
+    tCovl.textContent = `people covered now — current frameworks${fundTxt}, latest figure each (${new Set(C.map(r=>r.k)).size} of ${live} have one) · not people reached`; }
 }
 function draw(){
   const s = sel(), gho = s.gho;
@@ -1691,21 +1754,42 @@ def build_delivery(page, d):
     cb = d["cbpf_proj"]
     sec = d["sector"]
     ag = d["agency"]
-    ps = d["pre_sector"]
+    # pre-arranged splits: the latest version of every current framework, as on the Financing
+    # page (2026-10-02: every version's split was summed here, and lines with a sector but no
+    # agency showed as a 'null' bar)
+    ps = d["plan_rows"].copy()
+    ps["agency"] = ps["agency"].fillna("not stated in the budget")
+    ps["sector"] = ps["sector"].fillna("not stated in the budget")
     cva = d["cva"]
     rc = d["reached"]
+    # CERF activations whose allocation code is not recorded: their money cannot be split by
+    # agency or sector until it is
+    import html as _html
+    act = d["activation"]
+    nolink = act[(act["fund_code"] == "cerf") & act["allocation_code"].isna()
+                 & (act["amount_usd"].fillna(0) > 0)]
+    nolink_html = ("" if not len(nolink) else
+                   f"<p class='note' style='font-size:12px;color:#555'>Not in the released charts yet — "
+                   f"<b>{len(nolink)} CERF activation{'s' if len(nolink) > 1 else ''} "
+                   f"(${nolink['amount_usd'].sum()/1e6:,.1f}M) with no CERF allocation code recorded</b>: "
+                   + "; ".join(f"{_html.escape(str(r.country_iso3))} {_html.escape(str(r.hazard))} "
+                               f"{_html.escape(str(r.event_date))} (${r.amount_usd/1e6:,.1f}M)"
+                               for r in nolink.sort_values("event_date").itertuples()) + ".</p>")
 
-    panels = """
+    panels = nolink_html + """
 <div class='grid'>
  <div class='panel'><h3>CERF AA subgrants by partner type × year</h3><canvas id='d1' height='250'></canvas>
    <div class='note'>Yakubu's curated AA subgrant set; local = NNGO+GOV+RedC per his localization tagging.</div></div>
  <div class='panel'><h3>Country and regional fund AA projects: direct funding by org type</h3><canvas id='d2' height='250'></canvas>
    <div class='note'>Country and regional funds pay partners directly — this is the localization view CERF can't show. AA-keyword allocations only.</div></div>
- <div class='panel'><h3>Released by agency (CERF AA projects)</h3><canvas id='d3' height='250'></canvas></div>
- <div class='panel'><h3>Released by sector (CERF AA projects)</h3><canvas id='d4' height='250'></canvas></div>
+ <div class='panel'><h3>Released by agency (CERF AA projects)</h3><canvas id='d3' height='250'></canvas>
+   <div class='note'>CERF AA project budgets, all years: the allocations the activation record draws on (framework and ad hoc), as on the Financing page.</div></div>
+ <div class='panel'><h3>Released by sector (CERF AA projects)</h3><canvas id='d4' height='250'></canvas>
+   <div class='note'>The sector split of the same projects (CERF sector names).</div></div>
  <div class='panel'><h3>Pre-arranged by agency (framework budgets)</h3><canvas id='d5' height='250'></canvas>
-   <div class='note'>From the Jun-2026 pre-arranged sector budgets (framework docs).</div></div>
- <div class='panel'><h3>Pre-arranged by sector (framework budgets)</h3><canvas id='d6' height='250'></canvas></div>
+   <div class='note'>The budget lines of the latest version of every current framework, as on the Financing page.</div></div>
+ <div class='panel'><h3>Pre-arranged by sector (framework budgets)</h3><canvas id='d6' height='250'></canvas>
+   <div class='note'>Sector lines of the same budgets.</div></div>
  <div class='panel'><h3>AA delivered as CVA by year</h3><canvas id='d7' height='250'></canvas>
    <div class='note'>cerf_cva_history (2020–2026 CERF AA); project-level markers exist for 2024+ in cerf_project_supplement.</div></div>
  <div class='panel'><h3>People reached by gender × year (CERF AA)</h3><canvas id='d8' height='250'></canvas>
@@ -1766,7 +1850,7 @@ COVERAGE = [
     ("Subgrants by partner type / local partners", "covered", "dash-delivery.html", "CERF AA subgrants + country and regional fund direct org-type funding"),
     ("Released funds by agency", "covered", "dash-delivery.html", "CERF AA projects"),
     ("Released funds by sector", "covered", "dash-delivery.html", "CERF AA project sector splits"),
-    ("Pre-arranged funds by agency / sector", "covered", "dash-delivery.html", "Jun-2026 framework budgets; KB funding_breakdown adds per-version detail"),
+    ("Pre-arranged funds by agency / sector", "covered", "dash-delivery.html", "budget lines of the latest version of every current framework (v_window_funding_split)"),
     ("Agency participation across the portfolio", "covered", "dash-delivery.html", "agency axis of pre-arranged budgets"),
     ("AA delivered as CVA", "partial", "dash-delivery.html", "totals by year 2020–2026; MPC-vs-sector split only for 2024+ projects (cerf_project_supplement)"),
     ("People covered", "partial", "dash-funding.html", "per framework (latest); by CATEGORY of people not tracked anywhere"),

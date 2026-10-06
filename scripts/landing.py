@@ -1406,12 +1406,8 @@ def build_landing(page, d, e):
   </div>
  </div>
 </details>
-<div class='tiles' style='margin-top:18px'>
- <div class='tile'><a href='dashboards.html'><b>Dashboards</b></a><div class='l'>funding · allocations · delivery</div></div>
- <div class='tile'><a href='hierarchy.html'><b>Portfolio explorer</b></a><div class='l'>framework › version › window › activation</div></div>
- <div class='tile'><a href='entry.html'><b>Enter / ingest a framework</b></a><div class='l'>upload a PDF or fill the form — writes to the DB</div></div>
- <div class='tile'><a href='overview.html'><b>Data &amp; schema review</b></a><div class='l'>tables · reconciliation · roadmap</div></div>
-</div>
+<!-- 2026-10-02 meeting: the internal links that sat here (dashboards, explorer, data entry,
+     data & schema review) were easy to miss below the map; they all live in the Internal menu -->
 <script>window.L = {json.dumps(countries, default=str)};
 window.HAZ = {json.dumps(HAZ_COLOR)}; window.COLOR = {json.dumps(KB_COLOR)};
 window.KBLABEL = {json.dumps(DISP_LABEL)}; window.GLYPH = {json.dumps(HAZARD_SVG)};
