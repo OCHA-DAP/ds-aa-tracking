@@ -1,10 +1,12 @@
-"""admin.html — a Django-admin-style CRUD page over every table in the `aa` schema.
+"""admin.html (admin site: admin/admin.html) — a Django-admin-style CRUD page over every
+table in the `aa` schema.
 
 Static page; everything is fetched live from the entry proxy (GET /schema, /rows,
 /distinct; POST /save, /delete), so new tables and columns appear automatically and
 the page never carries a data snapshot. Two roles:
 
-- viewer: the site token embedded in this (staticrypt-encrypted) page — browse and
+- viewer: the site token embedded in this page, which is encrypted with the ADMIN-site
+  password (the public site never carries the token; build_site.write_site checks) — browse and
   filter every table and view;
 - editor: a separate token, never embedded, prompted for once and kept in the
   browser (localStorage `editorToken`, header `x-editor-token`) — add, change,

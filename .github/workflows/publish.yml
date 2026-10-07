@@ -81,10 +81,13 @@ jobs:
         env:
           EXTRACT_TOKEN: ${{ secrets.EXTRACT_TOKEN }}
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
         run: |
           # never publish pages without the proxy token: the data-entry and admin pages would go dark
           test -n "$EXTRACT_TOKEN" || { echo "::error::EXTRACT_TOKEN secret is not set"; exit 1; }
           test -n "$SITE_PASSWORD" || { echo "::error::SITE_PASSWORD secret is not set"; exit 1; }
+          # the admin site (admin/) has its own password, with no default anywhere
+          test -n "$ADMIN_PASSWORD" || { echo "::error::ADMIN_PASSWORD secret is not set (gh secret set ADMIN_PASSWORD)"; exit 1; }
           git config user.name "aa-tracking-bot"
           git config user.email "aa-tracking-bot@users.noreply.github.com"
           bash scripts/publish.sh
