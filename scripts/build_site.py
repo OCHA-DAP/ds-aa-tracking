@@ -202,6 +202,11 @@ def public_pages():
     """The public site: the tabs, and the framework pages the map opens (a pipeline framework
     with no layer on the map is not shown there, so its page is not public either)."""
     on_map = set(re.findall(r"fw-[A-Za-z0-9_\-]+\.html", _PAGES["index.html"][1])) if "index.html" in _PAGES else set()
+    on_map &= set(_PAGES)
+    # the rule reads the map's own links: if the map stops spelling them out, every framework
+    # page would silently turn admin-only and the tabs' links to them would be cut
+    if "index.html" in _PAGES and not on_map and any(n.startswith("fw-") for n in _PAGES):
+        raise SystemExit("FATAL: the map (index.html) references no framework page: cannot tell which are public")
     return {n for n in _PAGES if n in PUBLIC_TABS or n in on_map}
 
 
@@ -295,7 +300,8 @@ def write_site():
         if f.name not in admin and f.name != "index.html":
             f.unlink()
     for name, gone in sorted(cut.items()):
-        print(f"  ! public page {name}: link(s) to admin-only page(s) removed: {', '.join(sorted(gone))}")
+        # visible in the publish run's summary, not only in its log
+        print(f"::warning::public page {name}: link(s) to admin-only page(s) removed: {', '.join(sorted(gone))}")
     print(f"  public site: {len(public)} pages · admin site: {len(admin) + 1} pages ({ADMIN_DIR}/)")
 
 
