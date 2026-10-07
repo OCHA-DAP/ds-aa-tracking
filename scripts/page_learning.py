@@ -1,10 +1,11 @@
 """The Learning page (pillar-learning.html): a map of headline findings, then the repository.
 
-Reworked on 2026-10-05 into two things only. (1) A world map. Its default callouts are six
-findings from the strongest studies so far (FEATURED): three on saving lives and
-livelihoods, three on cost effectiveness, each called out of the countries it is about;
-hovering a shaded country keeps its own callouts lit and shows the country's further
-findings and headlines (HEADLINES, then its documents' key statistics). (2) The repository:
+Reworked on 2026-10-05 into two things only. (1) A world map of findings from the strongest
+studies so far (FEATURED), each called out of the countries it is about. Six show by
+default: three on saving lives and livelihoods, three on cost effectiveness. The findings
+on speed are on the map too, switched on from the legend. Hovering a shaded country keeps
+its own callouts lit and shows its further findings and headlines (HEADLINES, then its
+documents' key statistics). (2) The repository:
 every public learning document, filterable by country and hazard, sortable by year.
 
 A finding or a document opens in a panel INSIDE the page: over the map when it was opened
@@ -35,20 +36,20 @@ from import_learning import PLACEHOLDER
 # of aa.learning_document the card opens that document's panel, otherwise the finding shows
 # with its own citation and link.
 #
-# The map's default callouts are the `default` ones: three on saving lives and livelihoods
-# and three on cost effectiveness, and none on speed (the brief for the page). The mock-up
-# has two on cost effectiveness; the third (South Sudan) is not from it: same form, from the
-# OCHA lessons paper in the repository. The mock-up's two findings on speed are not defaults:
-# they show with their country, on hover.
+# The map shows by default the findings of DEFAULT_PREMISES: three on saving lives and
+# livelihoods and three on cost effectiveness (the brief for the page). The mock-up has two
+# on cost effectiveness; the third (South Sudan) is not from it: same form, from the OCHA
+# lessons paper in the repository. The mock-up's two findings on speed are on the map as
+# well, but not by default: the legend switches a premise's callouts on and off.
+DEFAULT_PREMISES = ("lives_livelihoods", "cost_effectiveness")
 CDP_2021 = ("https://www.disasterprotection.org/publications-centre/"
             "anticipatory-cash-transfers-in-climate-disaster-response")
 
 
-def _f(premise, iso, design, where, big, claim, cite, url, chips=(), vs=None, caveat=None,
-       default=True):
+def _f(premise, iso, design, where, big, claim, cite, url, chips=(), vs=None, caveat=None):
     return {"premise": premise, "iso": iso, "design": design, "where": where, "big": big,
             "claim": claim, "cite": cite, "url": url, "chips": chips, "vs": vs,
-            "caveat": caveat, "default": default}
+            "caveat": caveat}
 
 
 FEATURED = [
@@ -112,12 +113,11 @@ FEATURED = [
        "from the flood alert to a US$6.2 million CERF allocation. About 430,000 people "
        "were reached within five days, before the peak.",
        "OCHA, Working against the clock (2024)",
-       "https://www.unocha.org/news/working-against-clock-anticipating-floods-bangladesh",
-       default=False),
+       "https://www.unocha.org/news/working-against-clock-anticipating-floods-bangladesh"),
     _f("speed", ("BGD",), "Programme data", "Bangladesh, floods (2020 vs 2019)", "100 days",
        "earlier: cash reached households before the 2020 flood peak; in 2019 it came about "
        "100 days after.",
-       "Pople et al., Centre for Disaster Protection (2021)", CDP_2021, default=False),
+       "Pople et al., Centre for Disaster Protection (2021)", CDP_2021),
 ]
 LEDE = "Findings from the strongest studies so far"
 GAPS = ("No rigorous study has measured deaths averted, the measured gains are concentrated "
@@ -198,7 +198,7 @@ HEADLINES = [
        "Households in community production centres set up ahead of the 2018 drought: "
        "nearly double the share among households not assisted."),
 ]
-PER_COUNTRY = 3        # what a country shows on hover, beyond its default callouts
+PER_COUNTRY = 3        # what a country's card shows on hover, beyond its callouts on the map
 # premise -> (accent colour, text colour on white): the mock-up's three; the premises with no
 # default callout share a neutral one
 PREMISE_COLOR = {"lives_livelihoods": ("#1f69b3", "#1f69b3"),
@@ -336,7 +336,7 @@ def build_learning(page, d):
         return cnames.get(c) or wnames.get(c) or c
 
     # the findings, on the countries of theirs that the map shows (feat_of: every finding of
-    # a country, default callout or not)
+    # a country, whether its premise is on the map by default or not)
     featured, feat_of = [], {}
     for f in FEATURED:
         isos = [c for c in f["iso"] if c in boxes]
@@ -349,8 +349,7 @@ def build_learning(page, d):
             doc["ff"].append(len(featured))
         for c in isos:
             feat_of.setdefault(c, []).append(len(featured))
-        featured.append({"isos": isos, "def": bool(f["default"]), "p": f["premise"],
-                         "g": f["design"], "w": f["where"],
+        featured.append({"isos": isos, "p": f["premise"], "g": f["design"], "w": f["where"],
                          "b": f["big"], "t": f["claim"], "ch": [list(x) for x in f["chips"]],
                          "vs": f["vs"], "cav": f["caveat"], "cite": f["cite"],
                          "u": _url(f["url"]), "d": doc["id"] if doc is not None else None})
@@ -381,7 +380,8 @@ def build_learning(page, d):
             own.extend({"b": None, "t": r["t"], "p": None, "d": r["id"], "doc": True}
                        for r in newest[:PER_COUNTRY])
 
-    def_of = {c: [i for i in ix if featured[i]["def"]] for c, ix in feat_of.items()}
+    on = [k for k in dict.fromkeys(f["p"] for f in featured) if k in DEFAULT_PREMISES]
+    def_of = {c: [i for i in ix if featured[i]["p"] in on] for c, ix in feat_of.items()}
     countries = {}
     for c in sorted(set(heads) | set(feat_of)):
         if c not in boxes:        # not on the map (outside the frame): findings stay in the list
@@ -390,19 +390,18 @@ def build_learning(page, d):
         b = boxes[c]
         lat, lon = landing.CENTROID.get(c) or (None, None)
         x, y = xy(lon, lat) if lat is not None else ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
-        # f: its default callouts; fx: its findings that are not defaults, which lead its
-        # hover card, before the further headlines
-        fx = [i for i in feat_of.get(c, []) if not featured[i]["def"]]
+        # f: its findings (the page shows as callouts those whose premise is switched on;
+        # the others lead its hover card, before the further headlines)
         countries[c] = {"n": name(c), "x": round(x, 1), "y": round(y, 1), "r": b,
                         "dir": landing.DIRECTIONS.get(c, (0.7, -0.7)), "nd": n_docs.get(c, 0),
-                        "h": heads.get(c, [])[:max(0, PER_COUNTRY - len(fx))],
-                        "f": def_of.get(c, []), "fx": fx}
+                        "h": heads.get(c, [])[:PER_COUNTRY], "f": feat_of.get(c, [])}
 
     def dot(c, v):
         cls, r = ("ldot feat", 4.2) if def_of.get(c) else ("ldot", 2.8)
         return f"<circle class='{cls}' data-iso='{c}' cx='{v['x']}' cy='{v['y']}' r='{r}'/>"
 
-    # the default callouts' dots are drawn last, on top
+    # the dots of the countries with a callout by default are drawn last, on top (the page
+    # restyles them when a premise is switched on or off)
     dots = "".join(dot(c, v) for c, v in sorted(countries.items(),
                                                 key=lambda kv: bool(def_of.get(kv[0]))))
     for r in recs:
@@ -417,11 +416,6 @@ def build_learning(page, d):
 
     prem = {k: {"l": lab, "c": PREMISE_COLOR.get(k, NEUTRAL)[0],
                 "ink": PREMISE_COLOR.get(k, NEUTRAL)[1]} for k, lab in PREMISES}
-    legend = "".join(
-        f"<span class='lg-i'><span class='lg-d' style='background:{prem[k]['c']}'></span>"
-        f"{html.escape(premise_label[k])}</span>"
-        for k in dict.fromkeys(f["p"] for f in featured if f["def"]))
-
     # ---- the repository's filters
     c_opts = "".join(
         f"<option value='{html.escape(c)}'>{html.escape(n)} ({n_docs[c]})</option>"
@@ -437,6 +431,7 @@ def build_learning(page, d):
     n_int = int(d.get("n_internal_docs", 0))
 
     data = {"docs": recs, "countries": countries, "featured": featured, "prem": prem,
+            "on": on, "per": PER_COUNTRY,
             "hazard": HAZARD_LABEL, "vb": {"w": landing.VB_W, "h": round(landing.VB_H, 1)}}
     # "</" never appears inside the page's script element, whatever a title holds
     data_js = json.dumps(data, separators=(",", ":"), ensure_ascii=False).replace("</", "<\\/")
@@ -448,9 +443,9 @@ def build_learning(page, d):
   <g id='lworld'>{paths}</g><g id='ldots'>{dots}</g></svg>
  <div id='lpane' class='lpane'><svg id='leaders' class='leadersvg'></svg></div>
  <div id='hcard' class='hcard' hidden></div>
- <div class='llegend' id='llegend'><b>{html.escape(LEDE)}</b>{legend}
-  <span class='lg-h'>Click a finding for how the study was designed and what it was compared against.
-  Hover a shaded country for more; click it to keep that open.</span></div>
+ <div class='llegend' id='llegend'><b>{html.escape(LEDE)}</b><span class='ptogs' id='ltog'></span>
+  <span class='lg-h'>Click a premise to show or hide its findings; click a finding for how the study was
+  designed and what it was compared against. Hover a shaded country for more.</span></div>
 </div>
 <div id='hlstack' class='hlstack'></div>
 <aside id='mpanel' class='lpanel mpanel' role='region' aria-label='The finding or document opened from the map' tabindex='-1' hidden></aside>
@@ -535,13 +530,21 @@ LEARNING_CSS = r"""
 .llegend { position:absolute; left:12px; bottom:12px; max-width:262px; background:rgba(255,255,255,.93); border:1px solid #e3e8ef;
   border-radius:8px; padding:8px 10px; font-size:11px; color:#33435a; display:flex; flex-direction:column; gap:3px; }
 .llegend b { font-size:11px; color:#0f2540; }
-.lg-i { display:flex; align-items:center; gap:6px; } .lg-d { width:9px; height:9px; border-radius:50%; flex:none; }
+/* the premises: each switches its findings' callouts on and off */
+.ptogs { display:flex; flex-direction:column; gap:1px; align-items:flex-start; }
+.ptog { display:inline-flex; align-items:center; gap:6px; border:0; background:none; padding:2px 0; font:inherit; font-size:11px;
+  color:#16283d; cursor:pointer; text-align:left; }
+.ptog .lg-d { width:10px; height:10px; border-radius:50%; flex:none; background:var(--c); border:2px solid var(--c); box-sizing:border-box; }
+.ptog i { font-style:normal; color:#1d5aa8; }
+.ptog[aria-pressed='false'] { color:#6b7a8f; } .ptog[aria-pressed='false'] .lg-d { background:transparent; }
+.ptog:hover span.pl, .ptog:focus-visible span.pl { text-decoration:underline; } .ptog:focus-visible { outline:2px solid #2a78d6; outline-offset:2px; }
 .lg-h { color:#6b7a8f; font-size:10.5px; line-height:1.3; margin-top:2px; }
 /* narrow screens: the callouts do not fit on the map, the findings are listed under it */
 .hlstack { display:none; }
 .lmapbox.compact .lpane, .lmapbox.compact .hcard, .lmapbox.compact .llegend { display:none; }
 .lmapbox.compact + .hlstack { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:8px; margin-top:10px; }
-.hlstack .hc-h, .hlstack .hc-f, .hlstack .hc-k { grid-column:1/-1; margin:0; }
+.hlstack .hc-h, .hlstack .hc-f, .hlstack .hc-k, .hlstack .ptogs { grid-column:1/-1; margin:0; }
+.hlstack .ptogs { flex-direction:row; flex-wrap:wrap; gap:4px 16px; } .hlstack .ptog { font-size:12.5px; }
 .hlstack .hl { width:auto; box-shadow:none; }
 .lgaps { margin:12px 0 0; padding:9px 14px; background:#fff; border:1px solid #e3e6ea; border-left:4px solid #0f2540; border-radius:8px;
   font-size:12.5px; line-height:1.5; color:#33435a; }
@@ -618,6 +621,9 @@ table.ldocs tr.lspacer, table.ldocs tr.lspacer:hover td { cursor:default; backgr
 
 LEARNING_JS = r"""
 const LD = window.LD, C = LD.countries, DOCS = LD.docs, F = LD.featured, VB = LD.vb;
+// the premises whose findings are called out of the map: the default ones to begin with; the
+// legend switches each on and off (speed is there, and off, to begin with)
+const ON = new Set(LD.on), shown = i => ON.has(F[i].p);
 const BYID = new Map(DOCS.map(d => [d.id, d]));
 const P = k => LD.prem[k] || {l:'', c:'#94a3b8', ink:'#556270'};
 const $ = id => document.getElementById(id);
@@ -646,7 +652,7 @@ function hlButton(h, cls){
     + (s ? `<span class='hl-s'>${esc(s)}</span>` : '') + `</button>`;
 }
 
-// ---------- the default callouts (the findings marked default). Findings about the same
+// ---------- the callouts: the findings of the premises switched on. Findings about the same
 // countries share one callout (one card, not a leader each), and a callout about
 // several countries has a leader to each. Each takes the free spot nearest its countries.
 // Candidate spots lie on rays from the box around the countries of the callout (16
@@ -658,8 +664,9 @@ function hlButton(h, cls){
 // and the cheapest layout is kept.
 const labels = [];
 function buildCallouts(){
+  labels.forEach(Lb => { Lb.el.remove(); Lb.lns.forEach(ln => ln.remove()); }); labels.length = 0;
   const groups = new Map();
-  F.forEach((f, i) => { if(!f.def) return; const key = f.isos.join('+'); if(!groups.has(key)) groups.set(key, []); groups.get(key).push(i); });
+  F.forEach((f, i) => { if(!shown(i)) return; const key = f.isos.join('+'); if(!groups.has(key)) groups.set(key, []); groups.get(key).push(i); });
   groups.forEach(idx => {
     const isos = F[idx[0]].isos, el = document.createElement('div');
     el.className = 'callout' + (idx.length > 2 ? ' wide' : '');           // three or more: two columns, not a tower
@@ -768,14 +775,15 @@ function runLayout(){
 let pinned = null;
 function countryHTML(iso, pin, inStack){
   const c = C[iso], nd = c.nd;
-  const has = c.f.length + c.fx.length;
-  const label = !c.h.length ? '' : c.h[0].doc ? (has ? 'Newest documents' : 'No headline figure yet · newest documents') : has ? `More from ${c.n}` : '';
+  const on = c.f.filter(shown), off = c.f.filter(i => !shown(i)), has = c.f.length;
+  const more = c.h.slice(0, Math.max(0, LD.per - off.length));      // its other findings count towards what the card holds
+  const label = !more.length ? '' : more[0].doc ? (has ? 'Newest documents' : 'No headline figure yet · newest documents') : has ? `More from ${c.n}` : '';
   return `<div class='hc-h'><b>${esc(c.n)}</b><span>${nd ? `${nd} document${nd>1?'s':''}` : 'no country document'}</span>`
     + (pin ? `<button type='button' class='hc-x' aria-label='Close'>×</button>` : '') + `</div>`
-    + (inStack ? c.f.map(i => featButton(i, true)).join('') : '')            // on the map they are the lit callouts
-    + c.fx.map(i => featButton(i, true, 'hc-i')).join('')
+    + (inStack ? on.map(i => featButton(i, true)).join('') : '')             // on the map they are the lit callouts
+    + off.map(i => featButton(i, true, 'hc-i')).join('')                     // its findings of a premise switched off
     + (label ? `<div class='hc-k'>${esc(label)}</div>` : '')
-    + c.h.map(h => hlButton(h, 'hc-i')).join('')
+    + more.map(h => hlButton(h, 'hc-i')).join('')
     + `<div class='hc-f'>` + (pin ? (nd ? `<button type='button' class='hc-more' data-iso='${iso}'>Show ${nd>1?`its ${nd} documents`:'its document'} in the list ↓</button>` : '')
                                   : `<span class='hc-hint'>Click the country to keep this open</span>`) + `</div>`;
 }
@@ -812,8 +820,24 @@ function showCountry(iso, pin){
   mapbox.classList.add('hovering'); mapbox.classList.toggle('pin', !!pin); mark(iso); lit(iso); placeCard(iso);
 }
 function hideCountry(){ hcard.hidden = true; hcard.classList.remove('pinned'); mapbox.classList.remove('hovering', 'pin'); mark(null); lit(null); }
+function togglesHTML(){
+  return [...new Set(F.map(f => f.p))].map(k => { const p = P(k), on = ON.has(k);
+    return `<button type='button' class='ptog' data-prem='${esc(k)}' aria-pressed='${on}' style='--c:${p.c}' title='${on ? 'Hide' : 'Show'} the findings on ${esc(p.l.toLowerCase())}'>`
+      + `<span class='lg-d'></span><span class='pl'>${esc(p.l)}</span>${on ? '' : '<i>show</i>'}</button>`; }).join('');
+}
 function unpin(){ pinned = null; hideCountry();
-  stack.innerHTML = F.map((f, i) => f.def ? featButton(i, true) : '').join(''); }
+  stack.innerHTML = `<div class='ptogs'>${togglesHTML()}</div>` + F.map((f, i) => shown(i) ? featButton(i, true) : '').join(''); }
+// a premise switched on or off: its findings join or leave the map (and the list under a narrow map)
+function setPremise(k){
+  ON.has(k) ? ON.delete(k) : ON.add(k);
+  closeMapPanel(false); buildCallouts(); $('ltog').innerHTML = togglesHTML();
+  // a country with a callout gets the larger, darker dot
+  svg.querySelectorAll('.ldot').forEach(d => { const c = C[d.dataset.iso], feat = !!c && c.f.some(shown);
+    d.classList.toggle('feat', feat); d.setAttribute('r', feat ? 4.2 : 2.8); });
+  runLayout(); unpin();
+  const again = [...document.querySelectorAll(`.ptog[data-prem='${k}']`)].find(e => e.offsetParent);      // the legend's, or the list's
+  if(again) again.focus({preventScroll:true});
+}
 const isoOf = t => (t && t.dataset && t.dataset.iso && C[t.dataset.iso] && (t.classList.contains('on') || t.classList.contains('ldot'))) ? t.dataset.iso : null;
 svg.addEventListener('mouseover', e => { const iso = isoOf(e.target); if(iso && !pinned) showCountry(iso, false); });
 svg.addEventListener('mouseout', e => { if(!pinned && isoOf(e.target) && !isoOf(e.relatedTarget)) hideCountry(); });
@@ -822,12 +846,13 @@ svg.addEventListener('click', e => { const iso = isoOf(e.target); closeMapPanel(
 // a finding opens its source in the panel over the map; the pinned card can also filter the list
 function onHeadlineClick(e){
   const b = e.target.closest('button'); if(!b) return;
-  if(b.dataset.f) openFinding(+b.dataset.f, b);
+  if(b.dataset.prem) setPremise(b.dataset.prem);
+  else if(b.dataset.f) openFinding(+b.dataset.f, b);
   else if(b.dataset.doc){ const d = BYID.get(+b.dataset.doc); if(d) openOnMap(docHTML(d, {b: b.dataset.b}), b); }
   else if(b.dataset.iso) filterTo(b.dataset.iso);
   else unpin();
 }
-[lpane, hcard, stack].forEach(el => el.addEventListener('click', onHeadlineClick));
+[lpane, hcard, stack, legend].forEach(el => el.addEventListener('click', onHeadlineClick));
 
 // ---------- the repository: filter by country and hazard, sort by year, a row opens the panel
 const fC = $('f-c'), fH = $('f-h'), rows = $('lrows'), repo = $('lrepo'), lbody = $('lbody'),
@@ -979,5 +1004,5 @@ function relayout(){ clearTimeout(rto); rto = setTimeout(() => {
 new ResizeObserver(relayout).observe(svg);
 window.addEventListener('resize', relayout);
 document.addEventListener('visibilitychange', relayout);
-buildCallouts(); syncNarrow(); renderTable(); runLayout(); laidW = svg.getBoundingClientRect().width;
+buildCallouts(); $('ltog').innerHTML = togglesHTML(); syncNarrow(); renderTable(); runLayout(); laidW = svg.getBoundingClientRect().width;
 """
