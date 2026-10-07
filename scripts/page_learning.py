@@ -282,13 +282,9 @@ def build_learning(page, d):
     docs = d["learning"]          # public documents only (internal rows never leave _fetch)
     cur = d["current"]
     cnames = {c: _t(n) for c, n in zip(cur["country_iso3"], cur["country_name"])}
-    # iso -> hazards of its frameworks that have a public page: a framework still in the
-    # pipeline is not on the map, and its page is not part of the public site. (These links
-    # are built in the browser from the page's data, so nothing downstream can unlink them.)
-    fw_of = {}
+    fw_of = {}                    # iso -> hazards of its frameworks (each has a page)
     for r in cur.itertuples():
-        if getattr(r, "lifecycle", None) != "pipeline":
-            fw_of.setdefault(r.country_iso3, []).append(r.hazard)
+        fw_of.setdefault(r.country_iso3, []).append(r.hazard)
     premise_label = dict(PREMISES)
 
     # ---- documents
@@ -598,7 +594,7 @@ table.ldocs td.lk a { color:#1d5aa8; text-decoration:none; } table.ldocs td.lk a
   border-radius:0 4px 4px 0; color:#1a1a1a; }
 .sd-facts li.lead { border-left-color:#0f2540; background:#e6f0fb; }
 .sd-facts li b { color:#0f2540; } .sd-facts li i { font-style:normal; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:#556270; display:block; }
-.sd-fw a { display:block; font-size:13px; color:#1d5aa8; margin:2px 0; }
+.sd-fw a, .sd-fw span { display:block; font-size:13px; margin:2px 0; } .sd-fw a { color:#1d5aa8; } .sd-fw span { color:#445; }
 /* a default finding in full: design, where, figure, claim, secondary results, comparison, caveat */
 .fd { border:1px solid #dfe5ec; border-top:4px solid var(--pc,#94a3b8); border-radius:8px; padding:11px 13px 12px; margin:0 0 8px; }
 .fd.lead { box-shadow:0 0 0 2px var(--pc,#94a3b8) inset; }
@@ -899,7 +895,8 @@ function docHTML(d, lead){
     + (f ? `<h4>Key facts</h4><ul class='sd-facts'>${f}</ul>` : '')
     + (d.s ? `<h4>Summary</h4><p>${esc(d.s)}</p>` : '')
     + (d.pr.length ? `<h4>Evidence on</h4>${tagsHTML(d.pr.map(p => P(p).l))}` : '')
-    + (d.fw.length ? `<h4>Framework</h4><div class='sd-fw'>${d.fw.map(([href, label]) => `<a href='${esc(href)}'>${esc(label)} →</a>`).join('')}</div>` : '');
+    // a framework page that is not part of this site arrives with its link blanked ('#'): plain text then
+    + (d.fw.length ? `<h4>Framework</h4><div class='sd-fw'>${d.fw.map(([href, label]) => href && href !== '#' ? `<a href='${esc(href)}'>${esc(label)} →</a>` : `<span>${esc(label)}</span>`).join('')}</div>` : '');
 }
 function sourceHTML(f){
   return `<div class='sd-k'>Source not in the list below</div><h3>${esc(f.cite)}</h3>`
