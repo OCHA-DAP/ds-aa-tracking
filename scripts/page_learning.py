@@ -99,14 +99,15 @@ FEATURED = [
        chips=[("$26", "2019 response"), ("$13", "2020 anticipatory")],
        caveat="Cost per person reached, not cost per outcome; the assistance packages "
               "differed between years."),
-    _f("cost_effectiveness", ("SSD",), "Programme data", "South Sudan, floods (2022)",
+    _f("cost_effectiveness", ("SSD",), "Programme estimate", "South Sudan, floods (2022)",
        "4 times",
        "cheaper to bring supplies in by the reopened road between Bentiu and Mayom junction "
        "than to fly them in.",
        "OCHA, Innovating anticipatory action: lessons from the 2022 South Sudan floods (2024)",
        "https://reliefweb.int/report/south-sudan/"
        "innovating-anticipatory-action-lessons-2022-south-sudan-floods",
-       caveat="An estimate for one supply route, not a cost per person or per outcome."),
+       caveat="An estimate for one supply route, with no method given. It compares road "
+              "with air transport, not the cost per person or per outcome."),
     _f("speed", ("BGD",), "Programme data", "Bangladesh, floods (July 2024)", "16 min",
        "from the flood alert to a US$6.2 million CERF allocation. About 430,000 people "
        "were reached within five days, before the peak.",
@@ -232,7 +233,8 @@ def _restates(text, bigs):
     """Whether a key statistic carries the figure of a headline finding already shown next
     to it ('36% less likely…' beside '−36%'), so that it is not said twice."""
     return any(re.search(rf"(?<![\d.,]){re.escape(n)}(?!\d|[.,]\d)", text)
-               for b in bigs for n in re.findall(r"\d+(?:\.\d+)?", b))
+               for b in bigs for n in re.findall(r"\d+(?:\.\d+)?", b)
+               if len(n) > 1)      # a single digit ('4 times') is too common to tell a repeat by
 
 
 def _world(on):
@@ -577,6 +579,7 @@ table.ldocs td.lk a { color:#1d5aa8; text-decoration:none; } table.ldocs td.lk a
 .lbody.open:not(.narrow) table.ldocs { width:calc(100% - 400px); }
 .tpanel { position:absolute; z-index:4; right:0; top:0; width:384px; }
 .lbody.narrow .tpanel { left:0; width:auto; }
+table.ldocs tr.lspacer, table.ldocs tr.lspacer:hover td { cursor:default; background:none; } table.ldocs tr.lspacer td { padding:0; border:0; }
 .sd-x { position:absolute; top:10px; right:12px; border:0; background:none; font-size:24px; line-height:1; color:#6b7a8f; cursor:pointer; }
 .sd-k { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6b7a8f; margin-right:30px; }
 .lpanel h3 { font-size:17px; line-height:1.3; margin:6px 0 4px; color:#0f2540; }
@@ -905,17 +908,27 @@ function sourceHTML(f){
     + `<h4>Headline finding</h4>${findingHTML(f, false, false)}`;
 }
 const CLOSE = `<button type='button' class='sd-x' aria-label='Close'>×</button>`;
-let opener = null;       // what had the focus when the open panel was opened: it gets it back
-function refocus(yes){ if(yes && opener && document.contains(opener)) opener.focus({preventScroll:true}); opener = null; }
+// what a panel was opened from gets the focus back when it closes: the element itself, or (the
+// list and the cards are re-rendered by sorting, filtering and pinning) the one now in its place
+let opener = null, openerKey = null;
+function refocus(yes){
+  const el = opener && document.contains(opener) && opener.offsetParent ? opener
+    : openerKey ? [...document.querySelectorAll(openerKey)].find(e => e.offsetParent) : null;
+  if(yes && el) el.focus({preventScroll:true});
+  opener = openerKey = null;
+}
 function closeMapPanel(back){ if(mpanel.hidden) return false; mpanel.hidden = true; mpanel.innerHTML = ''; refocus(back); return true; }
+function dropSpacer(){ rows.querySelectorAll('tr.lspacer').forEach(tr => tr.remove()); }
 function closeListPanel(back){
   if(tpanel.hidden) return false;
-  tpanel.hidden = true; tpanel.innerHTML = ''; lbody.classList.remove('open'); lbody.style.minHeight = '';
+  tpanel.hidden = true; tpanel.innerHTML = ''; lbody.classList.remove('open'); lbody.style.minHeight = ''; dropSpacer();
   state.sel = null; markRow(); refocus(back); return true;
 }
 // over the map, on the side away from what was clicked, so that the card it came from stays in view
 function openOnMap(html, from){
-  const keep = document.activeElement; closeListPanel(false); closeMapPanel(false); opener = keep;
+  closeListPanel(false); closeMapPanel(false);
+  opener = from || null;
+  openerKey = !from ? null : from.dataset.f != null ? `.hl[data-f='${+from.dataset.f}']` : from.dataset.doc ? `.hl[data-doc='${+from.dataset.doc}']` : null;
   const m = mapbox.getBoundingClientRect(), r = from ? from.getBoundingClientRect() : null;
   mpanel.classList.toggle('left', !!r && (r.left + r.right) / 2 > (m.left + m.right) / 2);
   mpanel.innerHTML = CLOSE + html; mpanel.hidden = false; mpanel.scrollTop = 0;
@@ -926,10 +939,12 @@ function openFinding(i, from){
   const f = F[i], d = f.d != null ? BYID.get(f.d) : null;
   openOnMap(d ? docHTML(d, {f:i}) : sourceHTML(f), from);
 }
-// in the list, beside the row it belongs to (under it, where the list is too narrow for both)
+// in the list, beside the row it belongs to; where the list is too narrow for both, under the row,
+// with the rows below moved down to make room
 function openInList(id){
   const d = BYID.get(id); if(!d) return;
-  const keep = document.activeElement; closeMapPanel(false); closeListPanel(false); opener = keep;
+  closeMapPanel(false); closeListPanel(false);
+  openerKey = `#lrows tr[data-id='${id}']`; opener = document.querySelector(openerKey);
   state.sel = id; tpanel.innerHTML = CLOSE + docHTML(d, {}); tpanel.hidden = false; lbody.classList.add('open');
   markRow(); placeListPanel(); tpanel.focus({preventScroll:true});
 }
@@ -938,9 +953,14 @@ function placeListPanel(){
   if(tpanel.hidden) return;
   const tr = rows.querySelector(`tr[data-id='${state.sel}']`);
   if(!tr){ closeListPanel(false); return; }                     // its row is no longer listed
-  syncNarrow(); lbody.style.minHeight = '';
-  const narrow = lbody.classList.contains('narrow'), box = lbody.getBoundingClientRect(), row = tr.getBoundingClientRect();
-  const top = (narrow ? row.bottom : row.top) - box.top;
+  syncNarrow(); lbody.style.minHeight = ''; dropSpacer();
+  const narrow = lbody.classList.contains('narrow');
+  if(narrow){                                                   // an empty row of the panel's height, under its row
+    const sp = document.createElement('tr'); sp.className = 'lspacer';
+    sp.innerHTML = `<td colspan='5' style='height:${tpanel.offsetHeight + 12}px'></td>`; tr.after(sp);
+  }
+  const box = lbody.getBoundingClientRect(), row = tr.getBoundingClientRect();
+  const top = (narrow ? row.bottom + 6 : row.top) - box.top;
   // always level with its row; the list grows when the panel runs past its end
   tpanel.style.top = top + 'px'; lbody.style.minHeight = (top + tpanel.offsetHeight) + 'px';
 }
