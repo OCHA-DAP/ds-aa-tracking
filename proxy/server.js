@@ -26,8 +26,8 @@
  *   GET  /whoami     -> {role}
  *
  * Two roles, two shared secrets in header x-site-token: SITE_TOKEN (viewer —
- * embedded in the staticrypt-encrypted pages, so "has the site password" =
- * viewer) and EDITOR_TOKEN (editor — never embedded; the pages prompt for it
+ * embedded only in the pages of the admin site (admin/, its own staticrypt
+ * password), so "has the admin-site password" = viewer) and EDITOR_TOKEN (editor — never embedded; the pages prompt for it
  * once and keep it in localStorage). Reads need viewer; /extract, /entry, /save
  * and /delete need editor. Generic writes are refused on tables other writers
  * own (KB loaders, OneGMS mirrors) and on the append-only audit table.

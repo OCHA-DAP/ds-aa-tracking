@@ -57,8 +57,21 @@ are kept forever (the year-end official state, for the map's time view).
   `repository_dispatch` events `data-updated` (`kb-updated` is still accepted but the KB is
   not a source any more). It never touches the dev DB: it restores the blob snapshot
   (below) into a Postgres service container and builds against localhost. Needs the org
-  blob secret plus repo secrets `EXTRACT_TOKEN` (the proxy site token) and `SITE_PASSWORD`
-  (staticrypt).
+  blob secret plus repo secrets `EXTRACT_TOKEN` (the proxy site token), `SITE_PASSWORD`
+  (staticrypt, public site) and `ADMIN_PASSWORD` (staticrypt, admin site; no default
+  anywhere, the publish fails without it).
+- two sites, one build (2026-10-07): the **public site** is the tabs of its header (map,
+  model + historical activations, plan, financing + donor shares, learning, media) and the
+  framework pages the map opens — nothing else, and no link to anything else. Every other
+  page (data admin and entry, tables, schema, reconciliation and review pages, the extra
+  dashboards and explorers, the pages of pipeline frameworks the map does not show) is the
+  **admin site**, published under `admin/` with its own password and its own header; it may
+  link to the public site, never the reverse. The builders do not say which site a page is
+  on: `page()` collects the pages and `write_site()` in `scripts/build_site.py` sorts them
+  (`PUBLIC_TABS`), respells the links and stops the build if a public page carries the
+  proxy token. `scripts/publish.sh` allows exactly one directory on gh-pages (`admin/`,
+  encrypted pages and the two pdf.js files only) and refuses any page that is not
+  encrypted. Every page carries the "internal product under development" banner.
 - snapshot: the dev DB is losing public network access (2026-09); only Databricks reaches
   it. `databricks.yml` defines one job, **AA Tracking Nightly** (03:30 UTC, Job Compute):
   `databricks/nightly.py` runs `scripts/export_snapshot.py`, which writes every `aa` table (parquet) plus the DDL metadata
@@ -72,9 +85,10 @@ are kept forever (the year-end official state, for the map's time view).
   retired = a flag on country_hazard; per-window triggered flags in window_status
 - `src/ds_aa_tracking/migrations.py` — the idempotent window-first migration (run by ensure_schema)
 - `scripts/ingest.py` — parse → crosswalk to KB → full-refresh load (dev DB)
-- `scripts/build_site.py` — render the password-protected GH Pages review site
-- `scripts/admin_page.py` — `admin.html`: Django-admin-style CRUD over every `aa` table,
-  populated live from the proxy's `/schema`; viewer = site password, editor = separate
+- `scripts/build_site.py` — render the two password-protected GH Pages sites (public at
+  the root, admin under `admin/`)
+- `scripts/admin_page.py` — `admin/admin.html`: Django-admin-style CRUD over every `aa` table,
+  populated live from the proxy's `/schema`; viewer = admin-site password, editor = separate
   token prompted for in the browser (never embedded). Supersedes the tracking-tables tab.
 - `proxy/server.js` — the one server: PDF extraction, framework entry, and generic
   `/schema` `/rows` `/distinct` `/save` `/delete` for the admin page; every field change is
@@ -103,7 +117,7 @@ Every row is audited to `aa.entry_audit`; applied files are recorded in `aa.appl
 ## Running
 
 The dev DB is the single source of truth: data is entered and corrected through the
-site (`entry.html`, `admin.html`) — there is no spreadsheet ingest and no KB sync any
+admin site (`admin/entry.html`, `admin/admin.html`) — there is no spreadsheet ingest and no KB sync any
 more (`scripts/ingest.py` is the retired migration-era loader and refuses to run).
 DB access via `ocha-stratus` env vars; `PGSSLMODE=require` is set automatically.
 
@@ -111,7 +125,7 @@ DB access via `ocha-stratus` env vars; `PGSSLMODE=require` is set automatically.
 uv run python scripts/ensure_schema.py   # idempotent: create missing tables, additive migrations, views
 uv run python scripts/import_kb_pages.py # one-off (done 2026-09-28): KB pages → aa.version_page
 uv run python scripts/build_site.py      # needs graphviz (`brew install graphviz`) for the ERD
-bash scripts/publish.sh                  # build → encrypt → gh-pages (SKIP_BUILD=1 reuses the build)
+bash scripts/publish.sh                  # build → encrypt → gh-pages; needs ADMIN_PASSWORD (SKIP_BUILD=1 reuses the build, DRY_RUN=1 stops before the commit)
 ```
 
 Once the laptop can no longer reach the dev DB, work from the snapshot in a local Postgres
