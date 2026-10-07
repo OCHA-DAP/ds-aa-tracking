@@ -1373,7 +1373,7 @@ def build_landing(page, d, e):
  <div class='sh-grid'>
   <svg viewBox='0 0 780 362' class='sh-svg' role='img' aria-label='Status diagram'>
    <defs><linearGradient id='shsplit' x1='0' y1='0' x2='1' y2='1'><stop offset='50%' stop-color='#dbeafe'/><stop offset='50%' stop-color='#e8f1f8'/></linearGradient><marker id='arr' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' markerHeight='7' orient='auto-start-reverse'><path d='M0,0 L10,5 L0,10 z' fill='#64748b'/></marker></defs>
-   <text x='10' y='22' class='sh-h'>Framework VERSION status (stored: one of three, set in the admin)</text>
+   <text x='10' y='22' class='sh-h'>Framework VERSION status (stored: one of three, recorded by the team)</text>
    <g class='sh-box'><rect x='10' y='40' width='120' height='40' rx='8'/><text x='70' y='65'>pre-development</text></g>
    <g class='sh-box'><rect x='170' y='40' width='120' height='40' rx='8'/><text x='230' y='65'>in development</text></g>
    <g class='sh-box sh-on'><rect x='330' y='40' width='120' height='40' rx='8'/><text x='390' y='65'>endorsed</text></g>
@@ -1396,12 +1396,12 @@ def build_landing(page, d, e):
    <g class='sh-box sh-dev'><rect x='10' y='276' width='220' height='34' rx='8'/><text x='120' y='298'>In development</text></g>
    <text x='240' y='290' class='sh-note'>no endorsed version yet — the framework is being built for the first time</text>
    <g class='sh-box sh-off'><rect x='10' y='318' width='220' height='34' rx='8'/><text x='120' y='340'>Retired (layer off by default)</text></g>
-   <text x='240' y='332' class='sh-note'>a manual flag on the framework (country × hazard) in the admin — overrides everything above</text>
+   <text x='240' y='332' class='sh-note'>a manual flag on the framework (country × hazard) — overrides everything above</text>
   </svg>
   <div class='sh-layers'>
    <b>Map layers.</b> <span class='dot' style='background:{KB_COLOR["active"]}'></span><b>Current frameworks</b> — every framework whose status is active, being updated or in development (the default view; the headline figures follow whatever is shown).
    <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span><b>Ad hoc allocations</b> — countries and hazards that received ad hoc anticipatory-action money without a framework version (light green; a framework that also received ad hoc money stays drawn as a framework).
-   <span class='dot' style='background:{LAYER_COLOR["retired"]}'></span><b>Retired</b> — frameworks flagged retired in the admin, drawn in grey so past coverage can be compared with today's.
+   <span class='dot' style='background:{LAYER_COLOR["retired"]}'></span><b>Retired</b> — frameworks flagged retired, drawn in grey so past coverage can be compared with today's.
    <span class='dot dot-hollow' style='border-color:{LAYER_COLOR["tech"]}'></span><b>Technical support</b> — countries where OCHA supported the framework technically without a funding commitment, whatever their status (including pipeline ones like Palau and Tonga), drawn as a hollow teal pin.
   </div>
  </div>
@@ -2277,7 +2277,7 @@ function renderSide(){
     (isCur ? '' : f.current ? `<div class='warnbox'>Viewing ${pastY()?'another':'an older'} version (${esc(v.superseded?'superseded':(v.status||'past'))}). The map shows this version's scope. ${pastY()?`In force or most recent at the end of ${YEAR}`:'Most recent'}: <a onclick='selectVersion("${f.current}")' style='cursor:pointer'>${f.current}</a>.</div>`
        : `<div class='warnbox'>No dated version by the end of ${YEAR}${f.layers.length?' (in development by the status reports)':''}; showing the latest version.</div>`) +
     factsBlock(f, v) + pillarsBar(f, v) + `<div id='pillarbody'>${pillarBody(f, v)}</div>` +
-    `<p class='small' style='margin-top:12px'>${f.page?`<a href='${f.page}'>full framework page →</a> · `:''}<a href='hierarchy.html'>explorer</a></p>`;
+    (f.page && f.page!=='#' ? `<p class='small' style='margin-top:12px'><a href='${f.page}'>full framework page →</a></p>` : '');
   annotate(side, side);
 }
 // ---------- the building blocks of AA: model · plan · funding · learning (always shown)

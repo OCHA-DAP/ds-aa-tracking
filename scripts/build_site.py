@@ -12,6 +12,8 @@ README) — nothing in site_build/ is committed or served unencrypted.
 import html
 import json
 import os
+import re
+import shutil
 import sys
 from datetime import date
 from pathlib import Path
@@ -48,11 +50,12 @@ header .t { font-weight:700; font-size:17px; margin-right:26px; }
 header nav.pub a { color:#fff; font-weight:600; font-size:14px; padding:4px 0; border-bottom:2px solid transparent; }
 header nav.pub a:hover { border-bottom-color:#9ec5f0; }
 header nav.pub a.sub { color:#9ec5f0; font-weight:400; font-size:12px; margin-left:-10px; }
-header .intnav { margin-left:auto; position:relative; }
-header .intnav summary { cursor:pointer; color:#9ec5f0; font-size:13px; list-style:none; padding:4px 0; }
-header .intnav summary::-webkit-details-marker { display:none; }
-header .intnav > div { position:absolute; right:0; top:30px; background:#1f2a44; padding:10px 14px; border-radius:8px; display:flex; flex-direction:column; gap:7px; z-index:50; min-width:180px; box-shadow:0 6px 18px rgba(0,0,0,.25); }
-header .intnav > div a { margin:0; font-size:13px; }
+header.adm { background:#3b2338; }
+header.adm .tag { background:#f0b429; color:#3b2338; font-size:10.5px; font-weight:700; letter-spacing:.06em; padding:1px 7px; border-radius:9px; margin-right:18px; }
+header .tosite { margin-left:auto; margin-right:0; font-size:13px; }
+.devbanner { background:#fff3cd; color:#5c4400; border-bottom:1px solid #e6cf85; padding:7px 28px; font-size:13px; line-height:1.4; text-align:center; }
+ul.adm-list { list-style:none; padding:0; margin:6px 0 0; columns:2 320px; }
+ul.adm-list li { margin:4px 0; font-size:13.5px; break-inside:avoid; } ul.adm-list .d { color:var(--muted); font-size:12px; }
 @media (max-width:759px){ header { padding:10px 16px; } header .t { margin-right:14px; } header nav.pub a { margin-right:12px; } }
 main { max-width:1500px; margin:0 auto; padding:22px 28px 80px; }
 h1 { font-size:24px; } h2 { font-size:19px; margin-top:34px; }
@@ -96,9 +99,26 @@ function dlcsv(id, name) {
 }
 """
 
-# public-facing nav: the map, then the building blocks of AA (model · plan · financing, with
-# donor shares as a sub-link), learning and media; everything internal sits behind one
-# menu on the right
+# ---------------------------------------------------------------- two sites, one build
+# The PUBLIC site (shared widely) is the tabs of its header and the framework pages the map
+# opens: nothing else, and no link to anything else. Every other page — the admin, data
+# entry, the tables and review pages, the extra dashboards and explorers, the pages of the
+# pipeline frameworks the map does not show — is the ADMIN site: written to admin/, with its
+# own header, encrypted with its own password (scripts/publish.sh). The builders do not say
+# which site a page belongs to: page() collects them all and write_site() sorts them once
+# the map is known. An admin page may link to the public site; a public page never links
+# to the admin site, and never carries the data service's token.
+PUBLIC_TABS = ("index.html", "pillar-model.html", "pillar-history.html", "pillar-plan.html",
+               "dash-funding.html", "dash-donors.html", "pillar-learning.html", "media.html")
+ROOT_ASSETS = ("chart.umd.js", "sankey.js")           # the public pages load these; admin pages through ../
+ADMIN_ASSETS = ("pdf.min.js", "pdf.worker.min.js")    # data entry only
+ADMIN_DIR = "admin"
+
+BANNER = ("<div class='devbanner' role='note'><b>OCHA internal product under development</b>, "
+          "subject to change without warning. The figures may be incorrect and should not be used.</div>")
+
+# public nav: the map, then the building blocks of AA (model · plan · financing, with donor
+# shares as a sub-link), learning and media
 NAV = """
 <header>
   <span class="t"><a href="index.html" style="color:#fff;text-decoration:none">Anticipatory action</a></span>
@@ -110,40 +130,179 @@ NAV = """
    <a href="pillar-learning.html">Learning</a>
    <a href="media.html">Media</a>
   </nav>
-  <details class="intnav"><summary>Internal ▾</summary><div>
-   <a href="overview.html">Overview</a>
-   <a href="pillar-model-draft.html">Model visuals (mock-ups)</a>
-   <a href="dashboards.html">Dashboards</a>
-   <a href="dash-delivery.html">Delivery &amp; people</a>
-   <a href="dash-allocations.html">Allocation explorer</a>
-   <a href="hierarchy.html">Portfolio explorer</a>
-   <a href="entry.html">Data entry</a>
-   <a href="admin.html">Admin</a>
-   <a href="schema.html">DB schema</a>
-   <a href="reconciliation.html">Reconciliation</a>
-   <a href="review-julia.html">Julia</a>
-   <a href="review-yakubu.html">Yakubu</a>
-   <a href="cerf-mirror.html">OneGMS mirrors</a>
-   <a href="roadmap.html">Roadmap</a>
-   <a href="decisions.html">Source decisions</a>
-  </div></details>
 </header>
 """
+
+# admin nav: the few pages used every day; index.html (the admin home) lists all of them
+NAV_ADMIN = """
+<header class="adm">
+  <span class="t"><a href="index.html" style="color:#fff;text-decoration:none">AA tracking</a></span><span class="tag">ADMIN</span>
+  <nav class="pub">
+   <a href="index.html">All pages</a>
+   <a href="admin.html">Data admin</a>
+   <a href="entry.html">Data entry</a>
+   <a href="dashboards.html">Dashboards</a>
+   <a href="hierarchy.html">Portfolio explorer</a>
+   <a href="schema.html">DB schema</a>
+   <a href="reconciliation.html">Reconciliation</a>
+  </nav>
+  <a class="tosite" href="../index.html">Public site →</a>
+</header>
+"""
+
+# what the admin home says about each page; a page not listed here still appears, under
+# 'Other pages', so nothing built can go missing from the admin site
+ADMIN_HOME = [
+    ("Data", [
+        ("admin.html", "browse and edit every table of the tracking database"),
+        ("entry.html", "enter or ingest a framework: upload the PDF or fill the form"),
+        ("status.html", "the status form"),
+    ]),
+    ("Dashboards and explorers (not on the public site)", [
+        ("dashboards.html", "the hub: every framework page, with the monitoring calendar"),
+        ("dash-delivery.html", "sub-grants, localisation, agencies, sectors, cash, people reached"),
+        ("dash-allocations.html", "every CERF, country and regional fund allocation since 2006; complementarity; timeliness"),
+        ("hierarchy.html", ""),
+        ("questions.html", ""),
+        ("pillar-model-draft.html", ""),
+    ]),
+    ("Schema and data review", [
+        ("overview.html", "ownership map, portfolio at a glance"),
+        ("schema.html", ""),
+        ("tables.html", ""),
+        ("reconciliation.html", ""),
+        ("review-julia.html", ""), ("review-yakubu.html", ""),
+        ("cerf-mirror.html", ""),
+        ("decisions.html", ""),
+        ("roadmap.html", ""),
+    ]),
+]
 
 
 from policy_text import POLICY_CSS, policy_box  # noqa: E402  (plain-language box on top of each page)
 
+_PAGES = {}     # file name -> (title, body), in build order; write_site() writes them
+
+
 def page(name, title, body):
-    doc = f"""<!doctype html><html><head><meta charset="utf-8">
+    """Register a page. Nothing is written yet: which site it lands on (and so how its links
+    are spelled) is decided in write_site(), once every page is known."""
+    _PAGES[name] = (title, body)
+    print(f"  {name}")
+
+
+def _quoted(names):
+    """A pattern for any of these file names as a whole quoted string (an href, a src, a
+    value in the page data), optionally followed by an anchor or a query."""
+    return re.compile(r"""(?<=['"`])(""" + "|".join(sorted(map(re.escape, names), key=len, reverse=True))
+                      + r""")(?=[#?'"`])""")
+
+
+def public_pages():
+    """The public site: the tabs, and the framework pages the map opens (a pipeline framework
+    with no layer on the map is not shown there, so its page is not public either)."""
+    on_map = set(re.findall(r"fw-[A-Za-z0-9_\-]+\.html", _PAGES["index.html"][1])) if "index.html" in _PAGES else set()
+    on_map &= set(_PAGES)
+    # the rule reads the map's own links: if the map stops spelling them out, every framework
+    # page would silently turn admin-only and the tabs' links to them would be cut
+    if "index.html" in _PAGES and not on_map and any(n.startswith("fw-") for n in _PAGES):
+        raise SystemExit("FATAL: the map (index.html) references no framework page: cannot tell which are public")
+    return {n for n in _PAGES if n in PUBLIC_TABS or n in on_map}
+
+
+def _render(name, title, body, nav, meta):
+    return f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)}</title><style>{CSS}{POLICY_CSS}</style>
 <script>{FILTER_JS}</script></head><body>
-{NAV}<main><h1>{html.escape(title)}</h1>
-<p class="meta">Generated {date.today().isoformat()} from the dev <code>aa</code> schema
-({DATA_STAMP}) · internal review only</p>
+{BANNER}{nav}<main><h1>{html.escape(title)}</h1>
+<p class="meta">{meta}</p>
 {policy_box(name)}{body}</main></body></html>"""
-    (OUT / name).write_text(doc)
-    print(f"  {name}")
+
+
+def _admin_home(admin):
+    """admin/index.html: every page of the admin site, grouped."""
+    def li(n, note=""):
+        return (f"<li><a href='{n}'>{html.escape(_PAGES[n][0])}</a>"
+                + (f" <span class='d'>— {html.escape(note)}</span>" if note else "") + "</li>")
+    listed, cards = set(), []
+    for head, rows in ADMIN_HOME:
+        rows = [(n, note) for n, note in rows if n in admin]
+        listed |= {n for n, _ in rows}
+        if rows:
+            cards.append(f"<div class='card'><b>{html.escape(head)}</b><ul class='adm-list'>"
+                         + "".join(li(n, note) for n, note in rows) + "</ul></div>")
+    fw = sorted(n for n in admin if n.startswith("fw-"))
+    if fw:
+        cards.append("<div class='card'><b>Framework pages not on the public site</b> (pipeline "
+                     "frameworks the map does not show)<ul class='adm-list'>" + "".join(map(li, fw)) + "</ul></div>")
+    rest = sorted(n for n in admin if n not in listed and not n.startswith(("fw-", "table-")))
+    if rest:
+        cards.append("<div class='card'><b>Other pages</b><ul class='adm-list'>" + "".join(map(li, rest)) + "</ul></div>")
+    return ("<div class='card'>The admin site: data administration and entry, the internal dashboards "
+            "and explorers, the schema and the review pages. It is not linked from the public site "
+            "and has its own password.</div>" + "".join(cards))
+
+
+def write_site():
+    """Write every registered page: the public ones at the root, the rest under admin/.
+
+    Bodies are written as if all pages sat side by side. An admin page reaches the public
+    pages and the root scripts through ../ ; a public page loses any link to an admin page
+    (a plain link keeps its text, a link carried in the page data points nowhere) and the
+    build says so. A public page carrying the data service's token stops the build."""
+    public = public_pages()
+    admin = set(_PAGES) - public
+    adm_dir = OUT / ADMIN_DIR
+    adm_dir.mkdir(exist_ok=True)
+    stamp = date.today().isoformat()
+    to_root = _quoted(public | set(ROOT_ASSETS))
+    to_admin = _quoted(admin) if admin else None
+    anchor = re.compile(r"""<a\b[^>]*?\bhref=(['"])([A-Za-z0-9_\-]+\.html)(?:[#?][^'"]*)?\1[^>]*>(.*?)</a>""", re.S)
+    token = os.environ.get("EXTRACT_TOKEN", "").strip() or (
+        (Path(__file__).parents[1] / ".extract_token").read_text().strip()
+        if (Path(__file__).parents[1] / ".extract_token").exists() else "")
+    cut = {}
+    for name, (title, body) in _PAGES.items():
+        if name in public:
+            if to_admin:
+                def unlink(m, name=name):
+                    if m.group(2) not in admin:
+                        return m.group(0)
+                    cut.setdefault(name, set()).add(m.group(2))
+                    return m.group(3)
+                body = anchor.sub(unlink, body)
+                for n in set(to_admin.findall(body)):
+                    cut.setdefault(name, set()).add(n)
+                body = to_admin.sub("#", body)
+            doc = _render(name, title, body, NAV, f"Generated {stamp} · {DATA_STAMP}")
+            if (token and token in doc) or "x-site-token" in doc:
+                raise SystemExit(f"FATAL: public page {name} carries the data service's token")
+            (OUT / name).write_text(doc)
+        else:
+            body = to_root.sub(lambda m: "../" + m.group(1), body)
+            (adm_dir / name).write_text(_render(
+                name, title, body, NAV_ADMIN,
+                f"Generated {stamp} from the dev <code>aa</code> schema ({DATA_STAMP}) · admin site"))
+    (adm_dir / "index.html").write_text(_render(
+        "admin/index.html", "AA tracking — admin site", _admin_home(admin), NAV_ADMIN,
+        f"Generated {stamp} from the dev <code>aa</code> schema ({DATA_STAMP}) · admin site"))
+    for asset in ROOT_ASSETS:
+        shutil.copy(Path(__file__).parents[1] / "site_src" / asset, OUT / asset)
+    for asset in ADMIN_ASSETS:
+        shutil.copy(Path(__file__).parents[1] / "site_src" / asset, adm_dir / asset)
+        (OUT / asset).unlink(missing_ok=True)
+    # nothing from an earlier build may linger: publish.sh encrypts whatever HTML is here
+    for f in list(OUT.glob("*.html")):
+        if f.name not in public:
+            f.unlink()
+    for f in list(adm_dir.glob("*.html")):
+        if f.name not in admin and f.name != "index.html":
+            f.unlink()
+    for name, gone in sorted(cut.items()):
+        # visible in the publish run's summary, not only in its log
+        print(f"::warning::public page {name}: link(s) to admin-only page(s) removed: {', '.join(sorted(gone))}")
+    print(f"  public site: {len(public)} pages · admin site: {len(admin) + 1} pages ({ADMIN_DIR}/)")
 
 
 _CSV_SEQ = [0]
@@ -379,14 +538,10 @@ def main():
     build_roadmap_page()
 
     # ---------- dashboards + per-framework pages
-    import shutil
-
     import dashboards
     dashboards.build_all(e, page, tbl)
     import admin_page
     admin_page.build_admin(page)
-    for asset in ("chart.umd.js", "sankey.js", "pdf.min.js", "pdf.worker.min.js"):
-        shutil.copy(Path(__file__).parents[1] / "site_src" / asset, OUT / asset)
 
     # ---------- index
     reg = pd.read_sql("SELECT * FROM aa.v_trk_framework_current ORDER BY country_name", e)
@@ -419,6 +574,7 @@ cerf_allocation_storm · cerf_supplement
 {tbl(reg)}
 """
     page("overview.html", "AA tracking — schema & data review", idx)
+    write_site()
 
 
 def _latest_status_pivot(e, since="2025-12-01"):
@@ -1237,7 +1393,7 @@ def build_schema_page(e):
             )
             link = (
                 f" · <a href='table-{t}.html'>data</a>"
-                if t in trk_schema.TABLES else ""
+                if t in trk_schema.TABLES and t in TABLE_ORDER else ""
             )
             sections.append(
                 f"<div class='card'><h3 style='margin:2px 0'>aa.{t}"
