@@ -282,9 +282,13 @@ def build_learning(page, d):
     docs = d["learning"]          # public documents only (internal rows never leave _fetch)
     cur = d["current"]
     cnames = {c: _t(n) for c, n in zip(cur["country_iso3"], cur["country_name"])}
-    fw_of = {}                    # iso -> hazards of its frameworks (each has a page)
+    # iso -> hazards of its frameworks that have a public page: a framework still in the
+    # pipeline is not on the map, and its page is not part of the public site. (These links
+    # are built in the browser from the page's data, so nothing downstream can unlink them.)
+    fw_of = {}
     for r in cur.itertuples():
-        fw_of.setdefault(r.country_iso3, []).append(r.hazard)
+        if getattr(r, "lifecycle", None) != "pipeline":
+            fw_of.setdefault(r.country_iso3, []).append(r.hazard)
     premise_label = dict(PREMISES)
 
     # ---- documents
