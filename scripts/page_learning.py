@@ -395,7 +395,7 @@ def build_learning(page, d):
         mine = feat_of.get(c, [])
         more = heads.get(c, [])[:max(0, PER_COUNTRY - sum(featured[i]["p"] not in on for i in mine))]
         # pips: what the country's findings and headlines are about, among the premises with
-        # a colour of their own — so that speed is on the map without being asked for
+        # a colour of their own — so that a country with no callout still says what it holds
         about = {featured[i]["p"] for i in mine} | {h["p"] for h in more if h["p"]}
         countries[c] = {"n": name(c), "x": round(x, 1), "y": round(y, 1), "r": b,
                         "dir": landing.DIRECTIONS.get(c, (0.7, -0.7)), "nd": n_docs.get(c, 0),
@@ -461,7 +461,7 @@ def build_learning(page, d):
  <div id='hcard' class='hcard' hidden></div>
  <div class='llegend' id='llegend'><b>{html.escape(LEDE)}</b>{legend}
   <span class='lg-h'>{called}The small dots beside a country say what its findings are about:
-  hover it for all of them, click to keep them open. Click a finding for how the study was designed.</span></div>
+  hover the country for more, click to keep it open. Click a finding for how the study was designed.</span></div>
 </div>
 <div id='hlstack' class='hlstack'></div>
 <aside id='mpanel' class='lpanel mpanel' role='region' aria-label='The finding or document opened from the map' tabindex='-1' hidden></aside>
@@ -522,7 +522,7 @@ LEARNING_CSS = r"""
 .callout .hl { width:100%; border:0; border-left:4px solid var(--pc,#94a3b8); border-radius:0; box-shadow:none; }
 .callout .hl + .hl { border-top:1px solid #e3e8ef; }
 .callout.wide { width:470px; display:grid; grid-template-columns:1fr 1fr; }
-.callout.wide .hl { border-top:0; border-bottom:1px solid #e3e8ef; }
+.callout.wide .hl { border-top:0; } .callout.wide .hl:nth-child(n+3) { border-top:1px solid #e3e8ef; }
 .callout.wide .hl:nth-child(even) { border-left-width:4px; box-shadow:-1px 0 0 #e3e8ef; }
 .callout .hl:hover, .callout .hl:focus-visible { background:#f5f9fd; box-shadow:none; }
 .callout .hl-b, .hlstack .hl[data-f] .hl-b { font-size:19px; }
