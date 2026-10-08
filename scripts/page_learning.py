@@ -120,9 +120,6 @@ FEATURED = [
        "Pople et al., Centre for Disaster Protection (2021)", CDP_2021),
 ]
 LEDE = "Findings from the strongest studies so far"
-GAPS = ("No rigorous study has measured deaths averted, the measured gains are concentrated "
-        "in the weeks around the shock, and the cost-effectiveness figures are modelled "
-        "rather than observed.")
 
 # ---- further headlines, per country (shown on hover) ----------------------------------------
 # One finding of one learning document about ONE country, under one premise: `big` is the
@@ -466,7 +463,6 @@ def build_learning(page, d):
 <div id='hlstack' class='hlstack'></div>
 <aside id='mpanel' class='lpanel mpanel' role='region' aria-label='The finding or document opened from the map' tabindex='-1' hidden></aside>
 </div>
-<p class='lgaps'><b>What the evidence does not yet show.</b> {html.escape(GAPS)}</p>
 <div class='lrepo' id='lrepo'>
  <h2>Learning documents</h2>
  <div class='lbar'>
@@ -555,9 +551,6 @@ LEARNING_CSS = r"""
 .lmapbox.compact + .hlstack { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:8px; margin-top:10px; }
 .hlstack .hc-h, .hlstack .hc-f, .hlstack .hc-k { grid-column:1/-1; margin:0; }
 .hlstack .hl { width:auto; box-shadow:none; }
-.lgaps { margin:12px 0 0; padding:9px 14px; background:#fff; border:1px solid #e3e6ea; border-left:4px solid #0f2540; border-radius:8px;
-  font-size:12.5px; line-height:1.5; color:#33435a; }
-.lgaps b { color:#0f2540; }
 /* the repository */
 .lrepo { margin-top:28px; }
 .lrepo h2 { margin:0 0 6px; }
