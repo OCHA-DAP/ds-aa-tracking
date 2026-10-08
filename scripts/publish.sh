@@ -15,7 +15,13 @@
 #   pdf.js files of the data-entry page: any other nested path aborts before committing, and
 #   any other directory in the pushed tree is fatal
 # - every page published is a staticrypt page: one that is not aborts before committing
+# - the OPEN LAYER (scripts/llm_layer.py) is published unencrypted on purpose: llms.txt,
+#   llms-full.txt, robots.txt, sitemap.xml, *.md and aa-*.json / aa-*.csv at the top level —
+#   the Markdown twins of the public framework pages and the tables behind the public pages,
+#   for fetch-based tools and LLMs. Never a page, never anything from admin/.
 set -euo pipefail
+OPEN_GLOBS='*.md aa-*.json aa-*.csv llms.txt llms-full.txt robots.txt sitemap.xml'
+open_files() { ( cd "$1" && shopt -s nullglob && for g in $OPEN_GLOBS; do for f in $g; do echo "$f"; done; done ); }
 cd "$(dirname "$0")/.."
 PW="${SITE_PASSWORD:-anticipation2026}"
 ADMIN_PW="${ADMIN_PASSWORD:-}"
@@ -53,6 +59,7 @@ trap 'git worktree remove --force "$WT" 2>/dev/null || true' EXIT
 # the published tree is exactly this build: a page dropped from the build, or moved to the
 # admin site, must not linger at its old address
 rm -f "$WT"/*.html "$WT"/adm-*.json "$WT"/pdf.min.js "$WT"/pdf.worker.min.js
+for f in $(open_files "$WT"); do rm -f "$WT/$f"; done
 rm -rf "${WT:?}/$ADMIN"
 mkdir "$WT/$ADMIN"
 cp site_encrypted/*.html "$WT"/
@@ -67,11 +74,14 @@ for a in pdf.min.js pdf.worker.min.js; do          # the data-entry page only: a
 done
 # per-country admin-boundary geometry for the landing map (public CODAB data, not encrypted)
 cp site_build/adm-*.json "$WT"/
+# the open layer (unencrypted by design; the build already checked it for the proxy token)
+for f in $(open_files site_build); do cp "site_build/$f" "$WT/$f"; done
 touch "$WT/.nojekyll"
 (
   cd "$WT"
   git add -u .                   # tracked files only: what changed and what went away
   for f in *.html adm-*.json chart.umd.js sankey.js .nojekyll; do git add -f "./$f"; done
+  for f in $(open_files .); do git add -f "./$f"; done
   for f in $ADMIN/*.html $ADMIN/pdf.min.js $ADMIN/pdf.worker.min.js; do git add -f "./$f"; done
   # the tree about to be committed (not just what changed)
   BAD=$(git ls-files | grep "/" | grep -v -E "^$ADMIN/([A-Za-z0-9_.-]+\.html|pdf\.min\.js|pdf\.worker\.min\.js)$" || true)
@@ -85,10 +95,17 @@ touch "$WT/.nojekyll"
     fi
   done
   [ -f "$ADMIN/index.html" ] || { echo "FATAL: the admin site has no index.html — aborting" >&2; exit 1; }
+  # the open files are plain data: never a token, never a page
+  for f in $(open_files .); do
+    if grep -q "x-site-token\|staticrypt" "$f"; then
+      echo "FATAL: open file $f carries a token or a page — aborting" >&2; exit 1
+    fi
+  done
+  [ -f llms.txt ] || { echo "FATAL: the open layer is missing (no llms.txt) — aborting" >&2; exit 1; }
   if git diff --cached --quiet; then
     echo "nothing changed — not publishing"
   elif [ -n "${DRY_RUN:-}" ]; then
-    echo "DRY_RUN: would publish $(git ls-files | grep -c -v "/") top-level files and $(git ls-files "$ADMIN" | wc -l | tr -d ' ') under $ADMIN/"
+    echo "DRY_RUN: would publish $(git ls-files | grep -c -v "/") top-level files ($(open_files . | wc -l | tr -d ' ') open) and $(git ls-files "$ADMIN" | wc -l | tr -d ' ') under $ADMIN/"
     git diff --cached --stat | tail -1
   else
     git commit -q -m "Publish review site $(date +%F)"

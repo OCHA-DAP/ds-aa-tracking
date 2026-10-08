@@ -3897,3 +3897,4 @@ def build_all(e, page, tbl):
     build_status_form(page, d)
     import landing
     landing.build_landing(page, d, e)
+    return d                      # the open layer (llm_layer) reuses the frames
