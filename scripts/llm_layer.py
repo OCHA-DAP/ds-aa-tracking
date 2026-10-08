@@ -57,8 +57,9 @@ Counting rules (an LLM summing these files without them gets wrong totals):
 - CBPF and regional-fund pre-arranged money comes from the OneGMS allocation mirror
   (source `onegms-mirror`); hand-tracked CBPF rows are kept only for country-years the
   mirror does not cover, so the same money is never counted twice.
-- A framework is one (country, hazard) pair. Regional frameworks do not exist: the Dry
-  Corridor is three national frameworks that share a document.
+- A framework is one (country, hazard) pair. Regional frameworks do not exist: the Central
+  America Dry Corridor is four national frameworks (El Salvador, Guatemala, Honduras and the
+  retired Nicaragua) that share a document.
 - A framework version is an endorsed document; `lifecycle` says whether the framework is
   active, being updated, in development, dormant or expired today.
 - Return periods and activation probabilities are per trigger window of one version, from
