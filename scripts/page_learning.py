@@ -1,11 +1,10 @@
 """The Learning page (pillar-learning.html): a map of headline findings, then the repository.
 
 Reworked on 2026-10-05 into two things only. (1) A world map of findings from the strongest
-studies so far (FEATURED). Six are showcased, each called out of the countries it is
-about: three on saving lives and livelihoods, three on cost effectiveness. Speed is always
-on the map as well, but not showcased: a small dot beside a country says what its findings
-are about, and hovering the country keeps its own callouts lit and shows its other findings
-and headlines (HEADLINES, then its documents' key statistics). (2) The repository:
+studies so far (FEATURED), each called out of the countries it is about: on saving lives
+and livelihoods, on cost effectiveness and on speed. A small dot beside a country says
+what its findings are about, and hovering the country keeps its own callouts lit and shows
+its further headlines (HEADLINES, then its documents' key statistics). (2) The repository:
 every public learning document, filterable by country and hazard, sortable by year.
 
 A finding or a document opens in a panel INSIDE the page: over the map when it was opened
@@ -36,12 +35,13 @@ from import_learning import PLACEHOLDER
 # of aa.learning_document the card opens that document's panel, otherwise the finding shows
 # with its own citation and link.
 #
-# The map showcases (calls out, without being asked) the findings of SHOWCASE_PREMISES: three
-# on saving lives and livelihoods and three on cost effectiveness (the brief for the page).
-# The mock-up has two on cost effectiveness; the third (South Sudan) is not from it: same
-# form, from the OCHA lessons paper in the repository. The mock-up's two findings on speed
-# are on the map too, always, but are not showcased: they lead their country's card.
-SHOWCASE_PREMISES = ("lives_livelihoods", "cost_effectiveness")
+# The map showcases (calls out, without being asked) the findings of SHOWCASE_PREMISES: all
+# three premises since 2026-10-08, so every finding below — the mock-up's seven, speed
+# included, and one more. The first brief for the page asked for three on cost effectiveness
+# and the mock-up has two; the third (South Sudan) is not from it: same form, from the OCHA
+# lessons paper in the repository. A premise left out of SHOWCASE_PREMISES stays on the map
+# without callouts: its findings lead their country's card.
+SHOWCASE_PREMISES = ("lives_livelihoods", "cost_effectiveness", "speed")
 CDP_2021 = ("https://www.disasterprotection.org/publications-centre/"
             "anticipatory-cash-transfers-in-climate-disaster-response")
 
@@ -395,7 +395,7 @@ def build_learning(page, d):
         mine = feat_of.get(c, [])
         more = heads.get(c, [])[:max(0, PER_COUNTRY - sum(featured[i]["p"] not in on for i in mine))]
         # pips: what the country's findings and headlines are about, among the premises with
-        # a colour of their own — so that speed is on the map without being asked for
+        # a colour of their own — so that a country with no callout still says what it holds
         about = {featured[i]["p"] for i in mine} | {h["p"] for h in more if h["p"]}
         countries[c] = {"n": name(c), "x": round(x, 1), "y": round(y, 1), "r": b,
                         "dir": landing.DIRECTIONS.get(c, (0.7, -0.7)), "nd": n_docs.get(c, 0),
@@ -443,6 +443,9 @@ def build_learning(page, d):
                   *sorted(h for h in hz_n if h and h not in HAZARD_LABEL)])
     n_int = int(d.get("n_internal_docs", 0))
 
+    n_shown = sum(f["p"] in on for f in featured)
+    called = "" if n_shown == len(featured) else f"{n_shown} of them are called out. "
+
     data = {"docs": recs, "countries": countries, "featured": featured, "prem": prem,
             "on": on,
             "hazard": HAZARD_LABEL, "vb": {"w": landing.VB_W, "h": round(landing.VB_H, 1)}}
@@ -457,8 +460,8 @@ def build_learning(page, d):
  <div id='lpane' class='lpane'><svg id='leaders' class='leadersvg'></svg></div>
  <div id='hcard' class='hcard' hidden></div>
  <div class='llegend' id='llegend'><b>{html.escape(LEDE)}</b>{legend}
-  <span class='lg-h'>Six are called out. The small dots beside a country say what its findings are about:
-  hover it for all of them, click to keep them open. Click a finding for how the study was designed.</span></div>
+  <span class='lg-h'>{called}The small dots beside a country say what its findings are about:
+  hover the country for more, click to keep it open. Click a finding for how the study was designed.</span></div>
 </div>
 <div id='hlstack' class='hlstack'></div>
 <aside id='mpanel' class='lpanel mpanel' role='region' aria-label='The finding or document opened from the map' tabindex='-1' hidden></aside>
@@ -519,7 +522,7 @@ LEARNING_CSS = r"""
 .callout .hl { width:100%; border:0; border-left:4px solid var(--pc,#94a3b8); border-radius:0; box-shadow:none; }
 .callout .hl + .hl { border-top:1px solid #e3e8ef; }
 .callout.wide { width:470px; display:grid; grid-template-columns:1fr 1fr; }
-.callout.wide .hl { border-top:0; border-bottom:1px solid #e3e8ef; }
+.callout.wide .hl { border-top:0; } .callout.wide .hl:nth-child(n+3) { border-top:1px solid #e3e8ef; }
 .callout.wide .hl:nth-child(even) { border-left-width:4px; box-shadow:-1px 0 0 #e3e8ef; }
 .callout .hl:hover, .callout .hl:focus-visible { background:#f5f9fd; box-shadow:none; }
 .callout .hl-b, .hlstack .hl[data-f] .hl-b { font-size:19px; }
@@ -627,8 +630,8 @@ table.ldocs tr.lspacer, table.ldocs tr.lspacer:hover td { cursor:default; backgr
 
 LEARNING_JS = r"""
 const LD = window.LD, C = LD.countries, DOCS = LD.docs, F = LD.featured, VB = LD.vb;
-// the showcased premises: their findings are the callouts. The other findings (speed) are on
-// the map through their country: its pip, and its card on hover.
+// the showcased premises: their findings are the callouts. A finding of any other premise is
+// on the map through its country: its pip, and its card on hover.
 const ON = new Set(LD.on), shown = i => ON.has(F[i].p);
 const BYID = new Map(DOCS.map(d => [d.id, d]));
 const P = k => LD.prem[k] || {l:'', c:'#94a3b8', ink:'#556270'};
