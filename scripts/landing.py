@@ -1516,6 +1516,14 @@ table.acttbl { table-layout:fixed; width:100%; } table.acttbl td, table.acttbl t
 table.acttbl tr.oldv td { background:#f8fafc; }
 .fhead .actdots, .wl-pin .actdots { display:none; }
 .actdot { width:7px; height:7px; border-radius:50%; background:#e3322d; border:1.5px solid #fff; display:inline-block; }
+/* an activation in the last 30 days: its dot blinks (2026-10-08) — the one animation on the map;
+   the monitoring ring stays static (above). Readers who prefer reduced motion get a static red
+   halo instead, so the information survives without the movement. */
+@keyframes actblink { 0%, 100% { opacity:1; } 50% { opacity:.15; } }
+.actdot.recent, .maplegend .dot.recent { animation: actblink 1s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .actdot.recent, .maplegend .dot.recent { animation:none; box-shadow:0 0 0 2px #e3322d; }
+}
 .maplegend { position:absolute; left:12px; bottom:12px; font-size:11.5px; line-height:1.55; background:rgba(255,255,255,.86); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); padding:9px 12px;
   border-radius:10px; box-shadow:0 1px 2px rgba(16,24,40,.08), 0 6px 18px -8px rgba(16,24,40,.25); border:1px solid rgba(226,232,240,.9); z-index:3; color:#334155; transition: opacity .3s; }
 .maplegend b { color:#0f2540; }
@@ -1691,6 +1699,26 @@ function statusAt(f, D){
   if(!sc || sc === 'pipeline' || sc === 'retired') return [null, null];
   return [f.versions.length ? 'development' : sc, null];   // its first version came later: being built
 }
+// the framework activations a pin's dots stand for: the year view's filter, as applyYear() counts them
+function dotActs(f){ return f.activations.filter(a => a.type === 'framework_aa' && (YEAR == null || String(a.date).slice(0, 4) === String(YEAR))); }
+// an activation in the last RECENT_DAYS days, by the browser's clock (the page is static: one
+// published weeks ago must not keep blinking on the build date). Dates are partial ISO: a full
+// date is used as is (the KB crosswalk date sharpens a month-only one when it falls in that
+// month); a month-only date counts while the month's last day — or today, inside the month — is
+// within the window; a year-only date is too coarse to count.
+const RECENT_DAYS = 30;
+function isRecent(a){
+  let d = String(a.date || ''); const k = String(a.kb_date || '');
+  if(k.length === 10 && k.startsWith(d)) d = k;
+  if(d.length < 7) return false;
+  const y = +d.slice(0, 4), m = +d.slice(5, 7), now = new Date(),
+        today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  let end;
+  if(d.length >= 10) end = Date.UTC(y, m - 1, +d.slice(8, 10));
+  else { if(Date.UTC(y, m - 1, 1) > today) return false; end = Math.min(Date.UTC(y, m, 0), today); }
+  const age = (today - end) / 864e5;
+  return age >= 0 && age <= RECENT_DAYS;
+}
 function applyYear(){
   const Y = String(YEAR), D = dateY();
   Object.values(L).forEach(c => c.fws.forEach(f => {
@@ -1754,9 +1782,12 @@ function verBadge(st){ st=st||''; const m = {endorsed:'endorsed', superseded:'su
   const lbl = {development:'in development', 'pre-development':'pre-development'}[st] || st || '?';
   return `<span class='badge b-${m[st]||'retired'}'>${esc(lbl)}</span>`; }
 function hzColor(h){ return HAZ[h] || '#7a8699'; }
-function iconHTML(f, extra=''){ const ps = pinStyle(f); return `<span class='iconbox ${f.ring==='now'?'able-now':''} ${ps.cls} ${extra}' style='background:${ps.bg}' data-hz='${f.hazard}'>`
+function iconHTML(f, extra=''){ const ps = pinStyle(f);
+  const rec = dotActs(f).map(isRecent).sort((a, b) => b - a), nRec = rec.filter(Boolean).length;   // recent dots first: the 16-dot cap never hides one
+  const ttl = `${rec.length} activation${rec.length>1?'s':''}${nRec ? ` · ${nRec} in the last ${RECENT_DAYS} days` : ''}`;
+  return `<span class='iconbox ${f.ring==='now'?'able-now':''} ${ps.cls} ${extra}' style='background:${ps.bg}' data-hz='${f.hazard}'>`
   + `<svg viewBox='0 0 24 24' class='hz'>${GLYPH[f.glyph]||GLYPH.other}</svg>`
-  + (f.n_act ? `<span class='actdots' title='${f.n_act} activation${f.n_act>1?'s':''}'>${'<span class="actdot"></span>'.repeat(Math.min(f.n_act,16))}</span>` : '') + `</span>`; }
+  + (rec.length ? `<span class='actdots' title='${ttl}'>${rec.slice(0, 16).map(r => `<span class="actdot${r ? ' recent' : ''}"></span>`).join('')}</span>` : '') + `</span>`; }
 // ---------- projections
 // World: Equal Earth (UN GA A/80/L.104, Sep 2026), centred on EE.lam0, fitted to the view box.
 // Country: local equirectangular fit (cos-lat corrected). Zooming MORPHS one into the other.
@@ -1948,6 +1979,7 @@ function worldLegend(){
   const onLayer = k => all.filter(f=>f.layers.includes(k));
   const n = k => onLayer('framework').filter(f=>f.disp===k).length;
   const nAct = shown.reduce((s,f)=>s+f.n_act_all,0), nNow = shown.filter(f=>f.ring==='now').length;
+  const nRec = shown.reduce((s,f)=>s+dotActs(f).filter(isRecent).length,0);
   const swatch = { framework: `<span class='dot' style='background:${COLOR.active}'></span>`, adhoc: `<span class='dot' style='background:${LAYER_COLOR.adhoc}'></span>`,
                    retired: `<span class='dot' style='background:${LAYER_COLOR.retired}'></span>`, tech: `<span class='dot dot-hollow'></span>` };
   const lab = k => k === 'framework' && pastY() ? `Frameworks at the end of ${YEAR}` : k === 'adhoc' && YEAR != null ? `Ad hoc allocations in ${YEAR}` : LAYER_LABEL[k];
@@ -1958,6 +1990,7 @@ function worldLegend(){
     + `<span><span class='dot' style='background:${COLOR.development}'></span>In development <span class='cnt'>${n('development')}</span></span></div>`;
   legend.innerHTML = `<div class='layerctl' role='group' aria-label='Map layers'>` + row('framework') + st + row('adhoc') + row('retired') + row('tech') + `</div>`
     + `<div class='lsub'><span><span class='dot' style='background:#e3322d'></span>Activations${YEAR != null ? ` in ${YEAR}` : ''} <span class='cnt'>${nAct}</span></span>`
+    + (nRec ? `<span><span class='dot recent' style='background:#e3322d'></span>In the last ${RECENT_DAYS} days <span class='cnt'>${nRec}</span></span>` : '')
     + (pastY() ? '' : `<span><span class='dot' style='background:#fff;border:2.5px solid #f5a300;box-sizing:border-box'></span>In monitoring season <span class='cnt'>${nNow}</span></span>`) + `</div>`;
 }
 // what a list of map entries is called: frameworks, unless some are ad hoc allocations or technical support
