@@ -303,13 +303,17 @@ def build(d, public, out, snapshot_at):
 
     # ---- funding: the annual series the Financing page charts
     pre, act = dashboards.funding_series(d)
-    pre = pre[pre["kind"] == "prearranged"]
+    pre = pre[pre["kind"] == "prearranged"].copy()
+    pre["source"] = [x if x in ("framework-record", "onegms-mirror", "version-inferred") else "tracking-sheets"
+                     for x in pre["source"].astype(str)]
     p_rows = _records(pre.sort_values(["year", "country_iso3", "hazard", "fund_code"]),
                       ["country_iso3", "hazard", "year", "fund_code", "financier", "amount_usd", "source", "in_gho"])
     write_table("prearranged-funding", p_rows,
                 "Pre-arranged funding in place per framework, year and fund: a STOCK (the envelope "
-                "standing that year), never summed across years. `in_gho`: the country was in that "
-                "year's Global Humanitarian Overview.")
+                "standing that year), never summed across years. `source`: framework-record (the current "
+                "envelope), onegms-mirror (pooled-fund allocations), tracking-sheets (the team's "
+                "reported series), version-inferred (carried from the version in force). `in_gho`: "
+                "the country was in that year's Global Humanitarian Overview.")
     act = act.copy()
     yr_pre = pre.groupby(["year", "fund_code"])["amount_usd"].sum()
     yr_rel = act.groupby(["year", "fund_code"])["amount_usd"].sum()
@@ -330,7 +334,9 @@ def build(d, public, out, snapshot_at):
                 "agency and sector (the Plan page). A framework's rows sum to its envelope.")
 
     # ---- partners (public frameworks)
-    pt = _pairs(d["partners"], pub)
+    pt = _pairs(d["partners"], pub).copy()
+    pt["roles"] = [[x for x in (r if isinstance(r, list) else []) if re.fullmatch(r"[a-z_]+", str(x))] or None
+                   for r in pt["roles"]]
     pt_rows = _records(pt.sort_values(["country_iso3", "hazard", "org_type", "name"]),
                        ["country_iso3", "hazard", "version", "name", "acronym", "org_type", "roles",
                         "agency_parent", "amount_usd"])
@@ -369,7 +375,7 @@ def build(d, public, out, snapshot_at):
            f"> The authoritative record of OCHA's anticipatory action (AA) portfolio: every framework "
            f"(a country and a hazard), its versions, triggers and trigger windows, pre-arranged "
            f"funding, activations and the money they released, implementing partners and learning "
-           f"documents. Maintained by the OCHA Centre for Humanitarian Data. {stamp_line}\n",
+           f"documents. Maintained by the data science team of OCHA's Centre for Humanitarian Data. {stamp_line}\n",
            f"**Caveat.** {CAVEAT}\n",
            f"The HTML pages at {SITE_URL} may require a password; the Markdown pages and data files "
            f"listed here are the open interface and carry the same figures. Every file is regenerated "
@@ -388,14 +394,23 @@ def build(d, public, out, snapshot_at):
         idx.append(f"- [aa-{name}.json]({SITE_URL}aa-{name}.json) · [CSV]({SITE_URL}aa-{name}.csv): {desc} "
                    f"Columns: {', '.join(cols)}.")
     idx.append("\n## Vocabulary\n")
-    idx.append("- `country_iso3`: ISO 3166-1 alpha-3. `hazard`: drought, flood, storm, cholera, food_insecurity.\n"
-               "- `lifecycle`: active (a version in force), updating (a successor in development while "
-               "one is in force), development (no version in force yet), dormant, expired, retired.\n"
-               "- `fund_code`: `cerf` (the Central Emergency Response Fund); `cbpf-<iso3>` a "
-               "country-based pooled fund; `rhpf-…` a regional humanitarian pooled fund; "
+    idx.append("- `country_iso3`: ISO 3166-1 alpha-3. `hazard`: drought, flood, storm, cholera, plague, "
+               "food_insecurity.\n"
+               "- `lifecycle` (aa-frameworks): `active` a version in force; `updating` a successor in "
+               "development while one is in force; `development` a first version in development, none in "
+               "force yet; `pipeline` early or advanced conversations, nothing in development yet; "
+               "`retired` no longer pursued. `status` is the finer observed status behind it "
+               "(early_conversations, advanced_conversations, under_development, active, under_revision, "
+               "activated_implementing, dormant, retired).\n"
+               "- version `status` (aa-versions): `endorsed`, `development` (not yet endorsed), `retired`.\n"
+               "- `fund_code`: `cerf` the Central Emergency Response Fund; `cbpf-<iso3>` a country-based "
+               "pooled fund; `rhpf-<region>-<iso3>` a regional humanitarian pooled fund's envelope for a "
+               "country; `all` a pre-arranged total the source did not break down by fund; "
                "`cbpf-unspecified` a pooled fund the source did not name.\n"
                "- `event_type`: `framework_aa` an activation of a framework's trigger; `adhoc_aa` an "
                "anticipatory allocation outside a framework.\n"
+               "- window `basis`: `forecast`, `observational` or `mixed` (what the trigger reads); "
+               "`all_in`: one trigger releases the whole envelope.\n"
                "- Amounts are US dollars. Dates are ISO 8601; a month-grain date is the first of the month.\n")
     idx.append(f"\n## Related\n\n- Code and schema (public repository): https://github.com/OCHA-DAP/ds-aa-tracking\n"
                f"- OCHA anticipatory action: https://www.unocha.org/anticipatory-action\n"
