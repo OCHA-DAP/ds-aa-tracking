@@ -60,12 +60,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Restore boundary caches (FieldMaps COD-AB, Natural Earth)
+      - name: Restore caches (FieldMaps COD-AB, Natural Earth, framework document texts)
         uses: actions/cache@v4
         with:
           path: |
             data/fieldmaps
             data/world
+            data/framework_documents
           key: geo-${{ github.run_id }}
           restore-keys: geo-
       - run: uv sync
@@ -79,6 +80,8 @@ jobs:
           uv run python scripts/restore_snapshot.py --snapshot "${{ github.event.inputs.snapshot || 'latest' }}"
       - name: Build, encrypt and publish
         env:
+          # the open layer's document texts come from the PDF archive on the dev blob
+          DSCI_AZ_BLOB_DEV_SAS: ${{ secrets.DSCI_AZ_BLOB_DEV_SAS }}
           EXTRACT_TOKEN: ${{ secrets.EXTRACT_TOKEN }}
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}

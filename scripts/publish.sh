@@ -16,11 +16,11 @@
 #   any other directory in the pushed tree is fatal
 # - every page published is a staticrypt page: one that is not aborts before committing
 # - the OPEN LAYER (scripts/llm_layer.py) is published unencrypted on purpose: llms.txt,
-#   llms-full.txt, robots.txt, sitemap.xml, *.md and aa-*.json / aa-*.csv at the top level —
-#   the Markdown twins of the public framework pages and the tables behind the public pages,
-#   for fetch-based tools and LLMs. Never a page, never anything from admin/.
+#   llms-full.txt, robots.txt, sitemap.xml, *.md (framework pages, document reads), pdf-*.txt
+#   (document texts) and aa-*.json / aa-*.csv (the tables) at the top level, for fetch-based
+#   tools and LLMs. Never a page, never anything from admin/.
 set -euo pipefail
-OPEN_GLOBS='*.md aa-*.json aa-*.csv llms.txt llms-full.txt robots.txt sitemap.xml'
+OPEN_GLOBS='*.md aa-*.json aa-*.csv pdf-*.txt llms.txt llms-full.txt robots.txt sitemap.xml'
 open_files() { ( cd "$1" && shopt -s nullglob && for g in $OPEN_GLOBS; do for f in $g; do echo "$f"; done; done ); }
 cd "$(dirname "$0")/.."
 PW="${SITE_PASSWORD:-anticipation2026}"

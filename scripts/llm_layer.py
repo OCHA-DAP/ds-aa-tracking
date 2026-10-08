@@ -8,17 +8,25 @@ build (so the nightly publish keeps it current):
 - llms-full.txt       every Markdown page in one file
 - aa-portfolio.md     the portfolio: one row per framework, the annual funding series
 - fw-<iso3>-<hazard>.md   one page per PUBLIC framework page (the map's), same slug as the HTML
-- aa-<name>.json / .csv   the tables behind the public pages (one JSON object with the rows
-                          and the stamps; the CSV is the same rows)
+- fw-<iso3>-<hazard>.md   one page per framework (every pair the registry tracks; the HTML
+                          link only where the map opens a page)
+- doc-<kb_framework>-<version>.md   the structured read of each version's framework document
+                          (aa.version_page body: summary, method, trigger logic and windows,
+                          monitoring, decisions, changes, activations — the working sections
+                          on sources and open questions stay in the database)
+- pdf-<sha256>.txt        the full text of each registered public framework document
+                          (aa.framework_document, extracted with pypdf from the blob archive,
+                          cached under data/framework_documents/)
+- aa-<name>.json / .csv   the tables behind the pages (one JSON object with the rows and the
+                          stamps; the CSV is the same rows)
 - robots.txt, sitemap.xml
 
-What goes in mirrors the public site: the registry, funding and activations of every
-framework the tabs show (the Financing totals include pipeline frameworks the map opens no
-page for); the detail of a framework (versions, windows, triggers, plan, partners) only
-where its page is public. Never: people (focal points), the version pages' working notes
-(frontmatter `extra`, raw extracts, QA notes), the version records' provenance notes,
-activation comments, partner evidence, internal learning documents (already filtered at
-the source).
+Everything the database holds about the portfolio goes in (2026-10-08: "make everything
+visible to LLMs that we can"), except people and working material: never focal points, the
+version pages' working notes (frontmatter `extra`, raw extracts, QA notes, the sources and
+open-questions sections of the page body), the version records' provenance notes, activation
+comments, partner evidence, documents registered as private, internal learning documents
+(already filtered at the source).
 """
 
 import json
@@ -40,6 +48,10 @@ FM_KEYS = ("geographic_scope", "admin_level", "trigger_facets", "data_sources",
            "implementing_agencies", "target_people", "all_in", "framework_doc",
            "framework_doc_date", "prearranged_funding_usd", "cofinancing_usd",
            "cofinancing_sources")
+
+# the page-body sections that are working material (what was read, what is unresolved)
+DROP_SECTIONS = ("Sources & repo completeness", "Open questions / known issues", "Open questions")
+PDF_CACHE = Path(os.environ.get("FRAMEWORK_DOC_CACHE", Path(__file__).parents[1] / "data" / "framework_documents"))
 
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
@@ -140,14 +152,6 @@ def _md_table(rows, cols, fmt=None):
     return "\n".join(out) + "\n"
 
 
-def _pairs(df, pairs):
-    """Rows of a (country_iso3, hazard) frame whose pair is in `pairs`."""
-    if not len(df):
-        return df
-    keep = [(c, h) in pairs for c, h in zip(df["country_iso3"], df["hazard"])]
-    return df[keep]
-
-
 def _version_facts(vpage, kb_fw, version):
     """The public fields of one version page, flattened for a row or a Markdown block."""
     if not kb_fw or version is None:
@@ -171,13 +175,12 @@ def _version_facts(vpage, kb_fw, version):
 
 
 # ---------------------------------------------------------------------- the build
-def build(d, public, out, snapshot_at):
+def build(d, e, public, out, snapshot_at):
     """Write the layer into `out`; return the set of file names written."""
     import dashboards
 
     stamp = date.today().isoformat()
-    pages = _slug_pairs(public)                 # (iso3, hazard) -> fw-xxx.html
-    pub = set(pages)
+    pages = _slug_pairs(public)                 # (iso3, hazard) -> fw-xxx.html (the map's)
     written = set()
     files = []                                   # (name, description, columns) for llms.txt
 
@@ -204,7 +207,13 @@ def build(d, public, out, snapshot_at):
              if isinstance(r.kb_framework, str)}
     name_of = dict(zip(cur["country_iso3"], cur["country_name"]))
 
-    # ---- frameworks: every pair the tabs know (the map shows the pipeline ones as points)
+    # ---- the documents: structured reads (version pages) and the archived PDFs' text
+    reads = _doc_reads(e, out, snapshot_at, stamp)          # (kb_framework, version) -> file
+    texts, doc_links = _pdf_texts(e, out, stamp)            # sha -> file; (c, h, v) -> [{...}]
+    written.update(reads.values())
+    written.update(texts.values())
+
+    # ---- frameworks: every pair the registry tracks (the map shows the pipeline ones as points)
     fw_rows = []
     for r in cur.itertuples():
         page = pages.get((r.country_iso3, r.hazard))
@@ -220,16 +229,16 @@ def build(d, public, out, snapshot_at):
             "prearranged_year": _cell(r.prearranged_year),
             "people_covered": _cell(r.people_covered),
             "page_html": SITE_URL + page if page else None,
-            "page_markdown": SITE_URL + page[:-5] + ".md" if page else None,
+            "page_markdown": SITE_URL + f"fw-{r.country_iso3.lower()}-{r.hazard}.md",
         })
     write_table("frameworks", fw_rows,
                 "The framework registry: one row per (country, hazard) pair the portfolio tracks, "
-                "with its lifecycle, latest version, pre-arranged CERF envelope and people covered. "
-                "Pages exist only for the frameworks the map opens.")
+                "with its lifecycle, latest version, pre-arranged CERF envelope and people covered, "
+                "and the link to its Markdown page (an HTML page exists only where the map opens one).")
 
-    # ---- versions (public frameworks): the registry rows + the public page fields
+    # ---- versions: the registry rows + the page fields + the document links
     v_rows, trig_rows = [], []
-    vv = _pairs(fvm, pub).copy()
+    vv = fvm.copy()
     vv["_vf"] = pd.to_datetime(vv["valid_from"].astype(str), errors="coerce")
     kbs = d["versions"].set_index(["country_iso3", "hazard", d["versions"]["version"].astype(str)])
     for r in vv.sort_values(["country_iso3", "hazard", "_vf"]).itertuples():
@@ -239,7 +248,10 @@ def build(d, public, out, snapshot_at):
         row = {"country_iso3": r.country_iso3, "hazard": r.hazard, "version": str(r.version),
                "status": kb_status, "valid_from": _cell(r.valid_from), "valid_until": _cell(r.valid_until),
                "document_title": _cell(r.doc_title), "document_url": _cell(r.doc_url),
-               "analysis_ref": _cell(r.analysis_ref)}
+               "analysis_ref": _cell(r.analysis_ref),
+               "document_read": (SITE_URL + reads[(r.kb_framework, str(r.version))]
+                                 if (r.kb_framework, str(r.version)) in reads else None),
+               "document_text": [SITE_URL + texts[x["sha256"]] for x in doc_links.get(key, []) if x["sha256"] in texts] or None}
         row.update(facts)
         v_rows.append(row)
         for t in trig:
@@ -247,16 +259,17 @@ def build(d, public, out, snapshot_at):
                 trig_rows.append({"country_iso3": r.country_iso3, "hazard": r.hazard,
                                   "version": str(r.version), **{str(k): v for k, v in t.items()}})
     write_table("versions", v_rows,
-                "Every registered version (an endorsed framework document) of the frameworks with a "
-                "public page: validity, document, and the version's scope, trigger basis, indicators, "
-                "data sources, monitoring months and implementing agencies.")
+                "Every registered version (an endorsed framework document): validity, the document "
+                "(its official page, its structured read `document_read`, its full text "
+                "`document_text`), and the version's scope, trigger basis, indicators, data sources, "
+                "monitoring months and implementing agencies.")
     write_table("trigger-windows", trig_rows,
                 "The trigger windows as the framework document states them, per version: window, "
                 "indicator, threshold, lead time, return period and what the window releases. Columns "
                 "vary by framework (they are the document's own table).")
 
-    # ---- windows and backtests (public frameworks)
-    w = _pairs(d["windows"], pub)
+    # ---- windows and backtests
+    w = d["windows"]
     w_rows = _records(w.sort_values(["country_iso3", "hazard", "version", "window_name"]),
                       ["country_iso3", "country_name", "hazard", "version", "is_latest", "window_name",
                        "basis", "all_in", "allocation_usd", "return_period", "activation_prob",
@@ -267,8 +280,8 @@ def build(d, public, out, snapshot_at):
                 "(years), annual activation probability, activations in the analysed years, and "
                 "whether the window has triggered under the version in force.")
 
-    # ---- simulated (historical) activations (public frameworks)
-    s = _pairs(d["sim"], pub)
+    # ---- simulated (historical) activations
+    s = d["sim"]
     s_rows = _records(s.sort_values(["country_iso3", "hazard", "version", "event_year"]),
                       ["country_iso3", "hazard", "version", "window_name", "event_year",
                        "event_label", "event_date", "event_time", "time_precision"])
@@ -333,8 +346,8 @@ def build(d, public, out, snapshot_at):
                 "The pre-arranged budget of each live framework's current version split by implementing "
                 "agency and sector (the Plan page). A framework's rows sum to its envelope.")
 
-    # ---- partners (public frameworks)
-    pt = _pairs(d["partners"], pub).copy()
+    # ---- partners
+    pt = d["partners"].copy()
     pt["roles"] = [[x for x in (r if isinstance(r, list) else []) if re.fullmatch(r"[a-z_]+", str(x))] or None
                    for r in pt["roles"]]
     pt_rows = _records(pt.sort_values(["country_iso3", "hazard", "org_type", "name"]),
@@ -356,9 +369,7 @@ def build(d, public, out, snapshot_at):
     md_pages = []
     for r in cur.itertuples():
         page = pages.get((r.country_iso3, r.hazard))
-        if not page:
-            continue
-        name = page[:-5] + ".md"
+        name = f"fw-{r.country_iso3.lower()}-{r.hazard}.md"
         text = _framework_md(d, r, page, v_rows, trig_rows, w_rows, s_rows, a_rows, p_rows, pl,
                              pt_rows, ld, snapshot_at, stamp)
         (out / name).write_text(text)
@@ -389,6 +400,20 @@ def build(d, public, out, snapshot_at):
            "## Framework pages (one per framework, Markdown)\n"]
     for name, title, sub in md_pages:
         idx.append(f"- [{title}]({SITE_URL}{name}): {sub}")
+    idx.append("\n## Framework documents\n")
+    idx.append("Each version of a framework is an endorsed document (published on ReliefWeb or "
+               "unocha.org; `document_url` in aa-versions). Two renderings here, per version:\n")
+    idx.append("- **Structured reads** (`doc-<framework>-<version>.md`): a full read of the document by "
+               "the OCHA data science team — summary, method, trigger logic, trigger windows, "
+               "monitoring, key decisions, changes from the previous version, historical activations — "
+               "with the document's own page numbers as evidence. Linked from each framework page and "
+               "from `document_read` in aa-versions. All of them are in "
+               f"[llms-full.txt]({SITE_URL}llms-full.txt).")
+    idx.append("- **Full text** (`pdf-<sha256>.txt`): the text of the archived PDF, page by page, as "
+               "extracted (tables and figures come out flattened; the structured read is the better "
+               "source for figures). Linked from `document_text` in aa-versions.\n")
+    for (kb, ver), fn in sorted(reads.items()):
+        idx.append(f"- [{kb} {ver}]({SITE_URL}{fn})")
     idx.append("\n## Data files (JSON: one object with `rows`, `columns` and the stamps; CSV: the same rows)\n")
     for name, desc, cols in files:
         idx.append(f"- [aa-{name}.json]({SITE_URL}aa-{name}.json) · [CSV]({SITE_URL}aa-{name}.csv): {desc} "
@@ -416,16 +441,19 @@ def build(d, public, out, snapshot_at):
                f"- OCHA anticipatory action: https://www.unocha.org/anticipatory-action\n"
                f"- CERF: https://cerf.un.org/\n")
     (out / "llms.txt").write_text("\n".join(idx))
-    full = [portfolio] + [(out / n).read_text() for n, _, _ in md_pages]
+    full = ([portfolio] + [(out / n).read_text() for n, _, _ in md_pages]
+            + [(out / fn).read_text() for _, fn in sorted(reads.items())])
     (out / "llms-full.txt").write_text("\n\n---\n\n".join(full))
     (out / "robots.txt").write_text(f"User-agent: *\nAllow: /\n\nSitemap: {SITE_URL}sitemap.xml\n")
     urls = ([SITE_URL + n for n in sorted(public)] + [SITE_URL + "llms.txt", SITE_URL + "aa-portfolio.md"]
-            + [SITE_URL + n for n, _, _ in md_pages])
+            + [SITE_URL + n for n, _, _ in md_pages] + [SITE_URL + fn for _, fn in sorted(reads.items())]
+            + [SITE_URL + fn for _, fn in sorted(texts.items())])
     (out / "sitemap.xml").write_text(
         '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
         + "".join(f"  <url><loc>{u}</loc><lastmod>{stamp}</lastmod></url>\n" for u in urls) + "</urlset>\n")
     written.update({"llms.txt", "llms-full.txt", "robots.txt", "sitemap.xml"})
-    print(f"  open layer: {len(md_pages)} framework pages · {len(files)} tables · llms.txt")
+    print(f"  open layer: {len(md_pages)} framework pages · {len(reads)} document reads · "
+          f"{len(texts)} document texts · {len(files)} tables · llms.txt")
     return written
 
 
@@ -463,7 +491,7 @@ def _framework_md(d, r, page, v_rows, trig_rows, w_rows, s_rows, a_rows, p_rows,
     out.append("\n".join(f"- {x}" for x in facts) + "\n")
 
     # scope and trigger of the latest version
-    vs = mine(v_rows)
+    vs = [{**v, "read": v.get("document_read"), "text": v.get("document_text")} for v in mine(v_rows)]
     cur_v = next((v for v in vs if version and v["version"] == version), vs[-1] if vs else None)
     if cur_v:
         out.append(f"## Scope and trigger (version {cur_v['version']})\n")
@@ -565,8 +593,9 @@ def _framework_md(d, r, page, v_rows, trig_rows, w_rows, s_rows, a_rows, p_rows,
         out.append(_md_table(pf, ["year", "fund_code", "financier", "amount_usd", "source"], {"amount_usd": _m}))
 
     # versions
-    out.append("## Versions (endorsed documents)\n")
-    out.append(_md_table(vs, ["version", "status", "valid_from", "valid_until", "document_title", "document_url"]))
+    out.append("## Versions (endorsed documents)\n\n`read`: the structured read of the document; `text`: its full text.\n")
+    out.append(_md_table(vs, ["version", "status", "valid_from", "valid_until", "document_title", "document_url", "read", "text"],
+                         {"read": lambda v: v or "", "text": lambda v: ", ".join(v) if v else ""}))
 
     # learning
     docs = [x for x in ld if x.get("country_iso3") == c and (x.get("hazard") in (None, h))]
@@ -623,3 +652,125 @@ def _portfolio_md(fw_rows, y_rows, md_pages, snapshot_at, stamp):
         out.append(f"- [{title}]({SITE_URL}{name}): {sub}")
     out.append("")
     return "\n".join(out)
+
+
+# ---------------------------------------------------------------------- the documents
+def _doc_reads(e, out, snapshot_at, stamp):
+    """doc-<kb_framework>-<version>.md: the page body of every version page, minus the working
+    sections. Returns (kb_framework, version) -> file name."""
+    try:
+        pages = pd.read_sql(
+            """SELECT p.kb_framework, p.version::text AS version, p.body_md, p.country_iso3, p.hazard,
+                      fm.doc_url, fm.doc_title
+               FROM aa.version_page p
+               LEFT JOIN LATERAL (
+                   SELECT doc_url, doc_title FROM aa.framework_version f
+                   WHERE f.kb_framework = p.kb_framework AND f.version::text = p.version::text
+                   LIMIT 1) fm ON true
+               WHERE p.body_md IS NOT NULL AND length(p.body_md) > 0""", e)
+    except Exception as exc:
+        print(f"::warning::open layer: version pages unavailable ({exc.__class__.__name__}); no document reads")
+        return {}
+    files = {}
+    for r in pages.itertuples():
+        body = _strip_sections(r.body_md)
+        if not body.strip():
+            continue
+        fn = f"doc-{r.kb_framework}-{r.version}.md"
+        countries = ", ".join(r.country_iso3) if isinstance(r.country_iso3, (list, tuple)) else str(r.country_iso3 or "")
+        head = (f"> {CAVEAT}\n>\n> A structured read of the framework document by the OCHA data science team: "
+                f"the figures carry the document's own page numbers as evidence. Framework {r.kb_framework} "
+                f"({countries}, {r.hazard or ''}), version {r.version}."
+                + (f" Official document: {r.doc_url}" if isinstance(r.doc_url, str) and r.doc_url else "")
+                + (f"\n>\n> Data snapshot {snapshot_at} UTC · generated {stamp}" if snapshot_at else f"\n>\n> Generated {stamp}")
+                + f" · framework page: {SITE_URL}fw-{(r.country_iso3[0] if isinstance(r.country_iso3, (list, tuple)) and r.country_iso3 else '').lower()}-{r.hazard}.md"
+                + f" · index: {SITE_URL}llms.txt\n\n")
+        # the body starts with its own H1; keep it first
+        m = re.match(r"\s*(# .*?\n)", body)
+        text = (m.group(1) + "\n" + head + body[m.end():].lstrip("\n")) if m else head + body
+        (out / fn).write_text(text)
+        files[(r.kb_framework, r.version)] = fn
+    return files
+
+
+def _strip_sections(body):
+    """The page body without its working sections (DROP_SECTIONS) and section markers."""
+    parts = re.split(r"(?m)^(?=## )", body)
+    keep = []
+    for part in parts:
+        m = re.match(r"## +(.+?)\s*$", part, re.M)
+        title = m.group(1).strip() if m else ""
+        if title in DROP_SECTIONS or title.startswith("--- section"):
+            continue
+        keep.append(part)
+    text = "".join(keep)
+    return re.sub(r"(?m)^#+ +--- section.*$\n?", "", text)
+
+
+def _pdf_texts(e, out, stamp):
+    """pdf-<sha256>.txt for every current, public, registered framework document: the archived
+    PDF's text page by page (pypdf), from the blob archive, cached under PDF_CACHE by content
+    hash (a file never changes). Returns (sha -> file name, (iso3, hazard, version) -> [doc])."""
+    try:
+        docs = pd.read_sql(
+            """SELECT v.country_iso3, v.hazard, v.version::text AS version, v.role, v.official_url,
+                      d.sha256, d.blob_path, d.title, d.language, d.bytes
+               FROM aa.version_document v
+               JOIN aa.framework_document d USING (sha256)
+               WHERE d.is_public AND v.superseded_by IS NULL
+               ORDER BY v.country_iso3, v.hazard, v.version""", e)
+    except Exception as exc:
+        print(f"::warning::open layer: document registry unavailable ({exc.__class__.__name__}); no document texts")
+        return {}, {}
+    links = {}
+    for r in docs.itertuples():
+        links.setdefault((r.country_iso3, r.hazard, r.version), []).append(
+            {"sha256": r.sha256, "role": r.role, "title": _cell(r.title), "language": _cell(r.language),
+             "official_url": _cell(r.official_url)})
+    if os.environ.get("OPEN_LAYER_NO_PDF"):
+        print("  open layer: document texts skipped (OPEN_LAYER_NO_PDF)")
+        return {}, links
+    PDF_CACHE.mkdir(parents=True, exist_ok=True)
+    files, failed = {}, []
+    for sha, grp in docs.groupby("sha256", sort=False):
+        cache = PDF_CACHE / f"{sha}.txt"
+        if not cache.exists():
+            try:
+                text = _extract_pdf(grp.iloc[0]["blob_path"])
+            except Exception as exc:
+                failed.append(f"{sha[:12]} ({grp.iloc[0]['country_iso3']} {grp.iloc[0]['hazard']}): {exc.__class__.__name__}")
+                continue
+            cache.write_text(text)
+        serves = "; ".join(f"{x.country_iso3} {x.hazard} version {x.version} ({x.role})" for x in grp.itertuples())
+        urls = sorted({u for u in grp["official_url"] if isinstance(u, str) and u})
+        title = next((t for t in grp["title"] if isinstance(t, str) and t), None)
+        lang = next((t for t in grp["language"] if isinstance(t, str) and t), None)
+        head = (f"{title or 'Anticipatory action framework document'}\n"
+                f"{'=' * len(title or 'Anticipatory action framework document')}\n\n"
+                f"{CAVEAT}\n\n"
+                f"Full text of the framework document, page by page, as extracted from the PDF (tables and "
+                f"figures come out flattened; the structured read is the better source for figures). "
+                f"Serves: {serves}." + (f" Language: {lang}." if lang else "")
+                + (" Official page(s): " + ", ".join(urls) + "." if urls else "")
+                + f" Content hash (sha256): {sha}. Generated {stamp}. Index: {SITE_URL}llms.txt\n\n")
+        fn = f"pdf-{sha}.txt"
+        (out / fn).write_text(head + cache.read_text())
+        files[sha] = fn
+    if failed:
+        print("::warning::open layer: document text not extracted for " + "; ".join(failed))
+    return files, links
+
+
+def _extract_pdf(blob_path):
+    import io
+
+    import ocha_stratus as stratus
+    from pypdf import PdfReader
+
+    data = stratus.load_blob_data(blob_path, stage="dev", container_name="projects")
+    reader = PdfReader(io.BytesIO(data))
+    pages = []
+    for i, page in enumerate(reader.pages, 1):
+        t = (page.extract_text() or "").strip()
+        pages.append(f"--- page {i} ---\n{t}\n")
+    return "\n".join(pages)

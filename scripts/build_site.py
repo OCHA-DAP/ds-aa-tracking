@@ -185,7 +185,7 @@ ADMIN_HOME = [
 from policy_text import POLICY_CSS, policy_box  # noqa: E402  (plain-language box on top of each page)
 
 _PAGES = {}     # file name -> (title, body), in build order; write_site() writes them
-_DATA = {}      # "d": the dashboards' frames, for the open layer written beside the pages
+_DATA = {}      # "d": the dashboards' frames, "e": the engine — for the open layer written beside the pages
 
 
 def page(name, title, body):
@@ -300,7 +300,8 @@ def write_site():
     # public pages, llms.txt — unencrypted by design (scripts/llm_layer.py); it must carry
     # no token either, and it follows the public set (a page gone admin-only loses its twin)
     import llm_layer
-    open_files = llm_layer.build(_DATA["d"], public, OUT, SNAPSHOT_AT) if _DATA.get("d") is not None else set()
+    open_files = (llm_layer.build(_DATA["d"], _DATA["e"], public, OUT, SNAPSHOT_AT)
+                  if _DATA.get("d") is not None else set())
     for n in sorted(open_files):
         doc = (OUT / n).read_text()
         if (token and token in doc) or "x-site-token" in doc:
@@ -310,7 +311,7 @@ def write_site():
     for f in list(OUT.glob("*.html")):
         if f.name not in public:
             f.unlink()
-    for f in list(OUT.glob("*.md")) + list(OUT.glob("aa-*.json")) + list(OUT.glob("aa-*.csv")) + [
+    for f in list(OUT.glob("*.md")) + list(OUT.glob("aa-*.json")) + list(OUT.glob("aa-*.csv")) + list(OUT.glob("pdf-*.txt")) + [
             OUT / "llms.txt", OUT / "llms-full.txt", OUT / "robots.txt", OUT / "sitemap.xml"]:
         if f.exists() and f.name not in open_files:
             f.unlink()
@@ -559,6 +560,7 @@ def main():
     # ---------- dashboards + per-framework pages
     import dashboards
     _DATA["d"] = dashboards.build_all(e, page, tbl)
+    _DATA["e"] = e
     import admin_page
     admin_page.build_admin(page)
 
