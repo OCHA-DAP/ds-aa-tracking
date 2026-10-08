@@ -209,7 +209,7 @@ def build(d, e, public, out, snapshot_at):
 
     # ---- the documents: structured reads (version pages) and the archived PDFs' text
     reads = _doc_reads(e, out, snapshot_at, stamp)          # (kb_framework, version) -> file
-    texts, doc_links = _pdf_texts(e, out, stamp)            # sha -> file; (c, h, v) -> [{...}]
+    texts, doc_links = _pdf_texts(e, out)                   # sha -> file; (c, h, v) -> [{...}]
     written.update(reads.values())
     written.update(texts.values())
 
@@ -678,10 +678,15 @@ def _doc_reads(e, out, snapshot_at, stamp):
             continue
         fn = f"doc-{r.kb_framework}-{r.version}.md"
         countries = ", ".join(r.country_iso3) if isinstance(r.country_iso3, (list, tuple)) else str(r.country_iso3 or "")
-        head = (f"> {CAVEAT}\n>\n> A structured read of the framework document by the OCHA data science team: "
-                f"the figures carry the document's own page numbers as evidence. Framework {r.kb_framework} "
+        has_doc = isinstance(r.doc_url, str) and bool(r.doc_url)
+        what = (("A structured read of the framework document by the OCHA data science team: the figures "
+                 "carry the document's own page numbers as evidence.") if has_doc else
+                ("This version has no published framework document yet: what follows is the OCHA data "
+                 "science team's working record of the framework as it stands (its analysis, trigger "
+                 "design and status), not a read of an endorsed document."))
+        head = (f"> {CAVEAT}\n>\n> {what} Framework {r.kb_framework} "
                 f"({countries}, {r.hazard or ''}), version {r.version}."
-                + (f" Official document: {r.doc_url}" if isinstance(r.doc_url, str) and r.doc_url else "")
+                + (f" Official document: {r.doc_url}" if has_doc else "")
                 + (f"\n>\n> Data snapshot {snapshot_at} UTC · generated {stamp}" if snapshot_at else f"\n>\n> Generated {stamp}")
                 + f" · framework page: {SITE_URL}fw-{(r.country_iso3[0] if isinstance(r.country_iso3, (list, tuple)) and r.country_iso3 else '').lower()}-{r.hazard}.md"
                 + f" · index: {SITE_URL}llms.txt\n\n")
@@ -707,10 +712,11 @@ def _strip_sections(body):
     return re.sub(r"(?m)^#+ +--- section.*$\n?", "", text)
 
 
-def _pdf_texts(e, out, stamp):
+def _pdf_texts(e, out):
     """pdf-<sha256>.txt for every current, public, registered framework document: the archived
     PDF's text page by page (pypdf), from the blob archive, cached under PDF_CACHE by content
-    hash (a file never changes). Returns (sha -> file name, (iso3, hazard, version) -> [doc])."""
+    hash (a file never changes, so the file carries no date and gh-pages sees no churn).
+    Returns (sha -> file name, (iso3, hazard, version) -> [doc])."""
     try:
         docs = pd.read_sql(
             """SELECT v.country_iso3, v.hazard, v.version::text AS version, v.role, v.official_url,
@@ -752,7 +758,7 @@ def _pdf_texts(e, out, stamp):
                 f"figures come out flattened; the structured read is the better source for figures). "
                 f"Serves: {serves}." + (f" Language: {lang}." if lang else "")
                 + (" Official page(s): " + ", ".join(urls) + "." if urls else "")
-                + f" Content hash (sha256): {sha}. Generated {stamp}. Index: {SITE_URL}llms.txt\n\n")
+                + f" Content hash (sha256): {sha}. Index: {SITE_URL}llms.txt\n\n")
         fn = f"pdf-{sha}.txt"
         (out / fn).write_text(head + cache.read_text())
         files[sha] = fn
