@@ -96,6 +96,12 @@ are kept forever (the year-end official state, for the map's time view).
 - `scripts/dashboards.py` — dashboards, per-framework pages, explorer, entry forms
 - `scripts/donors.py` — the donor-shares page (reads `dashboards.funding_series`, so its
   released / pre-arranged totals are the Funding page's)
+- `scripts/page_media.py` — the Media page: the shared Drive folder "AA Visuals" as it was
+  gathered (photos by country, the social posts of the folder's catalogue), read from
+  `site_src/media.json`. Nothing is stored on the site: a photo is Drive's own rendition of
+  the shared file, asked for by its id. `scripts/sync_media.py` rewrites the manifest from the
+  folder: it only lists, it is run by hand and its diff is read before it is committed (not
+  part of the nightly build). Not curated yet: no selection, captions or credits
 - `scripts/landing.py` — landing map (base: Natural Earth 1:50m simplified as one topology so
   borders stay shared; zoom: FieldMaps edge-matched COD-AB for every country in view): zoom
   to a country, subnational scope per framework
