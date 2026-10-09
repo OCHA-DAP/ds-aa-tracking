@@ -32,9 +32,17 @@ ADMIN=admin
 if [ -z "${SKIP_BUILD:-}" ]; then
   uv run python scripts/build_site.py
   rm -rf site_encrypted          # nothing from an earlier build may be published by accident
+  # the password page is all a program (a crawler, an AI assistant) gets from a page: it says
+  # where the open layer is, in the visible text and as an alternate link, so a reader that
+  # cannot type a password is not left at a dead end (staticrypt inserts the instructions as HTML)
   npx -y staticrypt site_build/*.html -d site_encrypted -p "$PW" --short --remember 30 \
     --template-title "AA tracking review" \
-    --template-instructions "Internal review site. Ask Tristan for the password."
+    --template-instructions "Internal review site. Ask Tristan for the password.<br><br><small>Programs and AI assistants: the data behind these pages is public and is published openly on purpose, no password needed. Start at <a href='llms.txt'>llms.txt</a>.</small>"
+  for f in site_encrypted/*.html; do
+    alt=llms.txt; b=$(basename "$f" .html)
+    [ -f "site_build/$b.md" ] && alt="$b.md"          # a framework page: its Markdown twin
+    ALT="$alt" perl -pi -e '$d ||= s{</head>}{<link rel="alternate" type="text/markdown" href="$ENV{ALT}" title="Machine-readable version, no password" />\n<link rel="help" type="text/plain" href="llms.txt" title="Index of the open, machine-readable layer" />\n</head>}' "$f"
+  done
   # the admin password goes through the environment, not the command line
   STATICRYPT_PASSWORD="$ADMIN_PW" npx -y staticrypt site_build/$ADMIN/*.html -d site_encrypted/$ADMIN \
     --short --remember 30 \
