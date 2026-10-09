@@ -2892,7 +2892,7 @@ built to the CERF key-data-points list (<a href='questions.html'>coverage map</a
 <div class='tile'><a href='dash-allocations.html'><b>Allocation explorer</b></a><div class='l'>query every CERF, country and regional fund allocation 2006→; complementarity; timeliness</div></div>
 <div class='tile'><a href='dash-delivery.html'><b>Delivery & people</b></a><div class='l'>subgrants, localization, agencies, sectors, CVA, people reached</div></div>
 <div class='tile'><a href='pillar-learning.html'><b>Learning</b></a><div class='l'>headline findings on the map, and every learning document by country and hazard</div></div>
-<div class='tile'><a href='media.html'><b>Media & visuals</b></a><div class='l'>videos, photos, social posts and press releases on AA (collection starting)</div></div>
+<div class='tile'><a href='media.html'><b>Media & visuals</b></a><div class='l'>photos by country and social posts on AA, from the shared AA Visuals folder (a first collection, not curated yet)</div></div>
 </div></div>
 <h2 id='frameworks'>Per-framework pages</h2>
 <p class='meta' id='calendar'>Green cells = trigger-window months (monitoring calendar).</p>
@@ -2901,28 +2901,6 @@ built to the CERF key-data-points list (<a href='questions.html'>coverage map</a
 <tbody>{fw_items}</tbody></table></div></section>
 <style>{DASH_CSS}</style>"""
     page("dashboards.html", "Dashboards", body)
-
-
-def build_media(page):
-    """media.html — the public 'Media & visuals' page: a simple card page with an empty
-    state until the collection (videos, photos, social posts, press releases) exists."""
-    body = f"""
-<div class='card'><b>Media &amp; visuals of anticipatory action.</b> This page will collect
-the best material on AA — videos, photos, social posts and press releases from the
-activations and the frameworks — so that every activation's story is one click away
-from its record. Nothing is sourced yet: the collection starts with the learning
-documents now being imported, and each item will link back to the framework it
-belongs to.</div>
-<div class='card' style='text-align:center;padding:40px 20px'>
-<div style='font-size:34px;line-height:1'>▶</div>
-<div class='empty' style='margin-top:10px'>No media collected yet.</div>
-<p class='meta' style='margin:8px 0 0'>Meanwhile: <a href='pillar-learning.html'>Learning</a> lists the evaluations,
-after-action reviews and stories on record, and each framework page links its documents.</p>
-</div>
-<style>{DASH_CSS}</style>"""
-    page("media.html", "Media & visuals", body)
-
-
 
 
 # ------------------------------------------------------------------ hierarchy
@@ -3891,7 +3869,8 @@ def build_all(e, page, tbl):
     build_questions(page)
     links = build_framework_pages(page, tbl, d, e)
     build_hub(page, d, links)
-    build_media(page)
+    import page_media
+    page_media.build_media(page)
     build_hierarchy(page, d, e)
     build_entry(page, d, e)
     build_status_form(page, d)
