@@ -342,7 +342,8 @@ def build(d, e, public, out, snapshot_at):
             trig_table.append({"country_iso3": r.country_iso3, "hazard": r.hazard,
                                "version": str(r.version), "row": i + 1, **_trigger_row(t)})
     write_table("versions", v_rows,
-                "Every registered version (an endorsed framework document): validity, the document "
+                "Every registered version of every framework (`status`: an endorsed document, one still "
+                "in development, or a retired one): validity, the document "
                 "(its official page, its structured read `document_read`, its full text "
                 "`document_text`), and the version's scope, trigger basis, indicators, data sources, "
                 "monitoring months and implementing agencies.")
@@ -841,7 +842,8 @@ def _portfolio_md(fw_rows, y_rows, md_pages, snapshot_at, stamp, gaps=()):
                           "hazard": lambda v: (v or "").replace("_", " ")}))
     out.append("## Pre-arranged and released funding by year and fund\n\n"
                "Pre-arranged is the stock standing that year; released is what framework activations drew. "
-               "They are not added together.\n")
+               "They are not added together. `of_which_by_fund` breaks the two totals of the row down by "
+               "fund: its amounts are parts of those totals, not additions to them.\n")
     years = sorted({r["year"] for r in y_rows})
     funds = sorted({r["fund_code"] for r in y_rows}, key=lambda f: (f != "cerf", f))
     tot = []
@@ -850,10 +852,10 @@ def _portfolio_md(fw_rows, y_rows, md_pages, snapshot_at, stamp, gaps=()):
         tot.append({"year": y,
                     "prearranged_usd": sum(r["prearranged_usd"] or 0 for r in rows),
                     "released_usd": sum(r["released_usd"] or 0 for r in rows),
-                    "by_fund": "; ".join(f"{f}: {_m(sum(r['prearranged_usd'] or 0 for r in rows if r['fund_code'] == f))} pre-arranged, "
+                    "of_which_by_fund": "; ".join(f"{f}: {_m(sum(r['prearranged_usd'] or 0 for r in rows if r['fund_code'] == f))} pre-arranged, "
                                          f"{_m(sum(r['released_usd'] or 0 for r in rows if r['fund_code'] == f))} released"
                                          for f in funds if any(r["fund_code"] == f for r in rows))})
-    out.append(_md_table(tot, ["year", "prearranged_usd", "released_usd", "by_fund"],
+    out.append(_md_table(tot, ["year", "prearranged_usd", "released_usd", "of_which_by_fund"],
                          {"prearranged_usd": _m, "released_usd": _m}))
     out.append("## Framework pages\n")
     for name, title, sub in md_pages:
