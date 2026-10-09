@@ -6,7 +6,10 @@ Every ds-aa-tracking table gets a page with its full contents, plus:
 - CERF-mirror page for the new cerf_project* tables not yet fully documented in the KB
 
 The output is then encrypted with staticrypt before publishing (see publish step in
-README) — nothing in site_build/ is committed or served unencrypted.
+README) — no page in site_build/ is committed or served unencrypted. The one exception by
+design is the open layer written beside the pages (scripts/llm_layer.py: Markdown twins of the
+public framework pages, the tables behind the public pages, llms.txt, robots.txt, sitemap.xml)
+so fetch-based tools and LLMs can read the public figures.
 """
 
 import html
@@ -182,6 +185,7 @@ ADMIN_HOME = [
 from policy_text import POLICY_CSS, policy_box  # noqa: E402  (plain-language box on top of each page)
 
 _PAGES = {}     # file name -> (title, body), in build order; write_site() writes them
+_DATA = {}      # "d": the dashboards' frames, "e": the engine — for the open layer written beside the pages
 
 
 def page(name, title, body):
@@ -292,9 +296,24 @@ def write_site():
     for asset in ADMIN_ASSETS:
         shutil.copy(Path(__file__).parents[1] / "site_src" / asset, adm_dir / asset)
         (OUT / asset).unlink(missing_ok=True)
+    # the open layer: Markdown twins of the public framework pages, the tables behind the
+    # public pages, llms.txt — unencrypted by design (scripts/llm_layer.py); it must carry
+    # no token either, and it follows the public set (a page gone admin-only loses its twin)
+    import llm_layer
+    open_files = (llm_layer.build(_DATA["d"], _DATA["e"], public, OUT, SNAPSHOT_AT)
+                  if _DATA.get("d") is not None else set())
+    for n in sorted(open_files):
+        doc = (OUT / n).read_text()
+        if (token and token in doc) or "x-site-token" in doc:
+            raise SystemExit(f"FATAL: open file {n} carries the data service's token")
     # nothing from an earlier build may linger: publish.sh encrypts whatever HTML is here
+    # and publishes whatever open files are here
     for f in list(OUT.glob("*.html")):
         if f.name not in public:
+            f.unlink()
+    for f in list(OUT.glob("*.md")) + list(OUT.glob("aa-*.json")) + list(OUT.glob("aa-*.csv")) + list(OUT.glob("pdf-*.txt")) + [
+            OUT / "llms.txt", OUT / "llms-full.txt", OUT / "robots.txt", OUT / "sitemap.xml"]:
+        if f.exists() and f.name not in open_files:
             f.unlink()
     for f in list(adm_dir.glob("*.html")):
         if f.name not in admin and f.name != "index.html":
@@ -302,7 +321,8 @@ def write_site():
     for name, gone in sorted(cut.items()):
         # visible in the publish run's summary, not only in its log
         print(f"::warning::public page {name}: link(s) to admin-only page(s) removed: {', '.join(sorted(gone))}")
-    print(f"  public site: {len(public)} pages · admin site: {len(admin) + 1} pages ({ADMIN_DIR}/)")
+    print(f"  public site: {len(public)} pages · admin site: {len(admin) + 1} pages ({ADMIN_DIR}/) · "
+          f"open layer: {len(open_files)} files")
 
 
 _CSV_SEQ = [0]
@@ -539,7 +559,8 @@ def main():
 
     # ---------- dashboards + per-framework pages
     import dashboards
-    dashboards.build_all(e, page, tbl)
+    _DATA["d"] = dashboards.build_all(e, page, tbl)
+    _DATA["e"] = e
     import admin_page
     admin_page.build_admin(page)
 

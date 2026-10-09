@@ -539,8 +539,8 @@ def _fetch(e):
            LEFT JOIN aa.v_framework_lifecycle l
              ON l.country_iso3 = w.country_iso3 AND l.hazard = w.hazard""", e)
     d["plan_rows"] = pd.read_sql(
-        """SELECT f.country_iso3, r.country_name, f.hazard, f.version, f.agency, f.sector,
-                  f.amount_usd, f.fund_code, l.lifecycle
+        """SELECT f.country_iso3, r.country_name, f.hazard, f.version, f.window_name, f.agency,
+                  f.sector, f.amount_usd, f.fund_code, l.lifecycle
            FROM aa.v_window_funding_split f
            JOIN aa.v_framework_lifecycle l
              ON l.country_iso3 = f.country_iso3 AND l.hazard = f.hazard
@@ -3876,3 +3876,4 @@ def build_all(e, page, tbl):
     build_status_form(page, d)
     import landing
     landing.build_landing(page, d, e)
+    return d                      # the open layer (llm_layer) reuses the frames
