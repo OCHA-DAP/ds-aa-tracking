@@ -34,14 +34,17 @@ SOURCE_PRIORITY = [
 EXCLUDED_EVENT_TYPES = ("early_action",)
 _EXCL_SQL = ", ".join(f"'{t}'" for t in EXCLUDED_EVENT_TYPES)
 # The CERF AA allocations the site counts: the ones the activation record draws on (framework
-# and ad hoc; early action excluded), as the Financing page and the Plan page count them — not
-# the mirror's title keyword (aa_keyword), which also flags early-action allocations and misses
-# ad hoc AA with a plain title (2026-10-02 meeting: released by agency and by sector did not
-# match the curated figures). An activation whose CERF allocation code is not recorded yet
-# cannot be split; the Delivery page lists those.
+# and ad hoc; early action excluded), as the Financing page counts them — not the mirror's
+# title keyword (aa_keyword), which also flags early-action allocations and misses ad hoc AA
+# with a plain title (2026-10-02 meeting: released by agency and by sector did not match the
+# curated figures). An activation whose CERF allocation code is not recorded yet cannot be
+# split; the Delivery page lists those.
 _CERF_AA_CODES_SQL = ("SELECT DISTINCT allocation_code FROM aa.activation_funding "
                       "WHERE fund_code = 'cerf' AND allocation_code IS NOT NULL "
                       "AND event_type NOT IN (" + _EXCL_SQL + ")")
+# ... of which the framework activations' (ad hoc allocations left out): the Plan page's set, and
+# the map's by default (2026-10-14: the headline figures are framework-based)
+CERF_FW_CODES_SQL = _CERF_AA_CODES_SQL + " AND event_type <> 'adhoc_aa'"
 
 
 def canonical(df, keys):
