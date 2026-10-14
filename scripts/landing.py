@@ -749,6 +749,31 @@ def _adhoc_cerf(e, acts, actf, _try):
     return out
 
 
+def _cerf_reached(codes, _try):
+    """CERF allocation code -> (people reached, interim?): the allocation record (CERF's
+    de-duplicated figure, from the final report) or, where it has none yet, the sum over the
+    allocation's projects that report one (interim; a person reached by two projects counts
+    twice) — the Plan page's rule. A code with no figure is left out. Country and regional
+    funds have no such figure in the mirror."""
+    if not codes:
+        return {}
+    q = ", ".join(f"'{c}'" for c in codes)
+    al = _try(f"""SELECT c.application_code, c.individuals_reached,
+                         (SELECT sum(p.people_reached) FILTER (WHERE p.people_reached > 0)
+                          FROM aa.cerf_project p
+                          WHERE p.application_code = c.application_code) AS proj_reached
+                  FROM aa.cerf_allocation c WHERE c.application_code IN ({q})""",
+              ["application_code", "individuals_reached", "proj_reached"])
+    out = {}
+    for r in al.itertuples():
+        a, pj = _num(r.individuals_reached), _num(r.proj_reached)
+        if a:
+            out[r.application_code] = (a, False)
+        elif pj:
+            out[r.application_code] = (pj, True)
+    return out
+
+
 PRE_SERIES = {}   # year -> the whole annual pre-arranged series (assemble fills it; the tile label quotes it)
 
 
@@ -892,6 +917,13 @@ def assemble(d, e):
                  f"WHERE event_type NOT IN ({excl}) GROUP BY 1, 2",   # all years (a year selector will filter)
                  ["country_iso3", "hazard", "n"])
     adhoc_cerf = _adhoc_cerf(e, acts, actf, _try)
+    # people reached, per CERF allocation the activation record draws on. An allocation drawn by
+    # two activations (two windows, or a second trigger months later) reports ONE figure: its
+    # earliest activation carries it, the others are marked shared, so no sum counts it twice
+    cerf_f = actf[(actf["fund_code"] == "cerf") & actf["allocation_code"].notna()]
+    reach = _cerf_reached(sorted(set(cerf_f["allocation_code"])), _try)
+    reach_row = {code: g.sort_values(["event_date", "window_name"]).index[0]
+                 for code, g in cerf_f.groupby("allocation_code")}
     n_adhoc = {(a.country_iso3, a.hazard): int(a.n) for a in adhoc.itertuples()}
     hist = _year_history(d, e, excl, _try)        # the year selector's dated records, per pair
     learn = _try(
@@ -1111,8 +1143,10 @@ def assemble(d, e):
             fr = actf[(actf["country_iso3"] == c) & (actf["hazard"] == h)
                       & (actf["event_date"] == a.event_date)
                       & (actf["event_type"] == a.event_type)
-                      & (actf["event_label"].fillna("") == (a.event_label or ""))
-                      & (actf["window_name"].fillna("") == (a.window_name or ""))]
+                      # _s(): a missing string is NaN under pandas 3, and `nan or ""` is NaN —
+                      # ad hoc rows (no window) matched nothing and showed no money
+                      & (actf["event_label"].fillna("") == (_s(a.event_label) or ""))
+                      & (actf["window_name"].fillna("") == (_s(a.window_name) or ""))]
             u = aurl[(aurl["kb_framework"] == (kb_fw or "—"))
                      & (aurl["event_date"] == (a.kb_event_date or "—"))]
             if len(u) > 1 and "country_iso3" in u.columns:
@@ -1132,7 +1166,8 @@ def assemble(d, e):
                              "cerf_url": (f"https://cerf.un.org/what-we-do/allocation/"
                                           f"{int(x.alloc_year)}/summary/{x.allocation_code}"
                                           if x.fund_code == "cerf" and _s(x.allocation_code)
-                                          and pd.notna(x.alloc_year) else None)}
+                                          and pd.notna(x.alloc_year) else None),
+                             **_reach_fields(x, reach, reach_row)}
                             for x in fr.itertuples()],
             })
 
@@ -1208,6 +1243,19 @@ def assemble(d, e):
         cd["subgrants"] = [{"agency": a, "partners": ps} for a, ps in
                            sorted(groups.items(), key=lambda kv: -sum(p["usd"] or 0 for p in kv[1]))]
     return out
+
+
+def _reach_fields(x, reach, reach_row):
+    """The people-reached fields of one activation funding row (CERF rows only): the
+    allocation's figure on the row that carries it (`interim` when summed over projects),
+    `shared` on a later activation drawing on the same allocation."""
+    if x.fund_code != "cerf":
+        return {}
+    code = _s(x.allocation_code)
+    if code and reach_row.get(code) != x.Index:
+        return {"reached": None, "shared": True}
+    n, interim = reach.get(code, (None, False))
+    return {"reached": n, "interim": True} if interim else {"reached": n}
 
 
 def _expired(valid_until):
@@ -1295,19 +1343,40 @@ def geo_pass(countries, bboxes):
         cd["has_geo"] = m is not None
 
 
+def _flow_acts(f, layers):
+    """The activation records a pair contributes to the flow tiles (activations, money released,
+    people reached) — mirrors flowActs() in LANDING_JS: its framework activations while it is
+    shown as a framework (current or retired layer on), its ad hoc allocations while the ad hoc
+    layer is on. The Financing page's layer rule: same layers, same total on both pages."""
+    fw_on = any(k in layers and k in f["layers"] for k in ("framework", "retired"))
+    return [a for a in f["activations"]
+            if ("adhoc" in layers if a["type"] == "adhoc_aa" else fw_on)]
+
+
 def tile_figures(countries, layers):
     """Headline figures for a set of enabled layers — mirrors updateTiles() in LANDING_JS.
-    A pair is shown when any of its layers is enabled; framework figures (count, pre-arranged,
-    people covered) count pairs shown ON the framework layer; activations count every shown pair."""
+    A pair is shown when any of its layers is enabled; the stock figures (count, pre-arranged
+    now, people covered now) count pairs shown ON the framework layer; the flow figures
+    (activations, released, people reached: all to date) count _flow_acts()."""
     shown = [f for cd in countries.values() for f in cd["fws"] if set(f["layers"]) & set(layers)]
     fw = [f for f in shown if "framework" in layers and "framework" in f["layers"]]
+    acts = [a for f in shown for a in _flow_acts(f, layers)]
+    rows = [x for a in acts for x in a["funding"]]
+    # people reached: CERF allocations only, each counted once (see _reach_fields)
+    cerf = [x for x in rows if x["fund"] == "cerf" and not x.get("shared")]
     return {"n_fw": len(fw),
             "n_active": sum(1 for f in fw if f["disp"] == "active"),
             "n_upd": sum(1 for f in fw if f["disp"] == "updating"),
             "n_dev": sum(1 for f in fw if f["disp"] == "development"),
             "pre": sum(f["pre_now"] or 0 for f in fw),
-            "n_act": sum(f["n_act_all"] for f in shown),
-            "covered": sum(f["covered"] or 0 for f in fw)}
+            "covered": sum(f["covered"] or 0 for f in fw),
+            "n_cov": sum(1 for f in fw if f["covered"]),
+            "n_act": len(acts),
+            "released": sum(x["usd"] or 0 for x in rows),
+            "released_cerf": sum(x["usd"] or 0 for x in rows if x["fund"] == "cerf"),
+            "reached": sum(x.get("reached") or 0 for x in cerf),
+            "n_rep": sum(1 for x in cerf if x.get("reached") is not None),
+            "n_cerf": len(cerf)}
 
 
 # ---------------------------------------------------------------- page
@@ -1332,6 +1401,18 @@ def build_landing(page, d, e):
     # every framework shown (development ones included — they just have no envelope yet)
     t = tile_figures(countries, {"framework"})
     n_shown = t["n_fw"]
+    # the flow tiles name what the layers switched off would add (updateTiles: notShown)
+    ad, ret = tile_figures(countries, {"adhoc"}), tile_figures(countries, {"retired"})
+
+    def not_shown(*xs):
+        xs = [x for x in xs if x]
+        return f" · not shown: {', '.join(xs)}" if xs else ""
+    ns_act = not_shown(ad["n_act"] and f"{ad['n_act']} ad hoc allocation{'s' if ad['n_act'] > 1 else ''}",
+                       ret["n_act"] and f"{ret['n_act']} on retired frameworks")
+    ns_rel = not_shown(ad["released"] >= 5e4 and f"ad hoc allocations ${ad['released']/1e6:,.0f}M",
+                       ret["released"] >= 5e4 and f"retired frameworks ${ret['released']/1e6:,.0f}M")
+    ns_reach = not_shown(ad["reached"] and f"ad hoc allocations {ad['reached']/1e6:,.1f}M",
+                         ret["reached"] and f"retired frameworks {ret['reached']/1e6:,.1f}M")
 
     body = f"""
 <div class='hero'>
@@ -1347,8 +1428,10 @@ def build_landing(page, d, e):
   <div class='gcap' id='gcap'>Global portfolio — all layers currently shown on the map</div>
   <div class='tile' id='t-fw'><div class='v'>{t["n_fw"]}</div><div class='l'>frameworks on the map · {t["n_active"]} active · {t["n_upd"]} being updated · {t["n_dev"]} in development</div></div>
   <div class='tile' id='t-pre'><div class='v'>${t["pre"]/1e6:,.0f}M</div><div class='l'>pre-arranged now (CERF and country and regional funds), frameworks shown</div></div>
-  <div class='tile' id='t-act'><div class='v'>{t["n_act"]}</div><div class='l'>activations</div></div>
-  <div class='tile' id='t-cov'><div class='v'>{t["covered"]/1e6:,.1f}M</div><div class='l'>people covered, frameworks shown</div></div>
+  <div class='tile' id='t-cov'><div class='v'>{t["covered"]/1e6:,.1f}M</div><div class='l'>people covered now by the frameworks shown ({t["n_cov"]} of {t["n_fw"]} have a figure)</div></div>
+  <div class='tile' id='t-act'><div class='v'>{t["n_act"]}</div><div class='l'>framework activations to date{ns_act}</div></div>
+  <div class='tile' id='t-rel'><div class='v'>${t["released"]/1e6:,.0f}M</div><div class='l'>released to date on framework activations — CERF ${t["released_cerf"]/1e6:,.0f}M · country and regional funds ${(t["released"] - t["released_cerf"])/1e6:,.0f}M{ns_rel}</div></div>
+  <div class='tile' id='t-reach'><div class='v'>{t["reached"]/1e6:,.1f}M</div><div class='l'>people reached to date — CERF allocations, as reported so far ({t["n_rep"]} of {t["n_cerf"]} have a figure){ns_reach}</div></div>
  </div>
 </div>
 <div class='maprow' id='maprow'>
@@ -1600,11 +1683,16 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
 .yearbar button.on { background:#2171b5; border-color:#2171b5; color:#fff; font-weight:600; }
 .yearnote { margin:0 0 8px; font-size:12px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:5px 10px; }
 .drv { display:inline-block; margin-left:5px; padding:0 5px; border:1px dashed #b45309; border-radius:6px; font-size:10px; font-weight:600; color:#b45309; vertical-align:1px; cursor:help; }
-.gtiles { position:relative; transition: opacity .3s; }
-.gtiles .gcap { flex-basis:100%; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#64748b; margin:-2px 0 -6px 2px; }
+/* six figures in one row: three as at now (frameworks, pre-arranged, people covered), then three
+   to date (activations, released, people reached); the labels wrap inside equal columns */
+.gtiles { position:relative; transition: opacity .3s; display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); gap:10px; }
+.gtiles .tile { min-width:0; padding:10px 14px; }
+.gtiles .gcap { grid-column:1 / -1; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#64748b; margin:-2px 0 -6px 2px; }
+@media (max-width:1199px){ .gtiles { grid-template-columns:repeat(3, minmax(0, 1fr)); } }
+@media (max-width:759px){ .gtiles { grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; } }
 .gtiles.global { opacity:.72; } .gtiles.global .tile { background:#f6f8fa; border-style:dashed; box-shadow:none; }
 .gtiles.global .tile .v { font-size:18px; color:#475569; } .gtiles.global .gcap { color:#b45309; font-weight:700; }
-.ctiles { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin:8px 0 4px; }
+.ctiles { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin:8px 0 4px; }
 .ctiles .ctile { background:#eef5fc; border:1px solid #cfe1f3; border-radius:8px; padding:6px 8px; }
 .ctiles .ctile .v { font-size:15px; font-weight:700; color:#0f2540; line-height:1.2; } .ctiles .ctile .l { font-size:10.5px; color:#475569; }
 .ctiles .ccap { grid-column:1 / -1; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:#1a5fa0; font-weight:700; margin-bottom:-2px; }
@@ -1701,6 +1789,31 @@ function statusAt(f, D){
 }
 // the framework activations a pin's dots stand for: the year view's filter, as applyYear() counts them
 function dotActs(f){ return f.activations.filter(a => a.type === 'framework_aa' && (YEAR == null || String(a.date).slice(0, 4) === String(YEAR))); }
+// ---------- flow figures: activations, money released, people reached (all 'to date', or in the year shown)
+// What a pair contributes: its framework activations while it is shown as a framework (current
+// or retired layer on), its ad hoc allocations while the ad hoc layer is on — the Financing
+// page's layer rule, so both pages give the same total for the same layers. Mirrored by
+// _flow_acts() / tile_figures() in Python. LY: a layer set other than the one shown.
+function flowActs(f, LY){
+  LY = LY || LAYERS;
+  const fwOn = (LY.framework && f.layers.includes('framework')) || (LY.retired && f.layers.includes('retired'));
+  return f.activations.filter(a => (YEAR == null || String(a.date).slice(0, 4) === String(YEAR))
+    && (a.type === 'adhoc_aa' ? !!LY.adhoc : fwOn));
+}
+function flowFigures(fs, LY){
+  const acts = fs.flatMap(f => flowActs(f, LY)), rows = acts.flatMap(a => a.funding || []);
+  const sum = (xs, k) => xs.reduce((t, x) => t + (x[k] || 0), 0);
+  // people reached: CERF allocations only (the mirror has no figure for the pooled funds); an
+  // allocation drawn by two activations is counted once, on the first (the others: shared)
+  const cerf = rows.filter(x => x.fund === 'cerf' && !x.shared), rep = cerf.filter(x => x.reached != null);
+  return { n: acts.length, nAd: acts.filter(a => a.type === 'adhoc_aa').length,
+           usd: sum(rows, 'usd'), usdCerf: sum(rows.filter(x => x.fund === 'cerf'), 'usd'),
+           noUsd: acts.filter(a => !(a.funding || []).some(x => x.usd || x.shared)).length,
+           reached: sum(rep, 'reached'), nRep: rep.length, nCerf: cerf.length, nInterim: rep.filter(x => x.interim).length };
+}
+// what the flow figures count under the layers shown, in words
+function flowWhat(F){ return F.nAd === 0 ? 'framework activations' : F.nAd === F.n ? 'ad hoc allocations' : 'framework activations and ad hoc allocations'; }
+const people = v => v >= 1e6 ? (v/1e6).toFixed(1) + 'M' : v >= 1e3 ? Math.round(v/1e3) + 'k' : String(Math.round(v));
 // an activation in the last RECENT_DAYS days, by the browser's clock (the page is static: one
 // published weeks ago must not keep blinking on the build date). Dates are partial ISO: a full
 // date is used as is (the KB crosswalk date sharpens a month-only one when it falls in that
@@ -1978,7 +2091,7 @@ function worldLegend(){
   const all = Object.values(L).flatMap(c=>c.fws), shown = all.filter(f=>visLayer(f));
   const onLayer = k => all.filter(f=>f.layers.includes(k));
   const n = k => onLayer('framework').filter(f=>f.disp===k).length;
-  const nAct = shown.reduce((s,f)=>s+f.n_act_all,0), nNow = shown.filter(f=>f.ring==='now').length;
+  const nAct = flowFigures(shown).n, nNow = shown.filter(f=>f.ring==='now').length;
   const nRec = shown.reduce((s,f)=>s+dotActs(f).filter(isRecent).length,0);
   const swatch = { framework: `<span class='dot' style='background:${COLOR.active}'></span>`, adhoc: `<span class='dot' style='background:${LAYER_COLOR.adhoc}'></span>`,
                    retired: `<span class='dot' style='background:${LAYER_COLOR.retired}'></span>`, tech: `<span class='dot dot-hollow'></span>` };
@@ -2038,11 +2151,37 @@ function updateTiles(){
     preX ? `Includes ${money(preX)} of pooled-fund allocations not tied to one hazard.` : '',
     ser != null && Math.abs(ser - pre) >= 5e5 ? `The funding page's ${YEAR} figure (${money(ser)}) also counts AA-tagged pooled-fund allocations in countries without a framework shown here.` : '',
     noEnv.length ? `No figure for ${YEAR}: ${noEnv.join(', ')}.` : ''].filter(Boolean).join(' ');
-  set('t-act', shown.reduce((s,f)=>s+f.n_act_all,0), YEAR != null ? `activations in ${YEAR}` : 'activations');
   const cov = fw.reduce((s,f)=>s+(f.covered||0),0);
-  set('t-cov', past && !cov ? '—' : (cov/1e6).toFixed(1) + 'M', past
+  set('t-cov', (past && !cov) || !fw.length ? '—' : (cov/1e6).toFixed(1) + 'M', past
       ? (cov ? `people covered at the end of ${YEAR}, frameworks shown (latest figure reported by then)` : `people covered: no figure recorded by the end of ${YEAR}`)
-      : 'people covered, frameworks shown');
+      : fw.length ? `people covered now by the frameworks shown (${fw.filter(f=>f.covered).length} of ${fw.length} have a figure)` : 'people covered now: no framework shown');
+  // the flows: every activation to date (or of the year shown) on the layers shown
+  const F = flowFigures(shown), when = YEAR != null ? ` in ${YEAR}` : ' to date', what = flowWhat(F);
+  // what the layers switched off would add: named in each label, so no figure is taken for the whole
+  const all = Object.values(L).flatMap(c=>c.fws);
+  const offs = [['adhoc','ad hoc allocations'],['retired','retired frameworks'],['framework','current frameworks']]
+    .filter(([k]) => !LAYERS[k]).map(([k, lab]) => [lab, flowFigures(all, {[k]: true})]);
+  const notShown = fn => { const xs = offs.map(([lab, G]) => fn(lab, G)).filter(Boolean); return xs.length ? ` · not shown: ${xs.join(', ')}` : ''; };
+  set('t-act', F.n, (!F.n ? `no activation${when} on the layers shown`
+      : F.nAd && F.nAd < F.n ? `activations${when}: ${F.n - F.nAd} framework activations, ${F.nAd} ad hoc allocations` : what + when)
+      + notShown((lab, G) => G.n ? `${G.n} ${G.nAd ? `ad hoc allocation${G.n === 1 ? '' : 's'}` : `on ${lab}`}` : null));
+  const pooled = F.usd - F.usdCerf, funds = pooled < 5e4 ? 'CERF' : F.usdCerf < 5e4 ? 'country and regional funds'
+      : `CERF ${money(F.usdCerf)} · country and regional funds ${money(pooled)}`;
+  set('t-rel', F.n ? money(F.usd) : '—', (!F.n ? `nothing released${when} on the layers shown` : `released${when} on ${what} — ${funds}`)
+      + notShown((lab, G) => G.usd >= 5e4 ? `${lab} ${money(G.usd)}` : null));
+  const tr = document.getElementById('t-rel'); if(tr) tr.title = 'Money released when a framework activated'
+    + (F.nAd ? ' or allocated ad hoc for anticipatory action' : '') + ', from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.'
+    + (F.noUsd ? ` ${F.noUsd} of the ${F.n} have no amount recorded.` : '');
+  const by = YEAR != null ? ` with the ${YEAR} releases` : ' to date';
+  set('t-reach', F.nRep ? people(F.reached) : '—',
+      (!F.nCerf ? `people reached: no CERF allocation${YEAR != null ? ` in ${YEAR}` : ''} on the layers shown`
+      : !F.nRep ? `people reached${by}: no report yet for ${F.nCerf === 1 ? 'the CERF allocation' : `the ${F.nCerf} CERF allocations`}`
+      : `people reached${by} — CERF allocations, as reported so far (${F.nRep} of ${F.nCerf} have a figure)`)
+      + notShown((lab, G) => G.reached ? `${lab} ${people(G.reached)}` : null));
+  const tp2 = document.getElementById('t-reach'); if(tp2) tp2.title = 'Summed over CERF allocations: CERF\'s own de-duplicated figure for each one, from its final report'
+    + (F.nInterim ? `, or the sum over its projects where the allocation has none yet (${F.nInterim} interim)` : '')
+    + '. A person reached under two allocations counts twice. Reports come about nine months after an allocation, so recent years are incomplete.'
+    + ' Country and regional funds report no figure here. Not people covered: that is what the plans cover now.';
   const g = document.getElementById('gtiles'); if(g) g.classList.toggle('global', !!state.iso);
   const cap = document.getElementById('gcap'); if(cap) cap.textContent = (state.iso ? `Global portfolio — not ${L[state.iso].name}: its own figures are in the panel` : 'Global portfolio — all layers currently shown on the map')
     + (past ? ` · as at 31 December ${YEAR}` : YEAR != null ? ` · ${YEAR}, as of today` : '');
@@ -2261,12 +2400,16 @@ function monthStrip(months){ months = months||[]; return [...MONL].map((m,i)=>`<
 // the country's OWN figures, at the top of the panel — never to be confused with the global tiles
 function countryTiles(c){
   const fws = vis(c), fw = fws.filter(f=>visLayer(f)==='framework');
-  const pre = fw.reduce((s,f)=>s+(f.pre_now||0),0), cov = fw.reduce((s,f)=>s+(f.covered||0),0), nA = fws.reduce((s,f)=>s+f.n_act_all,0);
+  const pre = fw.reduce((s,f)=>s+(f.pre_now||0),0), cov = fw.reduce((s,f)=>s+(f.covered||0),0);
+  const F = flowFigures(fws), when = YEAR != null ? ` in ${YEAR}` : ' to date';   // the global tiles' rule, this country
+  const actL = (F.nAd && F.nAd === F.n ? 'ad hoc allocation' : F.nAd ? 'activation' : 'framework activation') + (F.n===1?'':'s') + when + (F.nAd && F.nAd < F.n ? `, ${F.nAd} of them ad hoc` : '');
   return `<div class='ctiles'><div class='ccap'>${esc(c.name)} only</div>
     <div class='ctile'><div class='v'>${fw.length}</div><div class='l'>framework${fw.length===1?'':'s'}${fws.length>fw.length?` · ${fws.length-fw.length} other`:''}</div></div>
     <div class='ctile'><div class='v'>${pre?money(pre):'—'}</div><div class='l'>pre-arranged ${pastY()?`in ${YEAR}`:'now'}</div></div>
-    <div class='ctile'><div class='v'>${nA}</div><div class='l'>activation${nA===1?'':'s'}${YEAR!=null?` in ${YEAR}`:''}</div></div>
-    <div class='ctile'><div class='v'>${cov?num(cov):'—'}</div><div class='l'>people covered</div></div></div>`;
+    <div class='ctile'><div class='v'>${cov?num(cov):'—'}</div><div class='l'>people covered${pastY()?'':' now'}</div></div>
+    <div class='ctile'><div class='v'>${F.n}</div><div class='l'>${actL}</div></div>
+    <div class='ctile'><div class='v'>${F.n?money(F.usd):'—'}</div><div class='l'>released${when}</div></div>
+    <div class='ctile'><div class='v'>${F.nRep?num(F.reached):'—'}</div><div class='l'>people reached${F.nCerf?` · ${F.nRep} of ${F.nCerf} CERF allocation${F.nCerf===1?'':'s'} reported`:''}</div></div></div>`;
 }
 function hiddenNote(c){
   const h = hidden(c); if(!h.length) return '';
