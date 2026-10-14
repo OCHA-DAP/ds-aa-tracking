@@ -12,7 +12,15 @@ import re
 import unicodedata
 
 import pandas as pd
-from dashboards import EXCLUDED_EVENT_TYPES, LIFE_LABEL, PAL, _dash_page, _st, haz
+from dashboards import (
+    CERF_FW_CODES_SQL,
+    EXCLUDED_EVENT_TYPES,
+    LIFE_LABEL,
+    PAL,
+    _dash_page,
+    _st,
+    haz,
+)
 
 LIVE = ("active", "updating", "development")
 HAZ_ROWS = ["drought", "flood", "storm", "cholera", "other"]
@@ -95,15 +103,19 @@ def _cerf_label(iasc, cerf):
 
 # ---- the tables `_fetch` does not load ----------------------------------------------------
 def _extra():
-    """One engine, one read per table, each tolerant of an older snapshot (empty frame)."""
+    """One engine, one read per table, each tolerant of an older snapshot (empty frame).
+    The CERF rows are those of the allocations framework activations drew on (CERF_FW_CODES_SQL:
+    ad hoc and early-action allocations left out), as the map counts them by default — not the
+    mirror's title keyword (aa_keyword) nor its sub-grant flag (is_aa)."""
     import ocha_stratus as stratus
     e = stratus.get_engine(stage="dev")
     excl = ", ".join(f"'{t}'" for t in EXCLUDED_EVENT_TYPES)
+    fw = "(" + CERF_FW_CODES_SQL + ")"
     q = {
         "alloc": ("""SELECT application_code, year, country_iso3,
                             lower(trim(emergency_type)) AS emergency_type, amount_approved,
                             individuals_planned, individuals_reached, report_due_date
-                     FROM aa.cerf_allocation WHERE aa_keyword""",
+                     FROM aa.cerf_allocation WHERE application_code IN """ + fw,
                   ["application_code", "year", "country_iso3", "emergency_type",
                    "amount_approved", "individuals_planned", "individuals_reached",
                    "report_due_date"]),
@@ -114,37 +126,37 @@ def _extra():
                            sum(p.people_planned) FILTER (WHERE p.people_reached > 0) AS planned,
                            sum(p.people_reached) FILTER (WHERE p.people_reached > 0) AS reached
                     FROM aa.cerf_project p
-                    JOIN aa.cerf_allocation c USING (application_code)
-                    WHERE c.aa_keyword GROUP BY p.application_code""",
+                    WHERE p.application_code IN """ + fw + " GROUP BY p.application_code",
                  ["application_code", "n_proj", "n_rep", "planned", "reached"]),
         "alloc_fw": ("""SELECT DISTINCT allocation_code, country_iso3, hazard
                         FROM aa.activation_funding
                         WHERE fund_code = 'cerf' AND allocation_code IS NOT NULL
-                          AND event_type NOT IN (""" + excl + ")",
+                          AND event_type NOT IN (""" + excl + ", 'adhoc_aa')",
                      ["allocation_code", "country_iso3", "hazard"]),
         "sector": ("""SELECT p.application_code, s.cerf_sector_name AS sector,
                              s.iasc_sector_name AS iasc, s.sector_amount
                       FROM aa.cerf_project_sector s
                       JOIN aa.cerf_project p USING (project_code)
-                      JOIN aa.cerf_allocation c ON c.application_code = p.application_code
-                      WHERE c.aa_keyword AND s.sector_amount > 0""",
+                      WHERE p.application_code IN """ + fw + " AND s.sector_amount > 0",
                    ["application_code", "sector", "iasc", "sector_amount"]),
         # d["subgrant_aa"] without the partner acronym, which the name matching uses
         "subgrant": ("""SELECT project_code, application_code, agency, year, country_iso3,
                                partner_name, partner_acronym, partner_type, localization,
                                subgrant_usd
-                        FROM aa.cerf_subgrant WHERE is_aa AND subgrant_usd IS NOT NULL""",
+                        FROM aa.cerf_subgrant
+                        WHERE application_code IN """ + fw + " AND subgrant_usd IS NOT NULL",
                      ["project_code", "application_code", "agency", "year", "country_iso3",
                       "partner_name", "partner_acronym", "partner_type", "localization",
                       "subgrant_usd"]),
-        "cva": ("""SELECT year, country_iso3, amount_approved_usd, cva_usd, people_receiving_cash
+        # no allocation code in the file: build_plan keeps the rows of framework allocations
+        "cva": ("""SELECT year, country_iso3, lower(trim(emergency_type)) AS emergency_type,
+                          amount_approved_usd, cva_usd, people_receiving_cash
                    FROM aa.cerf_cva_history""",
-                ["year", "country_iso3", "amount_approved_usd", "cva_usd",
+                ["year", "country_iso3", "emergency_type", "amount_approved_usd", "cva_usd",
                  "people_receiving_cash"]),
         "people": ("""SELECT p.application_code, p.phase, p.disaggregation, p.grp, p.value
                       FROM aa.cerf_application_people p
-                      JOIN aa.cerf_allocation c USING (application_code)
-                      WHERE c.aa_keyword""",
+                      WHERE p.application_code IN """ + fw,
                    ["application_code", "phase", "disaggregation", "grp", "value"]),
         "incl": ("""SELECT country_iso3, year, source, plan_type, in_gho, exposure_aa_shocks,
                            aa_feasible, aa_prearranged, has_framework
@@ -239,7 +251,8 @@ def _partners(d, ex):
 
     # CERF AA sub-grants -> framework: the activation record of the allocation, else the
     # allocation's emergency type (the CERF record) as the hazard
-    sg = (ex["subgrant"] if len(ex["subgrant"]) else d["subgrant_aa"]).copy()
+    sg = (ex["subgrant"] if len(ex["subgrant"]) else      # older snapshot: no acronym column
+          d["subgrant_aa"][d["subgrant_aa"]["application_code"].isin(ex["alloc"]["application_code"])]).copy()
     if "partner_acronym" not in sg:
         sg["partner_acronym"] = None
     tbd = (sg["partner_type"].eq("TBD")
@@ -485,7 +498,21 @@ def build_plan(page, d):
     n_iasc = sum(1 for b in cols if b != OTHER_SECTOR)
 
     # ================================================================== cash
+    # the CVA file has no allocation code: a row counts when a framework allocation of the same
+    # country and emergency type falls within a year of it (the file's year is not always the
+    # allocation's: its Ethiopia 2020 rows are 20-RR-ETH-46461, a 2021 allocation). An ad hoc
+    # allocation that close to a framework one on the same country and hazard would slip in;
+    # none does on 2026-10-14.
     cva = ex["cva"].copy()
+    fy = {}
+    for r in al.itertuples():
+        fy.setdefault((r.country_iso3, r.emergency_type), set()).add(int(r.year))
+    keep = [any(abs(int(y) - v) <= 1 for v in fy.get((c, t), ()))
+            for y, c, t in zip(cva["year"], cva["country_iso3"], cva["emergency_type"])]
+    cva_out = (cva[[not k for k in keep]].groupby(["country_iso3", "year", "emergency_type"])
+               ["amount_approved_usd"].sum())
+    cva = cva[keep]
+    out_txt = "; ".join(f"{c} {int(y)} {t} (${v/1e6:,.1f}M)" for (c, y, t), v in cva_out.items())
     cash_rows, cash_note, cash_share = [], "no CVA records in this snapshot", "–"
     if len(cva):
         for y, g in cva.groupby("year"):
@@ -497,15 +524,18 @@ def build_plan(page, d):
         cva_all = float(cva["cva_usd"].fillna(0).sum())
         cash_share = f"{cva_all / base_all:.0%}" if base_all else "–"
         cerf_all = float(al["amount_approved"].sum())
-        # countries whose CERF AA approvals exceed what the CVA file covers (> $0.5M)
+        # countries whose framework allocations exceed what the CVA file covers (> $0.5M)
         gap = (al.groupby("country_iso3")["amount_approved"].sum()
                .sub(cva.groupby("country_iso3")["amount_approved_usd"].sum(), fill_value=0))
         gap = sorted(gap[gap > 5e5].index)
-        cash_note = (f"{cva_all / base_all:.0%} of the ${base_all/1e6:,.0f}M in the CVA file went as "
-                     f"cash or vouchers, to {int(cva['people_receiving_cash'].fillna(0).sum()):,} "
-                     f"people. The file covers ${base_all/1e6:,.0f}M of the ${cerf_all/1e6:,.0f}M "
-                     f"approved for the {len(al)} CERF AA allocations"
-                     + (f" (not all of {', '.join(gap)})." if gap else "."))
+        cash_note = (f"{cva_all / base_all:.0%} of the ${base_all/1e6:,.0f}M of framework allocations in "
+                     f"the CVA file went as cash or vouchers, to "
+                     f"{int(cva['people_receiving_cash'].fillna(0).sum()):,} people. The file covers "
+                     f"${base_all/1e6:,.0f}M of the ${cerf_all/1e6:,.0f}M approved for the {len(al)} "
+                     f"CERF allocations of framework activations"
+                     + (f" (not all of {', '.join(gap)})." if gap else ".")
+                     + (f" Left out, no framework allocation of the country and hazard within a "
+                        f"year: {out_txt}." if out_txt else ""))
 
     # ================================================================== people
     # people reached per allocation: the allocation record (CERF's de-duplicated figure),
@@ -618,27 +648,27 @@ def build_plan(page, d):
                                    + fw.loc[fw["version"].isna(), "hazard"]))) if len(fw) else ""
     panels = f"""
 <div class='tiles'>
- <div class='tile'><div class='v'>{n_iasc}</div><div class='l'>sectors where the portfolio has planned or delivered AA<br>(IASC sector names; framework budgets, CERF AA projects)</div></div>
- <div class='tile'><div class='v'>{cash_share}</div><div class='l'>of the CERF AA money in CERF's CVA file<br>delivered as cash or vouchers</div></div>
- <div class='tile'><div class='v'>{ppl_total / 1e6:.1f}M</div><div class='l'>people reached, summed over the {len(rep)} of {len(al)}<br>CERF AA allocations that report it</div></div>
+ <div class='tile'><div class='v'>{n_iasc}</div><div class='l'>sectors where the portfolio has planned or delivered AA<br>(IASC sector names; framework budgets, CERF projects of framework activations)</div></div>
+ <div class='tile'><div class='v'>{cash_share}</div><div class='l'>of the framework activations' CERF money in CERF's CVA file<br>delivered as cash or vouchers</div></div>
+ <div class='tile'><div class='v'>{ppl_total / 1e6:.1f}M</div><div class='l'>people reached, summed over the {len(rep)} of {len(al)} CERF<br>allocations of framework activations that report it</div></div>
  <div class='tile'><div class='v'>{n_orgs}</div><div class='l'>organisations named in {n_fw_pt} current frameworks</div></div>
- <div class='tile'><div class='v'>{loc_share}</div><div class='l'>of CERF AA sub-grant money to national / local actors<br>(partner determined, {sg_years})</div></div>
+ <div class='tile'><div class='v'>{loc_share}</div><div class='l'>of the CERF sub-grant money of framework activations<br>to national / local actors (partner determined, {sg_years})</div></div>
 </div>
 
 <h2>Where the portfolio has experience</h2>
 <p class='meta'>Hazard × sector. Left: what the plans foresee — current frameworks whose latest version
 budgets something in the sector ({n_sec} of {n_live} current frameworks have a sector split; the rest are
 agency-only or have no split recorded, so a blank cell is not 'no experience'). Right: what was
-delivered — CERF AA allocations with project money in the sector.</p>
+delivered — CERF allocations of framework activations with project money in the sector.</p>
 <div class='grid'>
  <div class='panel'><h3>Planned: frameworks with budget in the sector</h3>
    {_matrix(plan_cnt, cols, {h: f'({v})' for h, v in plan_note.items()}, 'frameworks')}
    <div class='note'>Row label: frameworks with a sector split of all current frameworks for the hazard.
    From the framework documents' agency × sector split (aa.v_window_funding_split, latest version).</div></div>
- <div class='panel'><h3>Delivered: CERF AA allocations with money in the sector</h3>
+ <div class='panel'><h3>Delivered: CERF allocations of framework activations with money in the sector</h3>
    {_matrix(cerf_cnt, cols, {h: f'({v})' for h, v in cerf_note.items()}, 'allocations')}
-   <div class='note'>Row label: CERF AA allocations with sector records for the hazard (CERF emergency
-   type). From the CERF project sectors of AA allocations (aa.cerf_project_sector).</div></div>
+   <div class='note'>Row label: those allocations with sector records for the hazard (CERF emergency
+   type). From the CERF project sectors of the allocations (aa.cerf_project_sector).</div></div>
 </div>
 <details><summary style='cursor:pointer;font-size:13px'>Sector mapping (labels as recorded → IASC sector)</summary>
 <ul class='nm'>{mapping}</ul>
@@ -652,22 +682,23 @@ A combined label (e.g. 'Health &amp; Nutrition') counts in both columns. 'To be 
 
 <h2>Cash</h2>
 <div class='grid'>
- <div class='panel'><h3>CERF AA money delivered as cash and vouchers</h3>
+ <div class='panel'><h3>CERF money of framework activations delivered as cash and vouchers</h3>
    <div style='position:relative;height:300px'><canvas id='pl3' style='max-height:none'></canvas></div>
    <div class='note'>{cash_note} Computed inside the CERF CVA file (aa.cerf_cva_history): cash and voucher
-   amount over the approved amount of the same rows, by the file's year. Not joined to the CERF project
-   records: the file's years do not always match the allocation year. The rest is 'other modalities'
+   amount over the approved amount of the same rows, by the file's year. The file has no allocation code:
+   a row counts when a CERF allocation of a framework activation for the same country and emergency type
+   falls within a year of it (the file's years do not always match the allocation year). The rest is 'other modalities'
    (in-kind goods and services together — the data do not separate in-kind).</div></div>
 </div>
 
 <h2>People</h2>
 <div class='tiles'>
- <div class='tile'><div class='v'>{len(rep)} <span style='font-size:14px;font-weight:400'>of {len(al)}</span></div><div class='l'>CERF AA allocations with people reached reported{f' ({len(rep) - len(fin)} interim)' if len(rep) > len(fin) else ''}<br>{n_due} more: report not due yet · {len(gaps)} gap{'s' if len(gaps) != 1 else ''}</div></div>
+ <div class='tile'><div class='v'>{len(rep)} <span style='font-size:14px;font-weight:400'>of {len(al)}</span></div><div class='l'>CERF allocations of framework activations with people reached reported{f' ({len(rep) - len(fin)} interim)' if len(rep) > len(fin) else ''}<br>{n_due} more: report not due yet · {len(gaps)} gap{'s' if len(gaps) != 1 else ''}</div></div>
  <div class='tile'><div class='v'>{n_over} <span style='font-size:14px;font-weight:400'>of {len(fin)}</span></div><div class='l'>allocations with a final report that reached<br>at least as many people as planned</div></div>
  <div class='tile'><div class='v'>{fem['planned']:.0%} → {fem['reached']:.0%}</div><div class='l'>women and girls, share of people planned → reached<br>({len(both)} allocations with both)</div></div>
 </div>
 <div class='grid'>
- <div class='panel'><h3>People planned and reached, per CERF AA allocation</h3>
+ <div class='panel'><h3>People planned and reached, per CERF allocation of a framework activation</h3>
    <div style='position:relative;height:{max(300, 26 * len(ppl) + 60)}px'><canvas id='pl4' style='max-height:none'></canvas></div>
    <div class='note'>From the CERF allocation record (individuals planned / reached, aa.cerf_allocation).
    Where it has no people reached, the sum over the allocation's projects that report a figure — both
@@ -679,7 +710,7 @@ A combined label (e.g. 'Health &amp; Nutrition') counts in both columns. 'To be 
    {len(gaps)} gap{'s' if len(gaps) != 1 else ''}: {html.escape(gap_txt) or 'none'}.</div></div>
  <div class='panel'><h3>By sex, age and disability</h3>
    <div style='position:relative;height:300px'><canvas id='pl5' style='max-height:none'></canvas></div>
-   <div class='note'>Summed over the {len(both)} CERF AA allocations with both a planned and a reached
+   <div class='note'>Summed over the {len(both)} of these allocations with both a planned and a reached
    breakdown (aa.cerf_application_people; CERF GMS reports 2020–2024). Women / men are adults, girls / boys
    children. Persons with disabilities is a separate count, overlapping the others.</div></div>
 </div>
@@ -687,14 +718,14 @@ A combined label (e.g. 'Health &amp; Nutrition') counts in both columns. 'To be 
 <h2>Partners</h2>
 <p class='meta'>Organisations named in the framework documents (partner lists of the latest
 version that has one, {n_fw_pt} of {n_live} current frameworks) and organisations funded through
-CERF AA sub-grants ({sg_years}). No framework money here: the budgets are on the
+CERF sub-grants of framework activations ({sg_years}). No framework money here: the budgets are on the
 <a href='dash-funding.html'>Financing</a> page.</p>
 <div class='tiles'>
  <div class='tile'><div class='v'>{n_nat} <span style='font-size:14px;font-weight:400'>of {n_orgs}</span></div><div class='l'>named organisations are national / local actors: {int(n_by.get('government', 0))} government,<br>{int(n_by.get('nngo', 0))} national NGOs, {int(n_by.get('rcrc_nat', 0))} national RC/RC societies</div></div>
  <div class='tile'><div class='v'>{n_un}</div><div class='l'>UN agencies named as implementers</div></div>
  <div class='tile'><div class='v'>{n_ingo}</div><div class='l'>international NGOs</div></div>
- <div class='tile'><div class='v'>{n_funded_all}</div><div class='l'>organisations with a CERF AA sub-grant, {sg_years}</div></div>
- <div class='tile'><div class='v'>{n_named_f} <span style='font-size:14px;font-weight:400'>of {n_named}</span></div><div class='l'>named delivery partners funded by a CERF AA sub-grant<br>({len(cmp_)} frameworks with sub-grant records)</div></div>
+ <div class='tile'><div class='v'>{n_funded_all}</div><div class='l'>organisations with a CERF sub-grant of a framework activation, {sg_years}</div></div>
+ <div class='tile'><div class='v'>{n_named_f} <span style='font-size:14px;font-weight:400'>of {n_named}</span></div><div class='l'>named delivery partners funded by a CERF sub-grant<br>({len(cmp_)} frameworks with sub-grant records)</div></div>
 </div>
 <div class='grid'>
  <div class='panel'><h3>Organisations named in the frameworks, by type and main role</h3>
@@ -705,9 +736,9 @@ CERF AA sub-grants ({sg_years}). No framework money here: the budgets are on the
    HCR/ACNUR→UNHCR, PNUD→UNDP, OPS→PAHO) — within the country for national actors, across countries for UN agencies, INGOs,
    donors and the international Red Cross / Red Crescent (IFRC, partner national societies,
    Climate Centre). Approximate: spellings with no shared acronym stay apart.</div></div>
- <div class='panel'><h3>CERF AA sub-grants by recipient, per year</h3>
+ <div class='panel'><h3>CERF sub-grants of framework activations by recipient, per year</h3>
    <div style='position:relative;height:330px'><canvas id='pl2' style='max-height:none'></canvas></div>
-   <div class='note'>From the CERF sub-grant records of AA allocations (aa.cerf_subgrant), CERF's own
+   <div class='note'>From the CERF sub-grant records of those allocations (aa.cerf_subgrant), CERF's own
    <i>localization</i> field: 'Local' = government, national NGOs and national Red Cross / Red Crescent
    societies. The share in the label is local money over money whose partner is determined; 'not yet
    determined' (TBD) is shown but left out of the share. Agencies' direct spending is not in these bars.</div></div>
@@ -716,20 +747,20 @@ CERF AA sub-grants ({sg_years}). No framework money here: the budgets are on the
 <section><input class='filter' placeholder='filter…' oninput='filt(this)'>
 <div class='scroll'><table class='data'><thead><tr><th>framework</th><th>status</th><th>partner list (version)</th>
 <th>UN implementers</th><th>government</th><th>national / local NGOs</th><th>Red Cross / Red Crescent</th>
-<th>international NGOs</th><th>other</th><th>CERF AA sub-grantees</th><th>named delivery partners with a sub-grant</th>
+<th>international NGOs</th><th>other</th><th>CERF sub-grantees</th><th>named delivery partners with a sub-grant</th>
 <th>people covered</th></tr></thead><tbody>{trs}</tbody></table></div></section>
 <p class='note' style='color:#666;font-size:11.5px'>Counts of distinct organisations in the partner list.
-<b>CERF AA sub-grantees</b>: distinct funded partners of the framework's CERF AA allocations (all activations;
-an allocation belongs to the framework its activation record names, else to the hazard CERF gives it).
+<b>CERF sub-grantees</b>: distinct funded partners of the CERF allocations of the framework's activations
+(all of them; an allocation belongs to the framework its activation record names).
 <b>Named delivery partners</b>: government bodies, NGOs, Red Cross / Red Crescent and other organisations the
 document gives an implementing or sub-grantee role (UN agencies, donors, academia and private firms such as
 mobile-money providers excluded), matched on name or acronym to those sub-grantees — only where the framework
 has sub-grant records. The partner list can be from a newer version than the allocations.
 {n_not_named} sub-grantees of these frameworks are not named in the partner list.
 Frameworks with no partner list yet: {html.escape(hz_list) or 'none'}. People covered: latest figure per framework.</p>
-<details><summary style='cursor:pointer;font-size:13px'>Named delivery partners with no CERF AA sub-grant ({n_named - n_named_f})</summary>
+<details><summary style='cursor:pointer;font-size:13px'>Named delivery partners with no CERF sub-grant ({n_named - n_named_f})</summary>
 <ul class='nm'>{unf}</ul>
-<p class='note' style='color:#666;font-size:11.5px'>No CERF AA sub-grant recorded for the framework's
+<p class='note' style='color:#666;font-size:11.5px'>No CERF sub-grant recorded for the framework's
 allocations. They may be funded by the agencies' own resources, pooled funds or bilateral money, which
 this database does not trace to partners.</p></details>
 
@@ -796,8 +827,10 @@ const num = v=>Number(v).toLocaleString('en-US');
                "<b>Who does what, for whom and where</b> — the hazards and IASC sectors where the "
                "portfolio has planned or delivered, the share delivered as cash, the people planned "
                "and reached, the organisations named in the frameworks and those funded through "
-               "CERF AA sub-grants, and how far AA appears in the humanitarian plans. Figures "
+               "CERF sub-grants, and how far AA appears in the humanitarian plans. Figures "
                "follow the latest version of "
-               "each current framework (active, being updated or in development); the money is on the "
+               "each current framework (active, being updated or in development). The CERF figures "
+               "count the allocations of framework activations only, as the map does: ad hoc "
+               "allocations are left out. The money is on the "
                "<a href='dash-funding.html'>Financing</a> page.",
                panels, json.dumps(data, default=str), js)
