@@ -109,7 +109,7 @@ function dlcsv(id, name) {
 # the map is known. An admin page may link to the public site; a public page never links
 # to the admin site, and never carries the data service's token.
 PUBLIC_TABS = ("index.html", "pillar-model.html", "pillar-history.html", "pillar-plan.html",
-               "dash-funding.html", "dash-donors.html", "pillar-learning.html", "media.html")
+               "dash-funding.html", "pillar-learning.html", "media.html")
 ROOT_ASSETS = ("chart.umd.js", "sankey.js")           # the public pages load these; admin pages through ../
 ADMIN_ASSETS = ("pdf.min.js", "pdf.worker.min.js")    # data entry only
 ADMIN_DIR = "admin"
@@ -117,8 +117,9 @@ ADMIN_DIR = "admin"
 BANNER = ("<div class='devbanner' role='note'><b>OCHA internal product under development</b>, "
           "subject to change without warning. The figures may be incorrect and should not be used.</div>")
 
-# public nav: the map, then the building blocks of AA (model · plan · financing, with donor
-# shares as a sub-link), learning and media
+# public nav: the map, then the building blocks of AA (model · plan · financing), learning and
+# media. Donor shares left the public site on 2026-10-15 (the Financing page's money flows,
+# donors ticked, show the same): it is an admin page now
 NAV = """
 <header>
   <span class="t"><a href="index.html" style="color:#fff;text-decoration:none">Anticipatory action</a></span>
@@ -126,7 +127,7 @@ NAV = """
    <a href="index.html">Map</a>
    <a href="pillar-model.html">Model</a><a class="sub" href="pillar-history.html" title="simulated and real activations of the current triggers">historical activations</a>
    <a href="pillar-plan.html">Plan</a>
-   <a href="dash-funding.html">Financing</a><a class="sub" href="dash-donors.html" title="each donor's share of the AA money">donor shares</a>
+   <a href="dash-funding.html">Financing</a>
    <a href="pillar-learning.html">Learning</a>
    <a href="media.html">Media</a>
   </nav>
@@ -162,6 +163,7 @@ ADMIN_HOME = [
         ("dashboards.html", "the hub: every framework page, with the monitoring calendar"),
         ("dash-delivery.html", "sub-grants, localisation, agencies, sectors, cash, people reached"),
         ("dash-allocations.html", "every CERF, country and regional fund allocation since 2006; complementarity; timeliness"),
+        ("dash-donors.html", "each donor's share of AA released / pre-arranged, per donor and fund; build earmarks"),
         ("hierarchy.html", ""),
         ("questions.html", ""),
         ("pillar-model-draft.html", ""),
