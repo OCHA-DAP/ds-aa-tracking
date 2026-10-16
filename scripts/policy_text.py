@@ -50,7 +50,7 @@ POLICY = {
         "framework that was valid at any time in it; this year, those in place today) and never add "
         "it up across years. <b>Released</b> money is what actually went out when a framework "
         "activated; it is drawn from the pre-arranged envelopes, so the two are never added "
-        "together. CERF and the country and regional funds both pre-arrange money for "
+        "together. CERF and the Country and Regional Funds both pre-arrange money for "
         "anticipatory action."),
     "dash-donors.html": (
         "How is AA money attributed to donors?",
