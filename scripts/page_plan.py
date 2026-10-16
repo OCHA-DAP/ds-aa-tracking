@@ -61,22 +61,27 @@ OTHER_SECTOR = "Other (not an IASC sector)"
 SECTOR_BUCKETS = [
     ("Food Security", ["food security", "food assistance", "food aid", "agriculture",
                        "food security & livelihoods", "food security & agriculture",
-                       "agriculture & livelihoods"]),
-    ("Health", ["health", "srh", "health (srh)", "sexual and reproductive health"]),
+                       "agriculture & livelihoods", "agriculture and livelihoods", "food",
+                       "food security (food)", "food security (livelihoods/agriculture)",
+                       "food security - agriculture", "fsac", "sécurité alimentaire",
+                       "sécurité alimentaire et moyens de subsistance"]),
+    ("Health", ["health", "santé", "srh", "health (srh)", "sexual and reproductive health"]),
     ("Nutrition", ["nutrition"]),
     ("Water, Sanitation and Hygiene (WASH)", ["wash", "water, sanitation and hygiene",
-                                              "water sanitation hygiene"]),
+                                              "water sanitation hygiene",
+                                              "eau, assainissement et hygiène (eah)"]),
     ("Protection", ["protection", "child protection", "gbv", "gender-based violence",
                     "gender based violence", "protection (gbv)", "mine action"]),
     ("Shelter and Non-Food Items", ["shelter/nfi", "shelter", "shelter and non-food items",
-                                    "emergency shelter and nfi"]),
+                                    "emergency shelter and nfi",
+                                    "abris et biens non-alimentaires (abna)"]),
     ("Camp Coordination and Camp Management (CCCM)", ["cccm", "camp coordination and camp management",
                                                       "camp coordination / management"]),
     ("Education", ["education"]),
     ("Logistics", ["logistics"]),
     ("Emergency Telecommunications", ["emergency telecommunications"]),
     ("Early Recovery", ["early recovery"]),
-    ("Multi-purpose cash", ["multi-purpose cash", "multi-sector/mpca"]),
+    ("Multi-purpose cash", ["multi-purpose cash", "multi-sector/mpca", "multi-purpose cash (mpca)"]),
     ("Coordination and support services", ["coordination and support services",
                                            "common services", "humanitarian air services"]),
     (OTHER_SECTOR, ["early warning messaging", "multi-sector (community engagement)",
@@ -85,7 +90,9 @@ SECTOR_BUCKETS = [
 SECTOR_COMBINED = {"health & nutrition": ["Health", "Nutrition"],
                    "food security (window 1) / nutrition (window 2)": ["Food Security", "Nutrition"]}
 SECTOR_SKIP = {"to be determined"}
-_SECTOR = {raw: [b] for b, raws in SECTOR_BUCKETS for raw in raws} | SECTOR_COMBINED
+# a bucket name maps to itself: dashboards._merge_labels already buckets the money rows
+_SECTOR = ({b.lower(): [b] for b, _ in SECTOR_BUCKETS}
+           | {raw: [b] for b, raws in SECTOR_BUCKETS for raw in raws} | SECTOR_COMBINED)
 
 
 def _buckets(label):
