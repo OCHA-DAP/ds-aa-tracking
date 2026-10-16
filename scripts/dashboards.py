@@ -355,8 +355,10 @@ def prearranged_now(e):
     un = now["fund_code"] == "cbpf-unspecified"
     now.loc[un, "fund_code"] = [own.get(c) or regional.get(c) or "cbpf-unspecified"
                                 for c in now.loc[un, "country_iso3"]]
+    # a version with both an unnamed-CBPF row and its fund's own row states the same money
+    # twice (Nigeria 2026: a sheet's "CBPF" $1M and the NHF's $1M): the larger, not the sum
     return (now.groupby(["country_iso3", "hazard", "version", "fund_code", "lifecycle", "latest_version"],
-                        as_index=False, dropna=False)["total_usd"].sum())
+                        as_index=False, dropna=False)["total_usd"].max())
 
 
 def envelope_gaps(d):
