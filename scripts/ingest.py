@@ -193,7 +193,10 @@ def seed_fund(engine, tables):
             ftype = "regional_fund"
         else:
             code = f"cbpf-{(iso3 or f['pf_id'])}".lower()
-            ftype = "cbpf"
+            # a regional fund's country window named only in brackets — "Vanuatu (AP-Rhpf)",
+            # "Bangladesh (AP-RHPF)", "Kenya (ESAHF)" — keeps its cbpf-* code (other tables key
+            # on it) but is a regional fund (2026-10-16 review: tagged CBPF on the Financing page)
+            ftype = "regional_fund" if re.search(r"rhpf|esahf", str(f["name"]), re.I) else "cbpf"
         rows.append({"fund_code": code, "fund_type": ftype, "name": f["name"],
                      "country_iso3": iso3, "pf_id": int(f["pf_id"])})
     df = pd.DataFrame(rows).drop_duplicates(subset=["fund_code"])

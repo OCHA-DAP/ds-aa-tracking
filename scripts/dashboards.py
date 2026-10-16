@@ -71,6 +71,10 @@ td.na { background:#eef1f5; }
         border:1px solid #e0e0e0; border-radius:6px; padding:10px 14px; margin:12px 0;
         position:sticky; top:0; z-index:5; }
 .fbar label { font-size:12px; color:#555; }
+/* the Financing filter bar stands out (2026-10-16 review: people skip over it) */
+.fbar.hi { background:#eef4fb; border:2px solid #1f69b3; box-shadow:0 2px 6px rgba(31,105,179,.15); }
+.fbar.hi .fbar-t { font-weight:700; font-size:13px; color:#1f69b3; margin-right:4px; }
+.fbar.hi label { font-size:13px; color:#222; }
 .fbar select { padding:4px 8px; border:1px solid #bbb; border-radius:4px; font-size:12.5px; }
 /* the framework picker (Financing): a list that drops from the filter bar (the bar is sticky,
    so the list anchors to it and stays in view) */
@@ -144,6 +148,10 @@ table.acts td { white-space:normal; overflow-wrap:anywhere; vertical-align:top; 
 
 DASH_JS = """
 const PAL = %s, FUND_COLORS = %s;
+// a fund's type from the registry (window.REGIONAL_FUNDS, written by the page from aa.fund):
+// the Asia-Pacific and ESA regional funds' country windows carry cbpf-* codes
+function fundType(fc){ return fc==='cerf' ? 'cerf'
+  : ((fc||'').startsWith('rhpf') || (window.REGIONAL_FUNDS||[]).includes(fc)) ? 'regional_fund' : 'cbpf'; }
 Chart.defaults.font.family = "-apple-system,'Segoe UI',Roboto,sans-serif";
 Chart.defaults.color = '#52514e';
 Chart.defaults.borderColor = '#ececec';
@@ -668,6 +676,8 @@ def _fetch(e):
                         WHERE a.aa_keyword AND p.budget IS NOT NULL GROUP BY 1, 2, 3""",
          ["year", "fund_code", "org_type", "usd"])
     d["fund_names"] = pd.read_sql("SELECT fund_code, fund_type, name, country_iso3 FROM aa.fund", e)
+    REGIONAL_FUNDS.clear()
+    REGIONAL_FUNDS.update(d["fund_names"].loc[d["fund_names"]["fund_type"] == "regional_fund", "fund_code"])
     # Financing money flows: CBPF AA project budgets by grantee organisation (named grantees;
     # cbpf_org above keeps the type-only split for an older snapshot)
     _opt("cbpf_org_name", """SELECT p.allocation_year AS year, fu.fund_code,
@@ -732,7 +742,7 @@ def _dash_page(page, name, title, intro, panels_html, data_json, js_body):
 <div class='card'>{intro}</div>
 {panels_html}
 <script src="chart.umd.js"></script>
-<script>window.D = {data_json};</script>
+<script>window.D = {data_json}; window.REGIONAL_FUNDS = {json.dumps(sorted(REGIONAL_FUNDS))};</script>
 <script>{DASH_JS}\n{js_body}</script>
 <style>{DASH_CSS}</style>"""
     page(name, title, body)
@@ -881,9 +891,21 @@ def _layer_of(d):
     return layer
 
 
+# fund codes the registry (aa.fund) types as a regional fund: filled by _fetch. Some regional
+# fund windows carry cbpf-* codes (Vanuatu, Fiji, Bangladesh under the AP-RhPF; Kenya, Uganda
+# under the ESAHF), so the type comes from the registry, the rhpf- prefix only as a fallback
+REGIONAL_FUNDS = set()
+
+
+def _ft(fc):
+    """'cerf', 'regional_fund' or 'cbpf' for a fund code."""
+    return ("cerf" if fc == "cerf" else
+            "regional_fund" if (fc in REGIONAL_FUNDS or str(fc).startswith("rhpf")) else "cbpf")
+
+
 def _fu(fc):
     """Fund type letter carried by the flow rows: c CERF, r regional fund, p country CBPF."""
-    return "c" if fc == "cerf" else "r" if str(fc).startswith("rhpf") else "p"
+    return {"cerf": "c", "regional_fund": "r"}.get(_ft(fc), "p")
 
 
 def _money_flows(d, pre, act):
@@ -943,7 +965,7 @@ def _money_flows(d, pre, act):
     else:   # older snapshot: grantee types only, one node per category
         co = d["cbpf_org"].copy()
         co["cat"] = co["org_type"].map(_recipient_cat)
-        co["org_name"] = co["cat"].map(lambda c: "country and regional fund grantees — " + RECIPIENT_PLURAL[c])
+        co["org_name"] = co["cat"].map(lambda c: "Country and Regional Fund grantees — " + RECIPIENT_PLURAL[c])
     import html as _html
     import re as _re
     placeholder = _re.compile(r"\b(tbd|to be determined|partner to be determined|not recorded)\b", _re.I)
@@ -1006,7 +1028,7 @@ def _money_flows(d, pre, act):
         o = co[(co.index.get_level_values(0) == fc) & (co.index.get_level_values(1) == y)] if len(co) else co
         osum = float(o.sum()) if len(o) else 0.0
         if osum <= 0:
-            on("nr|country and regional fund grantees not recorded", amount, "nr|grantee not recorded")
+            on("nr|Country and Regional Fund grantees not recorded", amount, "nr|grantee not recorded")
             return
         for (_, _, node), v in o.items():
             cat = node.split(sep)[0]
@@ -1120,20 +1142,20 @@ FLOW_NOTE = (
     "<b>Pre-arranged</b>: the envelopes in place in the chosen year (a framework counts for a year "
     "if it was valid at any time in it; the current year: today), one per framework and fund — the Financing page's annual series. Never summed over "
     "years: a two-year envelope would count twice. Fund → agency uses the agency split of the "
-    "version in force at that date, scaled to the envelope; country and regional fund allocations go to their "
+    "version in force at that date, scaled to the envelope; Country and Regional Fund allocations go to their "
     "grantee organisations (AA-keyword project budgets). There is no final column: who an agency "
     "sub-grants to is only known once money is released. "
     "<b>Released</b>: money that went out on activations in the chosen year (all years add up). "
     "CERF → agency uses the AA projects approved that year, scaled to the released total; "
     "agency → partner uses the CERF AA sub-grants, and the rest goes to a final node with the "
-    "agency's own name — what it implements itself. Country and regional funds go to their grantee organisations "
+    "agency's own name — what it implements itself. Country and Regional Funds go to their grantee organisations "
     "from the AA-keyword project budgets; a grantee implements directly, so its band runs on, same "
     "amount, to the same organisation in the final column. "
     f"<b>Recipients</b>: the {FLOW_TOP_ORGS} partner and grantee organisations receiving the most in the "
     "view are named, the rest grouped per category (\"other national / local NGOs\"…). Every "
     "recipient node carries its category colour — UN agency, international NGO, national / local "
     "NGO, government, Red Cross / Red Crescent, other, not recorded — from the sub-grant partner "
-    "type or the organisation type recorded by the country and regional funds; a band takes the colour of the node it leaves. "
+    "type or the organisation type recorded by the Country and Regional Funds; a band takes the colour of the node it leaves. "
     "<b>Recipient types</b>: a stage just before the last column groups every band by the category "
     "of the organisation it reaches — UN agencies, international NGOs, national / local NGOs, Red "
     "Cross / Red Crescent, government, other — so one pathway shows the groups and the last column "
@@ -1303,8 +1325,7 @@ def build_funding(page, d):
     vf = vf[~((vf["fund_code"] == "all")
               & vf.apply(lambda r: (r["country_iso3"], r["hazard"], r["version"]) in has_comp,
                          axis=1))]
-    vf["ft"] = vf["fund_code"].map(lambda f: "cerf" if f == "cerf" else
-                                   "regional_fund" if str(f).startswith("rhpf") else "cbpf")
+    vf["ft"] = vf["fund_code"].map(_ft)
     vf = vf.merge(cur[["country_iso3", "hazard", "region"]], on=["country_iso3", "hazard"],
                   how="left")
     vf["hz"] = vf["hazard"].map(haz)
@@ -1373,8 +1394,7 @@ def build_funding(page, d):
     pr = d["plan_rows"].merge(cur[["country_iso3", "hazard", "region"]],
                               on=["country_iso3", "hazard"], how="left")
     pr["hz"] = pr["hazard"].map(haz)
-    pr["ft"] = pr["fund_code"].map(lambda f: "cerf" if f == "cerf" else
-                                   "regional_fund" if str(f).startswith("rhpf") else "cbpf")
+    pr["ft"] = pr["fund_code"].map(_ft)
     pr["g"] = [layer(c, h) for c, h in zip(pr["country_iso3"], pr["hazard"])]
     pr["k"] = pair_key(pr)
 
@@ -1464,14 +1484,15 @@ def build_funding(page, d):
         """A per-chart method note, collapsed under the chart."""
         return f"<details class='note'><summary style='cursor:pointer'>{title}</summary>{body}</details>"
 
-    fund_sel =("<label>Fund <select id='fFund'><option value=''>CERF and country and regional funds</option>"
+    fund_sel =("<label>Fund <select id='fFund'><option value=''>CERF and Country and Regional Funds</option>"
                 "<option value='cerf'>CERF</option>"
-                "<option value='pooled'>country and regional funds</option></select></label>")
+                "<option value='pooled'>Country and Regional Funds</option></select></label>")
     panels = f"""
-<div class='fbar'>
- <span style='display:inline-flex;gap:10px;align-items:center;padding-right:10px;border-right:1px solid #e0e0e0'>
+<div class='fbar hi'>
+ <span class='fbar-t'>Filter every figure on this page:</span>
+ <span style='display:inline-flex;gap:10px;align-items:center;padding-right:10px;border-right:1px solid #9db2c9'>
   <label title='frameworks active, being updated or in development: their money in every year'><input type='checkbox' id='fCur' checked> Current frameworks</label>
-  <label title='frameworks since retired: their money in the years they were live'><input type='checkbox' id='fRet' checked> Retired</label>
+  <label title='frameworks since retired: their money in the years they were live'><input type='checkbox' id='fRet'> Retired</label>
   <label title='AA money allocated without a framework: released money only'><input type='checkbox' id='fAdh' checked> Ad hoc allocations</label></span>
  <details class='fwpick' id='fwPick'><summary id='fwLab' title='the full list of frameworks: tick the ones to count'>Frameworks: all ▾</summary>
   <div class='fwpanel'>
@@ -1487,9 +1508,9 @@ def build_funding(page, d):
  <label title='released money only: pre-arranged money is a stock, in place on a date, so it never accumulates'><input type='checkbox' id='fCum'> cumulative (released)</label>
 </div>
 <div class='tiles'>
- <div class='tile'><div class='v' id='tFw'>{n_active}</div><div class='l' id='tFwl'>active frameworks · {n_upd} being updated · {n_dev} in development{f' · {n_tech} technical support only' if n_tech else ''} · {n_ret} retired</div></div>
- <div class='tile'><div class='v' id='tPre'>${(now_cerf + now_cbpf)/1e6:,.0f}M</div><div class='l' id='tPrel'>pre-arranged now — CERF ${now_cerf/1e6:,.0f}M · country and regional funds ${now_cbpf/1e6:,.0f}M</div></div>
- <div class='tile'><div class='v' id='tRel'>${total_rel/1e6:,.0f}M</div><div class='l' id='tRell'>AA released {rel_years} — framework activations, CERF and country and regional funds</div></div>
+ <div class='tile'><div class='v' id='tFw'>{n_active + n_upd + n_dev}</div><div class='l' id='tFwl'>frameworks — {n_active} active · {n_upd} being updated · {n_dev} in development</div></div>
+ <div class='tile'><div class='v' id='tPre'>${(now_cerf + now_cbpf)/1e6:,.0f}M</div><div class='l' id='tPrel'>pre-arranged now — CERF ${now_cerf/1e6:,.0f}M · Country and Regional Funds ${now_cbpf/1e6:,.0f}M</div></div>
+ <div class='tile'><div class='v' id='tRel'>${total_rel/1e6:,.0f}M</div><div class='l' id='tRell'>AA released {rel_years} — framework activations, CERF and Country and Regional Funds</div></div>
  <div class='tile'><div class='v' id='tCov'>{covered/1e6:,.1f}M</div><div class='l' id='tCovl'>people covered now — current frameworks, latest figure each ({n_cov} of {n_live} have one) · not people reached</div></div>
 </div>
 <p class='fwnote' id='fwNote' style='display:none'></p>
@@ -1497,7 +1518,7 @@ def build_funding(page, d):
 <details class='note' style='margin:0 0 14px;font-size:12px;color:#555'><summary style='cursor:pointer;font-size:12.5px'>How these figures are counted</summary>
 <p><b>Layers</b>, as on the map: <b>current frameworks</b> (active, being updated, in development) and <b>retired</b> frameworks bring their pre-arranged and released money in every year — a framework's layer is its status today, so the past years need the retired ones to be complete (an AA-tagged country or regional fund allocation in a country with no retired framework counts as current). <b>Ad hoc allocations</b> add the AA money allocated without a framework: released money only, nothing is pre-arranged for it. The <b>fund</b> switch applies to every figure but co-financing; framework counts, people covered and versions then keep the frameworks with money recorded on that fund. There is no technical-support layer here: technical support carries no money. The tiles and the charts follow the layers, the fund, the framework selection and the hazard and region filters (the GHO filter: the annual series and co-financing); the money-flow chart and the sections further down say what they follow.</p>
 <p><b>Frameworks</b> (in the filter bar) lists every current and retired framework with its pre-arranged money now: tick the ones to count — a sub-region, a few countries, any subset — and the tiles and the charts count only those, within the other filters. Money that belongs to no framework (an ad hoc allocation, a country-level allocation of a country or regional fund) follows its country: it counts while at least one line of that country is ticked, and the countries whose only AA money is of that kind have a line of their own at the end of the list. A subset changes which frameworks are counted, not how: its pre-arranged money is still a stock, in place today or in a given year, never added over years. The selection is kept in the page address, so a subset can be bookmarked or shared. The money-flow chart and the UN agencies and partners section do not follow it.</p>
-<p><b>Pre-arranged now</b> comes from the framework records: for every active, being-updated or in-development framework, the envelope of its most recent version that has one. The same figure is the current year in the annual chart and on the map.{stale_html} Pre-arranged money stays pre-arranged until a framework is <b>retired</b>: a framework being updated keeps its most recent version's envelope. Country and regional fund allocations are made up front, so an AA-tagged allocation counts as pre-arranged until an activation draws on it (then it counts as released as well). Pre-arranged money is a stock (in place on a date) and released money a flow (per year): the two are never added together.</p>
+<p><b>Pre-arranged now</b> comes from the framework records: for every active, being-updated or in-development framework, the envelope of its most recent version that has one. The same figure is the current year in the annual chart and on the map.{stale_html} Pre-arranged money stays pre-arranged until a framework is <b>retired</b>: a framework being updated keeps its most recent version's envelope. Country and Regional Fund allocations are made up front, so an AA-tagged allocation counts as pre-arranged until an activation draws on it (then it counts as released as well). Pre-arranged money is a stock (in place on a date) and released money a flow (per year): the two are never added together.</p>
 <p><b>People covered now</b> is the latest figure recorded for each current framework — the people its pre-arranged plan covers, not the people reached once it activated (those come from the final reports, on the Plan page). Retired frameworks cover no one now and are left out, as on the map. A framework still in development usually has no figure until its projects are planned; an early estimate can be recorded until then.</p>
 <p><b>Donors</b> (the <i>donors</i> tick on the money-flow chart): each donor's share of a fund's income that year, applied to the fund's AA money that year — donors give to the pooled funds as a whole, not to anticipatory action. Donors report their AA funding annually under the <a href='https://interagencystandingcommittee.org/grand-bargain' target='_blank' rel='noopener'>Grand Bargain</a>.</p>
 </details>
@@ -1507,18 +1528,16 @@ def build_funding(page, d):
 {_flow_panel(donors_on=False)}
 <div class='grid' style='margin-top:16px'>
  <div class='panel'><h3>Pre-arranged funding in place each year, by fund</h3><canvas id='c1' height='260'></canvas>
-   {how("A stock: what was committed in each year (a framework counts for a year if it was valid at any time in it), so the bars are not added up (the cumulative switch applies to released money only). CERF: the framework envelopes per year (sheets, framework pages, entries; 'all'-totals excluded where the fund split exists); the current year is pre-arranged now. Country and regional funds: AA-tagged allocations in the OneGMS mirror, in the year allocated. Co-financing is shown separately.")}</div>
+   {how("A stock: what was committed in each year (a framework counts for a year if it was valid at any time in it), so the bars are not added up (the cumulative switch applies to released money only). CERF: the framework envelopes per year (sheets, framework pages, entries; 'all'-totals excluded where the fund split exists); the current year is pre-arranged now. Country and Regional Funds: AA-tagged allocations in the OneGMS mirror, in the year allocated. Co-financing is shown separately.")}</div>
  <div class='panel'><h3>AA released by year, by fund</h3><canvas id='c2' height='260'></canvas>
    {how("Allocations drawn by a framework activation, all pooled funds — plus the ad hoc AA allocations when that layer is on. A country or regional fund allocation moves here only once an activation is recorded against it.")}</div>
  <div class='panel'><h3>Pre-arranged now, by hazard</h3><canvas id='c3' height='260'></canvas>
    {how("Latest envelope of every framework that is active, being updated or in development.")}</div>
  <div class='panel'><h3>Pre-arranged now, by region</h3><canvas id='c4' height='260'></canvas>
    {how("The same envelopes as by hazard, by the framework's region.")}</div>
- <div class='panel'><h3>Framework versions endorsed/revised per year</h3><canvas id='c5' height='260'></canvas>
-   {how("One bar segment per version registered that year (endorsed docs; a version = an endorsed document).")}</div>
  <div class='panel'><h3>Co-financing pre-arranged, by agency</h3><canvas id='c6' height='260'></canvas><p class='empty' id='c6x' style='display:none'></p>
    {f"<div class='note'>{nonaa_html}</div>" if nonaa_html else ""}
-   {how("Pre-arranged co-financing only: money from outside CERF and the country and regional funds recorded against a framework (window funding of kind co-financing); how much of it was disbursed is not recorded. A stock, as at the end of each year (the current year: today) — the years sit side by side and are never added up. Grouped by the financier as recorded (most co-financing rows do not record one yet); rows with neither are the <i>not recorded</i> bar. Follows the framework layers and the hazard, region and GHO filters. Does not apply: the fund switch (the money is outside the pooled funds), the ad hoc layer (ad hoc allocations carry no co-financing) and cumulative (a stock).")}</div>
+   {how("Pre-arranged co-financing only: money from outside CERF and the Country and Regional Funds recorded against a framework (window funding of kind co-financing); how much of it was disbursed is not recorded. A stock, as at the end of each year (the current year: today) — the years sit side by side and are never added up. Grouped by the financier as recorded (most co-financing rows do not record one yet); rows with neither are the <i>not recorded</i> bar. Follows the framework layers and the hazard, region and GHO filters. Does not apply: the fund switch (the money is outside the pooled funds), the ad hoc layer (ad hoc allocations carry no co-financing) and cumulative (a stock).")}</div>
 </div>
 <h2>Where the pre-arranged money goes</h2>
 <p class='meta'>The latest version of every current framework, split by agency and sector as the framework documents state it, stacked by fund.</p>
@@ -1529,7 +1548,7 @@ def build_funding(page, d):
    {how("Sector lines of the same budgets; a line with an agency but no sector is not shown here. Follows the same toggles as by agency.")}</div>
 </div>
 <h2>UN agencies and partners</h2>
-<p class='meta'>Once CERF releases AA money, the agencies keep part of it as direct spend and sub-grant the rest to implementing partners — where partners appear in the money trail.</p>
+<p class='meta'>Once CERF releases AA money, the agencies partially spend it directly (in large part on procurement) and partially sub-grant it to implementing partners.</p>
 <p class='empty' id='unNone' style='display:none'>The sub-grant reports are CERF's: select CERF, or both funds, to see them.</p>
 <div id='unBox'>
 <div class='tiles'>
@@ -1539,7 +1558,7 @@ def build_funding(page, d):
 </div>
 <div class='grid'>
  <div class='panel'><h3>CERF AA allocations by year — direct UN spend vs sub-granted to partners</h3><canvas id='c9' height='280'></canvas>
-   {how("Direct UN spend = CERF AA project budgets (OneGMS mirror; the allocations the activation record draws on, framework and ad hoc) minus the sub-grants reported for the same year (aa.cerf_subgrant, curated AA set). Partner groups from the sub-grant partner type; 'other' includes partners not yet typed. CERF's sub-grant reports cover framework and ad hoc allocations together and carry no hazard: this section follows the fund switch and the region filter only.")}</div>
+   {how("Direct UN spend = CERF AA project budgets (OneGMS mirror; the allocations the activation record draws on, framework and ad hoc) minus the sub-grants reported for the same year (aa.cerf_subgrant, curated AA set). Partner groups from the sub-grant partner type; 'other' includes partners not yet typed. CERF's sub-grant reports cover framework and ad hoc allocations together and carry no hazard: this section follows the fund switch and the region filter only. 2023 looks low because the only framework activations that year were DRC cholera ($1.5M): the CERF early-action allocations reported to the Anticipation Hub for 2023 are not counted as anticipatory action here, following the definition the Grand Bargain adopted at the end of 2024.")}</div>
  <div class='panel'><h3>Share of CERF AA sub-grants to local and national actors, by year</h3><canvas id='c10' height='280'></canvas>
    {how("Each bar is one year's CERF AA sub-grants (100%): to local and national actors (national / local NGOs, government, national Red Cross / Red Crescent societies), to international NGOs, and to partners not yet typed in the reports. The label is the local and national share; the recent years fill in as partners are typed. Follows the fund switch and the region filter only.")}</div>
 </div>
@@ -1565,7 +1584,6 @@ def build_funding(page, d):
         "fundNames": fund_names,
     }
     js = FLOW_JS + """
-function fundType(fc){ return fc==='cerf'?'cerf':(fc||'').startsWith('rhpf')?'regional_fund':'cbpf'; }
 const FT = ['cerf','cbpf','regional_fund'];
 // whole millions, with one decimal under $100M so a regional total isn't rounded away
 // (LAC released $22.5M, shown as $23M before 2026-10-16)
@@ -1632,8 +1650,8 @@ function fwPaint(s, N){
   const count = `${nOn} of ${N_FW} frameworks ticked` + (xOn<rest.length ? ` · ${xOn} of ${rest.length} countries with ad hoc allocations only` : '');
   const tot = sumOf(N, r=>r.total_usd), nc = sumOf(N.filter(r=>r.ft==='cerf'), r=>r.total_usd);
   fwSum.innerHTML = `<b>${count}</b> · ` + (!s.cur ? 'pre-arranged now: tick <i>Current frameworks</i> in the bar'
-    : `pre-arranged now <b>${M2(tot)}</b>` + (s.fund==='cerf' ? ', CERF only' : s.fund==='pooled' ? ', country and regional funds only'
-        : ` (CERF ${M2(nc)} · country and regional funds ${M2(tot-nc)})`) + (s.hz||s.rg ? ', within the hazard / region filter' : ''));
+    : `pre-arranged now <b>${M2(tot)}</b>` + (s.fund==='cerf' ? ', CERF only' : s.fund==='pooled' ? ', Country and Regional Funds only'
+        : ` (CERF ${M2(nc)} · Country and Regional Funds ${M2(tot-nc)})`) + (s.hz||s.rg ? ', within the hazard / region filter' : ''));
   fwLab.textContent = s.fws ? `Frameworks: ${nOn} of ${N_FW} ▾` : 'Frameworks: all ▾';
   fwPick.classList.toggle('on', !!s.fws);
   fwNote.style.display = fwFlowNote.style.display = s.fws ? '' : 'none';
@@ -1662,23 +1680,25 @@ function tiles(s, geo, A, N){
       v.textContent = '–'; l.textContent = w + ': nothing ticked — tick at least one line in Frameworks'; });
     return; }
   const selTxt = s.fws ? ' · ticked frameworks only' : '';
-  const fundTxt = s.fund==='cerf' ? ' with CERF money' : s.fund==='pooled' ? ' with country and regional fund money' : '';
+  const fundTxt = s.fund==='cerf' ? ' with CERF money' : s.fund==='pooled' ? ' with Country and Regional Fund money' : '';
   const F = D.fw.filter(r=>geo(r) && layerOK(r.g,s) && pairFundOK(r.funds,s));
-  const n = lc => F.filter(r=>r.lifecycle===lc).length, nT = F.filter(r=>r.technical_support).length;
-  if(s.cur){ tFw.textContent = n('active');
-    tFwl.textContent = `active frameworks${fundTxt} · ${n('updating')} being updated · ${n('development')} in development`
-      + (nT ? ` · ${nT} technical support only` : '') + (s.ret ? ` · ${n('retired')} retired` : '') + selTxt; }
+  // the fat number is every current framework, the line below breaks it down (2026-10-16
+  // review); technical-support-only pairs are not counted here (the map still shows them)
+  const n = lc => F.filter(r=>r.lifecycle===lc).length;
+  if(s.cur){ tFw.textContent = n('active') + n('updating') + n('development');
+    tFwl.textContent = `frameworks${fundTxt} — ${n('active')} active · ${n('updating')} being updated · ${n('development')} in development`
+      + (s.ret ? ` · ${n('retired')} retired` : '') + selTxt; }
   else if(s.ret){ tFw.textContent = n('retired'); tFwl.textContent = `retired frameworks${fundTxt}` + selTxt; }
   else { tFw.textContent = '–'; tFwl.textContent = 'frameworks: no framework layer selected'; }
   const nc = sumOf(N.filter(r=>r.ft==='cerf'), r=>r.total_usd), np = sumOf(N.filter(r=>r.ft!=='cerf'), r=>r.total_usd);
   if(!s.cur){ tPre.textContent = '–'; tPrel.textContent = 'pre-arranged now: select current frameworks (retired frameworks and ad hoc allocations have none)'; }
   else { tPre.textContent = M0(nc+np);
-    tPrel.textContent = 'pre-arranged now — ' + (s.fund==='cerf' ? 'CERF' : s.fund==='pooled' ? 'country and regional funds' : `CERF ${M0(nc)} · country and regional funds ${M0(np)}`) + selTxt; }
+    tPrel.textContent = 'pre-arranged now — ' + (s.fund==='cerf' ? 'CERF' : s.fund==='pooled' ? 'Country and Regional Funds' : `CERF ${M0(nc)} · Country and Regional Funds ${M0(np)}`) + selTxt; }
   const ys = uniqSorted(A, r=>r.year);
   const what = [(s.cur||s.ret) ? 'framework activations' : null, s.adh ? 'ad hoc allocations' : null].filter(Boolean).join(' + ');
   tRel.textContent = M0(sumOf(A, r=>r.amount_usd));
   tRell.textContent = `AA released ${ys.length ? ys[0]+(ys.length>1 ? '–'+ys[ys.length-1] : '') : '(none in this selection)'} — ${what || 'no layer selected'}, `
-    + (s.fund==='cerf' ? 'CERF' : s.fund==='pooled' ? 'country and regional funds' : 'CERF and country and regional funds') + (s.gho ? ', GHO contexts' : '')
+    + (s.fund==='cerf' ? 'CERF' : s.fund==='pooled' ? 'Country and Regional Funds' : 'CERF and Country and Regional Funds') + (s.gho ? ', GHO contexts' : '')
     + (s.fws ? (s.adh ? ' · ticked frameworks, and the ad hoc allocations of their countries' : selTxt) : '');
   // people covered: a now figure, current frameworks only (as pre-arranged now and the map)
   if(!s.cur){ tCov.textContent = '–'; tCovl.textContent = 'people covered now: select current frameworks (a retired framework covers no one now)'; }
@@ -1703,15 +1723,12 @@ function draw(){
   }
   const N = D.now.filter(r=>geo(r) && layerOK(r.g,s) && ftOK(r.ft,s));
   stackedBy('c3', N, r=>r.hz, r=>r.total_usd); stackedBy('c4', N, r=>r.region, r=>r.total_usd);
-  const V = D.ver.filter(r=>r.year && geo(r) && layerOK(r.g,s) && pairFundOK(r.funds,s));
-  const vy = uniqSorted(V, r=>r.year);
-  mkChart('c5','bar',vy,[{label:'versions',data:vy.map(y=>V.filter(r=>r.year===y).length),backgroundColor:PAL[2]}],{count:true});
   // co-financing PRE-ARRANGED, by who finances it: a stock at each year end, the years side by
   // side (never stacked or added up). Money from outside the pooled funds: the fund switch
   // cannot split it; ad hoc allocations carry none.
   {
     const C = D.cof.filter(r=>geo(r) && (!gho||r.in_gho) && layerOK(r.g,s));
-    const why = s.fund ? 'Co-financing is money from outside CERF and the country and regional funds: the fund switch does not apply to it — select both funds to see it.'
+    const why = s.fund ? 'Co-financing is money from outside CERF and the Country and Regional Funds: the fund switch does not apply to it — select both funds to see it.'
       : !(s.cur||s.ret) ? 'Co-financing belongs to frameworks: select current or retired frameworks (ad hoc allocations carry none).'
       : !C.length ? 'No pre-arranged co-financing recorded in this selection.' : '';
     c6.style.display = why ? 'none' : ''; c6x.style.display = why ? '' : 'none'; c6x.textContent = why;
@@ -1739,7 +1756,7 @@ function draw(){
   if(un) drawUN(s);
   if(window._flowDraw) _flowDraw();
 }
-// UN vs partners (CERF data; hidden when only the country and regional funds are selected):
+// UN vs partners (CERF data; hidden when only the Country and Regional Funds are selected):
 // the region filter applies, the other filters don't (the sub-grant reports carry no hazard)
 const UG = ['direct UN spend','INGO','NNGO / local','Red Cross / Red Crescent','government','other'];
 function drawUN(s){
@@ -1807,7 +1824,7 @@ window.addEventListener('hashchange', ()=>{ fwSel = fwFromHash(); fwToDom(); dra
 draw();"""
     _dash_page(page, "dash-funding.html", "Financing",
                "<b>The money of anticipatory action</b>: pre-arranged and released across CERF, "
-               "country and regional funds, with the map's layers and a fund, hazard, region and "
+               "Country and Regional Funds, with the map's layers and a fund, hazard, region and "
                "GHO filter. <b>Frameworks</b> in the filter bar lists every framework: tick any "
                "subset (a sub-region, a few countries) to total it. The money-flow chart can start from "
                "the donors of each fund.",
@@ -1900,7 +1917,7 @@ def build_allocations(page, d):
 <div class='grid'>
  <div class='panel'><h3>Allocations by year × fund type</h3><canvas id='a1' height='240'></canvas></div>
  <div class='panel'><h3>Top countries</h3><canvas id='a2' height='240'></canvas></div>
- <div class='panel' style='grid-column:1/-1'><h3>CERF ↔ country and regional funds complementarity (AA activations)</h3><canvas id='a3' height='240'></canvas>
+ <div class='panel' style='grid-column:1/-1'><h3>CERF ↔ Country and Regional Funds complementarity (AA activations)</h3><canvas id='a3' height='240'></canvas>
    <div class='note'>Per activation event: countries funded by more than one pooled fund at once appear in both series (from aa.activation_funding).</div></div>
  <div class='panel'><h3>Non-framework AA (ad-hoc) by country</h3><canvas id='a4' height='240'></canvas></div>
  <div class='panel'><h3>Timeliness: ERC endorsement → first project approved (AA, days)</h3><canvas id='a5' height='240'></canvas>
@@ -1921,7 +1938,6 @@ def build_allocations(page, d):
         "tim": json.loads(_records(tim, ["year", "days"])),
     }
     js = """
-function fundType(fc){ return fc==='cerf'?'cerf':(fc||'').startsWith('rhpf')?'regional_fund':'cbpf'; }
 const YEARS = uniqSorted(D.al, r=>r.year);
 YEARS.forEach(y=>{fY1.add(new Option(y,y)); fY2.add(new Option(y,y));});
 fY1.value = 2020; fY2.value = YEARS[YEARS.length-1];
@@ -1951,7 +1967,7 @@ function draw(){ const R = rows();
     .sort((a,b)=>(b[1].cerf+b[1].pooled)-(a[1].cerf+a[1].pooled));
   mkChart('a3','bar',both.map(x=>x[0]),
     [{label:'CERF',data:both.map(x=>x[1].cerf),backgroundColor:FUND_COLORS.cerf},
-     {label:'country and regional funds',data:both.map(x=>x[1].pooled),backgroundColor:FUND_COLORS.cbpf}]);
+     {label:'Country and Regional Funds',data:both.map(x=>x[1].pooled),backgroundColor:FUND_COLORS.cbpf}]);
   const adhoc = D.act.filter(r=>r.event_type!=='framework_aa');
   const byA = Object.entries(groupSum(adhoc,r=>r.country_iso3,r=>r.amount_usd)).sort((a,b)=>b[1]-a[1]);
   mkChart('a4','bar',byA.map(x=>x[0]),[{label:'ad hoc AA USD',data:byA.map(x=>x[1]),backgroundColor:PAL[3]}]);
@@ -1976,7 +1992,7 @@ fQ.addEventListener('input',draw);
 draw();"""
     _dash_page(page, "dash-allocations.html", "Allocation explorer",
                "Query the full historical allocation universe — every CERF "
-               "application (2006→) and every country and regional fund allocation envelope — with "
+               "application (2006→) and every Country and Regional Fund allocation envelope — with "
                "the AA lens on by default. Complementarity and non-framework AA "
                "views come from the activation record.",
                panels, json.dumps(data, default=str), js)
@@ -2014,8 +2030,8 @@ def build_delivery(page, d):
 <div class='grid'>
  <div class='panel'><h3>CERF AA subgrants by partner type × year</h3><canvas id='d1' height='250'></canvas>
    <div class='note'>Yakubu's curated AA subgrant set; local = NNGO+GOV+RedC per his localization tagging.</div></div>
- <div class='panel'><h3>Country and regional fund AA projects: direct funding by org type</h3><canvas id='d2' height='250'></canvas>
-   <div class='note'>Country and regional funds pay partners directly — this is the localization view CERF can't show. AA-keyword allocations only.</div></div>
+ <div class='panel'><h3>Country and Regional Fund AA projects: direct funding by org type</h3><canvas id='d2' height='250'></canvas>
+   <div class='note'>Country and Regional Funds pay partners directly — this is the localization view CERF can't show. AA-keyword allocations only.</div></div>
  <div class='panel'><h3>Released by agency (CERF AA projects)</h3><canvas id='d3' height='250'></canvas>
    <div class='note'>CERF AA project budgets, all years: the allocations the activation record draws on (framework and ad hoc), as on the Financing page.</div></div>
  <div class='panel'><h3>Released by sector (CERF AA projects)</h3><canvas id='d4' height='250'></canvas>
@@ -2070,7 +2086,7 @@ mkChart('d8','bar',rcY,[['women',0],['men',1],['girls',2],['boys',3]].map(([g,i]
   backgroundColor:PAL[i]})),{stacked:true,count:true});"""
     _dash_page(page, "dash-delivery.html", "Delivery, partners & people",
                "Who the money flows through and who it reaches: subgrants and "
-               "localization (CERF AA), direct partner funding (country and regional fund AA), agency "
+               "localization (CERF AA), direct partner funding (Country and Regional Fund AA), agency "
                "and sector splits (released vs pre-arranged), CVA, and people "
                "reached by gender.",
                panels, json.dumps(data, default=str), js)
@@ -2081,7 +2097,7 @@ COVERAGE = [
     ("Pre-arranged funding by year, cumulative", "covered", "dash-funding.html", "canonical per framework-year; cumulative toggle"),
     ("Pre-arranged by hazard / region", "covered", "dash-funding.html", ""),
     ("AA amount released by year, cumulative", "covered", "dash-funding.html", "all pooled funds via activation_funding"),
-    ("Subgrants by partner type / local partners", "covered", "dash-delivery.html", "CERF AA subgrants + country and regional fund direct org-type funding"),
+    ("Subgrants by partner type / local partners", "covered", "dash-delivery.html", "CERF AA subgrants + Country and Regional Fund direct org-type funding"),
     ("Released funds by agency", "covered", "dash-delivery.html", "CERF AA projects"),
     ("Released funds by sector", "covered", "dash-delivery.html", "CERF AA project sector splits"),
     ("Pre-arranged funds by agency / sector", "covered", "dash-delivery.html", "budget lines of the latest version of every current framework (v_window_funding_split)"),
@@ -2950,10 +2966,10 @@ Monitoring window: {_cal_strip(cal, c, h)}
 {fd_html}</div>
 <script src="chart.umd.js"></script>
 <script src="sankey.js"></script>
-<script>window.FD = {json.dumps(chart_data)}; window.SPLIT = {json.dumps(split_js)};</script>
+<script>window.FD = {json.dumps(chart_data)}; window.SPLIT = {json.dumps(split_js)}; window.REGIONAL_FUNDS = {json.dumps(sorted(REGIONAL_FUNDS))};</script>
 <script>{DASH_JS}
 const ds = Object.entries(FD.series).map(([fc,vals],i)=>({{label:fc,data:vals,
-  backgroundColor:FUND_COLORS[fc==='cerf'?'cerf':(fc.startsWith('rhpf')?'regional_fund':'cbpf')]||PAL[i]}}));
+  backgroundColor:FUND_COLORS[fundType(fc)]||PAL[i]}}));
 if(FD.years.length) mkChart('pf','bar',FD.years,ds,{{stacked:true, totals:true}});
 else document.getElementById('pf').outerHTML='<p class="meta">no funding rows</p>';
 if(SPLIT.length && window.sankeySVG){{
@@ -2986,8 +3002,8 @@ def build_hub(page, d, fw_links):
 built to the CERF key-data-points list (<a href='questions.html'>coverage map</a>).
 <div class='tiles'>
 <div class='tile'><a href='dash-funding.html'><b>Financing</b></a><div class='l'>pre-arranged & released, by year/hazard/region/fund, GHO, cumulative; any subset of frameworks (tick them in the list); current / retired frameworks and ad hoc allocations as on the map; money flows; localisation</div></div>
-<div class='tile'><a href='dash-donors.html'><b>Donor shares</b></a><div class='l'>each donor's share of AA released / pre-arranged, via their contributions to CERF and the country and regional funds; donor flows; build earmarks</div></div>
-<div class='tile'><a href='dash-allocations.html'><b>Allocation explorer</b></a><div class='l'>query every CERF, country and regional fund allocation 2006→; complementarity; timeliness</div></div>
+<div class='tile'><a href='dash-donors.html'><b>Donor shares</b></a><div class='l'>each donor's share of AA released / pre-arranged, via their contributions to CERF and the Country and Regional Funds; donor flows; build earmarks</div></div>
+<div class='tile'><a href='dash-allocations.html'><b>Allocation explorer</b></a><div class='l'>query every CERF, Country and Regional Fund allocation 2006→; complementarity; timeliness</div></div>
 <div class='tile'><a href='dash-delivery.html'><b>Delivery & people</b></a><div class='l'>subgrants, localization, agencies, sectors, CVA, people reached</div></div>
 <div class='tile'><a href='pillar-learning.html'><b>Learning</b></a><div class='l'>headline findings on the map, and every learning document by country and hazard</div></div>
 <div class='tile'><a href='media.html'><b>Media & visuals</b></a><div class='l'>photos by country and social posts on AA, from the shared AA Visuals folder (a first collection, not curated yet)</div></div>

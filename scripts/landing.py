@@ -1427,10 +1427,10 @@ def build_landing(page, d, e):
  <div class='tiles gtiles' id='gtiles'>
   <div class='gcap' id='gcap'>Global portfolio — all layers currently shown on the map</div>
   <div class='tile' id='t-fw'><div class='v'>{t["n_fw"]}</div><div class='l'>frameworks on the map · {t["n_active"]} active · {t["n_upd"]} being updated · {t["n_dev"]} in development</div></div>
-  <div class='tile' id='t-pre'><div class='v'>${t["pre"]/1e6:,.0f}M</div><div class='l'>pre-arranged now (CERF and country and regional funds), frameworks shown</div></div>
+  <div class='tile' id='t-pre'><div class='v'>${t["pre"]/1e6:,.0f}M</div><div class='l'>pre-arranged now (CERF and Country and Regional Funds), frameworks shown</div></div>
   <div class='tile' id='t-cov'><div class='v'>{t["covered"]/1e6:,.1f}M</div><div class='l'>people covered now by the frameworks shown ({t["n_cov"]} of {t["n_fw"]} have a figure)</div></div>
   <div class='tile' id='t-act'><div class='v'>{t["n_act"]}</div><div class='l'>framework activations to date{ns_act}</div></div>
-  <div class='tile' id='t-rel'><div class='v'>${t["released"]/1e6:,.0f}M</div><div class='l'>released to date on framework activations — CERF ${t["released_cerf"]/1e6:,.0f}M · country and regional funds ${(t["released"] - t["released_cerf"])/1e6:,.0f}M{ns_rel}</div></div>
+  <div class='tile' id='t-rel'><div class='v'>${t["released"]/1e6:,.0f}M</div><div class='l'>released to date on framework activations — CERF ${t["released_cerf"]/1e6:,.0f}M · Country and Regional Funds ${(t["released"] - t["released_cerf"])/1e6:,.0f}M{ns_rel}</div></div>
   <div class='tile' id='t-reach'><div class='v'>{t["reached"]/1e6:,.1f}M</div><div class='l'>people reached to date — CERF allocations, as reported so far ({t["n_rep"]} of {t["n_cerf"]} have a figure){ns_reach}</div></div>
  </div>
 </div>
@@ -2143,7 +2143,7 @@ function updateTiles(){
   set('t-pre', '$' + Math.round(pre/1e6) + 'M', past
       ? `pre-arranged in ${YEAR}, frameworks shown`
         + (noEnv.length ? ` · ${noEnv.length} with no figure for ${YEAR}` : '')
-      : 'pre-arranged now (CERF and country and regional funds), all current frameworks incl. in development'
+      : 'pre-arranged now (CERF and Country and Regional Funds), all current frameworks incl. in development'
         + (noEnv.length ? ` · ${noEnv.length} without an envelope recorded yet: ${noEnv.join(', ')}` : ''),
       past && fw.some(f => f.pre_drv) && 'Part of this year\'s figure is inferred from the envelope of the version valid during the year (no reported figure for that framework-year)');
   const tp = document.getElementById('t-pre'); if(tp) tp.title = !past ? '' : [
@@ -2165,8 +2165,8 @@ function updateTiles(){
   set('t-act', F.n, (!F.n ? `no activation${when} on the layers shown`
       : F.nAd && F.nAd < F.n ? `activations${when}: ${F.n - F.nAd} framework activations, ${F.nAd} ad hoc allocations` : what + when)
       + notShown((lab, G) => G.n ? `${G.n} ${G.nAd ? `ad hoc allocation${G.n === 1 ? '' : 's'}` : `on ${lab}`}` : null));
-  const pooled = F.usd - F.usdCerf, funds = pooled < 5e4 ? 'CERF' : F.usdCerf < 5e4 ? 'country and regional funds'
-      : `CERF ${money(F.usdCerf)} · country and regional funds ${money(pooled)}`;
+  const pooled = F.usd - F.usdCerf, funds = pooled < 5e4 ? 'CERF' : F.usdCerf < 5e4 ? 'Country and Regional Funds'
+      : `CERF ${money(F.usdCerf)} · Country and Regional Funds ${money(pooled)}`;
   set('t-rel', F.n ? money(F.usd) : '—', (!F.n ? `nothing released${when} on the layers shown` : `released${when} on ${what} — ${funds}`)
       + notShown((lab, G) => G.usd >= 5e4 ? `${lab} ${money(G.usd)}` : null));
   const tr = document.getElementById('t-rel'); if(tr) tr.title = 'Money released when a framework activated'
@@ -2181,7 +2181,7 @@ function updateTiles(){
   const tp2 = document.getElementById('t-reach'); if(tp2) tp2.title = 'Summed over CERF allocations: CERF\'s own de-duplicated figure for each one, from its final report'
     + (F.nInterim ? `, or the sum over its projects where the allocation has none yet (${F.nInterim} interim)` : '')
     + '. A person reached under two allocations counts twice. Reports come about nine months after an allocation, so recent years are incomplete.'
-    + ' Country and regional funds report no figure here. Not people covered: that is what the plans cover now.';
+    + ' Country and Regional Funds report no figure here. Not people covered: that is what the plans cover now.';
   const g = document.getElementById('gtiles'); if(g) g.classList.toggle('global', !!state.iso);
   const cap = document.getElementById('gcap'); if(cap) cap.textContent = (state.iso ? `Global portfolio — not ${L[state.iso].name}: its own figures are in the panel` : 'Global portfolio — all layers currently shown on the map')
     + (past ? ` · as at 31 December ${YEAR}` : YEAR != null ? ` · ${YEAR}, as of today` : '');

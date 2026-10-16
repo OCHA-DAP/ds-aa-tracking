@@ -325,11 +325,14 @@ def _portfolio_orgs(pt):
 
 
 # ---- small HTML helpers --------------------------------------------------------------------
-def _matrix(counts, cols, row_note, title_unit):
-    """Hazard x sector table; cell shade from PAL[0] by count."""
+def _matrix(counts, cols, row_note, title_unit, freq=None):
+    """Hazard x sector table; cell shade from PAL[0] by count. `freq` (sector -> count) is
+    written on the header cells so the page's order switch can sort by it."""
     r0, g0, b0 = (int(PAL[0][i:i + 2], 16) for i in (1, 3, 5))
     mx = max([v for v in counts.values()] or [1])
-    head = "".join(f"<th class='sx'><span>{html.escape(c)}</span></th>" for c in cols)
+    freq = freq or {}
+    head = "".join(f"<th class='sx' data-f='{freq.get(c, 0)}' data-n='{html.escape(c)}'><span>{html.escape(c)}</span></th>"
+                   for c in cols)
     body = ""
     for h in HAZ_ROWS:
         if h not in row_note:
@@ -492,7 +495,9 @@ def build_plan(page, d):
     tot = {}
     for (h, b), v in list(plan_cnt.items()) + list(cerf_cnt.items()):
         tot[b] = tot.get(b, 0) + v
-    cols = sorted(tot, key=lambda b: (b == OTHER_SECTOR, -tot[b], b))
+    # alphabetical by default (2026-10-16 review: agencies look for their sector); the page's
+    # switch sorts by frequency instead (tot: frameworks + allocations with the sector)
+    cols = sorted(tot, key=lambda b: (b == OTHER_SECTOR, b.lower()))
 
     def _src(lab, raw):
         return (f"<span class='muted'>{lab}:</span> {html.escape('; '.join(sorted(raw)))}"
@@ -503,6 +508,23 @@ def build_plan(page, d):
                                  _src("CERF (IASC sector)", cerf_raw.get(b))) if x)
         + "</li>" for b in cols)
     n_iasc = sum(1 for b in cols if b != OTHER_SECTOR)
+    # sectors that read oddly for AA (2026-10-16 review): Early Recovery is antithetical to AA
+    # (a project tagged so at approval), and CERF does not usually fund coordination and
+    # support services. Named here, for CERF colleagues to confirm; not re-filed.
+    odd = ex["sector"].assign(b=[(_buckets(_cerf_label(i, c)) or [""])[0]
+                                 for i, c in zip(ex["sector"]["iasc"], ex["sector"]["sector"])])
+    al_lab = {r.application_code: f"{r.country_iso3} {hz_of.get(r.application_code, 'other')} {int(r.year)}"
+              for r in al.itertuples()}
+
+    def _odd(bucket):
+        g = odd[odd["b"] == bucket].groupby("application_code")["sector_amount"].sum()
+        return "; ".join(f"{al_lab.get(c, c)} ({html.escape(c)}, ${v/1e3:,.0f}k)" for c, v in g.items())
+    er, cs = _odd("Early Recovery"), _odd("Coordination and support services")
+    odd_note = ((f"<br><b>Early Recovery</b> is not an AA sector: the cell comes from a project tagged so "
+                 f"in CERF's records at approval — {er}. To be confirmed with CERF colleagues." if er else "")
+                + (f"<br><b>Coordination and support services</b> (common services, humanitarian air "
+                   f"services), which CERF does not usually fund in AA: {cs}. CERF colleagues to advise "
+                   f"whether it belongs under Logistics." if cs else ""))
 
     # ================================================================== cash
     # the CVA file has no allocation code: a row counts when a framework allocation of the same
@@ -520,7 +542,7 @@ def build_plan(page, d):
                ["amount_approved_usd"].sum())
     cva = cva[keep]
     out_txt = "; ".join(f"{c} {int(y)} {t} (${v/1e6:,.1f}M)" for (c, y, t), v in cva_out.items())
-    cash_rows, cash_note, cash_share = [], "no CVA records in this snapshot", "–"
+    cash_rows, cash_note, cash_share, cash_hz, cash_trend = [], "no CVA records in this snapshot", "–", [], ""
     if len(cva):
         for y, g in cva.groupby("year"):
             base, c_ = float(g["amount_approved_usd"].sum()), float(g["cva_usd"].fillna(0).sum())
@@ -529,6 +551,15 @@ def build_plan(page, d):
                               "people": int(g["people_receiving_cash"].fillna(0).sum())})
         base_all = float(cva["amount_approved_usd"].sum())
         cva_all = float(cva["cva_usd"].fillna(0).sum())
+        # by hazard: how the team talks about cash (above average in the sudden-onset
+        # frameworks, storms and floods; little in cholera) — 2026-10-16 review
+        for h, g in cva.assign(hz=cva["emergency_type"].fillna("").map(lambda x: haz(x) if x else "other")).groupby("hz"):
+            base, c_ = float(g["amount_approved_usd"].sum()), float(g["cva_usd"].fillna(0).sum())
+            cash_hz.append({"hz": h, "cash": c_, "other": max(base - c_, 0),
+                            "share": c_ / base if base else None})
+        cash_hz.sort(key=lambda r: -(r["share"] or 0))
+        last3 = [r for r in cash_rows if r["year"] >= max(r_["year"] for r_ in cash_rows) - 2]
+        cash_trend = " · ".join(f"{r['year']}: {r['share']:.0%}" for r in last3 if r["share"] is not None)
         cash_share = f"{cva_all / base_all:.0%}" if base_all else "–"
         cerf_all = float(al["amount_approved"].sum())
         # countries whose framework allocations exceed what the CVA file covers (> $0.5M)
@@ -667,15 +698,18 @@ def build_plan(page, d):
 budgets something in the sector ({n_sec} of {n_live} current frameworks have a sector split; the rest are
 agency-only or have no split recorded, so a blank cell is not 'no experience'). Right: what was
 delivered — CERF allocations of framework activations with project money in the sector.</p>
+<p class='meta'>Sectors in <label><input type='radio' name='sxo' value='a' checked> alphabetical order</label>
+<label><input type='radio' name='sxo' value='f'> order of frequency (most often present first)</label></p>
 <div class='grid'>
  <div class='panel'><h3>Planned: frameworks with budget in the sector</h3>
-   {_matrix(plan_cnt, cols, {h: f'({v})' for h, v in plan_note.items()}, 'frameworks')}
+   {_matrix(plan_cnt, cols, {h: f'({v})' for h, v in plan_note.items()}, 'frameworks', tot)}
    <div class='note'>Row label: frameworks with a sector split of all current frameworks for the hazard.
    From the framework documents' agency × sector split (aa.v_window_funding_split, latest version).</div></div>
- <div class='panel'><h3>Delivered: CERF allocations of framework activations with money in the sector</h3>
-   {_matrix(cerf_cnt, cols, {h: f'({v})' for h, v in cerf_note.items()}, 'allocations')}
+ <div class='panel'><h3>Delivered: sector representation across framework activations (based on CERF allocations)</h3>
+   {_matrix(cerf_cnt, cols, {h: f'({v})' for h, v in cerf_note.items()}, 'allocations', tot)}
    <div class='note'>Row label: those allocations with sector records for the hazard (CERF emergency
-   type). From the CERF project sectors of the allocations (aa.cerf_project_sector).</div></div>
+   type). From the CERF project sectors of the allocations (aa.cerf_project_sector).
+   {odd_note}</div></div>
 </div>
 <details><summary style='cursor:pointer;font-size:13px'>Sector mapping (labels as recorded → IASC sector)</summary>
 <ul class='nm'>{mapping}</ul>
@@ -689,8 +723,9 @@ A combined label (e.g. 'Health &amp; Nutrition') counts in both columns. 'To be 
 
 <h2>Cash</h2>
 <div class='grid'>
- <div class='panel'><h3>CERF money of framework activations delivered as cash and vouchers</h3>
-   <div style='position:relative;height:300px'><canvas id='pl3' style='max-height:none'></canvas></div>
+ <div class='panel'><h3>Share delivered as cash and vouchers, by hazard (CERF money of framework activations)</h3>
+   <div style='position:relative;height:260px'><canvas id='pl3' style='max-height:none'></canvas></div>
+   {f"<p class='meta'>In total {cash_share}; the last three years: {cash_trend}.</p>" if cash_trend else ""}
    <div class='note'>{cash_note} Computed inside the CERF CVA file (aa.cerf_cva_history): cash and voucher
    amount over the approved amount of the same rows, by the file's year. The file has no allocation code:
    a row counts when a CERF allocation of a framework activation for the same country and emergency type
@@ -731,45 +766,17 @@ CERF sub-grants of framework activations ({sg_years}). No framework money here: 
  <div class='tile'><div class='v'>{n_nat} <span style='font-size:14px;font-weight:400'>of {n_orgs}</span></div><div class='l'>named organisations are national / local actors: {int(n_by.get('government', 0))} government,<br>{int(n_by.get('nngo', 0))} national NGOs, {int(n_by.get('rcrc_nat', 0))} national RC/RC societies</div></div>
  <div class='tile'><div class='v'>{n_un}</div><div class='l'>UN agencies named as implementers</div></div>
  <div class='tile'><div class='v'>{n_ingo}</div><div class='l'>international NGOs</div></div>
- <div class='tile'><div class='v'>{n_funded_all}</div><div class='l'>organisations with a CERF sub-grant of a framework activation, {sg_years}</div></div>
- <div class='tile'><div class='v'>{n_named_f} <span style='font-size:14px;font-weight:400'>of {n_named}</span></div><div class='l'>named delivery partners funded by a CERF sub-grant<br>({len(cmp_)} frameworks with sub-grant records)</div></div>
+ <div class='tile'><div class='v'>{n_funded_all}</div><div class='l'>non-UN recipients of CERF funding (Red Cross, NGOs, government) through sub-grants of framework activations, {sg_years}</div></div>
 </div>
 <div class='grid'>
- <div class='panel'><h3>Organisations named in the frameworks, by type and main role</h3>
-   <div style='position:relative;height:330px'><canvas id='pl1' style='max-height:none'></canvas></div>
-   <div class='note'>Each organisation counted once, under its first role in this order: implementing,
-   sub-grantee, government counterpart, technical, coordination, funding. Organisations are merged
-   on a shared acronym or name (French / Spanish UN acronyms mapped: PAM/PMA→WFP, OMS→WHO, OIM→IOM,
-   HCR/ACNUR→UNHCR, PNUD→UNDP, OPS→PAHO) — within the country for national actors, across countries for UN agencies, INGOs,
-   donors and the international Red Cross / Red Crescent (IFRC, partner national societies,
-   Climate Centre). Approximate: spellings with no shared acronym stay apart.</div></div>
  <div class='panel'><h3>CERF sub-grants of framework activations by recipient, per year</h3>
    <div style='position:relative;height:330px'><canvas id='pl2' style='max-height:none'></canvas></div>
    <div class='note'>From the CERF sub-grant records of those allocations (aa.cerf_subgrant), CERF's own
    <i>localization</i> field: 'Local' = government, national NGOs and national Red Cross / Red Crescent
    societies. The share in the label is local money over money whose partner is determined; 'not yet
-   determined' (TBD) is shown but left out of the share. Agencies' direct spending is not in these bars.</div></div>
+   determined' (TBD) is shown but left out of the share. Agencies' direct spending is not in these bars.
+   2023 looks low because the only framework activations that year were DRC cholera ($1.5M). The CERF early-action allocations reported to the Anticipation Hub for 2023 are not counted as anticipatory action here, following the definition the Grand Bargain adopted at the end of 2024.</div></div>
 </div>
-<h3 style='margin:20px 0 6px'>By framework</h3>
-<section><input class='filter' placeholder='filter…' oninput='filt(this)'>
-<div class='scroll'><table class='data'><thead><tr><th>framework</th><th>status</th><th>partner list (version)</th>
-<th>UN implementers</th><th>government</th><th>national / local NGOs</th><th>Red Cross / Red Crescent</th>
-<th>international NGOs</th><th>other</th><th>CERF sub-grantees</th><th>named delivery partners with a sub-grant</th>
-<th>people covered</th></tr></thead><tbody>{trs}</tbody></table></div></section>
-<p class='note' style='color:#666;font-size:11.5px'>Counts of distinct organisations in the partner list.
-<b>CERF sub-grantees</b>: distinct funded partners of the CERF allocations of the framework's activations
-(all of them; an allocation belongs to the framework its activation record names).
-<b>Named delivery partners</b>: government bodies, NGOs, Red Cross / Red Crescent and other organisations the
-document gives an implementing or sub-grantee role (UN agencies, donors, academia and private firms such as
-mobile-money providers excluded), matched on name or acronym to those sub-grantees — only where the framework
-has sub-grant records. The partner list can be from a newer version than the allocations.
-{n_not_named} sub-grantees of these frameworks are not named in the partner list.
-Frameworks with no partner list yet: {html.escape(hz_list) or 'none'}. People covered: latest figure per framework.</p>
-<details><summary style='cursor:pointer;font-size:13px'>Named delivery partners with no CERF sub-grant ({n_named - n_named_f})</summary>
-<ul class='nm'>{unf}</ul>
-<p class='note' style='color:#666;font-size:11.5px'>No CERF sub-grant recorded for the framework's
-allocations. They may be funded by the agencies' own resources, pooled funds or bilateral money, which
-this database does not trace to partners.</p></details>
 
 <h2>AA in the humanitarian plans</h2>
 <p class='meta'>Of the countries in the Global Humanitarian Overview, how many face shocks AA can address,
@@ -800,13 +807,23 @@ the source. {html.escape(kpi_note)}</p>
         "types": types,
         "loc": loc_rows,
         "cash": cash_rows,
+        "cashHz": cash_hz,
         "ppl": ppl,
         "dis": dis,
     }
     js = """
-mkChart('pl1','bar',D.types.map(t=>t.label),
-  D.roles.map((r,i)=>({label:r.label,data:D.types.map(t=>t.n[r.key]||0),backgroundColor:PAL[i%PAL.length]})),
-  {stacked:true,count:true,totals:true,allLabels:true,extra:{indexAxis:'y'}});
+// the sector order switch: alphabetical (default) or by frequency, both matrices together;
+// the 'Other' column stays last
+function sxOrder(byF){
+  document.querySelectorAll('table.mxt').forEach(t=>{
+    const hs = [...t.tHead.rows[0].cells].slice(1);
+    const idx = hs.map((h,i)=>i).sort((a,b)=>{ const A=hs[a].dataset, B=hs[b].dataset;
+      const oa = A.n.startsWith('Other'), ob = B.n.startsWith('Other');
+      if(oa!==ob) return oa ? 1 : -1;
+      return byF ? (B.f - A.f) || A.n.localeCompare(B.n) : A.n.localeCompare(B.n); });
+    [...t.rows].forEach(r=>{ const c = [...r.cells], first = c[0];
+      idx.forEach(i=>r.appendChild(c[i+1])); r.insertBefore(first, r.firstChild); }); }); }
+document.querySelectorAll("input[name='sxo']").forEach(el=>el.addEventListener('change', ()=>sxOrder(el.value==='f')));
 const pc = v=>v==null?'':' · '+Math.round(v*100)+'%';
 mkChart('pl2','bar',D.loc.map(r=>r.year+pc(r.share)),[
   {label:'government',data:D.loc.map(r=>r.gov),backgroundColor:PAL[0]},
@@ -815,10 +832,10 @@ mkChart('pl2','bar',D.loc.map(r=>r.year+pc(r.share)),[
   {label:'international NGOs',data:D.loc.map(r=>r.intl),backgroundColor:PAL[1]},
   {label:'not yet determined',data:D.loc.map(r=>r.tbd),backgroundColor:'#c8ccd2'}],
   {stacked:true,totals:true,allLabels:true});
-if(D.cash.length) mkChart('pl3','bar',D.cash.map(r=>r.year+pc(r.share)),[
-  {label:'cash and vouchers',data:D.cash.map(r=>r.cash),backgroundColor:PAL[2]},
-  {label:'other modalities',data:D.cash.map(r=>r.other),backgroundColor:'#c8ccd2'}],
-  {stacked:true,totals:true,allLabels:true});
+if(D.cashHz.length) mkChart('pl3','bar',D.cashHz.map(r=>r.hz+pc(r.share)),[
+  {label:'cash and vouchers',data:D.cashHz.map(r=>r.cash),backgroundColor:PAL[2]},
+  {label:'other modalities',data:D.cashHz.map(r=>r.other),backgroundColor:'#c8ccd2'}],
+  {stacked:true,totals:true,allLabels:true,extra:{indexAxis:'y'}});
 mkChart('pl4','bar',D.ppl.map(r=>r.label),[
   {label:'planned',data:D.ppl.map(r=>r.planned),backgroundColor:PAL[0]},
   {label:'reached',data:D.ppl.map(r=>r.reached),backgroundColor:PAL[2]}],
