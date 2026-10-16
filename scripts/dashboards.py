@@ -2171,13 +2171,35 @@ def _match_triggers(old, new):
             [n for j, n in enumerate(new) if j not in used_n])
 
 
+_TROW_STD = {"basis", "lead time", "return period", "releases", "releases (usd)", "releases (planned)",
+             "monitored by"}
+
+
+def _trow(t):
+    """A trigger-window row with `window` and `indicator` filled in where the page used its own
+    column names (Haiti 2024-08-23: 'window (pdf → code)', and the conditions as 'wind' and
+    '2-day rain' columns instead of one indicator)."""
+    t = dict(t)
+    if not _has(t.get("window")):
+        k = next((k for k in t if str(k).startswith("window")), None)
+        if k is not None and _has(t[k]):
+            t["window"] = str(t[k]).split("→")[0].strip()
+    if not _has(t.get("indicator")):
+        conds = [f"{k} {v}" for k, v in t.items()
+                 if k not in _TROW_STD and k not in ("window", "threshold")
+                 and not str(k).startswith("window") and _has(v)]
+        if conds:
+            t["indicator"] = " AND ".join(conds)
+    return t
+
+
 def _version_diff(fo, fn, to, tn):
     """Qualitative change sentences between two versions' structured metadata (frontmatter
     fo -> fn, trigger-window rows to -> tn). Only fields recorded on both sides."""
     import html as _h
     fo, fn = fo or {}, fn or {}
-    to = [t for t in (to or []) if isinstance(t, dict)]
-    tn = [t for t in (tn or []) if isinstance(t, dict)]
+    to = [_trow(t) for t in (to or []) if isinstance(t, dict)]
+    tn = [_trow(t) for t in (tn or []) if isinstance(t, dict)]
     out = []
     both = lambda k: _has(fo.get(k)) and _has(fn.get(k))   # noqa: E731
     esc = lambda s: _h.escape(str(s))                        # noqa: E731
@@ -2717,7 +2739,13 @@ def build_framework_pages(page, tbl, d, e=None):
     for _, fw in cur.sort_values("country_name").iterrows():
         c, h = fw["country_iso3"], fw["hazard"]
         slug = f"fw-{c.lower()}-{h}"
-        links.append((fw["country_name"], h, fw.get("lifecycle") or fw["status"], slug, c))
+        # a pair with no framework version (Uganda flood, Zimbabwe drought…) gets a page for its
+        # ad hoc allocations; its sheet status (pipeline talks) is not shown on it
+        no_fw = ver[(ver["country_iso3"] == c) & (ver["hazard"] == h)].empty
+        status = ("no framework" if no_fw else
+                  next((x for x in (fw.get("lifecycle"), fw.get("status")) if _has(x)), "no status"))
+        cur_v = fw["current_version"] if _has(fw.get("current_version")) else "—"
+        links.append((fw["country_name"], h, status, slug, c))
         version = (fw["latest_version"] if pd.notna(fw.get("latest_version"))
                    else fw["current_version"] if pd.notna(fw.get("current_version")) else None)
         kb_fw = fw["kb_framework"] if pd.notna(fw.get("kb_framework")) else None
@@ -2812,11 +2840,11 @@ def build_framework_pages(page, tbl, d, e=None):
         derived_note = (
             f" <span class='muted' style='font-size:11px'>(derived from the endorsed "
             f"{fw['current_version']} version — sheets last said “{str(obs).replace('_', ' ')}”)</span>"
-            if pd.notna(obs) and obs != fw["status"] else "")
+            if pd.notna(obs) and obs != fw["status"] and not no_fw else "")
         body = f"""
 <div class='card'><b>{fw['country_name']} — {h}</b> ·
-<span class='badge b-new'>{fw['status'] or 'no status'}</span>{derived_note}
-current version: <code>{fw['current_version'] or '—'}</code>
+<span class='badge b-new'>{fw['status'] if _has(fw.get('status')) and not no_fw else status}</span>{derived_note}
+current version: <code>{cur_v}</code>
 {('· KB: <code>' + fw['kb_framework'] + '</code>') if pd.notna(fw['kb_framework']) else '· not in KB'}
 · people covered: <b>{covered_txt}</b><br>
 Monitoring window: {_cal_strip(cal, c, h)}
@@ -2879,7 +2907,7 @@ if(SPLIT.length && window.sankeySVG){{
 }}
 </script>
 <style>{DASH_CSS}</style>"""
-        page(f"{slug}.html", f"{fw['country_name']} {h} — framework", body)
+        page(f"{slug}.html", f"{fw['country_name']} {h} — " + ("ad hoc allocations, no framework" if no_fw else "framework"), body)
     return links
 
 
