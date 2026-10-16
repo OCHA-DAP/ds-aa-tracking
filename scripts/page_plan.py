@@ -714,8 +714,8 @@ delivered — CERF allocations of framework activations with project money in th
 <ul class='nm'>{mapping}</ul>
 <p class='note' style='color:#666;font-size:11.5px'>Columns are the IASC clusters / sectors (Food Security takes in
 agriculture, food assistance and livelihoods; Protection takes in its areas of responsibility — child protection,
-gender-based violence, mine action), plus multi-purpose cash (cross-sector, as CERF reports it) and coordination and
-support services. CERF rows are placed by CERF's own IASC sector (aa.cerf_project_sector.iasc_sector_name;
+gender-based violence, mine action; WASH takes in early recovery; Logistics takes in coordination and support
+services — agreed in review 2026-10-16), plus multi-purpose cash (cross-sector, as CERF reports it). CERF rows are placed by CERF's own IASC sector (aa.cerf_project_sector.iasc_sector_name;
 its 'Multi-Sector' is multi-purpose cash). '{OTHER_SECTOR}' holds framework labels that are not an IASC sector
 (e.g. early warning messaging, community engagement): CERF has no such sector, so they are not folded into one.
 A combined label (e.g. 'Health &amp; Nutrition') counts in both columns. 'To be determined' is left out.</p></details>
