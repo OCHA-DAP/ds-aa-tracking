@@ -69,7 +69,9 @@ SECTOR_BUCKETS = [
     ("Nutrition", ["nutrition"]),
     ("Water, Sanitation and Hygiene (WASH)", ["wash", "water, sanitation and hygiene",
                                               "water sanitation hygiene",
-                                              "eau, assainissement et hygiène (eah)"]),
+                                              "eau, assainissement et hygiène (eah)",
+                                              # agreed in review 2026-10-16
+                                              "early recovery"]),
     ("Protection", ["protection", "child protection", "gbv", "gender-based violence",
                     "gender based violence", "protection (gbv)", "mine action"]),
     ("Shelter and Non-Food Items", ["shelter/nfi", "shelter", "shelter and non-food items",
@@ -78,12 +80,11 @@ SECTOR_BUCKETS = [
     ("Camp Coordination and Camp Management (CCCM)", ["cccm", "camp coordination and camp management",
                                                       "camp coordination / management"]),
     ("Education", ["education"]),
-    ("Logistics", ["logistics"]),
+    # coordination and support services: agreed in review 2026-10-16
+    ("Logistics", ["logistics", "coordination and support services", "common services",
+                   "humanitarian air services"]),
     ("Emergency Telecommunications", ["emergency telecommunications"]),
-    ("Early Recovery", ["early recovery"]),
     ("Multi-purpose cash", ["multi-purpose cash", "multi-sector/mpca", "multi-purpose cash (mpca)"]),
-    ("Coordination and support services", ["coordination and support services",
-                                           "common services", "humanitarian air services"]),
     (OTHER_SECTOR, ["early warning messaging", "multi-sector (community engagement)",
                     "disaster risk reduction"]),
 ]
@@ -508,23 +509,21 @@ def build_plan(page, d):
                                  _src("CERF (IASC sector)", cerf_raw.get(b))) if x)
         + "</li>" for b in cols)
     n_iasc = sum(1 for b in cols if b != OTHER_SECTOR)
-    # sectors that read oddly for AA (2026-10-16 review): Early Recovery is antithetical to AA
-    # (a project tagged so at approval), and CERF does not usually fund coordination and
-    # support services. Named here, for CERF colleagues to confirm; not re-filed.
-    odd = ex["sector"].assign(b=[(_buckets(_cerf_label(i, c)) or [""])[0]
+    # sectors filed elsewhere (agreed in review 2026-10-16): Early Recovery
+    # under WASH, coordination and support services under Logistics. Named in the note.
+    odd = ex["sector"].assign(b=[str(_cerf_label(i, c)).strip().lower()
                                  for i, c in zip(ex["sector"]["iasc"], ex["sector"]["sector"])])
     al_lab = {r.application_code: f"{r.country_iso3} {hz_of.get(r.application_code, 'other')} {int(r.year)}"
               for r in al.itertuples()}
 
-    def _odd(bucket):
-        g = odd[odd["b"] == bucket].groupby("application_code")["sector_amount"].sum()
+    def _odd(raws):
+        g = odd[odd["b"].isin(raws)].groupby("application_code")["sector_amount"].sum()
         return "; ".join(f"{al_lab.get(c, c)} ({html.escape(c)}, ${v/1e3:,.0f}k)" for c, v in g.items())
-    er, cs = _odd("Early Recovery"), _odd("Coordination and support services")
-    odd_note = ((f"<br><b>Early Recovery</b> is not an AA sector: the cell comes from a project tagged so "
-                 f"in CERF's records at approval — {er}. To be confirmed with CERF colleagues." if er else "")
+    er = _odd({"early recovery"})
+    cs = _odd({"coordination and support services", "common services", "humanitarian air services"})
+    odd_note = ((f"<br><b>Early Recovery</b> projects are counted under WASH: {er}." if er else "")
                 + (f"<br><b>Coordination and support services</b> (common services, humanitarian air "
-                   f"services), which CERF does not usually fund in AA: {cs}. CERF colleagues to advise "
-                   f"whether it belongs under Logistics." if cs else ""))
+                   f"services) are counted under Logistics: {cs}." if cs else ""))
 
     # ================================================================== cash
     # the CVA file has no allocation code: a row counts when a framework allocation of the same
