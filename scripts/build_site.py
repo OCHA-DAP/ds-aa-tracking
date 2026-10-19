@@ -258,11 +258,10 @@ def write_site():
     build says so. A public page carrying the data service's token stops the build."""
     public = public_pages()
     admin = set(_PAGES) - public
-    for n in UNLISTED_TABS:     # hidden means hidden: no header link, no link from any page
-        linked = ([m for m, (_, b) in _PAGES.items() if m != n and _quoted([n]).search(b)]
-                  + (["the header"] if _quoted([n]).search(NAV) else []))
+    for n in UNLISTED_TABS:     # hidden means hidden: no page and no header names its file
+        linked = [m for m, (_, b) in _PAGES.items() if m != n and n in b] + (["the header"] if n in NAV else [])
         if linked:
-            raise SystemExit(f"FATAL: unlisted page {n} is linked from {', '.join(linked)}")
+            raise SystemExit(f"FATAL: unlisted page {n} is named on {', '.join(linked)}")
     adm_dir = OUT / ADMIN_DIR
     adm_dir.mkdir(exist_ok=True)
     stamp = date.today().isoformat()

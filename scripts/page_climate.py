@@ -103,7 +103,7 @@ def _rows(df):
             "codes": codes,
             "unc": sorted(r.indicator for r in g.itertuples() if r.uncertain),
             "notes": {r.indicator: r.note for r in g.itertuples() if isinstance(r.note, str) and r.note},
-            "mirror": _s(p.title) is not None,
+            "mirror": not pd.isna(p.year),
         })
     return out
 
@@ -119,6 +119,9 @@ def build(e, page):
     if unknown:
         print(f"::warning::{PAGE}: indicator keys not in page_climate.INDICATORS ignored: {', '.join(unknown)}")
         df = df[df["indicator"].isin(KEYS)]
+    if df.empty:
+        page(PAGE, TITLE, f"<style>{DASH_CSS}</style><div class='card'>No coded projects loaded yet.</div>")
+        return
     rows = _rows(df)
     coders = sorted({r["coder"] for r in rows}, key=lambda c: (c.startswith("model-"), c))
     data = {
@@ -126,10 +129,8 @@ def build(e, page):
         "indicators": [{"key": k, "theme": t, "label": lab} for k, t, lab in INDICATORS],
         "gate": GATE, "rows": rows, "coders": coders,
     }
-    payload = json.dumps(data, ensure_ascii=False, default=str, allow_nan=False).replace("</", "<\\/")
-    shown = [r for r in rows if r["coder"] == coders[0]]
-    n_coded = sum(1 for r in shown if r["codes"])
-    blank = [r["code"] for r in shown if not r["codes"]]
+    # every '<' escaped: no text in the data can end the script element or open a comment in it
+    payload = json.dumps(data, ensure_ascii=False, default=str, allow_nan=False).replace("<", "\\u003c")
 
     coder_pick = ("<label>Coder <select id='cc-coder'>"
                   + "".join(f"<option>{_e(c)}</option>" for c in coders) + "</select></label>"
@@ -137,11 +138,10 @@ def build(e, page):
     body = f"""
 <div class='card'><b>Unlisted page, work in progress.</b> CERF projects coded against climate-adaptation
 indicators: one question on whether the proposal mentions current climate risk or future climate impacts,
-and activity indicators in seven areas. Each project was coded by hand from its proposal's project summary,
-<b>{n_coded} projects so far</b>{f" ({len(blank)} more listed but not coded: {', '.join(map(_e, blank))})" if blank else ""}.
-More are being coded. Tick indicators below to list the projects coded <i>yes</i> on them; the counts follow
-the other filters. Project facts (year, agency, emergency, amount) are from the CERF project data.
-<div class='tiles' id='cc-tiles'></div></div>
+and activity indicators in seven areas, each project coded from its proposal's project summary. More are
+being coded. Tick indicators below to list the projects coded <i>yes</i> on them; the counts follow the other
+filters. Project facts (year, agency, emergency, amount) are from the CERF project data.
+<div class='tiles' id='cc-tiles'></div><div class='meta' id='cc-blank'></div></div>
 
 <div class='fbar'>
  {coder_pick}
@@ -268,6 +268,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const anyAct = coded.filter(r => D.indicators.some(i => i.key !== D.gate && r.codes[i.key] === 'Y'));
     const gate = coded.filter(r => r.codes[D.gate] === 'Y');
     const t = $('cc-tiles'); t.textContent = '';
+    const blank = rows.filter(r => !Object.keys(r.codes).length).map(r => r.code);
+    $('cc-blank').textContent = blank.length ? `Listed but not coded: ${blank.join(', ')}.` : '';
     [[coded.length, 'projects coded'], [anyAct.length, 'with at least one indicator coded yes'],
      [gate.length, 'mention climate risk or impacts']].forEach(([v, l]) => {
       const d = el('div', 'tile'); d.append(el('div', 'v', fmt(v)), el('div', 'l', l)); t.append(d); });

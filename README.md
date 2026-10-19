@@ -110,7 +110,8 @@ are kept forever (the year-end official state, for the map's time view).
   indicators in seven areas), filterable by indicator. Codes in `aa.cerf_climate_coding`
   (project × indicator × coder), project facts from the CERF mirror. A coder's workbook
   becomes an entry file with `scripts/import_climate_coding.py WORKBOOK --coder NAME --out
-  FILE.json` (it checks every header before reading), then `apply_entries.py --upload`.
+  FILE.json` (it checks every header before reading), then `apply_entries.py --upload` —
+  only once the nightly's one-off `--ensure-schema` run has created the table.
   The workbooks and the proposals they were coded from never go in git
 - `scripts/landing.py` — landing map (base: Natural Earth 1:50m simplified as one topology so
   borders stay shared; zoom: FieldMaps edge-matched COD-AB for every country in view): zoom
