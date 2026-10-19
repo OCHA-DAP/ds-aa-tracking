@@ -70,7 +70,9 @@ are kept forever (the year-end official state, for the map's time view).
   link to the public site, never the reverse. The builders do not say which site a page is
   on: `page()` collects the pages and `write_site()` in `scripts/build_site.py` sorts them
   (`PUBLIC_TABS`), respells the links and stops the build if a public page carries the
-  proxy token. `scripts/publish.sh` allows exactly one directory on gh-pages (`admin/`,
+  proxy token. A public page can be **unlisted** (`UNLISTED_TABS`): same password as the
+  tabs, but no header link and no link from any page (the build stops if one appears), so
+  only people given its address find it. `scripts/publish.sh` allows exactly one directory on gh-pages (`admin/`,
   encrypted pages and the two pdf.js files only) and refuses any page that is not
   encrypted. Every page carries the "internal product under development" banner.
 - snapshot: the dev DB is losing public network access (2026-09); only Databricks reaches
@@ -103,6 +105,14 @@ are kept forever (the year-end official state, for the map's time view).
   the shared file, asked for by its id. `scripts/sync_media.py` rewrites the manifest from the
   folder: it only lists, it is run by hand and its diff is read before it is committed (not
   part of the nightly build). Not curated yet: no selection, captions or credits
+- `scripts/page_climate.py` — `climate-adaptation.html`, unlisted: CERF projects coded by
+  hand against climate-adaptation indicators (a gate question on climate risk, and activity
+  indicators in seven areas), filterable by indicator. Codes in `aa.cerf_climate_coding`
+  (project × indicator × coder), project facts from the CERF mirror. A coder's workbook
+  becomes an entry file with `scripts/import_climate_coding.py WORKBOOK --coder NAME --out
+  FILE.json` (it checks every header before reading), then `apply_entries.py --upload` —
+  only once the nightly's one-off `--ensure-schema` run has created the table.
+  The workbooks and the proposals they were coded from never go in git
 - `scripts/landing.py` — landing map (base: Natural Earth 1:50m simplified as one topology so
   borders stay shared; zoom: FieldMaps edge-matched COD-AB for every country in view): zoom
   to a country, subnational scope per framework
