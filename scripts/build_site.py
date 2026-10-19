@@ -372,7 +372,7 @@ NOTES = {
     "cerf_project_supplement": "Project-level markers + CVA from the Agency HQ Report export: gender/GBV/disability/cash markers, people receiving cash, CVA amount, displacement-category targeting.",
     "cerf_cva_history": "CVA by country × agency × emergency × year, 2020–2026 (aggregated to the sheet's grain). Parked: no allocation codes, so it can never link to anything — kept as context, may be revived for a CVA workstream; target-state CVA is project-level.",
     "emergency_type_override": "Yakubu's re-tagged allocations: GMS emergency type vs actual shock (mostly Flood→Storm, with storm name).",
-    "cerf_climate_coding": "CERF projects coded against climate-adaptation indicators (one row per project × indicator × coder; NULL value = blank cell). Shown on the unlisted climate-adaptation page (public password, no link to it); indicator wording in scripts/page_climate.py.",
+    "cerf_climate_coding": "CERF projects coded against climate-adaptation indicators (one row per project × indicator × coder; NULL value = blank cell). Hand coding on the unlisted climate-adaptation page, model runs (coders model-*) scored against it on the unlisted climate-coding-accuracy page (public password; the two link only to each other); indicator wording in scripts/page_climate.py.",
 }
 
 TABLE_ORDER = list(NOTES)

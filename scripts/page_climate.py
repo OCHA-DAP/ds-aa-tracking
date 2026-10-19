@@ -30,6 +30,9 @@ TITLE = "Climate adaptation in CERF projects"
 ACC_PAGE = "climate-coding-accuracy.html"
 ACC_TITLE = "Climate coding: can a model reproduce it?"
 
+# the hand coder the accuracy page scores the models against; if absent, the human coder
+# with the most answers (with a warning)
+REF_CODER = "Nico"
 # the automated passes the accuracy page knows, in the order it shows them: coded_by, name,
 # what the model was given. A model-* coder not listed here is shown last, under its key.
 RUNS = [
@@ -152,7 +155,8 @@ def build(e, page):
     build_accuracy(df, page)
     df = df[~df["coded_by"].str.startswith("model-")]    # this page: the hand coding only
     if df.empty:
-        page(PAGE, TITLE, f"<style>{DASH_CSS}</style><div class='card'>No hand-coded projects loaded yet.</div>")
+        page(PAGE, TITLE, f"<style>{DASH_CSS}</style><div class='card'>No hand-coded projects loaded yet. "
+             f"The model runs are on <a href='{ACC_PAGE}'>their own page</a>.</div>")
         return
     rows = _rows(df)
     coders = sorted({r["coder"] for r in rows})
@@ -386,7 +390,7 @@ def _score(ref, run):
         if GATE in rc and GATE in mc:
             gate.append((rc[GATE], mc[GATE]))
         anyp.append((any(v == "Y" for k, v in rc.items() if k != GATE),
-                     any(v == "Y" for k, v in mc.items() if k != GATE)))
+                     any(v == "Y" for k, v in mc.items() if k != GATE and k in rc)))
     both = sum(a == b == "Y" for a, b in pairs)
     ref_y, run_y = sum(a == "Y" for a, _ in pairs), sum(b == "Y" for _, b in pairs)
     return {"projects": len(anyp), "cells": len(pairs), "agree": sum(a == b for a, b in pairs),
@@ -410,10 +414,15 @@ def build_accuracy(df, page):
     humans = [c for c in coders if not c.startswith("model-")]
     models = [c for c in coders if c.startswith("model-")]
     if not humans or not models:
-        page(ACC_PAGE, ACC_TITLE, f"<style>{DASH_CSS}</style><div class='card'>No model runs loaded yet. "
+        missing = "No model runs" if humans else "No hand coding to compare with" if models else "No coding"
+        page(ACC_PAGE, ACC_TITLE, f"<style>{DASH_CSS}</style><div class='card'>{missing} loaded yet. "
              f"The hand coding is on <a href='{PAGE}'>its own page</a>.</div>")
         return
-    ref_coder = humans[0]
+    if REF_CODER in humans:
+        ref_coder = REF_CODER
+    else:
+        ref_coder = max(humans, key=lambda c: int(((df["coded_by"] == c) & df["value"].notna()).sum()))
+        print(f"::warning::{ACC_PAGE}: reference coder {REF_CODER!r} not found; scoring against {ref_coder!r}")
     known = [k for k, _, _ in RUNS]
     runs = [(k, n, d) for k, n, d in RUNS if k in models] + [(m, m, "") for m in models if m not in known]
     rows = _rows(df)
@@ -434,6 +443,7 @@ def build_accuracy(df, page):
         for (k, n, d), s in ((r, scores[r[0]]) for r in runs))
     any_ref = sum(any(v == "Y" for kk, v in c.items() if kk != GATE) for c in ref.values())
     n_ref_y = sum(v == "Y" for c in ref.values() for v in c.values())
+    n_ref = sum(len(c) for c in ref.values())
 
     theme_name = {k: n for k, n, _ in THEMES} | {"gate": "Climate risk"}
     ind_rows = []
@@ -469,7 +479,7 @@ def build_accuracy(df, page):
 <div class='card'><b>Unlisted page, work in progress.</b> Can a model code CERF proposals the way
 {_e(ref_coder)} did? The model (Claude) coded the same projects in {len(runs)} ways, and every answer is compared with
 {_e(ref_coder)}'s: {len(ref)} hand-coded projects, {n_ref_y} answers <i>yes</i> out of
-{len(ref) * len(INDICATORS)}. The hand coding itself, with its filters, is on <a href='{PAGE}'>its own page</a>.
+{n_ref:,}. The hand coding itself, with its filters, is on <a href='{PAGE}'>its own page</a>.
 <p class='meta' style='margin:8px 0 0'>Under {_e(ref_coder)}'s reading, {any_ref} of the {len(ref)} projects have at
 least one activity indicator coded yes: most indicators are read as broad humanitarian categories (any disease
 work, any psychosocial support, any food or cash), not only climate-related activity.</p></div>
@@ -486,7 +496,7 @@ is high whatever happens. <b>Precision</b>: of the model's yes answers, the shar
 
 <h2>Indicator by indicator</h2>
 <p class='meta'>How many projects each coder said <i>yes</i> on: {_e(ref_coder)}, then for each run the model's
-yes answers / those {_e(ref_coder)} also gave. Indicators with only a few yes answers cannot be learned or scored
+yes answers / those {_e(ref_coder)} also gave (counted where {_e(ref_coder)} answered). Indicators with only a few yes answers cannot be learned or scored
 from this sample.</p>
 <div class='scroll'><table class='data acc-ind'><thead><tr><th>Area</th><th>Indicator</th>
  <th>{_e(ref_coder)}</th>{head}</tr></thead><tbody>{''.join(ind_rows)}</tbody></table></div>
@@ -540,15 +550,16 @@ document.addEventListener('DOMContentLoaded', () => {
   const el = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls;
     if (text != null) x.textContent = text; return x; };
   const open = new Set();
+  const codes = (p, k) => (p.runs[k] || {}).codes || {};
   // indicators where the run and the hand coder both answered and differ
-  const diffs = (p, k) => { const r = (p.runs[k] || {}).codes || {};
+  const diffs = (p, k) => { const r = codes(p, k);
     return D.indicators.filter(i => p.ref[i.key] && r[i.key] && p.ref[i.key] !== r[i.key]); };
   const yes = c => D.indicators.filter(i => c[i.key] === 'Y').length;
 
   function detail(p, run) {
     const box = el('div', 'acc-det');
     const shown = D.indicators.filter(i => p.ref[i.key] === 'Y'
-      || Object.values(p.runs).some(r => r.codes[i.key] === 'Y'));
+      || D.runs.some(r => codes(p, r.key)[i.key] === 'Y'));
     if (!shown.length) { box.append(el('div', 'meta', 'Every coder answered no on every indicator.')); return box; }
     const t = el('table', 'acc-mx'), hr = el('tr');
     hr.append(el('th', null, 'Indicator'), el('th', null, D.ref));
@@ -559,7 +570,7 @@ document.addEventListener('DOMContentLoaded', () => {
       lab.append(el('div', 'a', i.theme), el('div', null, i.label)); tr.append(lab);
       tr.append(el('td', null, p.ref[i.key] || '–'));
       D.runs.forEach(r => {
-        const v = ((p.runs[r.key] || {}).codes || {})[i.key], ref = p.ref[i.key];
+        const v = codes(p, r.key)[i.key], ref = p.ref[i.key];
         const cls = [r.key === run ? 'sel' : '', ref && v && v !== ref ? (v === 'Y' ? 'extra' : 'miss') : ''].join(' ').trim();
         const td = el('td', cls || null, v || '–');
         const ev = ((p.runs[r.key] || {}).notes || {})[i.key];
@@ -576,7 +587,8 @@ document.addEventListener('DOMContentLoaded', () => {
       notes.forEach(([k, v]) => { const li = el('li'); li.append(el('b', null, (IND[k] || {label: k}).label + ': '), el('span', null, v)); ul.append(li); });
       box.append(ul);
     }
-    const ev = Object.entries(((p.runs[run] || {}).notes) || {});
+    // the model's note on a yes is its evidence
+    const ev = Object.entries(((p.runs[run] || {}).notes) || {}).filter(([k]) => codes(p, run)[k] === 'Y');
     const rn = (D.runs.find(r => r.key === run) || {}).name;
     box.append(el('div', 'meta', ev.length ? `Why the model said yes (${rn}), quoted from the proposal:` : `No evidence recorded for ${rn}.`));
     const ul = el('ul', 'acc-ev');
