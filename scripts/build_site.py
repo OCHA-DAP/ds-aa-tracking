@@ -109,7 +109,10 @@ function dlcsv(id, name) {
 # the map is known. An admin page may link to the public site; a public page never links
 # to the admin site, and never carries the data service's token.
 PUBLIC_TABS = ("index.html", "pillar-model.html", "pillar-history.html", "pillar-plan.html",
-               "dash-funding.html", "pillar-learning.html", "media.html")
+               "dash-funding.html", "pillar-learning.html", "media.html", "climate-adaptation.html")
+# public, so behind the same password as the tabs, but deliberately NOT in NAV nor linked
+# from any page: reached only by its link, until it is ready to be a tab (user, 2026-10-19)
+UNLISTED_TABS = ("climate-adaptation.html",)
 ROOT_ASSETS = ("chart.umd.js", "sankey.js")           # the public pages load these; admin pages through ../
 ADMIN_ASSETS = ("pdf.min.js", "pdf.worker.min.js")    # data entry only
 ADMIN_DIR = "admin"
@@ -255,6 +258,11 @@ def write_site():
     build says so. A public page carrying the data service's token stops the build."""
     public = public_pages()
     admin = set(_PAGES) - public
+    for n in UNLISTED_TABS:     # hidden means hidden: no header link, no link from any page
+        linked = ([m for m, (_, b) in _PAGES.items() if m != n and _quoted([n]).search(b)]
+                  + (["the header"] if _quoted([n]).search(NAV) else []))
+        if linked:
+            raise SystemExit(f"FATAL: unlisted page {n} is linked from {', '.join(linked)}")
     adm_dir = OUT / ADMIN_DIR
     adm_dir.mkdir(exist_ok=True)
     stamp = date.today().isoformat()
@@ -362,6 +370,7 @@ NOTES = {
     "cerf_project_supplement": "Project-level markers + CVA from the Agency HQ Report export: gender/GBV/disability/cash markers, people receiving cash, CVA amount, displacement-category targeting.",
     "cerf_cva_history": "CVA by country × agency × emergency × year, 2020–2026 (aggregated to the sheet's grain). Parked: no allocation codes, so it can never link to anything — kept as context, may be revived for a CVA workstream; target-state CVA is project-level.",
     "emergency_type_override": "Yakubu's re-tagged allocations: GMS emergency type vs actual shock (mostly Flood→Storm, with storm name).",
+    "cerf_climate_coding": "CERF projects coded against climate-adaptation indicators (one row per project × indicator × coder; NULL value = blank cell). Shown on the unlisted climate-adaptation page (public password, no link to it); indicator wording in scripts/page_climate.py.",
 }
 
 TABLE_ORDER = list(NOTES)
@@ -373,6 +382,12 @@ def main():
     # ---------- per-table pages + tables index
     cards = []
     for t in TABLE_ORDER:
+        # a durable table exists only after the one-off `--ensure-schema` run of the nightly
+        # job: until then the snapshot has no copy of it, which is not an error
+        if t in trk_schema.DURABLE_TABLES and pd.read_sql(
+                f"SELECT to_regclass('aa.{t}') AS r", e)["r"].iloc[0] is None:
+            print(f"::warning::aa.{t} is not in the snapshot yet (run the nightly with --ensure-schema)")
+            continue
         df = pd.read_sql(f"SELECT * FROM aa.{t}", e)
         df = df.drop(columns=[c for c in ("updated_at",) if c in df.columns])
         _tblname = t
@@ -544,6 +559,8 @@ def main():
     dashboards.build_all(e, page, tbl)
     import admin_page
     admin_page.build_admin(page)
+    import page_climate
+    page_climate.build(e, page)
 
     # ---------- index
     reg = pd.read_sql("SELECT * FROM aa.v_trk_framework_current ORDER BY country_name", e)

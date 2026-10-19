@@ -618,6 +618,25 @@ DURABLE_TABLES = {
             registered_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard, version, sha256)
         )""",
+    # CERF projects coded against climate-adaptation indicators, one row per project x
+    # indicator x coder (scripts/import_climate_coding.py turns a coding workbook into an
+    # entries file). Project facts come from aa.cerf_project; the indicator list and its
+    # themes live in scripts/page_climate.py. Several coders can code the same project
+    # (a person, an automated pass), so a comparison never overwrites anything.
+    "cerf_climate_coding": """
+        CREATE TABLE IF NOT EXISTS aa.cerf_climate_coding (
+            project_code text NOT NULL,    -- aa.cerf_project
+            indicator text NOT NULL,       -- key in page_climate.INDICATORS
+            coded_by text NOT NULL,        -- the coder: a person, or model-<name> for an
+                                           -- automated pass
+            value text CHECK (value IN ('Y', 'N')),  -- NULL: the cell was blank or unreadable
+            uncertain boolean NOT NULL DEFAULT false,  -- the coder marked it '(?)'
+            note text,                     -- the coder's words: the other relevant
+                                           -- activities, or a comment on the answer
+            source text NOT NULL,          -- the workbook (and sheet) the codes came from
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (project_code, indicator, coded_by)
+        )""",
     "entry_audit": """
         CREATE TABLE IF NOT EXISTS aa.entry_audit (
             id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
