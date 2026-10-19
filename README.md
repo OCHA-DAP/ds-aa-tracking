@@ -105,9 +105,12 @@ are kept forever (the year-end official state, for the map's time view).
   the shared file, asked for by its id. `scripts/sync_media.py` rewrites the manifest from the
   folder: it only lists, it is run by hand and its diff is read before it is committed (not
   part of the nightly build). Not curated yet: no selection, captions or credits
-- `scripts/page_climate.py` — `climate-adaptation.html`, unlisted: CERF projects coded by
-  hand against climate-adaptation indicators (a gate question on climate risk, and activity
-  indicators in seven areas), filterable by indicator. Codes in `aa.cerf_climate_coding`
+- `scripts/page_climate.py` — two unlisted pages that link only to each other.
+  `climate-adaptation.html`: CERF projects coded by hand against climate-adaptation indicators
+  (a gate question on climate risk, and activity indicators in seven areas), filterable by
+  indicator. `climate-coding-accuracy.html`: how closely automated passes (coders named
+  `model-*`, listed in `RUNS`) reproduce the hand coding — kappa, precision and recall per
+  run, per indicator, and project by project with the model's evidence quotes. Codes in `aa.cerf_climate_coding`
   (project × indicator × coder), project facts from the CERF mirror. A coder's workbook
   becomes an entry file with `scripts/import_climate_coding.py WORKBOOK --coder NAME --out
   FILE.json` (it checks every header before reading), then `apply_entries.py --upload` —

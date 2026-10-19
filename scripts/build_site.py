@@ -109,10 +109,12 @@ function dlcsv(id, name) {
 # the map is known. An admin page may link to the public site; a public page never links
 # to the admin site, and never carries the data service's token.
 PUBLIC_TABS = ("index.html", "pillar-model.html", "pillar-history.html", "pillar-plan.html",
-               "dash-funding.html", "pillar-learning.html", "media.html", "climate-adaptation.html")
+               "dash-funding.html", "pillar-learning.html", "media.html", "climate-adaptation.html",
+               "climate-coding-accuracy.html")
 # public, so behind the same password as the tabs, but deliberately NOT in NAV nor linked
-# from any page: reached only by its link, until it is ready to be a tab (user, 2026-10-19)
-UNLISTED_TABS = ("climate-adaptation.html",)
+# from any listed page: reached only by their links (they may link to each other), until
+# they are ready to be tabs (user, 2026-10-19)
+UNLISTED_TABS = ("climate-adaptation.html", "climate-coding-accuracy.html")
 ROOT_ASSETS = ("chart.umd.js", "sankey.js")           # the public pages load these; admin pages through ../
 ADMIN_ASSETS = ("pdf.min.js", "pdf.worker.min.js")    # data entry only
 ADMIN_DIR = "admin"
@@ -258,8 +260,9 @@ def write_site():
     build says so. A public page carrying the data service's token stops the build."""
     public = public_pages()
     admin = set(_PAGES) - public
-    for n in UNLISTED_TABS:     # hidden means hidden: no page and no header names its file
-        linked = [m for m, (_, b) in _PAGES.items() if m != n and n in b] + (["the header"] if n in NAV else [])
+    for n in UNLISTED_TABS:     # hidden means hidden: no listed page and no header names its file
+        linked = ([m for m, (_, b) in _PAGES.items() if m not in UNLISTED_TABS and n in b]
+                  + (["the header"] if n in NAV else []))
         if linked:
             raise SystemExit(f"FATAL: unlisted page {n} is named on {', '.join(linked)}")
     adm_dir = OUT / ADMIN_DIR
