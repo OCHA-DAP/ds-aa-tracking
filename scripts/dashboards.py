@@ -1156,10 +1156,9 @@ FLOW_NOTE = (
     "recipient node carries its category colour — UN agency, international NGO, national / local "
     "NGO, government, Red Cross / Red Crescent, other, not recorded — from the sub-grant partner "
     "type or the organisation type recorded by the Country and Regional Funds; a band takes the colour of the node it leaves. "
-    "<b>Recipient types</b>: a stage just before the last column groups every band by the category "
-    "of the organisation it reaches — UN agencies, international NGOs, national / local NGOs, Red "
-    "Cross / Red Crescent, government, other — so one pathway shows the groups and the last column "
-    "the named organisations (untick <i>recipient types</i> to hide it). "
+    "<b>Recipient types</b>: the far-right column groups every band by the category of the "
+    "organisation it reaches — UN agencies, international NGOs, national / local NGOs, Red "
+    "Cross / Red Crescent, government, other (untick <i>recipient types</i> to hide it). "
     "<b>Donors → fund</b>: each donor's paid contributions to the fund that year ÷ the fund's "
     "total paid income that year, × the amount — attributed pro rata, since contributions fund "
     "the whole pool. Top 12 donors, the rest grouped.")
@@ -1179,7 +1178,7 @@ def _flow_panel(donors_on, donor_toggle=True):
    <label style='padding:3px 10px;cursor:pointer;border-left:1px solid #cbd5e1'><input type='radio' name='flM' value='r'> released</label></span>
   <label><span id='flYl'>In place in</span> <select id='flY'></select></label>
   {dctl}
-  <label title='a stage that groups the recipients by type (UN agencies, NGOs, Red Cross / Red Crescent, government, other) before the named ones'><input type='checkbox' id='flK' checked> recipient types</label>
+  <label title='a last column that groups the recipients by type (UN agencies, NGOs, Red Cross / Red Crescent, government, other)'><input type='checkbox' id='flK' checked> recipient types</label>
   <label id='flPw'><input type='checkbox' id='flP' checked> final recipients</label>
   <span id='flTot' class='muted'></span>
  </div>
@@ -1189,7 +1188,7 @@ def _flow_panel(donors_on, donor_toggle=True):
 
 
 FLOW_JS = """
-// ---- where the money flows: [donors ->] funds -> agencies / grantees [-> final recipients].
+// ---- where the money flows: [donors ->] funds -> agencies / grantees [-> final recipients] [-> recipient types].
 // Shared by the Financing page and the donor-flows view of the donor-shares page; rows from
 // _money_flows. Recipient node ids carry their category: 'a:un|WFP' (an agency: always named),
 // 'p:ingo~ActionAid' (an organisation: the top ones of the view named, the rest grouped).
@@ -1203,7 +1202,7 @@ const CAT_OTHER = {un:'other UN agencies', ingo:'other international NGOs', nngo
 // RhPF green); the five hues validated as a set (all pairs: CVD dE >= 13.5, normal >= 19.6) and
 // against the fund colours (normal >= 15.6); the two greys are the neutral categories
 const CAT_COLOR = {un:'#65389f', ingo:'#70b6e7', nngo:'#ceaa3e', gov:'#8a4f0e', rc:'#c3518d', oth:'#3a3f47', nr:'#d6dae0'};
-// the recipient-type stage: one node per category, just before the last column
+// the recipient-type column: one node per category, the far-right column
 const CAT_GROUP = {un:'UN agencies', ingo:'International NGOs', nngo:'National / local NGOs', gov:'Government',
   rc:'Red Cross / Red Crescent', oth:'Other', nr:'Type not recorded'};
 function flowNode(id){ const m = /^([apk]):([a-z]+)([|~])(.*)$/.exec(id);
@@ -1230,17 +1229,14 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
   L = flowRegroup(L, x=>{ const n = flowNode(x); return n && n.org && !named.has(n.name) ? `${n.p}:${n.cat}|${CAT_OTHER[n.cat]}` : x; });
   if(!showD) L = L.filter(l=>l.lv!=='d');
   if(!showP) L = L.filter(l=>l.lv!=='a');
-  // recipient types (2026-10-02 meeting): every band into the last column passes through its
-  // category first — UN agencies, international / national NGOs, Red Cross / Red Crescent,
-  // government, other — so one pathway shows the groups and the last column the named ones.
-  // After the naming above (the ranking reads agency -> organisation links), and the first
-  // half keeps its level so the total (the 'f' links) is unchanged.
+  // recipient types (2026-10-02 meeting): the far-right column (2026-10-19: the final bucket,
+  // not a stage before the named organisations) — every band reaching the named column runs
+  // on to its category: UN agencies, international / national NGOs, Red Cross / Red Crescent,
+  // government, other. After the naming above; the 'f' links (the total) are unchanged.
   if(showK){
     const last = showP ? 'p:' : 'a:', lv = showP ? 'a' : 'f', S = [];
-    L.forEach(l=>{ const n = l.lv===lv && l.t.startsWith(last) ? flowNode(l.t) : null;
-      if(!n){ S.push(l); return; }
-      const k = `k:${n.cat}|${CAT_GROUP[n.cat]}`;
-      S.push({lv, s:l.s, t:k, v:l.v}, {lv:'k', s:k, t:l.t, v:l.v}); });
+    L.forEach(l=>{ S.push(l); const n = l.lv===lv && l.t.startsWith(last) ? flowNode(l.t) : null;
+      if(n) S.push({lv:'k', s:l.t, t:`k:${n.cat}|${CAT_GROUP[n.cat]}`, v:l.v}); });
     L = flowRegroup(S, x=>x);
   }
   const lab = id => { const [p, ...rest] = id.split(':'); const n = rest.join(':');
@@ -1250,10 +1246,9 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
     return [...ids].map(id=>({id, label:lab(id)})); };
   if(showD) cols.push(col('d:'));
   cols.push(col('f:'));
-  if(showK && !showP) cols.push(col('k:'));
   cols.push(col('a:'));
-  if(showK && showP) cols.push(col('k:'));
   if(showP) cols.push(col('p:'));
+  if(showK) cols.push(col('k:'));
   const seen = new Set(); cols.forEach(c=>c.forEach(n=>{ const r = flowNode(n.id); if(r) seen.add(r.cat); }));
   const total = L.filter(l=>l.lv==='f').reduce((s,l)=>s+l.v,0);
   return {columns:cols, links:L.map(l=>({s:l.s,t:l.t,v:l.v})), total, cats:CAT_ORDER.filter(c=>seen.has(c))};
