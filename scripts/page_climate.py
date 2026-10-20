@@ -109,14 +109,16 @@ LEFT JOIN aa.cerf_project p USING (project_code)
 ORDER BY c.project_code, c.coded_by"""
 
 
-# CERF funding per year, all projects and the anticipatory-action ones (allocations flagged
-# AA in aa.v_allocation, as on the Financing and Allocations pages): what the hand-coding page
-# compares the selected projects with
+# funded CERF projects per PROJECT year: all of them, and those in allocations flagged
+# anticipatory action (the is_aa flag of aa.v_allocation, by project year, so not the same sums
+# as the Allocations page's by allocation year): what the hand-coding page compares the selected
+# projects with
 SQL_TOTALS = """
 SELECT p.year, count(*) AS n, sum(p.amount_approved) AS usd,
        sum(p.amount_approved) FILTER (WHERE a.is_aa) AS aa_usd
 FROM aa.cerf_project p
-LEFT JOIN (SELECT DISTINCT allocation_code, is_aa FROM aa.v_allocation WHERE fund_type = 'cerf') a
+LEFT JOIN (SELECT allocation_code, bool_or(is_aa) AS is_aa FROM aa.v_allocation
+           WHERE fund_type = 'cerf' GROUP BY allocation_code) a
        ON a.allocation_code = p.application_code
 WHERE p.project_status = 'Funded' AND p.year IS NOT NULL
 GROUP BY p.year ORDER BY p.year"""
@@ -273,7 +275,7 @@ CC_CSS = """
         font-size:12.5px; margin-top:10px; }
 .cc-m .t { color:#333; } .cc-m .t small { display:block; color:var(--muted); font-size:11.5px; }
 .cc-m .track { height:14px; background:#eef1f5; border-radius:0 4px 4px 0; position:relative; }
-.cc-m .track i { position:absolute; left:0; top:0; bottom:0; background:var(--accent); border-radius:0 4px 4px 0; min-width:2px; }
+.cc-m .track i { position:absolute; left:0; top:0; bottom:0; background:var(--accent); border-radius:0 4px 4px 0; }
 .cc-m .v { font-weight:700; text-align:right; font-variant-numeric:tabular-nums; }
 .cc-fund .note { color:var(--muted); font-size:11.5px; margin-top:10px; }
 @media (max-width:600px){ .cc-m { grid-template-columns:1fr 60px; } .cc-m .t { grid-column:1 / -1; } }
@@ -383,44 +385,52 @@ document.addEventListener('DOMContentLoaded', () => {
     : `US$ ${fmt(Math.round(n))}`;
   const pct = r => r >= 0.1 ? `${Math.round(r * 100)}%` : r >= 0.001 ? `${(r * 100).toFixed(1)}%` : r > 0 ? '<0.1%' : '0%';
   // the selected projects' funding against three totals: the coded projects (with the same
-  // filters), all funded CERF projects and the CERF AA ones in the same years
-  function funding(b) {
+  // filters), all funded CERF projects and the CERF AA ones, in the same years on both sides
+  const span = ys => !ys.length ? '' : ys.length === 1 ? String(ys[0]) : `${ys[0]}–${ys[ys.length - 1]}`;
+  const sum = (xs, f) => xs.reduce((a, x) => a + (f(x) || 0), 0);
+  function funding(b, shown) {
     const box = $('cc-fund'); box.textContent = '';
-    const sel = shown.reduce((s, r) => s + (r.amount || 0), 0);
     const coded = b.filter(r => Object.keys(r.codes).length);
-    const codedUsd = coded.reduce((s, r) => s + (r.amount || 0), 0);
+    const sel = shown.filter(r => Object.keys(r.codes).length);      // listed-but-uncoded rows out
     const yr = $('cc-year').value, ys = coded.map(r => r.year).filter(y => y != null);
     const years = yr ? [+yr] : ys.length ? Array.from({length: Math.max(...ys) - Math.min(...ys) + 1}, (_, i) => Math.min(...ys) + i) : [];
-    const span = !years.length ? '' : years.length === 1 ? String(years[0]) : `${years[0]}–${years[years.length - 1]}`;
-    const T = years.map(y => D.totals[y] || {n: 0, usd: 0, aa: 0});
-    const all = T.reduce((s, t) => s + t.usd, 0), aa = T.reduce((s, t) => s + t.aa, 0), nAll = T.reduce((s, t) => s + t.n, 0);
-    const hero = el('div', 'hero', money(sel));
-    hero.append(el('span', null, ` approved for ${shown.length} selected project${shown.length === 1 ? '' : 's'}`));
+    const T = y => D.totals[y] || {n: 0, usd: 0, aa: 0};
+    const aaYears = years.filter(y => T(y).aa);
+    const usd = sum(sel, r => r.amount), all = sum(years, y => T(y).usd), nAll = sum(years, y => T(y).n);
+    const hero = el('div', 'hero', money(usd));
+    hero.append(el('span', null, ` approved for ${sel.length} selected coded project${sel.length === 1 ? '' : 's'}`));
     box.append(hero);
-    const meter = (title, sub, num, den, over) => {
+    const meter = (title, sub, num, den) => {
       const m = el('div', 'cc-m'), t = el('div', 't', title), tr = el('div', 'track'), f = el('i');
       t.append(el('small', null, sub));
       const r = den ? num / den : null;
-      f.style.width = r == null ? '0' : Math.min(r, 1) * 100 + '%';
-      tr.append(f);
+      f.style.width = r ? Math.min(r, 1) * 100 + '%' : '0';
       tr.title = r == null ? 'nothing to compare with' : `${money(num)} of ${money(den)}`;
-      m.append(t, tr, el('div', 'v', r == null ? '—' : r > 1 && over ? `×${r.toFixed(1)}` : pct(r)));
+      tr.append(f);
+      m.append(t, tr, el('div', 'v', r == null ? '—' : pct(r)));
       box.append(m);
     };
-    meter('Share of the coded projects’ funding', `${coded.length} coded projects, ${money(codedUsd)}`, sel, codedUsd);
-    meter(`Share of all CERF funding, ${span}`, `${fmt(nAll)} funded projects, ${money(all)}`, sel, all);
-    meter(`Compared with CERF anticipatory-action funding, ${span}`,
-          aa ? `projects in allocations flagged anticipatory action, ${money(aa)}` : 'no anticipatory-action allocations in these years', sel, aa, true);
-    box.append(el('div', 'note', `Only ${fmt(coded.length)} of the ${fmt(nAll)} CERF projects of ${span || 'these years'} are coded so far, `
-      + 'so the shares of all CERF and of anticipatory-action funding are small and grow as coding continues. '
-      + 'The comparison with anticipatory-action funding is a ratio of totals: the selected projects need not be anticipatory action. '
-      + 'Year filter: the totals follow it; the other filters apply to the projects only.'));
+    const inYears = (title, ys) => ys.length ? `${title}, ${span(ys)}` : title;
+    meter('Share of the coded projects’ funding', `${coded.length} coded projects, ${money(sum(coded, r => r.amount))}`,
+          usd, sum(coded, r => r.amount));
+    meter(inYears('Share of all CERF funding', years), nAll ? `${fmt(nAll)} funded projects, ${money(all)}` : 'no CERF projects in these years',
+          usd, all);
+    // anticipatory action only exists from 2020: compare the selected projects of the same years
+    const aaSel = sum(sel.filter(r => aaYears.includes(r.year)), r => r.amount), aa = sum(aaYears, y => T(y).aa);
+    meter(inYears('Compared with CERF anticipatory-action funding', aaYears),
+          aa ? `${money(aaSel)} of the selected projects in these years, against ${money(aa)} in allocations flagged anticipatory action`
+             : 'no anticipatory-action allocations in these years', aaSel, aa);
+    box.append(el('div', 'note', (nAll ? `Only ${fmt(coded.length)} of the ${fmt(nAll)} funded CERF projects of ${span(years)} are coded so far, `
+      + 'so the share of all CERF funding is small and grows as coding continues. ' : '')
+      + 'The comparison with anticipatory-action funding is a ratio of totals over the same years (the selected projects '
+      + 'need not be anticipatory action themselves), and can pass 100%. Totals are by project year; the year filter applies '
+      + 'to them, the other filters to the projects only. Listed projects with no answers are left out.'));
   }
   let shown = [];
   function render() {
     const b = base();
     shown = b.filter(r => matches(r) && (!ticked.size || Object.keys(r.codes).length));
-    tiles(b); panels(b); table(shown); funding(b);
+    tiles(b); panels(b); table(shown); funding(b, shown);
     const amt = shown.reduce((s, r) => s + (r.amount || 0), 0);
     $('cc-count').textContent = `${shown.length} of ${b.length} projects · US$ ${fmt(amt)} approved`
       + (ticked.size ? ` · coded yes on ${mode() === 'all' ? 'all' : 'any'} of ${ticked.size} ticked indicator${ticked.size > 1 ? 's' : ''}` : '');
