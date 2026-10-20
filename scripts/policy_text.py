@@ -77,10 +77,11 @@ def policy_box(page_name):
     """The box for a page (empty string if none). Marked as draft until the text is agreed."""
     if page_name not in POLICY:
         return ""
+    from site_i18n import ATTR, T, TB
     title, body = POLICY[page_name]
-    return (f"<div class='policy'><div class='policy-h'>{html.escape(title)}"
-            f"<span class='policy-draft' title='wording under review'>draft</span></div>"
-            f"<div class='policy-b'>{body}</div></div>")
+    return (f"<div class='policy'><div class='policy-h'>{T(title)}"
+            f"<span class='policy-draft' {ATTR('title', 'wording under review')}>{T('draft')}</span></div>"
+            f"<div class='policy-b'>{TB(body)}</div></div>")
 
 
 POLICY_CSS = """
