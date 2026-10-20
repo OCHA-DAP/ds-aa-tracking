@@ -1130,9 +1130,12 @@ def _money_flows(d, pre, act):
             names[fc] = str(fc).upper()
     names = {k: _re.sub(r"rhpf", "RhPF", v, flags=_re.I) for k, v in names.items()}
     years = {m: sorted({r["y"] for r in rows if r["m"] == m}) for m in ("p", "r")}
-    done = [y for y in years["r"] if y <= today.year - 1]
-    default = {"p": today.year if today.year in years["p"] else (years["p"][-1] if years["p"] else None),
-               "r": done[-1] if done else (years["r"][-1] if years["r"] else None)}
+    # both views open on the last complete year (2026-10-20 call: 2025, not 2026, whose
+    # donor shares raise the question of why the US is so represented)
+    def _last_done(ys):
+        done = [y for y in ys if y <= today.year - 1]
+        return done[-1] if done else (ys[-1] if ys else None)
+    default = {"p": _last_done(years["p"]), "r": _last_done(years["r"])}
     return rows, years, default, names
 
 
@@ -1156,10 +1159,9 @@ FLOW_NOTE = (
     "recipient node carries its category colour — UN agency, international NGO, national / local "
     "NGO, government, Red Cross / Red Crescent, other, not recorded — from the sub-grant partner "
     "type or the organisation type recorded by the Country and Regional Funds; a band takes the colour of the node it leaves. "
-    "<b>Recipient types</b>: a stage just before the last column groups every band by the category "
-    "of the organisation it reaches — UN agencies, international NGOs, national / local NGOs, Red "
-    "Cross / Red Crescent, government, other — so one pathway shows the groups and the last column "
-    "the named organisations (untick <i>recipient types</i> to hide it). "
+    "<b>Recipient types</b>: the far-right column groups every band by the category of the "
+    "organisation it reaches — UN agencies, international NGOs, national / local NGOs, Red "
+    "Cross / Red Crescent, government, other (untick <i>recipient types</i> to hide it). "
     "<b>Donors → fund</b>: each donor's paid contributions to the fund that year ÷ the fund's "
     "total paid income that year, × the amount — attributed pro rata, since contributions fund "
     "the whole pool. Top 12 donors, the rest grouped.")
@@ -1175,11 +1177,11 @@ def _flow_panel(donors_on, donor_toggle=True):
     return f"""<div class='panel'>
  <div style='display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:12.5px;margin-bottom:8px'>
   <span role='radiogroup' aria-label='which money' style='display:inline-flex;border:1px solid #cbd5e1;border-radius:6px;overflow:hidden'>
-   <label style='padding:3px 10px;cursor:pointer'><input type='radio' name='flM' value='p' checked> pre-arranged</label>
-   <label style='padding:3px 10px;cursor:pointer;border-left:1px solid #cbd5e1'><input type='radio' name='flM' value='r'> released</label></span>
+   <label style='padding:3px 10px;cursor:pointer'><input type='radio' name='flM' value='p'> pre-arranged</label>
+   <label style='padding:3px 10px;cursor:pointer;border-left:1px solid #cbd5e1'><input type='radio' name='flM' value='r' checked> released</label></span>
   <label><span id='flYl'>In place in</span> <select id='flY'></select></label>
   {dctl}
-  <label title='a stage that groups the recipients by type (UN agencies, NGOs, Red Cross / Red Crescent, government, other) before the named ones'><input type='checkbox' id='flK' checked> recipient types</label>
+  <label title='a last column that groups the recipients by type (UN agencies, NGOs, Red Cross / Red Crescent, government, other)'><input type='checkbox' id='flK' checked> recipient types</label>
   <label id='flPw'><input type='checkbox' id='flP' checked> final recipients</label>
   <span id='flTot' class='muted'></span>
  </div>
@@ -1189,7 +1191,7 @@ def _flow_panel(donors_on, donor_toggle=True):
 
 
 FLOW_JS = """
-// ---- where the money flows: [donors ->] funds -> agencies / grantees [-> final recipients].
+// ---- where the money flows: [donors ->] funds -> agencies / grantees [-> final recipients] [-> recipient types].
 // Shared by the Financing page and the donor-flows view of the donor-shares page; rows from
 // _money_flows. Recipient node ids carry their category: 'a:un|WFP' (an agency: always named),
 // 'p:ingo~ActionAid' (an organisation: the top ones of the view named, the rest grouped).
@@ -1203,7 +1205,7 @@ const CAT_OTHER = {un:'other UN agencies', ingo:'other international NGOs', nngo
 // RhPF green); the five hues validated as a set (all pairs: CVD dE >= 13.5, normal >= 19.6) and
 // against the fund colours (normal >= 15.6); the two greys are the neutral categories
 const CAT_COLOR = {un:'#65389f', ingo:'#70b6e7', nngo:'#ceaa3e', gov:'#8a4f0e', rc:'#c3518d', oth:'#3a3f47', nr:'#d6dae0'};
-// the recipient-type stage: one node per category, just before the last column
+// the recipient-type column: one node per category, the far-right column
 const CAT_GROUP = {un:'UN agencies', ingo:'International NGOs', nngo:'National / local NGOs', gov:'Government',
   rc:'Red Cross / Red Crescent', oth:'Other', nr:'Type not recorded'};
 function flowNode(id){ const m = /^([apk]):([a-z]+)([|~])(.*)$/.exec(id);
@@ -1230,17 +1232,14 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
   L = flowRegroup(L, x=>{ const n = flowNode(x); return n && n.org && !named.has(n.name) ? `${n.p}:${n.cat}|${CAT_OTHER[n.cat]}` : x; });
   if(!showD) L = L.filter(l=>l.lv!=='d');
   if(!showP) L = L.filter(l=>l.lv!=='a');
-  // recipient types (2026-10-02 meeting): every band into the last column passes through its
-  // category first — UN agencies, international / national NGOs, Red Cross / Red Crescent,
-  // government, other — so one pathway shows the groups and the last column the named ones.
-  // After the naming above (the ranking reads agency -> organisation links), and the first
-  // half keeps its level so the total (the 'f' links) is unchanged.
+  // recipient types (2026-10-02 meeting): the far-right column (2026-10-19: the final bucket,
+  // not a stage before the named organisations) — every band reaching the named column runs
+  // on to its category: UN agencies, international / national NGOs, Red Cross / Red Crescent,
+  // government, other. After the naming above; the 'f' links (the total) are unchanged.
   if(showK){
     const last = showP ? 'p:' : 'a:', lv = showP ? 'a' : 'f', S = [];
-    L.forEach(l=>{ const n = l.lv===lv && l.t.startsWith(last) ? flowNode(l.t) : null;
-      if(!n){ S.push(l); return; }
-      const k = `k:${n.cat}|${CAT_GROUP[n.cat]}`;
-      S.push({lv, s:l.s, t:k, v:l.v}, {lv:'k', s:k, t:l.t, v:l.v}); });
+    L.forEach(l=>{ S.push(l); const n = l.lv===lv && l.t.startsWith(last) ? flowNode(l.t) : null;
+      if(n) S.push({lv:'k', s:l.t, t:`k:${n.cat}|${CAT_GROUP[n.cat]}`, v:l.v}); });
     L = flowRegroup(S, x=>x);
   }
   const lab = id => { const [p, ...rest] = id.split(':'); const n = rest.join(':');
@@ -1250,10 +1249,9 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
     return [...ids].map(id=>({id, label:lab(id)})); };
   if(showD) cols.push(col('d:'));
   cols.push(col('f:'));
-  if(showK && !showP) cols.push(col('k:'));
   cols.push(col('a:'));
-  if(showK && showP) cols.push(col('k:'));
   if(showP) cols.push(col('p:'));
+  if(showK) cols.push(col('k:'));
   const seen = new Set(); cols.forEach(c=>c.forEach(n=>{ const r = flowNode(n.id); if(r) seen.add(r.cat); }));
   const total = L.filter(l=>l.lv==='f').reduce((s,l)=>s+l.v,0);
   return {columns:cols, links:L.map(l=>({s:l.s,t:l.t,v:l.v})), total, cats:CAT_ORDER.filter(c=>seen.has(c))};
@@ -1270,8 +1268,10 @@ function mountFlow(cfg){
     const el = document.getElementById('flow'), leg = document.getElementById('flLeg');
     if(!F.links.length){ el.innerHTML = "<p class='empty'>no AA money in this selection for this year</p>"; flTot.textContent=''; if(leg) leg.innerHTML=''; return; }
     const n = Math.max(...F.columns.map(c=>c.length));
-    el.innerHTML = sankeySVG({columns:F.columns, links:F.links, width:1100, height:Math.max(260, n*24),
-      fmt:money, labelW:200, labelMax:34, label:cfg.label || 'AA money through funds and agencies',
+    // five columns (donors … recipient types) leave ~170px between them at 1100: wider, shorter labels
+    const wide = F.columns.length >= 5;
+    el.innerHTML = sankeySVG({columns:F.columns, links:F.links, width:wide ? 1300 : 1100, height:Math.max(260, n*24),
+      fmt:money, labelW:200, labelMax:wide ? 26 : 34, label:cfg.label || 'AA money through funds and agencies',
       nodeColor: nd => { const r = flowNode(nd.id); return r ? CAT_COLOR[r.cat] : null; }});
     el.insertAdjacentHTML('beforeend', "<div class='note'>Hover a band or a box to follow the money; click a box to keep it in focus, click again to clear. Funds in their own colour (CERF blue, pooled funds orange, regional funds green); every agency, grantee and recipient in the colour of its category; a band takes the colour of the box it leaves.</div>");
     if(leg) leg.innerHTML = '<b>Recipients</b>' + F.cats.map(c=>`<span style='display:inline-flex;align-items:center;gap:5px'><span style='width:11px;height:11px;border-radius:2px;background:${CAT_COLOR[c]};display:inline-block${c==='nr' ? ';box-shadow:inset 0 0 0 1px #aab2bd' : ''}'></span>${CAT_LABEL[c]}</span>`).join('');
@@ -1523,9 +1523,9 @@ def build_funding(page, d):
 <p><b>Donors</b> (the <i>donors</i> tick on the money-flow chart): each donor's share of a fund's income that year, applied to the fund's AA money that year — donors give to the pooled funds as a whole, not to anticipatory action. Donors report their AA funding annually under the <a href='https://interagencystandingcommittee.org/grand-bargain' target='_blank' rel='noopener'>Grand Bargain</a>.</p>
 </details>
 <h2>Where the money flows</h2>
-<p class='meta'>Funds → agencies and grantees → the organisations that implement, <b>pre-arranged</b> (the envelopes in place on a date) or <b>released</b> (what went out in a year) — two views never added together. Follows the layers and the fund switch; tick <i>donors</i> to start from each fund's donors.</p>
+<p class='meta'>Funds → agencies and grantees → the organisations that implement, <b>pre-arranged</b> (the envelopes in place on a date) or <b>released</b> (what went out in a year) — two views never added together. Follows the layers and the fund switch. It opens on the money released in the last complete year, from each fund's donors; untick <i>donors</i> to start at the funds.</p>
 <p class='fwnote' id='fwFlowNote' style='display:none'>This chart shows every framework of the layers above: it does not follow the framework selection (nor the hazard and region filters).</p>
-{_flow_panel(donors_on=False)}
+{_flow_panel(donors_on=True)}
 <div class='grid' style='margin-top:16px'>
  <div class='panel'><h3>Pre-arranged funding in place each year, by fund</h3><canvas id='c1' height='260'></canvas>
    {how("A stock: what was committed in each year (a framework counts for a year if it was valid at any time in it), so the bars are not added up (the cumulative switch applies to released money only). CERF: the framework envelopes per year (sheets, framework pages, entries; 'all'-totals excluded where the fund split exists); the current year is pre-arranged now. Country and Regional Funds: AA-tagged allocations in the OneGMS mirror, in the year allocated. Co-financing is shown separately.")}</div>
