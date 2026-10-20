@@ -46,6 +46,11 @@ RUNS = [
      "coder's answers the model wrote down the coder's rules, then coded the other half with those "
      "rules without seeing the answers there; then the halves swapped. The fair estimate for "
      "projects not yet coded."),
+    ("model-six-fold", "Learned from five sixths (6-fold)",
+     "The coded projects were split into six groups. For each group the model wrote down the hand "
+     "coder's rules from the other five groups, then coded the group with those rules without seeing "
+     "the answers there. Learned from almost all the projects, like the rules used on new ones, and "
+     "still a fair test."),
     ("model-in-sample", "Learned from all (in-sample)",
      "Rules written from all the coded projects, applied back to the same projects: how closely the "
      "rules can reproduce the hand coding at best. It overstates accuracy on new projects."),
@@ -104,6 +109,30 @@ LEFT JOIN aa.cerf_project p USING (project_code)
 ORDER BY c.project_code, c.coded_by"""
 
 
+# CERF funding per year, all projects and the anticipatory-action ones (allocations flagged
+# AA in aa.v_allocation, as on the Financing and Allocations pages): what the hand-coding page
+# compares the selected projects with
+SQL_TOTALS = """
+SELECT p.year, count(*) AS n, sum(p.amount_approved) AS usd,
+       sum(p.amount_approved) FILTER (WHERE a.is_aa) AS aa_usd
+FROM aa.cerf_project p
+LEFT JOIN (SELECT DISTINCT allocation_code, is_aa FROM aa.v_allocation WHERE fund_type = 'cerf') a
+       ON a.allocation_code = p.application_code
+WHERE p.project_status = 'Funded' AND p.year IS NOT NULL
+GROUP BY p.year ORDER BY p.year"""
+
+
+def _totals(e):
+    """{year: {n, usd, aa}} of funded CERF projects; empty if the allocation view is absent."""
+    if pd.read_sql("SELECT to_regclass('aa.v_allocation') AS r", e)["r"].iloc[0] is None:
+        print(f"::warning::{PAGE}: aa.v_allocation missing; no funding shares")
+        return {}
+    t = pd.read_sql(SQL_TOTALS, e)
+    return {int(r.year): {"n": int(r.n), "usd": round(float(r.usd or 0)),
+                          "aa": round(float(r.aa_usd)) if pd.notna(r.aa_usd) else 0}
+            for r in t.itertuples()}
+
+
 def _e(s):
     return html.escape("" if s is None else str(s))
 
@@ -153,6 +182,7 @@ def build(e, page):
         build_accuracy(df, page)
         return
     build_accuracy(df, page)
+    totals = _totals(e)
     df = df[~df["coded_by"].str.startswith("model-")]    # this page: the hand coding only
     if df.empty:
         page(PAGE, TITLE, f"<style>{DASH_CSS}</style><div class='card'>No hand-coded projects loaded yet. "
@@ -163,7 +193,7 @@ def build(e, page):
     data = {
         "themes": [{"key": k, "name": n, "desc": d} for k, n, d in THEMES],
         "indicators": [{"key": k, "theme": t, "label": lab} for k, t, lab in INDICATORS],
-        "gate": GATE, "rows": rows, "coders": coders,
+        "gate": GATE, "rows": rows, "coders": coders, "totals": totals,
     }
     # every '<' escaped: no text in the data can end the script element or open a comment in it
     payload = json.dumps(data, ensure_ascii=False, default=str, allow_nan=False).replace("<", "\\u003c")
@@ -195,6 +225,9 @@ How closely a model reproduces this coding: <a href='{ACC_PAGE}'>model accuracy<
 <h2>Indicators</h2>
 <div class='cc-gate' id='cc-gate'></div>
 <div class='cc-themes' id='cc-themes'></div>
+
+<h2>Funding of the selected projects</h2>
+<div class='cc-fund' id='cc-fund'></div>
 
 <h2 id='cc-h'>Projects</h2>
 <div class='cc-head'><span id='cc-count' class='meta'></span>
@@ -233,6 +266,17 @@ CC_CSS = """
 .cc-tag.gate { background:#fff4d6; color:#7a5200; }
 .cc-note { color:#555; font-size:11.5px; margin-top:3px; }
 .cc-none { color:#999; font-size:12px; }
+/* funding meters: one ratio each, a filled track */
+.cc-fund { background:#fff; border:1px solid #e0e0e0; border-radius:6px; padding:12px 16px; max-width:980px; }
+.cc-fund .hero { font-size:22px; font-weight:700; } .cc-fund .hero span { font-size:13px; font-weight:400; color:var(--muted); }
+.cc-m { display:grid; grid-template-columns:minmax(180px,330px) 1fr 70px; gap:4px 12px; align-items:center;
+        font-size:12.5px; margin-top:10px; }
+.cc-m .t { color:#333; } .cc-m .t small { display:block; color:var(--muted); font-size:11.5px; }
+.cc-m .track { height:14px; background:#eef1f5; border-radius:0 4px 4px 0; position:relative; }
+.cc-m .track i { position:absolute; left:0; top:0; bottom:0; background:var(--accent); border-radius:0 4px 4px 0; min-width:2px; }
+.cc-m .v { font-weight:700; text-align:right; font-variant-numeric:tabular-nums; }
+.cc-fund .note { color:var(--muted); font-size:11.5px; margin-top:10px; }
+@media (max-width:600px){ .cc-m { grid-template-columns:1fr 60px; } .cc-m .t { grid-column:1 / -1; } }
 """
 
 CC_JS = r"""
@@ -335,11 +379,48 @@ document.addEventListener('DOMContentLoaded', () => {
       tr.append(td); tb.append(tr);
     }
   }
+  const money = n => n >= 1e9 ? `US$ ${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `US$ ${(n / 1e6).toFixed(1)}M`
+    : `US$ ${fmt(Math.round(n))}`;
+  const pct = r => r >= 0.1 ? `${Math.round(r * 100)}%` : r >= 0.001 ? `${(r * 100).toFixed(1)}%` : r > 0 ? '<0.1%' : '0%';
+  // the selected projects' funding against three totals: the coded projects (with the same
+  // filters), all funded CERF projects and the CERF AA ones in the same years
+  function funding(b) {
+    const box = $('cc-fund'); box.textContent = '';
+    const sel = shown.reduce((s, r) => s + (r.amount || 0), 0);
+    const coded = b.filter(r => Object.keys(r.codes).length);
+    const codedUsd = coded.reduce((s, r) => s + (r.amount || 0), 0);
+    const yr = $('cc-year').value, ys = coded.map(r => r.year).filter(y => y != null);
+    const years = yr ? [+yr] : ys.length ? Array.from({length: Math.max(...ys) - Math.min(...ys) + 1}, (_, i) => Math.min(...ys) + i) : [];
+    const span = !years.length ? '' : years.length === 1 ? String(years[0]) : `${years[0]}–${years[years.length - 1]}`;
+    const T = years.map(y => D.totals[y] || {n: 0, usd: 0, aa: 0});
+    const all = T.reduce((s, t) => s + t.usd, 0), aa = T.reduce((s, t) => s + t.aa, 0), nAll = T.reduce((s, t) => s + t.n, 0);
+    const hero = el('div', 'hero', money(sel));
+    hero.append(el('span', null, ` approved for ${shown.length} selected project${shown.length === 1 ? '' : 's'}`));
+    box.append(hero);
+    const meter = (title, sub, num, den, over) => {
+      const m = el('div', 'cc-m'), t = el('div', 't', title), tr = el('div', 'track'), f = el('i');
+      t.append(el('small', null, sub));
+      const r = den ? num / den : null;
+      f.style.width = r == null ? '0' : Math.min(r, 1) * 100 + '%';
+      tr.append(f);
+      tr.title = r == null ? 'nothing to compare with' : `${money(num)} of ${money(den)}`;
+      m.append(t, tr, el('div', 'v', r == null ? '—' : r > 1 && over ? `×${r.toFixed(1)}` : pct(r)));
+      box.append(m);
+    };
+    meter('Share of the coded projects’ funding', `${coded.length} coded projects, ${money(codedUsd)}`, sel, codedUsd);
+    meter(`Share of all CERF funding, ${span}`, `${fmt(nAll)} funded projects, ${money(all)}`, sel, all);
+    meter(`Compared with CERF anticipatory-action funding, ${span}`,
+          aa ? `projects in allocations flagged anticipatory action, ${money(aa)}` : 'no anticipatory-action allocations in these years', sel, aa, true);
+    box.append(el('div', 'note', `Only ${fmt(coded.length)} of the ${fmt(nAll)} CERF projects of ${span || 'these years'} are coded so far, `
+      + 'so the shares of all CERF and of anticipatory-action funding are small and grow as coding continues. '
+      + 'The comparison with anticipatory-action funding is a ratio of totals: the selected projects need not be anticipatory action. '
+      + 'Year filter: the totals follow it; the other filters apply to the projects only.'));
+  }
   let shown = [];
   function render() {
     const b = base();
     shown = b.filter(r => matches(r) && (!ticked.size || Object.keys(r.codes).length));
-    tiles(b); panels(b); table(shown);
+    tiles(b); panels(b); table(shown); funding(b);
     const amt = shown.reduce((s, r) => s + (r.amount || 0), 0);
     $('cc-count').textContent = `${shown.length} of ${b.length} projects · US$ ${fmt(amt)} approved`
       + (ticked.size ? ` · coded yes on ${mode() === 'all' ? 'all' : 'any'} of ${ticked.size} ticked indicator${ticked.size > 1 ? 's' : ''}` : '');
