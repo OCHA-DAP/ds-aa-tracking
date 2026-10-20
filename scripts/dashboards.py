@@ -1130,9 +1130,12 @@ def _money_flows(d, pre, act):
             names[fc] = str(fc).upper()
     names = {k: _re.sub(r"rhpf", "RhPF", v, flags=_re.I) for k, v in names.items()}
     years = {m: sorted({r["y"] for r in rows if r["m"] == m}) for m in ("p", "r")}
-    done = [y for y in years["r"] if y <= today.year - 1]
-    default = {"p": today.year if today.year in years["p"] else (years["p"][-1] if years["p"] else None),
-               "r": done[-1] if done else (years["r"][-1] if years["r"] else None)}
+    # both views open on the last complete year (2026-10-20 call: 2025, not 2026, whose
+    # donor shares raise the question of why the US is so represented)
+    def _last_done(ys):
+        done = [y for y in ys if y <= today.year - 1]
+        return done[-1] if done else (ys[-1] if ys else None)
+    default = {"p": _last_done(years["p"]), "r": _last_done(years["r"])}
     return rows, years, default, names
 
 
@@ -1174,8 +1177,8 @@ def _flow_panel(donors_on, donor_toggle=True):
     return f"""<div class='panel'>
  <div style='display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:12.5px;margin-bottom:8px'>
   <span role='radiogroup' aria-label='which money' style='display:inline-flex;border:1px solid #cbd5e1;border-radius:6px;overflow:hidden'>
-   <label style='padding:3px 10px;cursor:pointer'><input type='radio' name='flM' value='p' checked> pre-arranged</label>
-   <label style='padding:3px 10px;cursor:pointer;border-left:1px solid #cbd5e1'><input type='radio' name='flM' value='r'> released</label></span>
+   <label style='padding:3px 10px;cursor:pointer'><input type='radio' name='flM' value='p'> pre-arranged</label>
+   <label style='padding:3px 10px;cursor:pointer;border-left:1px solid #cbd5e1'><input type='radio' name='flM' value='r' checked> released</label></span>
   <label><span id='flYl'>In place in</span> <select id='flY'></select></label>
   {dctl}
   <label title='a last column that groups the recipients by type (UN agencies, NGOs, Red Cross / Red Crescent, government, other)'><input type='checkbox' id='flK' checked> recipient types</label>
@@ -1265,8 +1268,10 @@ function mountFlow(cfg){
     const el = document.getElementById('flow'), leg = document.getElementById('flLeg');
     if(!F.links.length){ el.innerHTML = "<p class='empty'>no AA money in this selection for this year</p>"; flTot.textContent=''; if(leg) leg.innerHTML=''; return; }
     const n = Math.max(...F.columns.map(c=>c.length));
-    el.innerHTML = sankeySVG({columns:F.columns, links:F.links, width:1100, height:Math.max(260, n*24),
-      fmt:money, labelW:200, labelMax:34, label:cfg.label || 'AA money through funds and agencies',
+    // five columns (donors … recipient types) leave ~170px between them at 1100: wider, shorter labels
+    const wide = F.columns.length >= 5;
+    el.innerHTML = sankeySVG({columns:F.columns, links:F.links, width:wide ? 1300 : 1100, height:Math.max(260, n*24),
+      fmt:money, labelW:200, labelMax:wide ? 26 : 34, label:cfg.label || 'AA money through funds and agencies',
       nodeColor: nd => { const r = flowNode(nd.id); return r ? CAT_COLOR[r.cat] : null; }});
     el.insertAdjacentHTML('beforeend', "<div class='note'>Hover a band or a box to follow the money; click a box to keep it in focus, click again to clear. Funds in their own colour (CERF blue, pooled funds orange, regional funds green); every agency, grantee and recipient in the colour of its category; a band takes the colour of the box it leaves.</div>");
     if(leg) leg.innerHTML = '<b>Recipients</b>' + F.cats.map(c=>`<span style='display:inline-flex;align-items:center;gap:5px'><span style='width:11px;height:11px;border-radius:2px;background:${CAT_COLOR[c]};display:inline-block${c==='nr' ? ';box-shadow:inset 0 0 0 1px #aab2bd' : ''}'></span>${CAT_LABEL[c]}</span>`).join('');
@@ -1518,9 +1523,9 @@ def build_funding(page, d):
 <p><b>Donors</b> (the <i>donors</i> tick on the money-flow chart): each donor's share of a fund's income that year, applied to the fund's AA money that year — donors give to the pooled funds as a whole, not to anticipatory action. Donors report their AA funding annually under the <a href='https://interagencystandingcommittee.org/grand-bargain' target='_blank' rel='noopener'>Grand Bargain</a>.</p>
 </details>
 <h2>Where the money flows</h2>
-<p class='meta'>Funds → agencies and grantees → the organisations that implement, <b>pre-arranged</b> (the envelopes in place on a date) or <b>released</b> (what went out in a year) — two views never added together. Follows the layers and the fund switch; tick <i>donors</i> to start from each fund's donors.</p>
+<p class='meta'>Funds → agencies and grantees → the organisations that implement, <b>pre-arranged</b> (the envelopes in place on a date) or <b>released</b> (what went out in a year) — two views never added together. Follows the layers and the fund switch. It opens on the money released in the last complete year, from each fund's donors; untick <i>donors</i> to start at the funds.</p>
 <p class='fwnote' id='fwFlowNote' style='display:none'>This chart shows every framework of the layers above: it does not follow the framework selection (nor the hazard and region filters).</p>
-{_flow_panel(donors_on=False)}
+{_flow_panel(donors_on=True)}
 <div class='grid' style='margin-top:16px'>
  <div class='panel'><h3>Pre-arranged funding in place each year, by fund</h3><canvas id='c1' height='260'></canvas>
    {how("A stock: what was committed in each year (a framework counts for a year if it was valid at any time in it), so the bars are not added up (the cumulative switch applies to released money only). CERF: the framework envelopes per year (sheets, framework pages, entries; 'all'-totals excluded where the fund split exists); the current year is pre-arranged now. Country and Regional Funds: AA-tagged allocations in the OneGMS mirror, in the year allocated. Co-financing is shown separately.")}</div>
