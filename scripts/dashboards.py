@@ -15,7 +15,7 @@ on the reconciliation pages.
 import json
 
 import site_i18n as i18n  # noqa: E402  (EN / FR / ES, the team mechanism: scripts/site_i18n.py)
-from site_i18n import ATTR, OPT, T, TB, TBF, TF  # noqa: E402
+from site_i18n import ATTR, ATTRC, OPT, T, TB, TBC, TBF, TC, TD, TF  # noqa: E402
 
 import pandas as pd
 
@@ -1903,7 +1903,7 @@ def _doc_li(r):
          if isinstance(r.url, str) and r.url else title)
     who = " · ".join(str(x) for x in [r.publisher if isinstance(r.publisher, str) else None,
                                       int(r.year) if pd.notna(r.year) else None] if x)
-    tag = f"<span class='doctag'>{DOC_TYPE_LABEL.get(r.doc_type, str(r.doc_type))}</span>"
+    tag = f"<span class='doctag'>{T(DOC_TYPE_LABEL.get(r.doc_type, str(r.doc_type)))}</span>"
     ks = (f"<span class='ks'>{_h.escape(str(r.key_stat))}</span>"
           if isinstance(r.key_stat, str) and r.key_stat else "")
     return f"<li>{t}{(' <span class=' + chr(39) + 'who' + chr(39) + '>· ' + who + '</span>') if who else ''}{tag}{ks}</li>"
@@ -2175,7 +2175,8 @@ MONTHS = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"]
 
 def _cal_strip(cal, c, h):
     on = set(cal.loc[(cal["country_iso3"] == c) & (cal["hazard"] == h), "month"])
-    cells = "".join(f"<td class='{'on' if m in on else ''}'>{MONTHS[m-1]}</td>"
+    # month initials in each language (Spanish: E for enero)
+    cells = "".join(f"<td class='{'on' if m in on else ''}'>{T(MONTHS[m-1], MONTHS[m-1], 'EFMAMJJASOND'[m-1])}</td>"
                     for m in range(1, 13))
     return f"<table class='cal'><tr>{cells}</tr></table>"
 
@@ -2194,7 +2195,7 @@ def _partners_block(pt, sg, c, h, version):
     if not len(pv) and len(p):
         alt = sorted(p["version"].astype(str).unique())[-1]
         pv = p[p["version"].astype(str) == alt]
-        note = f" <span class='muted' style='font-size:11px'>(from version {alt})</span>"
+        note = f" <span class='muted' style='font-size:11px'>{TF('(from version {v})', v=alt)}</span>"
     groups = ""
     for key, label in ORG_GROUPS:
         g = pv[pv["org_type"] == key] if key != "other" else pv[
@@ -2204,13 +2205,14 @@ def _partners_block(pt, sg, c, h, version):
         items = "".join(
             f"<li>{_h.escape(str(r.name))}"
             f"{(' (' + _h.escape(str(r.acronym)) + ')') if isinstance(r.acronym, str) and r.acronym else ''}"
-            f"{(' <span class=' + chr(39) + 'muted' + chr(39) + '>' + ', '.join(str(x).replace('_', ' ') for x in _aslist(r.roles)) + '</span>') if _aslist(r.roles) else ''}"
-            f"{(' <span class=' + chr(39) + 'muted' + chr(39) + '>under ' + _h.escape(str(r.agency_parent)) + '</span>') if isinstance(r.agency_parent, str) and r.agency_parent else ''}"
+            # a role is a code (translated) or the document's own words (as written)
+            f"{(' <span class=' + chr(39) + 'muted' + chr(39) + '>' + ', '.join(TD(str(x).replace('_', ' ')) for x in _aslist(r.roles)) + '</span>') if _aslist(r.roles) else ''}"
+            f"{(' <span class=' + chr(39) + 'muted' + chr(39) + '>' + TF('under {p}', p=str(r.agency_parent)) + '</span>') if isinstance(r.agency_parent, str) and r.agency_parent else ''}"
             f"{(' · ' + _fmt_usd(r.amount_usd)) if pd.notna(r.amount_usd) else ''}</li>"
             for r in g.itertuples())
-        groups += f"<div class='pg'><h4>{label} · {len(g)}</h4><ul style='margin:0;padding-left:16px'>{items}</ul></div>"
-    head = (f"<b>{pv['name'].nunique()} partners</b>{note}" if len(pv)
-            else "<span class='empty'>no partners recorded for this version yet</span>")
+        groups += f"<div class='pg'><h4>{T(label)} · {len(g)}</h4><ul style='margin:0;padding-left:16px'>{items}</ul></div>"
+    head = (f"<b>{TF('{n} partners', n=pv['name'].nunique())}</b>{note}" if len(pv)
+            else f"<span class='empty'>{T('no partners recorded for this version yet')}</span>")
     s = sg[sg["country_iso3"] == c]
     sub = ""
     if len(s):
@@ -2221,12 +2223,13 @@ def _partners_block(pt, sg, c, h, version):
             items = "".join(
                 f"<li>{_h.escape(str(n))} <span class='muted'>{str(r.typ) if pd.notna(r.typ) else ''}</span>"
                 f" · {_fmt_usd(r.usd)}</li>" for n, r in names.iterrows())
-            sub += (f"<div class='pg'><h4>{_h.escape(str(ag))} · {_fmt_usd(g['subgrant_usd'].sum())}"
-                    f" to {len(names)}</h4><ul style='margin:0;padding-left:16px'>{items}</ul></div>")
-        sub = (f"<h3 class='sub'>Funded sub-grantees <span class='muted' style='font-weight:400'>"
-               f"— CERF AA sub-grants in {c}, all activations, by agency</span></h3>"
+            sub += (f"<div class='pg'><h4>{_h.escape(str(ag))} · "
+                    f"{TF('{usd} to {n}', usd=_fmt_usd(g['subgrant_usd'].sum()), n=len(names))}"
+                    f"</h4><ul style='margin:0;padding-left:16px'>{items}</ul></div>")
+        sub = (f"<h3 class='sub'>{T('Funded sub-grantees')} <span class='muted' style='font-weight:400'>"
+               f"{TF('— CERF AA sub-grants in {c}, all activations, by agency', c=c)}</span></h3>"
                f"<div class='partners'>{sub}</div>")
-    return (f"<h3 class='sub'>Partners</h3><p style='margin:4px 0 8px'>{head}</p>"
+    return (f"<h3 class='sub'>{T('Partners')}</h3><p style='margin:4px 0 8px'>{head}</p>"
             + (f"<div class='partners'>{groups}</div>" if groups else "") + sub)
 
 
@@ -2301,9 +2304,10 @@ def _trow(t):
     return t
 
 
-def _version_diff(fo, fn, to, tn):
+def _version_diff(fo, fn, to, tn, w=lambda x: x):
     """Qualitative change sentences between two versions' structured metadata (frontmatter
-    fo -> fn, trigger-window rows to -> tn). Only fields recorded on both sides."""
+    fo -> fn, trigger-window rows to -> tn). Only fields recorded on both sides. w: the
+    sentences' words in one language (the recorded values inside them stay as recorded)."""
     import html as _h
     fo, fn = fo or {}, fn or {}
     to = [_trow(t) for t in (to or []) if isinstance(t, dict)]
@@ -2312,6 +2316,7 @@ def _version_diff(fo, fn, to, tn):
     both = lambda k: _has(fo.get(k)) and _has(fn.get(k))   # noqa: E731
     esc = lambda s: _h.escape(str(s))                        # noqa: E731
     unit = {0: "zones", 1: "admin-1 areas", 2: "admin-2 areas", 3: "admin-3 areas"}
+    unit1 = {0: "zone", 1: "admin-1 area", 2: "admin-2 area", 3: "admin-3 area"}
     # geographic scope (with the admin level as the unit where known)
     _sl = lambda x: [str(x)] if isinstance(x, str) else [str(y) for y in (x or [])]   # noqa: E731
     if both("geographic_scope") and sorted(_sl(fo["geographic_scope"])) != sorted(_sl(fn["geographic_scope"])):
@@ -2326,29 +2331,29 @@ def _version_diff(fo, fn, to, tn):
             elif set(go) < set(gn):
                 verb = "widened"
         def _g(g, lvl):
-            u = unit.get(lvl, "areas") if isinstance(lvl, (int, float)) else "areas"
-            u = u[:-1] if len(g) == 1 else u
-            return f"{len(g)} {u} ({', '.join(esc(x) for x in g)})"
-        out.append(f"Geographic scope {verb} from {_g(go, lo)} to {_g(gn, ln)}")
+            u = ((unit1 if len(g) == 1 else unit).get(lvl, "area" if len(g) == 1 else "areas")
+                 if isinstance(lvl, (int, float)) else "area" if len(g) == 1 else "areas")
+            return f"{len(g)} {w(u)} ({', '.join(esc(x) for x in g)})"
+        out.append(w(f"Geographic scope {verb} from {{a}} to {{b}}").format(a=_g(go, lo), b=_g(gn, ln)))
     if both("admin_level") and fo["admin_level"] != fn["admin_level"]:
-        out.append(f"Admin level {fo['admin_level']} → {fn['admin_level']}")
+        out.append(w("Admin level {a} → {b}").format(a=fo["admin_level"], b=fn["admin_level"]))
     # trigger windows
     no = len(to) or (fo.get("trigger_facets") or {}).get("n_windows")
     nn = len(tn) or (fn.get("trigger_facets") or {}).get("n_windows")
     if to and tn:
         pairs, dropped, added = _match_triggers(to, tn)
-        bits = ([f"dropped {esc(t.get('window', '?'))} — {esc(t.get('indicator', ''))}" for t in dropped]
-                + [f"added {esc(t.get('window', '?'))} — {esc(t.get('indicator', ''))}" for t in added])
+        bits = ([w("dropped {x}").format(x=f"{esc(t.get('window', '?'))} — {esc(t.get('indicator', ''))}") for t in dropped]
+                + [w("added {x}").format(x=f"{esc(t.get('window', '?'))} — {esc(t.get('indicator', ''))}") for t in added])
         if len(to) != len(tn) or bits:
-            out.append(f"Trigger windows: {len(to)} → {len(tn)}" + (f" ({'; '.join(bits)})" if bits else ""))
+            out.append(w("Trigger windows: {a} → {b}").format(a=len(to), b=len(tn)) + (f" ({'; '.join(bits)})" if bits else ""))
         cut = lambda x: (str(x)[:110] + '…') if len(str(x)) > 111 else str(x)   # noqa: E731
         thr = [f"{esc(to[i].get('window', ''))}: {esc(cut(to[i].get('threshold')))} → {esc(cut(tn[j].get('threshold')))}"
                for i, j in pairs if _has(to[i].get("threshold")) and _has(tn[j].get("threshold"))
                and str(to[i]["threshold"]).strip() != str(tn[j]["threshold"]).strip()]
         if thr:
-            out.append("Thresholds changed — " + "; ".join(thr))
+            out.append(w("Thresholds changed — {x}").format(x="; ".join(thr)))
     elif no and nn and no != nn:
-        out.append(f"Trigger windows: {no} → {nn}")
+        out.append(w("Trigger windows: {a} → {b}").format(a=no, b=nn))
     # trigger facets: indicators, basis, calibration
     tfo, tfn = fo.get("trigger_facets") or {}, fn.get("trigger_facets") or {}
     io, inn = tfo.get("indicators") or [], tfn.get("indicators") or []
@@ -2361,32 +2366,33 @@ def _version_diff(fo, fn, to, tn):
             m = next((n for n in new if str(n).split("-")[0].lower() == fam), None)
             if m is not None:
                 swaps.append(f"{esc(g)} → {esc(m)}"); gone.remove(g); new.remove(m)
-        bits = swaps + [f"dropped {esc(x)}" for x in gone] + [f"added {esc(x)}" for x in new]
+        bits = (swaps + [w("dropped {x}").format(x=esc(x)) for x in gone]
+                + [w("added {x}").format(x=esc(x)) for x in new])
         if kept:
-            bits.append(f"{', '.join(esc(x) for x in kept)} kept")
-        out.append("Indicators: " + "; ".join(bits))
-    for k, lab in [("basis", "Trigger basis"), ("calibration", "Calibration")]:
+            bits.append(w("{x} kept").format(x=", ".join(esc(x) for x in kept)))
+        out.append(w("Indicators: {x}").format(x="; ".join(bits)))
+    for k, lab in [("basis", "Trigger basis: {a} → {b}"), ("calibration", "Calibration: {a} → {b}")]:
         if _has(tfo.get(k)) and _has(tfn.get(k)) and tfo[k] != tfn[k]:
-            out.append(f"{lab}: {esc(tfo[k])} → {esc(tfn[k])}")
+            out.append(w(lab).format(a=esc(tfo[k]), b=esc(tfn[k])))
     # monitoring months
     mo = (fo.get("monitoring_period") or {}).get("months") if isinstance(fo.get("monitoring_period"), dict) else None
     mn = (fn.get("monitoring_period") or {}).get("months") if isinstance(fn.get("monitoring_period"), dict) else None
     _mi = lambda ms: sorted({int(x) for x in (ms or []) if isinstance(x, int) and 1 <= x <= 12})  # noqa: E731
     mo, mn = _mi(mo) if _has(mo) else None, _mi(mn) if _has(mn) else None
     if mo and mn and mo != mn:
-        nm = lambda ms: ", ".join(MONTH_ABBR[x - 1] for x in ms)  # noqa: E731
-        out.append(f"Monitoring months: {nm(mo)} → {nm(mn)}")
+        nm = lambda ms: ", ".join(w(MONTH_ABBR[x - 1]) for x in ms)  # noqa: E731
+        out.append(w("Monitoring months: {a} → {b}").format(a=nm(mo), b=nm(mn)))
     # money
-    for k, lab in [("prearranged_funding_usd", "Pre-arranged"), ("cofinancing_usd", "Co-financing")]:
+    for k, lab in [("prearranged_funding_usd", "Pre-arranged: {a} → {b}"), ("cofinancing_usd", "Co-financing: {a} → {b}")]:
         if both(k):
             try:
                 a, b = float(fo[k]), float(fn[k])
             except (TypeError, ValueError):
                 continue
             if abs(a - b) > 0.5:
-                out.append(f"{lab}: {_m(a)} → {_m(b)}")
-    for k, lab in [("funding_by_source", "Funding by source"), ("funding_by_sector", "Sectors"),
-                   ("funding_by_agency", "Agency budgets")]:
+                out.append(w(lab).format(a=_m(a), b=_m(b)))
+    for k, lab in [("funding_by_source", "Funding by source: {x}"), ("funding_by_sector", "Sectors: {x}"),
+                   ("funding_by_agency", "Agency budgets: {x}")]:
         if not both(k) or not isinstance(fo[k], dict) or not isinstance(fn[k], dict):
             continue
         def _num_d(dct):
@@ -2401,38 +2407,39 @@ def _version_diff(fo, fn, to, tn):
         if k == "funding_by_source" and set(a) == set(b) and len(a) == 1:
             continue   # a single source says the same as the pre-arranged line
         bits = []
-        for x in sorted(set(a) | set(b), key=lambda s: -float(b.get(s) or a.get(s) or 0)):
+        for x in sorted(set(a) | set(b), key=lambda s: (-float(b.get(s) or a.get(s) or 0), str(s))):
             va, vb = a.get(x), b.get(x)
             if va is not None and vb is not None:
                 if abs(float(va) - float(vb)) > 0.5:
                     bits.append(f"{esc(x)} {_m(va)} → {_m(vb)}")
             elif va is None and vb is not None:
-                bits.append(f"{esc(x)} added ({_m(vb)})")
+                bits.append(w("{x} added ({v})").format(x=esc(x), v=_m(vb)))
             elif va is not None:
-                bits.append(f"{esc(x)} dropped (was {_m(va)})")
+                bits.append(w("{x} dropped (was {v})").format(x=esc(x), v=_m(va)))
         if bits:
-            out.append(f"{lab}: " + "; ".join(bits))
+            out.append(w(lab).format(x="; ".join(bits)))
     # agencies (the list, else the budget dict's keys)
     ao = fo.get("implementing_agencies") if _has(fo.get("implementing_agencies")) else list((fo.get("funding_by_agency") or {}).keys())
     an = fn.get("implementing_agencies") if _has(fn.get("implementing_agencies")) else list((fn.get("funding_by_agency") or {}).keys())
     if ao and an and set(ao) != set(an):
         add, rem = sorted(set(an) - set(ao)), sorted(set(ao) - set(an))
-        out.append("Agencies: " + "; ".join(
-            ([f"added {', '.join(esc(x) for x in add)}"] if add else [])
-            + ([f"removed {', '.join(esc(x) for x in rem)}"] if rem else [])))
+        out.append(w("Agencies: {x}").format(x="; ".join(
+            ([w("added {x}").format(x=", ".join(esc(x) for x in add))] if add else [])
+            + ([w("removed {x}").format(x=", ".join(esc(x) for x in rem))] if rem else []))))
     if both("target_people") and fo["target_people"] != fn["target_people"]:
         try:
-            out.append(f"Target people {int(fo['target_people']):,} → {int(fn['target_people']):,}")
+            out.append(w("Target people {a} → {b}").format(a=f"{int(fo['target_people']):,}",
+                                                            b=f"{int(fn['target_people']):,}"))
         except (TypeError, ValueError):
             pass
     if both("data_sources") and set(map(str, fo["data_sources"])) != set(map(str, fn["data_sources"])):
         add = sorted(set(map(str, fn["data_sources"])) - set(map(str, fo["data_sources"])))
         rem = sorted(set(map(str, fo["data_sources"])) - set(map(str, fn["data_sources"])))
-        out.append("Data sources: " + "; ".join(
-            ([f"added {', '.join(esc(x) for x in add)}"] if add else [])
-            + ([f"removed {', '.join(esc(x) for x in rem)}"] if rem else [])))
+        out.append(w("Data sources: {x}").format(x="; ".join(
+            ([w("added {x}").format(x=", ".join(esc(x) for x in add))] if add else [])
+            + ([w("removed {x}").format(x=", ".join(esc(x) for x in rem))] if rem else []))))
     if fo.get("all_in") is not None and fn.get("all_in") is not None and fo["all_in"] != fn["all_in"]:
-        out.append("Funding model: " + ("split by window → all-in" if fn["all_in"] else "all-in → split by window"))
+        out.append(w("Funding model: split by window → all-in" if fn["all_in"] else "Funding model: all-in → split by window"))
     return out
 
 
@@ -2441,8 +2448,8 @@ def _changes_block(fvm, vpage, c, h):
     import html as _h
     v = fvm[(fvm["country_iso3"] == c) & (fvm["hazard"] == h)].copy()
     if len(v) < 2:
-        return ("<div class='blk'><h2>What changed between versions</h2>"
-                "<p class='empty'>Only one version is registered — nothing to compare yet.</p></div>")
+        return (f"<div class='blk'><h2>{T('What changed between versions')}</h2>"
+                f"<p class='empty'>{T('Only one version is registered — nothing to compare yet.')}</p></div>")
     v["_vf"] = version_start(v)
     v = v.sort_values(["_vf", "version"])
     pg = {(r.kb_framework, str(r.version)): (r.frontmatter, r.triggers) for r in vpage.itertuples()}
@@ -2451,18 +2458,21 @@ def _changes_block(fvm, vpage, c, h):
     for old, new in reversed(list(zip(rows[:-1], rows[1:]))):
         fo, to = pg.get((old.kb_framework, str(old.version)), (None, None))
         fn, tn = pg.get((new.kb_framework, str(new.version)), (None, None))
-        diff = _version_diff(fo, fn, to, tn) if (fo or to) and (fn or tn) else []
-        body = ("<ul>" + "".join(f"<li>{x}</li>" for x in diff) + "</ul>" if diff
-                else "<p class='empty' style='padding:2px 0'>no structured change recorded</p>")
-        note = (f"<p class='vnote'><b>Note:</b> {_h.escape(str(new.note))}</p>"
+        # each sentence in every language (the recorded values inside them as they are)
+        diff = ({l: _version_diff(fo, fn, to, tn, (lambda x: x) if l == "en" else (lambda x, l=l: i18n.tr(l, x)))
+                 for l in ("en",) + i18n.LANGS} if (fo or to) and (fn or tn) else {})
+        body = ("<ul>" + "".join("<li>" + "".join(f'<span class="lv lv-{l}">{diff[l][i]}</span>' for l in diff)
+                                 + "</li>" for i in range(len(diff["en"]))) + "</ul>" if diff and diff["en"]
+                else f"<p class='empty' style='padding:2px 0'>{T('no structured change recorded')}</p>")
+        note = (f"<p class='vnote'><b>{T('Note:')}</b> {_h.escape(str(new.note))}</p>"
                 if isinstance(new.note, str) and new.note.strip() else "")
         items += (f"<div class='vchg'><h4>{_h.escape(str(old.version))} → {_h.escape(str(new.version))}"
                   f"</h4>{body}{note}</div>")
-    return ("<div class='blk'><h2>What changed between versions</h2>"
-            "<p class='meta'>Derived from the recorded framework metadata (scope, trigger windows, "
+    return (f"<div class='blk'><h2>{T('What changed between versions')}</h2>"
+            "<p class='meta'>" + TB("Derived from the recorded framework metadata (scope, trigger windows, "
             "indicators, monitoring months, budgets) — only fields recorded for both versions are "
             "compared. Narrative notes on each change can be added to the version record and will "
-            "appear under the pair.</p>" + items + "</div>")
+            "appear under the pair.") + "</p>" + items + "</div>")
 
 
 def _norm(s):
@@ -2573,6 +2583,14 @@ def sim_at(r):
     return ("on " if len(w) > 7 else "in ") + w
 
 
+def _sim_tip(window, r):
+    """'<window>: would have activated in 2019 (simulation)', in every language (ATTRC)."""
+    when = sim_when(r)
+    return ATTRC("title", lambda w: f"{window}: " + w(
+        "would have activated on {0} (simulation)" if len(when) > 7
+        else "would have activated in {0} (simulation)").replace("{0}", when))
+
+
 def sim_before_start(ss, valid_from):
     """(rows kept, n rows dropped, start year) for one version's simulated rows. A version's
     backtest is fixed before it is endorsed and real activations can only come after, so only
@@ -2630,6 +2648,18 @@ def sim_after_note(n, vf_y):
             f"and from then on only real activations count.") if n else ""
 
 
+def _register_after_note(n, vf_y):
+    """sim_after_note's sentence, registered in every language (looked up by tr / tr8)."""
+    tmpl = ("{n} simulated row dated after the version's start ({y} or later) is not shown: a version's "
+            "backtest is fixed before it is endorsed, and from then on only real activations count."
+            if n == 1 else
+            "{n} simulated rows dated after the version's start ({y} or later) are not shown: a version's "
+            "backtest is fixed before it is endorsed, and from then on only real activations count.")
+    def same(x):
+        return {l: str(x) for l in ("en",) + i18n.LANGS}
+    return i18n.add(sim_after_note(n, vf_y), tmpl, n=same(n), y=same(vf_y))
+
+
 def _activation_blocks(d, c, h, kb_fw, version, umap):
     """(Historical activations grid, Actual activations table) for one framework."""
     import html as _h
@@ -2673,8 +2703,7 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
         for r in ss.itertuples():
             key = (int(r.sim_year), str(r.event_label) if isinstance(r.event_label, str) else "")
             rows.setdefault(key, {}).setdefault(r.window_name, []).append(
-                f"<span class='dot sim' style='background:{col}' title='{esc(r.window_name)}: would have activated "
-                f"{esc(sim_at(r))} (simulation)'></span>")
+                f"<span class='dot sim' style='background:{col}' {_sim_tip(r.window_name, r)}></span>")
     # real activations, one entry per event with its funding rows
     act = d["act_all"][(d["act_all"]["country_iso3"] == c) & (d["act_all"]["hazard"] == h)].copy()
     wa = d["wact"][(d["wact"]["country_iso3"] == c) & (d["wact"]["hazard"] == h)]
@@ -2691,19 +2720,21 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
                            partial=full.get((ed, wn)) is False))
     for ev in events:
         amt = "; ".join(f"{x.fund_code} {_m(x.amount_usd)}" for x in ev["fund"].itertuples()
-                        if pd.notna(x.amount_usd)) or "amount not recorded"
+                        if pd.notna(x.amount_usd))
         href, goes = _event_href(ev)
         vv = "" if ev["version"] is None or str(ev["version"]) in ("nan", "None", "NaT", "<NA>") else str(ev["version"])
         # no version = an ad hoc allocation: neither this version nor an earlier one
         ref = shown if shown is not None else (str(version) if version is not None else None)
         same = (not vv) or (ref is not None and _vm(vv, ref))   # no backtest: compare with the current version
-        tip = (f"{ev['date']} · {ev['win'] or ev['typ'].replace('_', ' ')} · {amt}"
-               + (" · ad hoc allocation (no framework version)" if not vv else "" if same else f" · under version {vv}")
-               + (" · partial activation" if ev["partial"] else "")
-               + (f" · opens {goes}" if href else ""))
+        def tip(w, ev=ev, amt=amt, vv=vv, same=same, href=href, goes=goes):
+            return (f"{ev['date']} · {ev['win'] or w(ev['typ'].replace('_', ' '))} · {amt or w('amount not recorded')}"
+                    + (" · " + w("ad hoc allocation (no framework version)") if not vv else ""
+                       if same else " · " + w("under version {0}").replace("{0}", vv))
+                    + (" · " + w("partial activation") if ev["partial"] else "")
+                    + (" · " + w("opens {0}").replace("{0}", w(goes)) if href else ""))
         mk = (f"<span class='dot {'real' if same else 'old'}'></span>")
-        mk = (f"<a href='{esc(href)}' target='_blank' rel='noopener' title='{esc(tip)}'>{mk}</a>"
-              if href else f"<span title='{esc(tip)}'>{mk}</span>")
+        mk = (f"<a href='{esc(href)}' target='_blank' rel='noopener' {ATTRC('title', tip)}>{mk}</a>"
+              if href else f"<span {ATTRC('title', tip)}>{mk}</span>")
         y = int(ev["date"][:4]) if ev["date"][:4].isdigit() else None
         if y is None:
             continue
@@ -2711,75 +2742,84 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
         key = next((k for k in keys if ev["label"] and _loose(k[1], ev["label"])), None) \
             or next((k for k in keys if k[1] == ""), None)
         if key is None:
-            key = (y, ev["label"] or ("activation" if keys else ""))
+            key = (y, ev["label"] or ("activation" if keys else ""))   # 'activation': translated where shown
             rows.setdefault(key, {})
         wmatch = next((w for w in wins if _loose(w, ev["win"])), None)
         rows[key].setdefault(wmatch or "__cell", []).append(mk)
     # ---- the grid
     if not rows:
-        hist = "<p class='empty'>No backtest and no activation recorded for this framework.</p>"
+        hist = f"<p class='empty'>{T('No backtest and no activation recorded for this framework.')}</p>"
     else:
         head = "".join(f"<th>{esc(w)}</th>" for w in wins)
-        use_tip = (f"version {shown} took effect {vf_txt}: from {vf_y} on, real activations only "
+        use_tip = ("version {v} took effect {d}: from {y} on, real activations only "
                    "(its simulation covers the years before)") if use_years else ""
+
+        def _use(y):   # the 'in use' tooltip of a year, in every language
+            return ATTRC("title", lambda w: f"{y}: " + w(use_tip).format(v=shown, d=vf_txt, y=vf_y))
         body = ""
         for (y, lab) in sorted(rows, key=lambda k: (-k[0], k[1])):
             cells = rows[(y, lab)]
             inner = lambda w: "".join(cells.get(w, []))   # noqa: E731
             if y in use_years:
-                tds = "".join(f"<td class='use' title='{esc(f'{y}: ' + use_tip)}'>{inner(w)}</td>" for w in wins)
+                tds = "".join(f"<td class='use' {_use(y)}>{inner(w)}</td>" for w in wins)
             elif y in sim_years or not sim_years:
                 tds = "".join(f"<td>{inner(w)}</td>" for w in wins)
             else:
-                tds = "".join(f"<td class='na' title='{y} is not covered by the historical simulation'>{inner(w)}</td>"
+                tds = "".join(f"<td class='na' {ATTR('title', '{y} is not covered by the historical simulation', y=y)}>{inner(w)}</td>"
                               for w in wins)
-            body += (f"<tr><td class='yr'>{y}{(' <span class=' + chr(39) + 'muted' + chr(39) + '>' + esc(lab) + '</span>') if lab else ''}"
-                     + (f" <span class='usetag' title='{esc(use_tip)}'>in use</span>" if y in use_years and not lab else "")
+            lab_html = T(lab) if lab == "activation" else esc(lab)
+            body += (f"<tr><td class='yr'>{y}{(' <span class=' + chr(39) + 'muted' + chr(39) + '>' + lab_html + '</span>') if lab else ''}"
+                     + (f" <span class='usetag' {ATTRC('title', lambda w: w(use_tip).format(v=shown, d=vf_txt, y=vf_y))}>{T('in use')}</span>"
+                        if y in use_years and not lab else "")
                      + f"{' ' + ''.join(cells.get('__cell', [])) if cells.get('__cell') else ''}</td>"
                      + tds + "</tr>")
-        vnote = ("" if shown is None else
-                 f"Backtest of version <code>{esc(shown)}</code>"
-                 + ("" if str(shown) == str(version) else " (the current version has no recorded backtest)")
-                 + (f", {int(n_years)} years analysed" if n_years and pd.notna(n_years) else "")
-                 + (f"; the version took effect {esc(vf_txt)}, so from {vf_y} on the rows show real "
-                    "activations only" if use_years else "") + ". "
-                 + (esc(sim_after_note(n_after, vf_y)) + " " if n_after else ""))
-        hist = (f"<p class='meta'>{vnote or 'No backtest recorded for this framework — real activations only. '}"
-                "One row per year, newest first; a real activation whose window does not match a "
-                "column sits in the year cell. Markers link to the announcement or the CERF allocation.</p>"
-                f"<table class='data hist'><thead><tr><th>year</th>{head}</tr></thead><tbody>{body}</tbody></table>"
-                f"<p class='legend'><span class='dot sim' style='background:{col}'></span> would have activated (simulation) · "
-                f"<span class='dot real'></span> activated, money released · "
-                f"<span class='dot old'></span> activated under "
-                + ("an earlier version" if str(shown) == str(version) else "a different version (hover for which)")
-                + (" · <span class='sw use'></span> version in use: real activations only" if use_years else "")
+        def vnote(w):
+            if shown is None:
+                return w("No backtest recorded for this framework — real activations only.") + " "
+            return (w("Backtest of version {v}").format(v=f"<code>{esc(shown)}</code>")
+                    + ("" if str(shown) == str(version) else " " + w("(the current version has no recorded backtest)"))
+                    + (", " + w("{n} years analysed").format(n=int(n_years)) if n_years and pd.notna(n_years) else "")
+                    + ("; " + w("the version took effect {d}, so from {y} on the rows show real activations only")
+                       .format(d=esc(vf_txt), y=vf_y) if use_years else "") + ". "
+                    + (esc(w(sim_after_note(n_after, vf_y))) + " " if n_after else ""))
+        if n_after:   # the note, registered in every language (it is looked up above)
+            _register_after_note(n_after, vf_y)
+        hist = (f"<p class='meta'>{TBC(vnote)}"
+                + TB("One row per year, newest first; a real activation whose window does not match a "
+                     "column sits in the year cell. Markers link to the announcement or the CERF allocation.") + "</p>"
+                f"<table class='data hist'><thead><tr><th>{T('year')}</th>{head}</tr></thead><tbody>{body}</tbody></table>"
+                f"<p class='legend'><span class='dot sim' style='background:{col}'></span> {T('would have activated (simulation)')} · "
+                f"<span class='dot real'></span> {T('activated, money released')} · "
+                f"<span class='dot old'></span> "
+                + T("activated under an earlier version" if str(shown) == str(version) else "activated under a different version (hover for which)")
+                + (f" · <span class='sw use'></span> {T('version in use: real activations only')}" if use_years else "")
                 + "</p>")
     # ---- actual activations table
     if not events:
-        actual = "<p class='empty'>No activation recorded.</p>"
+        actual = f"<p class='empty'>{T('No activation recorded.')}</p>"
     else:
         tr = ""
         for ev in events:
             fl = "<br>".join(
                 f"{esc(x.fund_code)}: {'' if pd.isna(x.amount_usd) else '$' + format(x.amount_usd, ',.0f')}"
-                for x in ev["fund"].itertuples()) or "<span class='muted'>not recorded</span>"
+                for x in ev["fund"].itertuples()) or f"<span class='muted'>{T('not recorded')}</span>"
             links = [f"<a href='{esc(u)}' target='_blank' rel='noopener'>CERF {esc(code)} ↗</a>"
                      for code, u in ev["cerf"] if u]
             links += [f"<span class='muted'>{esc(code)}</span>" for code, u in ev["cerf"] if not u]
             if ev["ann"]:
-                links.append(f"<a href='{esc(ev['ann'])}' target='_blank' rel='noopener'>announcement ↗</a>")
-            links += [f"<a href='{esc(u)}' target='_blank' rel='noopener'>other ↗</a>" for u in ev["other"]]
+                links.append(f"<a href='{esc(ev['ann'])}' target='_blank' rel='noopener'>{T('announcement ↗')}</a>")
+            links += [f"<a href='{esc(u)}' target='_blank' rel='noopener'>{T('other ↗')}</a>" for u in ev["other"]]
             vtag = ("" if (not ev["version"] or str(ev["version"]) == str(version))
-                    else f" <span class='doctag' title='This activation happened under version {esc(ev['version'])}, an earlier version of the framework than the current one ({esc(version)}); its triggers and budget may differ.'>earlier version</span>")
+                    else f" <span class='doctag' {ATTR('title', 'This activation happened under version {v}, an earlier version of the framework than the current one ({c}); its triggers and budget may differ.', v=ev['version'], c=version)}>{T('earlier version')}</span>")
             tr += (f"<tr><td>{esc(ev['date'])}</td><td>{esc(ev['version'])}{vtag}</td>"
                    f"<td>{esc(ev['win'])}{(' · ' + esc(ev['label'])) if ev['label'] else ''}"
-                   f"{'' if ev['typ'] == 'framework_aa' else ' <span class=' + chr(39) + 'muted' + chr(39) + '>(' + esc(ev['typ'].replace('_', ' ')) + ')</span>'}"
-                   f"{' <span class=' + chr(39) + 'warn-tag' + chr(39) + '>partial</span>' if ev['partial'] else ''}</td>"
+                   f"{'' if ev['typ'] == 'framework_aa' else ' <span class=' + chr(39) + 'muted' + chr(39) + '>(' + T(ev['typ'].replace('_', ' ')) + ')</span>'}"
+                   f"{' <span class=' + chr(39) + 'warn-tag' + chr(39) + '>' + T('partial') + '</span>' if ev['partial'] else ''}</td>"
                    f"<td>{fl}</td><td>{' · '.join(links)}</td></tr>")
         actual = ("<table class='data acts'><colgroup><col style='width:10%'><col style='width:17%'>"
                   "<col style='width:28%'><col style='width:17%'><col style='width:28%'></colgroup>"
-                  "<thead><tr><th>date</th><th>version</th><th>window</th><th>funding</th><th>links</th>"
-                  f"</tr></thead><tbody>{tr}</tbody></table>")
+                  "<thead><tr>" + "".join(f"<th>{T(x)}</th>" for x in ("date", "version", "window", "funding", "links"))
+                  + f"</tr></thead><tbody>{tr}</tbody></table>")
     return hist, actual
 
 
@@ -2812,21 +2852,22 @@ def _validation_block(fvm, c, h, version):
     if r is not None:
         for ref in str(r["analysis_ref"]).split(";"):
             u = _gh_url(ref)
-            lab = f"Trigger analysis code — <code>{esc(ref.strip())}</code>"
+            lab = f"{T('Trigger analysis code')} — <code>{esc(ref.strip())}</code>"
             items.append((f"<a href='{esc(u)}' target='_blank' rel='noopener'>{lab} ↗</a>" if u else lab)
-                         + ("" if is_cur else f" <span class='muted'>(version {esc(r['version'])})</span>"))
+                         + ("" if is_cur else f" <span class='muted'>{TF('(version {v})', v=r['version'])}</span>"))
     r, is_cur = _pick("doc_url")
     if r is not None:
-        t = r["doc_title"] if isinstance(r["doc_title"], str) and r["doc_title"] else "Framework document"
-        items.append(f"<a href='{esc(r['doc_url'])}' target='_blank' rel='noopener'>{esc(t)} ↗</a>"
-                     + ("" if is_cur else f" <span class='muted'>(version {esc(r['version'])})</span>"))
+        t = (esc(r["doc_title"]) if isinstance(r["doc_title"], str) and r["doc_title"]
+             else T("Framework document"))   # a document's own title stays as written
+        items.append(f"<a href='{esc(r['doc_url'])}' target='_blank' rel='noopener'>{t} ↗</a>"
+                     + ("" if is_cur else f" <span class='muted'>{TF('(version {v})', v=r['version'])}</span>"))
     if TRIGGER_VALIDATION_URL:
         items.append(f"<a href='{esc(TRIGGER_VALIDATION_URL)}' target='_blank' rel='noopener'>"
-                     "Trigger validation folder (Drive) ↗</a>")
+                     f"{T('Trigger validation folder (Drive) ↗')}</a>")
     body = ("<ul class='doclist'>" + "".join(f"<li>{x}</li>" for x in items) + "</ul>" if items
-            else "<p class='empty'>Technical documentation not yet linked.</p>")
-    return ("<h3 class='sub'>Trigger validation &amp; technical work</h3>" + body
-            + "<p class='meta'>The full trigger validation will be published on this page in future.</p>")
+            else f"<p class='empty'>{T('Technical documentation not yet linked.')}</p>")
+    return (f"<h3 class='sub'>{T('Trigger validation & technical work')}</h3>" + body
+            + f"<p class='meta'>{T('The full trigger validation will be published on this page in future.')}</p>")
 
 
 def build_framework_pages(page, tbl, d, e=None):
@@ -2839,7 +2880,7 @@ def build_framework_pages(page, tbl, d, e=None):
     umap = {(r.country_iso3, r.hazard, str(r.event_date), r.window_name): r.url
             for r in urls.itertuples()}
     try:
-        trig = _kb_trigger_info(e) if e is not None else {}
+        trig = _kb_trigger_info(e, parts=True) if e is not None else {}
     except Exception as exc:
         print(f"  framework pages: KB trigger info unavailable ({exc.__class__.__name__})")
         trig = {}
@@ -2878,13 +2919,13 @@ def build_framework_pages(page, tbl, d, e=None):
         w = win[(win["country_iso3"] == c) & (win["hazard"] == h)]
         wv = w[w["version"].astype(str) == str(version)] if version else w.iloc[0:0]
         wrows = "".join(
-            f"<tr><td>{x.window_name}</td><td>{x.basis if pd.notna(x.basis) else ''}"
-            f"{' · all-in' if x.all_in is True else ''}</td>"
-            f"<td>{'triggered' + (f' ({x.triggered_on})' if pd.notna(x.triggered_on) else '') if x.triggered else 'not triggered'}</td>"
+            f"<tr><td>{x.window_name}</td><td>{TD(x.basis) if pd.notna(x.basis) else ''}"
+            f"{' · ' + T('all-in') if x.all_in is True else ''}</td>"
+            f"<td>{T('triggered') + (f' ({x.triggered_on})' if pd.notna(x.triggered_on) else '') if x.triggered else T('not triggered')}</td>"
             f"<td class='num'>{_fmt_usd(x.allocation_usd)}</td>"
-            f"<td class='num'>{f'1-in-{x.return_period:.1f} yr' if pd.notna(x.return_period) else ''}</td>"
+            f"<td class='num'>{TF('1-in-{n} yr', n=f'{x.return_period:.1f}') if pd.notna(x.return_period) else ''}</td>"
             f"<td class='num'>{f'{x.activation_prob*100:.0f}%' if pd.notna(x.activation_prob) else ''}</td>"
-            f"<td class='num'>{f'{int(x.n_activations)} in {int(x.analysis_years)} yrs' if pd.notna(x.n_activations) and pd.notna(x.analysis_years) else ''}</td></tr>"
+            f"<td class='num'>{TF('{n} in {y} yrs', n=int(x.n_activations), y=int(x.analysis_years)) if pd.notna(x.n_activations) and pd.notna(x.analysis_years) else ''}</td></tr>"
             for x in wv.sort_values("window_name").itertuples())
         hist_html, actual_html = _activation_blocks(d, c, h, kb_fw, version, umap)
         changes_html = _changes_block(d["fv_meta"], d["vpage"], c, h)
@@ -2897,8 +2938,9 @@ def build_framework_pages(page, tbl, d, e=None):
         if not len(sv) and len(s):
             split_version = sorted(s["version"].astype(str).unique())[-1]
             sv = s[s["version"].astype(str) == split_version]
-            split_note = (f" <span class='muted' style='font-size:11px'>(split and envelope from "
-                          f"version {split_version} — the current version has no split yet)</span>")
+            split_note = (" <span class='muted' style='font-size:11px'>"
+                          + TF("(split and envelope from version {v} — the current version has no split yet)", v=split_version)
+                          + "</span>")
         # the envelope of the SAME version as the split, so the comparison is like for like
         ev = (env[(env["country_iso3"] == c) & (env["hazard"] == h)
                   & (env["version"].astype(str) == str(split_version))]
@@ -2913,25 +2955,24 @@ def build_framework_pages(page, tbl, d, e=None):
             f"<td>{x.sector if pd.notna(x.sector) else ''}</td><td>{x.fund_code if pd.notna(x.fund_code) else ''}</td>"
             f"<td class='num'>${x.amount_usd:,.0f}</td></tr>" for x in sv.itertuples())
         split_foot = (
-            f"<tr><th colspan=4>split total</th><th class='num'>${split_total:,.0f}</th></tr>"
-            f"<tr><th colspan=4>version envelope (pre-arranged)</th><th class='num'>"
+            f"<tr><th colspan=4>{T('split total')}</th><th class='num'>${split_total:,.0f}</th></tr>"
+            f"<tr><th colspan=4>{T('version envelope (pre-arranged)')}</th><th class='num'>"
             f"{f'${envelope:,.0f}' if envelope else '—'}"
-            f"{'<span class=' + chr(39) + 'warn-tag' + chr(39) + '>split exceeds envelope by ' + f'{(split_total/envelope - 1)*100:.0f}' + '%</span>' if over else ''}</th></tr>")
+            f"{'<span class=' + chr(39) + 'warn-tag' + chr(39) + '>' + TF('split exceeds envelope by {p}%', p=f'{(split_total/envelope - 1)*100:.0f}') + '</span>' if over else ''}</th></tr>")
         # budget by agency / by sector (bars) and agency -> sector (Sankey), same split rows
         split_js = [{"a": x.agency if isinstance(x.agency, str) and x.agency else "(agency not stated)",
                      "s": x.sector if isinstance(x.sector, str) and x.sector else "(sector not stated)",
                      "v": float(x.amount_usd)} for x in sv.itertuples() if pd.notna(x.amount_usd)]
         plan_charts = ("<div class='grid' style='margin-top:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr))'>"
-                       "<div class='panel'><h3>Budget by agency</h3><div id='pAg'></div></div>"
-                       "<div class='panel'><h3>Budget by sector</h3><div id='pSe'></div></div>"
-                       "<div class='panel' style='grid-column:1/-1'><h3>Agency → sector</h3><div id='pSk'></div>"
-                       "<div class='note'>From the split rows above (version "
-                       f"{split_version or '—'}); a window-level split that repeats the same money "
-                       "across alternative windows is summed as recorded — compare the split total with "
-                       "the envelope.</div></div></div>") if split_js else ""
+                       f"<div class='panel'><h3>{T('Budget by agency')}</h3><div id='pAg'></div></div>"
+                       f"<div class='panel'><h3>{T('Budget by sector')}</h3><div id='pSe'></div></div>"
+                       f"<div class='panel' style='grid-column:1/-1'><h3>{T('Agency → sector')}</h3><div id='pSk'></div>"
+                       "<div class='note'>" + TBF("From the split rows above (version {v}); a window-level split that repeats "
+                       "the same money across alternative windows is summed as recorded — compare the split total with "
+                       "the envelope.", v=split_version or "—") + "</div></div></div>") if split_js else ""
         vrows = "".join(
-            f"<tr><td>{x.version}</td><td>{x.kb_status if pd.notna(x.kb_status) else ''}</td><td>{x.source}</td>"
-            f"<td>{f'<a href={x.doc_url!r}>doc</a>' if pd.notna(x.doc_url) else ''}</td>"
+            f"<tr><td>{x.version}</td><td>{TD(x.kb_status) if pd.notna(x.kb_status) else ''}</td><td>{x.source}</td>"
+            f"<td>{f'<a href={x.doc_url!r}>' + T('doc') + '</a>' if pd.notna(x.doc_url) else ''}</td>"
             f"<td style='max-width:340px'>{x.analysis_ref if pd.notna(x.analysis_ref) else ''}</td></tr>"
             for x in v.itertuples())
         frows = "".join(f"<span class='badge b-kb'>{x.role}: {x.person}</span>"
@@ -2943,54 +2984,58 @@ def build_framework_pages(page, tbl, d, e=None):
         # ---- Learning: the framework's documents
         fd = _fw_docs(docs, c, h)
         fd_html = (f"<ul class='doclist'>{''.join(_doc_li(x) for x in fd.itertuples())}</ul>"
-                   if len(fd) else "<div class='empty'>no documents yet</div>")
+                   if len(fd) else f"<div class='empty'>{T('no documents yet')}</div>")
         obs = fw.get("observed_status")
         derived_note = (
-            f" <span class='muted' style='font-size:11px'>(derived from the endorsed "
-            f"{fw['current_version']} version — sheets last said “{str(obs).replace('_', ' ')}”)</span>"
+            " <span class='muted' style='font-size:11px'>"
+            + TF("(derived from the endorsed {v} version — sheets last said “{s}”)",
+                 v=fw["current_version"], s=str(obs).replace("_", " ")) + "</span>"
             if pd.notna(obs) and obs != fw["status"] and not no_fw else "")
+        fw_name = T(i18n.add(f"{fw['country_name']} — {h}", "{country} — {hazard}",
+                             country=i18n.country(c, fw["country_name"]), hazard=h))
+        st_raw = fw['status'] if _has(fw.get('status')) and not no_fw else status
         body = f"""
-<div class='card'><b>{fw['country_name']} — {h}</b> ·
-<span class='badge b-new'>{fw['status'] if _has(fw.get('status')) and not no_fw else status}</span>{derived_note}
-current version: <code>{cur_v}</code>
-{('· KB: <code>' + fw['kb_framework'] + '</code>') if pd.notna(fw['kb_framework']) else '· not in KB'}
-· people covered: <b>{covered_txt}</b><br>
-Monitoring window: {_cal_strip(cal, c, h)}
+<div class='card'><b>{fw_name}</b> ·
+<span class='badge b-new'>{T(st_raw)}</span>{derived_note}
+{T('current version:')} <code>{cur_v}</code>
+{('· KB: <code>' + fw['kb_framework'] + '</code>') if pd.notna(fw['kb_framework']) else '· ' + T('not in KB')}
+· {T('people covered:')} <b>{covered_txt}</b><br>
+{T('Monitoring window:')} {_cal_strip(cal, c, h)}
 <div style='margin-top:6px'>{frows}</div></div>
 {changes_html}
-<div class='blk'><h2>Model</h2>
-<p class='meta'>{('Trigger: ' + trig_line) if trig_line else 'No structured trigger info in the KB for this version.'}</p>
-<h3 class='sub'>Windows and backtests (version {version or '—'})</h3>
+<div class='blk'><h2>{T('Model')}</h2>
+<p class='meta'>{(T('Trigger:') + ' ' + TC(lambda w: _trigger_line(trig_line, w))) if trig_line else T('No structured trigger info in the KB for this version.')}</p>
+<h3 class='sub'>{TF('Windows and backtests (version {v})', v=version or '—')}</h3>
 <section><div class='scroll' style='max-height:260px'><table class='data'><thead>
-<tr><th>window</th><th>basis</th><th>state</th><th>budget</th><th>return period</th><th>annual prob.</th><th>backtest</th></tr></thead>
-<tbody>{wrows or '<tr><td colspan=7 class="empty">no windows registered for this version</td></tr>'}</tbody></table></div></section>
-<h3 class='sub'>Actual activations</h3>
+<tr>{''.join(f'<th>{T(x)}</th>' for x in ('window', 'basis', 'state', 'budget', 'return period', 'annual prob.', 'backtest'))}</tr></thead>
+<tbody>{wrows or '<tr><td colspan=7 class="empty">' + T('no windows registered for this version') + '</td></tr>'}</tbody></table></div></section>
+<h3 class='sub'>{T('Actual activations')}</h3>
 <section>{actual_html}</section>
-<h3 class='sub'>Historical activations</h3>
+<h3 class='sub'>{T('Historical activations')}</h3>
 <section>{hist_html}</section>
 {valid_html}</div>
-<div class='blk'><h2>Plan</h2>
+<div class='blk'><h2>{T('Plan')}</h2>
 <div class='tiles'>
- <div class='tile'><div class='v'>{covered_txt}</div><div class='l'>people covered (latest figure)</div></div>
- <div class='tile'><div class='v'>{len(agencies) or '—'}</div><div class='l'>agencies with a budget line{(': ' + ', '.join(agencies)) if agencies else ''}</div></div>
+ <div class='tile'><div class='v'>{covered_txt}</div><div class='l'>{T('people covered (latest figure)')}</div></div>
+ <div class='tile'><div class='v'>{len(agencies) or '—'}</div><div class='l'>{TF('agencies with a budget line: {list}', list=', '.join(agencies)) if agencies else T('agencies with a budget line')}</div></div>
 </div>
-<h3 class='sub'>Agency × sector split{split_note}</h3>
+<h3 class='sub'>{T('Agency × sector split')}{split_note}</h3>
 <section><div class='scroll' style='max-height:360px'><table class='data'><thead>
-<tr><th>window</th><th>agency</th><th>sector</th><th>fund</th><th>USD</th></tr></thead>
-<tbody>{srows or '<tr><td colspan=5 class="empty">no split recorded</td></tr>'}</tbody>
+<tr>{''.join(f'<th>{T(x)}</th>' for x in ('window', 'agency', 'sector', 'fund', 'USD'))}</tr></thead>
+<tbody>{srows or '<tr><td colspan=5 class="empty">' + T('no split recorded') + '</td></tr>'}</tbody>
 <tfoot>{split_foot}</tfoot></table></div></section>
 {plan_charts}
 {_partners_block(pt, sg, c, h, version)}</div>
-<div class='blk'><h2>Funding</h2>
+<div class='blk'><h2>{T('Funding')}</h2>
 <div class='grid'>
-<div class='panel'><h3>Pre-arranged funding in place, by year × fund</h3><div class='note'>The envelope in place each year — a stock, so the bars are not added up.</div><canvas id='pf' height='230'></canvas></div>
-<div class='panel'><h3>Versions (endorsed documents)</h3>
+<div class='panel'><h3>{T('Pre-arranged funding in place, by year × fund')}</h3><div class='note'>{T('The envelope in place each year — a stock, so the bars are not added up.')}</div><canvas id='pf' height='230'></canvas></div>
+<div class='panel'><h3>{T('Versions (endorsed documents)')}</h3>
 <div class='scroll' style='max-height:230px'><table class='data'><thead>
-<tr><th>version</th><th>KB status</th><th>source</th><th>doc</th><th>analysis</th></tr></thead>
-<tbody>{vrows or '<tr><td colspan=5>none registered</td></tr>'}</tbody></table></div></div>
+<tr>{''.join(f'<th>{T(x)}</th>' for x in ('version', 'KB status', 'source', 'doc', 'analysis'))}</tr></thead>
+<tbody>{vrows or '<tr><td colspan=5>' + T('none registered') + '</td></tr>'}</tbody></table></div></div>
 </div>
-<p class='meta'>Counted in reports: {rrows or '—'}</p></div>
-<div class='blk'><h2>Learning · {len(fd)} document{'' if len(fd) == 1 else 's'}</h2>
+<p class='meta'>{T('Counted in reports:')} {rrows or '—'}</p></div>
+<div class='blk'><h2>{TF('Learning · {n} document', n=len(fd)) if len(fd) == 1 else TF('Learning · {n} documents', n=len(fd))}</h2>
 {fd_html}</div>
 <script src="chart.umd.js"></script>
 <script src="sankey.js"></script>
@@ -2999,20 +3044,25 @@ Monitoring window: {_cal_strip(cal, c, h)}
 const ds = Object.entries(FD.series).map(([fc,vals],i)=>({{label:fc,data:vals,
   backgroundColor:FUND_COLORS[fundType(fc)]||PAL[i]}}));
 if(FD.years.length) mkChart('pf','bar',FD.years,ds,{{stacked:true, totals:true}});
-else document.getElementById('pf').outerHTML='<p class="meta">no funding rows</p>';
-if(SPLIT.length && window.sankeySVG){{
+else document.getElementById('pf').outerHTML='<p class="meta">' + {json.dumps(T("no funding rows"))} + '</p>';
+function drawSplit(){{   // again on a language switch (the two placeholders, the charts' labels)
+  if(!(SPLIT.length && window.sankeySVG)) return;
+  // the records' agency and sector labels as recorded; our two placeholders translated
+  const lab = x => (x === '(agency not stated)' || x === '(sector not stated)') ? tr8(x) : x;
   const bars = k => {{ const g = groupSum(SPLIT, r=>r[k], r=>r.v);
-    return Object.keys(g).sort((a,b)=>g[b]-g[a]).map(x=>({{label:x, v:g[x]}})); }};
+    return Object.keys(g).sort((a,b)=>g[b]-g[a]).map(x=>({{label:lab(x), v:g[x]}})); }};
   const AG = bars('a'), SE = bars('s');
-  document.getElementById('pAg').innerHTML = hbarsSVG(AG, {{width:460, fmt:money, labelW:130, colorBy:'a', label:'budget by agency'}});
-  document.getElementById('pSe').innerHTML = hbarsSVG(SE, {{width:460, fmt:money, labelW:130, color:'#64748b', label:'budget by sector'}});
-  const L = {{}}; SPLIT.forEach(r=>{{ const k='a:'+r.a+'|s:'+r.s; L[k]=(L[k]||0)+r.v; }});
+  document.getElementById('pAg').innerHTML = hbarsSVG(AG, {{width:460, fmt:money, labelW:130, colorBy:'a', label:tr8('budget by agency')}});
+  document.getElementById('pSe').innerHTML = hbarsSVG(SE, {{width:460, fmt:money, labelW:130, color:'#64748b', label:tr8('budget by sector')}});
+  const L = {{}}; SPLIT.forEach(r=>{{ const k='a:'+lab(r.a)+'|s:'+lab(r.s); L[k]=(L[k]||0)+r.v; }});
   document.getElementById('pSk').innerHTML = sankeySVG({{
     columns:[AG.map(x=>({{id:'a:'+x.label,label:x.label}})), SE.map(x=>({{id:'s:'+x.label,label:x.label}}))],
     links:Object.entries(L).map(([k,v])=>{{ const [s,t]=k.split('|'); return {{s,t,v}}; }}),
     width:900, height:Math.max(110, Math.max(AG.length,SE.length)*26), fmt:money, labelW:150,
-    label:'pre-arranged budget from agency to sector'}});
+    label:tr8('pre-arranged budget from agency to sector')}});
 }}
+drawSplit();
+document.addEventListener('aalang', drawSplit);
 </script>
 <style>{DASH_CSS}</style>"""
         tmpl = "{country} {hazard} — " + ("ad hoc allocations, no framework" if no_fw else "framework")
@@ -3100,8 +3150,9 @@ def _st(status, kind="fw"):
     return f"<span class='st {cls}'>{status.replace('_', ' ')}</span>"
 
 
-def _kb_trigger_info(e):
-    """Structured trigger info per (kb_framework, version) from aa.version_page."""
+def _kb_trigger_info(e, parts=False):
+    """Structured trigger info per (kb_framework, version) from aa.version_page: the English
+    line, or (parts=True) its parts — basis, indicators, months — for _trigger_line()."""
     from ds_aa_tracking.kb_pages import load_version_pages
 
     out = {}
@@ -3109,19 +3160,22 @@ def _kb_trigger_info(e):
         fm = pg["fm"]
         tf = fm.get("trigger_facets") or {}
         mp = fm.get("monitoring_period") or {}
-        bits = []
-        if tf.get("basis"):
-            bits.append(str(tf["basis"]))
-        if tf.get("indicators"):
-            bits.append(", ".join(map(str, tf["indicators"])))
-        months = mp.get("months") or []
-        if months:
-            names = "JFMAMJJASOND"
-            bits.append("monitored " + "".join(names[m - 1] for m in months
-                                               if isinstance(m, int) and 1 <= m <= 12))
-        if bits:
-            out[(fw, ver)] = " · ".join(bits)
+        months = [m for m in (mp.get("months") or []) if isinstance(m, int) and 1 <= m <= 12]
+        x = (str(tf["basis"]) if tf.get("basis") else None,
+             ", ".join(map(str, tf["indicators"])) if tf.get("indicators") else None, months)
+        if any(x):
+            out[(fw, ver)] = x if parts else _trigger_line(x)
     return out
+
+
+def _trigger_line(x, w=lambda s: s):
+    """'forecast · SEAS5-precip · monitored MAMJAS' (w: the words in one language; the
+    indicators as recorded; the month initials of that language)."""
+    basis, ind, months = x
+    names = w("JFMAMJJASOND")
+    bits = [w(basis) if basis else None, ind,
+            w("monitored {m}").format(m="".join(names[m - 1] for m in months)) if months else None]
+    return " · ".join(b for b in bits if b)
 
 
 def build_hierarchy(page, d, e):
