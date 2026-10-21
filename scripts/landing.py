@@ -1156,7 +1156,8 @@ def assemble(d, e):
                 "scope_raw": [str(x) for x in scope_raw],
                 "scope_tiers_raw": (pg["tiers"] if pg else []) if not regional else [],
                 "scope": None,      # filled by the geo pass
-                "kb_page": bool(pg), "source": _s(v.source), "note": _s(v.note),
+                # no "note": the version's working notes name people and the page never shows them
+                "kb_page": bool(pg), "source": _s(v.source),
                 # budget sanity: the version's pre-arranged envelope (v_version_funding, all
                 # funds) — the sidebar compares the agency x sector split total against it
                 "envelope": envelope.get((c, h, v.version)),

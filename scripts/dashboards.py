@@ -2872,7 +2872,7 @@ def _validation_block(fvm, c, h, version):
 
 def build_framework_pages(page, tbl, d, e=None):
     cur, ver, act = d["current"], d["versions"], d["activation"]
-    pre, cov, foc = d["prearranged"], d["covered"], d["focal"]
+    pre, cov = d["prearranged"], d["covered"]
     rep, cal = d["report"], d["calendar"]
     split, env, win = d["split_all"], d["env_all"], d["windows"]
     docs, pt, sg = d["learning"], d["partners"], d["subgrant_aa"]
@@ -2902,7 +2902,6 @@ def build_framework_pages(page, tbl, d, e=None):
         a = act[(act["country_iso3"] == c) & (act["hazard"] == h)]
         p = pre[(pre["country_iso3"] == c) & (pre["hazard"] == h)
                 & (pre["kind"] == "prearranged") & (pre["fund_code"] != "all")]
-        f = foc[(foc["country_iso3"] == c) & (foc["hazard"] == h)]
         r = rep[(rep["country_iso3"] == c) & (rep["hazard"] == h)]
         pc = cov[(cov["country_iso3"] == c) & (cov["hazard"] == h)]
         years = sorted(p["year"].unique())
@@ -2975,8 +2974,6 @@ def build_framework_pages(page, tbl, d, e=None):
             f"<td>{f'<a href={x.doc_url!r}>' + T('doc') + '</a>' if pd.notna(x.doc_url) else ''}</td>"
             f"<td style='max-width:340px'>{x.analysis_ref if pd.notna(x.analysis_ref) else ''}</td></tr>"
             for x in v.itertuples())
-        frows = "".join(f"<span class='badge b-kb'>{x.role}: {x.person}</span>"
-                        for x in f.itertuples())
         rrows = ", ".join(sorted({f"{x.channel} ({x.report_year})"
                                   for x in r.itertuples()}))
         covered_txt = (f"{int(pc['people_covered'].iloc[0]):,}"
@@ -3000,8 +2997,7 @@ def build_framework_pages(page, tbl, d, e=None):
 {T('current version:')} <code>{cur_v}</code>
 {('· KB: <code>' + fw['kb_framework'] + '</code>') if pd.notna(fw['kb_framework']) else '· ' + T('not in KB')}
 · {T('people covered:')} <b>{covered_txt}</b><br>
-{T('Monitoring window:')} {_cal_strip(cal, c, h)}
-<div style='margin-top:6px'>{frows}</div></div>
+{T('Monitoring window:')} {_cal_strip(cal, c, h)}</div>
 {changes_html}
 <div class='blk'><h2>{T('Model')}</h2>
 <p class='meta'>{(T('Trigger:') + ' ' + TC(lambda w: _trigger_line(trig_line, w))) if trig_line else T('No structured trigger info in the KB for this version.')}</p>
