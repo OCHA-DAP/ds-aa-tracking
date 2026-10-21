@@ -222,6 +222,8 @@ _JS_TR8 = re.compile(r"""\btr8\(\s*(?:'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)
 
 
 def _unesc(s: str) -> str:
+    # \uXXXX too: the page data is json.dumps'd, which writes '→' or 'é' as an escape
+    s = re.sub(r"\\u([0-9a-fA-F]{4})", lambda m: chr(int(m.group(1), 16)), s)
     return s.replace("\\'", "'").replace('\\"', '"').replace("\\`", "`").replace("\\\\", "\\")
 
 
