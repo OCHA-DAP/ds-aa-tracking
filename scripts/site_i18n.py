@@ -286,6 +286,36 @@ def _unesc(s: str) -> str:
     return s.replace("\\'", "'").replace('\\"', '"').replace("\\`", "`").replace("\\\\", "\\")
 
 
+_CALL = re.compile(r"\b(?:tr8|yr)\(")
+
+
+def _call_literals(text: str):
+    """Every string literal in the arguments of the tr8(…) and yr(…) calls of a script, quotes
+    and nested parentheses followed: the line scans pair quotes along a line, so a literal
+    inside an HTML attribute of a template (title='${tr8('…')}') escapes them."""
+    for m in _CALL.finditer(text):
+        i, depth, n = m.end(), 1, len(text)
+        while i < n and depth:
+            c = text[i]
+            if c in "'\"`":
+                j, buf, expr, brace = i + 1, [], False, 0
+                while j < n and (brace or text[j] != c):
+                    if text[j] == "\\" and j + 1 < n:
+                        buf.append(text[j:j + 2]); j += 2; continue
+                    if c == "`" and text.startswith("${", j):      # a template with ${…}: not a key
+                        expr, brace, j = True, brace + 1, j + 2; continue
+                    if brace and text[j] == "}":
+                        brace -= 1
+                    buf.append(text[j]); j += 1
+                if not expr:
+                    yield _unesc("".join(buf))
+                i = j + 1
+                continue
+            depth += c == "("
+            depth -= c == ")"
+            i += 1
+
+
 def js_dict(page_text: str) -> dict[str, dict[str, str]]:
     """The entries a page's scripts can need: every string literal or data value in the page
     the tables know (labels in the page data — hazards, regions, statuses — included). A
@@ -295,6 +325,7 @@ def js_dict(page_text: str) -> dict[str, dict[str, str]]:
         for l in LANGS:
             tr(l, k)
     keys = {key(_unesc(m.group(1))) for rx in (_JS_SQ, _JS_DQ) for m in rx.finditer(page_text)}
+    keys |= {key(k) for k in _call_literals(page_text)}
     # node ids carry their label after a prefix ('d:Other donors', 'p:nr|partner not recorded')
     keys |= {k.rsplit("|", 1)[-1].split(":", 1)[-1] for k in keys if "|" in k or ":" in k}
     return {l: {k: TABLES[l][k] for k in sorted(keys) if k in TABLES[l]} for l in LANGS}
