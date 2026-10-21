@@ -25,7 +25,7 @@ from dashboards import (
     _words,
     haz,
 )
-from site_i18n import ATTR, LANGS, TB, TBF, TF, T
+from site_i18n import ATTR, TB, TBF, TF, T
 
 LIVE = ["active", "updating", "development"]
 LIFE_COLOR = {"active": "#2171b5", "updating": "#6baed6", "development": "#a9cce3"}   # the map's blues
@@ -77,15 +77,8 @@ def _esc(s):
 
 
 def _tri(build, cut=None):
-    """T() of a string assembled from pieces: build(w) gets w(), the lookup in one language.
-    cut: past that many characters the text is cut, in full on hover (in each language)."""
-    v = {l: _nofire(build((lambda x: x) if l == "en" else (lambda x, l=l: i18n.tr(l, x))))
-         for l in ("en",) + LANGS}
-    if cut is None or len(v["en"]) <= cut:
-        return T(*v.values())
-    tip = " ".join(f'data-title-{l}="{html.escape(v[l], quote=True)}"' for l in v)
-    return (f'<span title="{html.escape(v["en"], quote=True)}" {tip}>'
-            + T(*(x[:cut].rstrip() + "…" if len(x) > cut else x for x in v.values())) + "</span>")
+    """i18n.TC() with the display vocabulary (never 'fired') applied in every language."""
+    return i18n.TC(lambda w: _nofire(build(w)), cut)
 
 
 def _fw(f):

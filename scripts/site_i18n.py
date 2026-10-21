@@ -197,6 +197,34 @@ def TBF(en_html: str, **kw) -> str:
     return "".join(f'<span class="lv lv-{l}">{v[l]}</span>' for l in ("en",) + LANGS)
 
 
+def _composed(build) -> dict[str, str]:
+    """A string assembled from translated pieces: build(w) is called once per language with w,
+    that language's lookup (in English, the string itself)."""
+    return {"en": build(lambda x: x), **{l: build(lambda x, l=l: tr(l, x)) for l in LANGS}}
+
+
+def TC(build, cut: int | None = None) -> str:
+    """T() of a composed string (see _composed). cut: past that many characters each
+    language is cut, the whole text on hover."""
+    v = _composed(build)
+    if cut is None or len(v["en"]) <= cut:
+        return T(*v.values())
+    tip = " ".join(f'data-title-{l}="{_attr(x)}"' for l, x in v.items())
+    return (f'<span title="{_attr(v["en"])}" {tip}>'
+            + T(*(x[:cut].rstrip() + "…" if len(x) > cut else x for x in v.values())) + "</span>")
+
+
+def TBC(build) -> str:
+    """TB() of a composed string with markup (build returns HTML in each language)."""
+    return "".join(f'<span class="lv lv-{l}">{x}</span>' for l, x in _composed(build).items())
+
+
+def ATTRC(name: str, build) -> str:
+    """ATTR() of a composed string."""
+    v = _composed(build)
+    return f'{name}="{_attr(v["en"])}" ' + " ".join(f'data-{name}-{l}="{_attr(x)}"' for l, x in v.items())
+
+
 def ATTR(name: str, en: str, **kw) -> str:
     """An attribute (title, placeholder, aria-label) in every language: name="en" plus
     data-name-<lang>, which the client swaps in."""
