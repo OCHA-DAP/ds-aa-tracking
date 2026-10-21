@@ -70,6 +70,7 @@ table.data td { padding:4px 8px; border-bottom:1px solid #eee; vertical-align:to
                 max-width:420px; overflow-wrap:break-word; }
 table.data tr:hover td { background:#f2f7fc; }
 .scroll { overflow-x:auto; max-height:75vh; overflow-y:auto; border:1px solid #ddd; }
+.xscroll { overflow-x:auto; }   /* a wide table scrolls inside its box, never the page */
 input.filter { padding:6px 10px; width:340px; margin:10px 0; border:1px solid #bbb;
                border-radius:4px; font-size:13px; }
 button.dl { padding:6px 12px; border:1px solid #2a78d6; color:#1d5aa8; background:#fff;
