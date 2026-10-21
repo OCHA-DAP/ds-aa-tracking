@@ -15,13 +15,16 @@ and need a francophone and a hispanophone colleague to review them.
 | Stage | Pages | Status |
 |---|---|---|
 | 1 | Header, development banner, the plain-language box on top of every tab, the **Financing** page | done (2026-10-20) |
-| 2 | Map, Model, Historical activations, Plan, Learning, Media | to do: shown in English under FR / ES until then |
-| 3 | The framework pages (one template for all of them) | to do |
+| 2a | **Model**, **Historical activations**, **Plan** | done (2026-10-21) |
+| 2b | Map, Learning, Media | to do: shown in English under FR / ES until then |
+| 3 | The framework pages (one template for all of them), and the collapsed per-framework blocks at the bottom of Historical activations, which are the framework pages' own | to do |
 
 Never translated, on purpose (KB rules): organisation and fund names, codes and acronyms;
 the framework documents' own text (trigger statements, thresholds, window names quoted from
-a document — several are already in French or Spanish); media captions (quoted posts); the
-open data files. Numbers keep one format in every language (`$4.0M`, `36%`).
+a document — several are already in French or Spanish); the framework records' text on the
+Model page (indicators, lead times, stated return periods, data provider names); media
+captions (quoted posts); the open data files and CSV downloads. Numbers keep one format in
+every language (`$4.0M`, `36%`).
 
 ## How to review or correct a translation
 
@@ -47,6 +50,10 @@ French (KB glossary unless marked *suggestion*):
 - **being updated** → *en cours de révision* (the documents say *cadre révisé*, *mise à jour*).
 - **storm** (the site's family of tropical storms, cyclones, hurricanes, typhoons) → *cyclone tropical*.
 - **sub-grant** → *sous-subvention* (*suggestion*: not attested); **people covered** → *personnes couvertes* (*suggestion*).
+- **return period 1-in-N** → *1 sur N ans* (the documents' form: *une période de retour d’environ 1 sur 4 ans*).
+- **backtest** stays *backtest* (as the KB's French pages have it); *analyse historique* is the attested alternative.
+- **framework record** (the tracking database's entry for a framework) → *fiche du cadre* (*suggestion*).
+- **rainfall** (what a trigger watches) → *précipitations* (KB glossary: the indicator, not *pluie*).
 
 Spanish (GLOSSARY.md; only two independent Spanish documents exist — the Dry Corridor
 template and Cuba — so several terms are suggestions):
@@ -60,6 +67,9 @@ template and Cuba — so several terms are suggestions):
 - **being updated** → *en actualización* (*suggestion*); **people covered** → *personas cubiertas* (*suggestion*);
   **sub-grant** → *subvención a socios* (*suggestion*).
 - **storm** → *ciclón tropical*.
+- **return period 1-in-N** → *1 en N años* (the documents' form).
+- **backtest** → *análisis histórico* (*suggestion*; the documents have *desempeño histórico* for the historical performance).
+- **framework record** → *ficha del marco* (*suggestion*); **rainfall** → *precipitación*.
 
 UN agency acronyms (WFP, WHO…) stay in English for now, like the other organisation names;
 the reviewers may prefer the UN French / Spanish acronyms (PAM, OMS…).
