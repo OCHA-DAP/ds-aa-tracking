@@ -62,7 +62,10 @@ def canonical(df, keys):
 
 DASH_CSS = """
 td.na { background:#eef1f5; }
-.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(420px,1fr)); gap:16px; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr)); gap:16px; }   /* min(): never wider than a phone */
+/* a phone: the money flow keeps a readable size and scrolls sideways in its box; the activations table too */
+@media (max-width:760px){ #flow { overflow-x:auto; } #flow svg.sk { min-width:1000px; } }
+table.data.acts { min-width:560px; } table.data.acts td:first-child { white-space:nowrap; }
 .panel { background:#fff; border:1px solid #e0e0e0; border-radius:6px; padding:14px 16px; min-width:0; overflow:hidden; }
 .panel h3 { margin:2px 0 10px; font-size:14.5px; }
 .panel .note { color:#666; font-size:11.5px; margin-top:6px; }
@@ -113,7 +116,7 @@ canvas { max-height:300px; }
 .warn-tag { display:inline-block; padding:0 7px; border-radius:9px; font-size:10.5px; font-weight:600;
             background:#fde3e3; color:#a11; margin-left:6px; }
 ul.doclist { list-style:none; padding:0; margin:6px 0; }
-ul.doclist li { padding:5px 0; border-bottom:1px solid #f0f0f0; font-size:13px; }
+ul.doclist li { padding:5px 0; border-bottom:1px solid #f0f0f0; font-size:13px; overflow-wrap:anywhere; }   /* long code references */
 ul.doclist li:last-child { border-bottom:0; }
 ul.doclist .ks { display:block; color:#555; font-size:11.5px; margin-top:2px; }
 ul.doclist .who { color:#666; font-size:12px; }
@@ -1840,7 +1843,9 @@ fwQ.addEventListener('input', ()=>{ const q = fwQ.value.toLowerCase().split(' ')
 fwNote.addEventListener('click', ev=>{ if(ev.target.tagName==='BUTTON'){ fwSel = null; fwToDom(); fwCommit(); } });
 // the list never runs below the window, so its total stays in view wherever the bar sits
 function fwFit(){ if(!fwPick.open) return; const p = fwPick.querySelector('.fwpanel');
-  p.style.maxHeight = Math.max(220, innerHeight - p.getBoundingClientRect().top - 12) + 'px'; }
+  p.style.maxHeight = Math.max(220, innerHeight - p.getBoundingClientRect().top - 12) + 'px';
+  p.style.left = ''; const over = p.getBoundingClientRect().right - (document.documentElement.clientWidth - 8);
+  if(over > 0) p.style.left = (10 - over) + 'px'; }
 fwPick.addEventListener('toggle', ()=>{   // little room under the bar: bring the bar to the top of the window first
   const bar = fwPick.closest('.fbar');
   if(fwPick.open && innerHeight - bar.getBoundingClientRect().bottom < 360) bar.scrollIntoView();
@@ -2787,7 +2792,7 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
         hist = (f"<p class='meta'>{TBC(vnote)}"
                 + TB("One row per year, newest first; a real activation whose window does not match a "
                      "column sits in the year cell. Markers link to the announcement or the CERF allocation.") + "</p>"
-                f"<table class='data hist'><thead><tr><th>{T('year')}</th>{head}</tr></thead><tbody>{body}</tbody></table>"
+                f"<div class='xscroll'><table class='data hist'><thead><tr><th>{T('year')}</th>{head}</tr></thead><tbody>{body}</tbody></table></div>"
                 f"<p class='legend'><span class='dot sim' style='background:{col}'></span> {T('would have activated (simulation)')} · "
                 f"<span class='dot real'></span> {T('activated, money released')} · "
                 f"<span class='dot old'></span> "
@@ -2816,10 +2821,10 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
                    f"{'' if ev['typ'] == 'framework_aa' else ' <span class=' + chr(39) + 'muted' + chr(39) + '>(' + T(ev['typ'].replace('_', ' ')) + ')</span>'}"
                    f"{' <span class=' + chr(39) + 'warn-tag' + chr(39) + '>' + T('partial') + '</span>' if ev['partial'] else ''}</td>"
                    f"<td>{fl}</td><td>{' · '.join(links)}</td></tr>")
-        actual = ("<table class='data acts'><colgroup><col style='width:10%'><col style='width:17%'>"
+        actual = ("<div class='xscroll'><table class='data acts'><colgroup><col style='width:10%'><col style='width:17%'>"
                   "<col style='width:28%'><col style='width:17%'><col style='width:28%'></colgroup>"
                   "<thead><tr>" + "".join(f"<th>{T(x)}</th>" for x in ("date", "version", "window", "funding", "links"))
-                  + f"</tr></thead><tbody>{tr}</tbody></table>")
+                  + f"</tr></thead><tbody>{tr}</tbody></table></div>")
     return hist, actual
 
 

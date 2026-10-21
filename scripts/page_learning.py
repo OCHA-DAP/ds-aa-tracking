@@ -600,7 +600,7 @@ table.ldocs td.lk a { color:#1d5aa8; text-decoration:none; } table.ldocs td.lk a
 .mpanel { position:absolute; z-index:8; top:10px; bottom:10px; right:10px; width:min(380px, calc(100% - 20px)); overflow-y:auto; }
 .mpanel.left { right:auto; left:10px; }
 .lmapbox.compact ~ .mpanel { position:relative; inset:auto; width:auto; margin-top:10px; overflow:visible; }
-.lbody { position:relative; }
+.lbody { position:relative; overflow-x:auto; }   /* five columns: on a phone the list scrolls, not the page */
 .lbody.open:not(.narrow) table.ldocs { width:calc(100% - 400px); }
 .tpanel { position:absolute; z-index:4; right:0; top:0; width:384px; }
 .lbody.narrow .tpanel { left:0; width:auto; }
@@ -639,6 +639,7 @@ table.ldocs tr.lspacer, table.ldocs tr.lspacer:hover td { cursor:default; backgr
 .lpanel p.fd-cav { font-size:12px; line-height:1.5; color:#56677b; margin:0 0 5px; }
 .lpanel p.fd-cite { font-size:11.5px; color:#56677b; margin:0; }
 .lbody.narrow table.ldocs td.lt { width:auto; } .lbody.narrow .lt-p { display:block; margin:2px 0 0; }
+@media (max-width:480px){ table.ldocs th, table.ldocs td { padding:6px 4px; font-size:12px; } }   /* a phone: the five columns fit */
 """
 
 LEARNING_JS = r"""
