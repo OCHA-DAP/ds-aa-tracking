@@ -75,7 +75,15 @@ COUNTRY = {
            "TCD": "Tchad", "TON": "Tonga", "UGA": "Ouganda", "VEN": "Venezuela",
            "VUT": "Vanuatu", "YEM": "Yémen", "ZWE": "Zimbabwe", "AGO": "Angola",
            "BDI": "Burundi", "PAK": "Pakistan", "LKA": "Sri Lanka", "LAO": "Laos",
-           "PNG": "Papouasie-Nouvelle-Guinée", "SLB": "Îles Salomon"},
+           "PNG": "Papouasie-Nouvelle-Guinée", "SLB": "Îles Salomon", "LSO": "Lesotho",
+           "MNG": "Mongolie", "SYR": "Syrie", "IND": "Inde", "IDN": "Indonésie", "ZMB": "Zambie",
+           "TZA": "Tanzanie", "RWA": "Rwanda", "SEN": "Sénégal", "GHA": "Ghana", "TLS": "Timor-Leste",
+           "JOR": "Jordanie", "LBN": "Liban", "IRQ": "Iraq", "LBR": "Libéria", "SLE": "Sierra Leone",
+           "GIN": "Guinée", "CAF": "République centrafricaine", "TGO": "Togo", "BEN": "Bénin",
+           "CIV": "Côte d’Ivoire", "PER": "Pérou", "ECU": "Équateur", "BOL": "Bolivie", "DOM": "République dominicaine",
+           "VNM": "Viet Nam", "KHM": "Cambodge", "THA": "Thaïlande", "BTN": "Bhoutan", "TJK": "Tadjikistan",
+           "KGZ": "Kirghizistan", "EGY": "Égypte", "MAR": "Maroc", "LBY": "Libye", "PSE": "Palestine",
+           "UKR": "Ukraine"},
     "es": {"AFG": "Afganistán", "BFA": "Burkina Faso", "BGD": "Bangladés", "COD": "RD del Congo",
            "CMR": "Camerún", "COL": "Colombia", "CUB": "Cuba", "DJI": "Yibuti",
            "ERI": "Eritrea", "ETH": "Etiopía", "FJI": "Fiyi", "GMB": "Gambia",
@@ -87,7 +95,15 @@ COUNTRY = {
            "TCD": "Chad", "TON": "Tonga", "UGA": "Uganda", "VEN": "Venezuela",
            "VUT": "Vanuatu", "YEM": "Yemen", "ZWE": "Zimbabue", "AGO": "Angola",
            "BDI": "Burundi", "PAK": "Pakistán", "LKA": "Sri Lanka", "LAO": "Laos",
-           "PNG": "Papúa Nueva Guinea", "SLB": "Islas Salomón"},
+           "PNG": "Papúa Nueva Guinea", "SLB": "Islas Salomón", "LSO": "Lesoto",
+           "MNG": "Mongolia", "SYR": "Siria", "IND": "India", "IDN": "Indonesia", "ZMB": "Zambia",
+           "TZA": "Tanzania", "RWA": "Ruanda", "SEN": "Senegal", "GHA": "Ghana", "TLS": "Timor-Leste",
+           "JOR": "Jordania", "LBN": "Líbano", "IRQ": "Iraq", "LBR": "Liberia", "SLE": "Sierra Leona",
+           "GIN": "Guinea", "CAF": "República Centroafricana", "TGO": "Togo", "BEN": "Benín",
+           "CIV": "Côte d’Ivoire", "PER": "Perú", "ECU": "Ecuador", "BOL": "Bolivia", "DOM": "República Dominicana",
+           "VNM": "Viet Nam", "KHM": "Camboya", "THA": "Tailandia", "BTN": "Bután", "TJK": "Tayikistán",
+           "KGZ": "Kirguistán", "EGY": "Egipto", "MAR": "Marruecos", "LBY": "Libia", "PSE": "Palestina",
+           "UKR": "Ucrania"},
 }
 
 MONTH_ABBR = {"fr": ["", "janv", "févr", "mars", "avr", "mai", "juin", "juil", "août", "sept", "oct", "nov", "déc"],
@@ -238,6 +254,14 @@ def OPT(value: str, en: str, selected: bool = False) -> str:
     v = _all(en, None)
     return (f'<option value="{_attr(value)}" class="tr" data-en="{_attr(v["en"])}"'
             + "".join(f' data-{l}="{_attr(v[l])}"' for l in LANGS)
+            + (" selected" if selected else "") + f'>{html.escape(v["en"])}</option>')
+
+
+def OPTC(value: str, build, selected: bool = False) -> str:
+    """OPT() of a composed string (a name and a count, say)."""
+    v = _composed(build)
+    return (f'<option value="{_attr(value)}" class="tr"'
+            + "".join(f' data-{l}="{_attr(x)}"' for l, x in v.items())
             + (" selected" if selected else "") + f'>{html.escape(v["en"])}</option>')
 
 
