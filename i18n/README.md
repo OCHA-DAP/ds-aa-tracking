@@ -16,14 +16,18 @@ and need a francophone and a hispanophone colleague to review them.
 |---|---|---|
 | 1 | Header, development banner, the plain-language box on top of every tab, the **Financing** page | done (2026-10-20) |
 | 2a | **Model**, **Historical activations**, **Plan** | done (2026-10-21) |
-| 2b | Map, Learning, Media | to do: shown in English under FR / ES until then |
+| 2b | **Map**, **Learning**, **Media** | done (2026-10-21) |
 | 3 | The framework pages (one template for all of them), and the collapsed per-framework blocks at the bottom of Historical activations, which are the framework pages' own | to do |
 
 Never translated, on purpose (KB rules): organisation and fund names, codes and acronyms;
 the framework documents' own text (trigger statements, thresholds, window names quoted from
 a document — several are already in French or Spanish); the framework records' text on the
-Model page (indicators, lead times, stated return periods, data provider names); media
-captions (quoted posts); the open data files and CSV downloads. Numbers keep one format in
+Model page and in the map's panel (indicators, lead times, stated return periods, data
+provider names, partner roles as written, the sector labels of a budget split, area names);
+the learning documents' titles, publishers, summaries and key statistics; CERF's emergency
+types; file and folder names and the social posts on the Media page (quoted posts); the
+open data files and CSV downloads. The Learning page's curated findings and headlines are
+the page's own copy and are translated, figures unchanged. Numbers keep one format in
 every language (`$4.0M`, `36%`).
 
 ## How to review or correct a translation

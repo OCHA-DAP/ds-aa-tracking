@@ -16,9 +16,13 @@ import difflib
 import json
 import re
 import unicodedata
+from html import escape as html_escape
+from html import unescape as html_unescape
 from pathlib import Path
 
 import pandas as pd
+import site_i18n as i18n
+from site_i18n import ATTR, TB, T
 
 from ds_aa_tracking.kb_pages import load_version_pages
 
@@ -639,6 +643,34 @@ def _envelopes(vf):
     return out
 
 
+def _after_note(n, vf_y):
+    """dashboards.sim_after_note, registered in every language for the page's script."""
+    from dashboards import sim_after_note
+    en = sim_after_note(n, vf_y)
+    if not en:
+        return en
+    tmpl = ("{n} simulated row dated after the version's start ({y} or later) is not shown: a version's "
+            "backtest is fixed before it is endorsed, and from then on only real activations count."
+            if n == 1 else
+            "{n} simulated rows dated after the version's start ({y} or later) are not shown: a version's "
+            "backtest is fixed before it is endorsed, and from then on only real activations count.")
+    same = {"en": str(n), "fr": str(n), "es": str(n)}
+    return i18n.add(en, tmpl, n=same, y={"en": str(vf_y), "fr": str(vf_y), "es": str(vf_y)})
+
+
+def _svg_tr(svg):
+    """The status diagram's <text> elements follow the language switch: class 'tr' and a
+    data-<lang> attribute each (aaSetLang swaps textContent, SVG text included)."""
+    def one(m):
+        attrs, en = m.group(1), m.group(2)
+        v = i18n.titles(html_unescape(en))
+        data = " ".join(f'data-{l}="{html_escape(x)}"' for l, x in v.items())
+        attrs = (re.sub(r"class='([^']*)'", r"class='\1 tr'", attrs) if "class='" in attrs
+                 else attrs + " class='tr'")
+        return f"<text{attrs} {data}>{en}</text>"
+    return re.sub(r"<text([^>]*)>([^<]*)</text>", one, svg)
+
+
 def _analysis_url(ref):
     """'repo@branch:path' -> GitHub tree URL in the team org; anything else stays text."""
     m = re.match(r"^([\w.-]+)@([\w./-]+):(.*)$", str(ref or ""))
@@ -843,11 +875,15 @@ def _year_history(d, e, excl, _try):
         s["retired"] = True
         if _s(x.last_until):
             s["ret_on"] = str(pd.Timestamp(str(x.last_until)).date() + _dt.timedelta(days=1))
-            s["ret_note"] = f"last version valid until {str(x.last_until)[:10]}"
+            d10 = str(x.last_until)[:10]
+            s["ret_note"] = i18n.add(f"last version valid until {d10}", "last version valid until {d}",
+                                     d={"en": d10, "fr": d10, "es": d10})
         else:
             first = next((a for a, cat in sh_all.get((x.country_iso3, x.hazard), []) if cat == "retired"), None)
             if first:
-                s["ret_on"], s["ret_note"] = first, f"first status report saying dormant / retired, {first}"
+                s["ret_on"], s["ret_note"] = first, i18n.add(
+                    f"first status report saying dormant / retired, {first}",
+                    "first status report saying dormant / retired, {d}", d={"en": first, "fr": first, "es": first})
     return {"pair": pair, "country": country, "series": series}
 
 
@@ -880,8 +916,7 @@ def assemble(d, e):
                   agency, sector, amount_usd, provenance
            FROM aa.v_window_funding_split
            WHERE amount_usd IS NOT NULL AND (agency IS NOT NULL OR sector IS NOT NULL)""", e)
-    from dashboards import (EXCLUDED_EVENT_TYPES, read_simulated, sim_after_note,
-                            sim_before_start, sim_when)
+    from dashboards import EXCLUDED_EVENT_TYPES, read_simulated, sim_before_start, sim_when
     sim = read_simulated(e)   # with event_date / event_time when the DB has them
     psb = fb.iloc[0:0]                                    # folded into window_funding
     excl = ", ".join(f"'{t}'" for t in EXCLUDED_EVENT_TYPES)
@@ -1050,7 +1085,7 @@ def assemble(d, e):
                             rows.setdefault((y, None), set())
                 backtest = {"windows": wins_bt, "per_event": per_event, "start": y0, "end": y1,
                             "in_use_from": vf_y, "in_use_to": use_end if vu is not None and pd.notna(vu) else None,
-                            "n_after": n_after, "after_note": sim_after_note(n_after, vf_y),
+                            "n_after": n_after, "after_note": _after_note(n_after, vf_y),
                             "rows": [{"year": k[0], "label": k[1], "fired": sorted(ws),
                                       "when": when.get(k, {})}
                                      for k, ws in sorted(rows.items(), key=lambda kv: (-kv[0][0], str(kv[0][1])))]}
@@ -1416,14 +1451,12 @@ def build_landing(page, d, e):
 
     body = f"""
 <div class='hero'>
- <div class='yearbar' id='yearbar' role='group' aria-label='Year shown on the map'><span class='yl'>Year</span>
-  <button type='button' data-y='' class='on' aria-pressed='true'>All years, to today</button>{"".join(
-      f"<button type='button' data-y='{y}' aria-pressed='false'>{y}{' (today)' if y == TODAY.year else ''}</button>"
+ <div class='yearbar' id='yearbar' role='group' {ATTR("aria-label", "Year shown on the map")}><span class='yl'>{T("Year")}</span>
+  <button type='button' data-y='' class='on' aria-pressed='true'>{T("All years, to today")}</button>{"".join(
+      f"<button type='button' data-y='{y}' aria-pressed='false'>{y}{' ' + T('(today)') if y == TODAY.year else ''}</button>"
       for y in range(TODAY.year, YEAR_FIRST - 1, -1))}
  </div>
- <p class='yearnote' id='yearnote' hidden>Past years are reconstructed from the framework records (version dates and
-  status history): a framework counts for a year if a version was valid at any time during it. They will
-  be replaced by the official year-end figures once those are loaded.</p>
+ <p class='yearnote' id='yearnote' hidden>{TB("Past years are reconstructed from the framework records (version dates and status history): a framework counts for a year if a version was valid at any time during it. They will be replaced by the official year-end figures once those are loaded.")}</p>
  <div class='tiles gtiles' id='gtiles'>
   <div class='gcap' id='gcap'>Global portfolio — all layers currently shown on the map</div>
   <div class='tile' id='t-fw'><div class='v'>{t["n_fw"]}</div><div class='l'>frameworks on the map · {t["n_active"]} active · {t["n_upd"]} being updated · {t["n_dev"]} in development</div></div>
@@ -1436,25 +1469,20 @@ def build_landing(page, d, e):
 </div>
 <div class='maprow' id='maprow'>
  <div class='mapbox' id='mapbox'>
-  <button id='back' class='backbtn' hidden>← world</button>
+  <button id='back' class='backbtn' hidden>{T("← world")}</button>
   <div id='tip' class='tip' hidden></div>
   {svg}
   <div id='lpane' class='labelpane'><svg id='leaders' class='leadersvg'></svg></div>
   <div class='maplegend' id='legend'></div>
  </div>
  <div class='side' id='side'>
-  <div class='muted' style='padding:20px 6px'>Select a country or a pin to see its
-  frameworks — status, funding, monitoring window, triggers, versions and activations.</div>
+  <div class='muted' style='padding:20px 6px'>{T("Select a country or a pin to see its frameworks — status, funding, monitoring window, triggers, versions and activations.")}</div>
  </div>
 </div>
-<p class='maphelp'><b>Reading the map.</b> Published triggers, windows, pre-arranged financing and activations
- across the AA portfolio — CERF, country-based and regional pooled funds. Pin colour = framework status,
- inferred from the most recent version; each red dot = one past activation; an amber ring = in its monitoring
- season this month. <b>Click a country or a pin</b> to zoom in and see the areas each framework covers; the
- <b>layer toggles</b> in the map legend choose what is drawn, and the figures above follow them.</p>
-<details id='statushelp' class='statushelp'><summary>How statuses work — version lifecycle and the framework status inferred from it</summary>
+<p class='maphelp'>{TB("<b>Reading the map.</b> Published triggers, windows, pre-arranged financing and activations across the AA portfolio — CERF, country-based and regional pooled funds. Pin colour = framework status, inferred from the most recent version; each red dot = one past activation; an amber ring = in its monitoring season this month. <b>Click a country or a pin</b> to zoom in and see the areas each framework covers; the <b>layer toggles</b> in the map legend choose what is drawn, and the figures above follow them.")}</p>
+<details id='statushelp' class='statushelp'><summary>{T("How statuses work — version lifecycle and the framework status inferred from it")}</summary>
  <div class='sh-grid'>
-  <svg viewBox='0 0 780 362' class='sh-svg' role='img' aria-label='Status diagram'>
+  <svg viewBox='0 0 780 362' class='sh-svg' role='img' {ATTR("aria-label", "Status diagram")}>
    <defs><linearGradient id='shsplit' x1='0' y1='0' x2='1' y2='1'><stop offset='50%' stop-color='#dbeafe'/><stop offset='50%' stop-color='#e8f1f8'/></linearGradient><marker id='arr' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' markerHeight='7' orient='auto-start-reverse'><path d='M0,0 L10,5 L0,10 z' fill='#64748b'/></marker></defs>
    <text x='10' y='22' class='sh-h'>Framework VERSION status (stored: one of three, recorded by the team)</text>
    <g class='sh-box'><rect x='10' y='40' width='120' height='40' rx='8'/><text x='70' y='65'>pre-development</text></g>
@@ -1482,10 +1510,10 @@ def build_landing(page, d, e):
    <text x='240' y='332' class='sh-note'>a manual flag on the framework (country × hazard) — overrides everything above</text>
   </svg>
   <div class='sh-layers'>
-   <b>Map layers.</b> <span class='dot' style='background:{KB_COLOR["active"]}'></span><b>Current frameworks</b> — every framework whose status is active, being updated or in development (the default view; the headline figures follow whatever is shown).
-   <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span><b>Ad hoc allocations</b> — countries and hazards that received ad hoc anticipatory-action money without a framework version (light green; a framework that also received ad hoc money stays drawn as a framework).
-   <span class='dot' style='background:{LAYER_COLOR["retired"]}'></span><b>Retired</b> — frameworks flagged retired, drawn in grey so past coverage can be compared with today's.
-   <span class='dot dot-hollow' style='border-color:{LAYER_COLOR["tech"]}'></span><b>Technical support</b> — countries where OCHA supported the framework technically without a funding commitment, whatever their status (including pipeline ones like Palau and Tonga), drawn as a hollow teal pin.
+   {TB("<b>Map layers.</b>")} <span class='dot' style='background:{KB_COLOR["active"]}'></span>{TB("<b>Current frameworks</b> — every framework whose status is active, being updated or in development (the default view; the headline figures follow whatever is shown).")}
+   <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span>{TB("<b>Ad hoc allocations</b> — countries and hazards that received ad hoc anticipatory-action money without a framework version (light green; a framework that also received ad hoc money stays drawn as a framework).")}
+   <span class='dot' style='background:{LAYER_COLOR["retired"]}'></span>{TB("<b>Retired</b> — frameworks flagged retired, drawn in grey so past coverage can be compared with today's.")}
+   <span class='dot dot-hollow' style='border-color:{LAYER_COLOR["tech"]}'></span>{TB("<b>Technical support</b> — countries where OCHA supported the framework technically without a funding commitment, whatever their status (including pipeline ones like Palau and Tonga), drawn as a hollow teal pin.")}
   </div>
  </div>
 </details>
@@ -1505,6 +1533,12 @@ window.YEARS = {json.dumps({"first": YEAR_FIRST, "now": TODAY.year, "today": TOD
 <script src="sankey.js"></script>
 <script>{LANDING_JS}</script>
 <style>{LANDING_CSS}</style>"""
+    a = body.index("<svg viewBox='0 0 780 362'")
+    b = body.index("</svg>", a) + len("</svg>")
+    body = body[:a] + _svg_tr(body[a:b]) + body[b:]
+    # the countries' names in every language (an ad hoc-only country has the map's name)
+    i18n.register_countries((iso, cd.get("name")) for iso, cd in countries.items())
+    i18n.register_countries((iso, w.get("n")) for iso, w in wdata.items())
     page("index.html", "OCHA Anticipatory Action — portfolio", body)
 
 
@@ -1736,7 +1770,10 @@ abbr[title] { text-decoration:underline dotted #94a3b8; text-underline-offset:2p
 """
 
 LANDING_JS = r"""
-const MONL = 'JFMAMJJASOND';
+// what the script writes follows the language switch (tr8, site_i18n); the records' own text
+// (trigger statements, window and area names, document titles, notes) is shown as recorded
+const MONL = () => tr8('JFMAMJJASOND');   // month initials (Spanish: E for enero)
+const yr = (toDate, inYear) => YEAR != null ? tr8(inYear, YEAR) : tr8(toDate);   // 'to date' / 'in <year>'
 const svg = document.getElementById('map'), world = document.getElementById('world'),
       adm = document.getElementById('adm'), side = document.getElementById('side'),
       back = document.getElementById('back'), tip = document.getElementById('tip'),
@@ -1813,6 +1850,11 @@ function flowFigures(fs, LY){
 }
 // what the flow figures count under the layers shown, in words
 function flowWhat(F){ return F.nAd === 0 ? 'framework activations' : F.nAd === F.n ? 'ad hoc allocations' : 'framework activations and ad hoc allocations'; }
+// the tile's label for each of them, to date and in a year (spelled out: the page's translations
+// are found by their literal text)
+const WHAT_WHEN = {'framework activations': ['framework activations to date', 'framework activations in {0}'],
+  'ad hoc allocations': ['ad hoc allocations to date', 'ad hoc allocations in {0}'],
+  'framework activations and ad hoc allocations': ['framework activations and ad hoc allocations to date', 'framework activations and ad hoc allocations in {0}']};
 const people = v => v >= 1e6 ? (v/1e6).toFixed(1) + 'M' : v >= 1e3 ? Math.round(v/1e3) + 'k' : String(Math.round(v));
 // an activation in the last RECENT_DAYS days, by the browser's clock (the page is static: one
 // published weeks ago must not keep blinking on the build date). Dates are partial ISO: a full
@@ -1873,13 +1915,13 @@ function setYear(y){
 function c_has(iso, hz){ const f = L[iso].fws.find(x => x.hazard === hz); return !!(f && f.layers.length); }
 document.querySelectorAll('#yearbar button').forEach(b => b.addEventListener('click', () => setYear(b.dataset.y)));
 // a status 'as at' a past year is derived: say so wherever it is shown
-const DRV = (t) => `<span class='drv' title='${esc(t || 'Reconstructed from the framework records (version dates and status history)')}'>derived</span>`;
+const DRV = (t) => `<span class='drv' title='${esc(t || tr8('Reconstructed from the framework records (version dates and status history)'))}'>${esc(tr8('derived'))}</span>`;
 function statusNote(f){ if(!pastY()) return '';
-  return f.disp === 'retired' ? ` · retired by the end of ${YEAR} (retirement date derived: ${(f.hist||{}).ret_note || 'no date recorded'})`
-       : ` · status at the end of ${YEAR} (derived)`; }
+  return ' · ' + (f.disp === 'retired' ? tr8('retired by the end of {0} (retirement date derived: {1})', YEAR, tr8((f.hist||{}).ret_note || 'no date recorded'))
+       : tr8('status at the end of {0} (derived)', YEAR)); }
 
 function money(v){ return v==null ? '—' : v>=1e6 ? '$'+(v/1e6).toFixed(v>=1e7?0:1)+'M' : v>=1e3 ? '$'+Math.round(v/1e3)+'k' : '$'+Math.round(v); }
-function num(v){ return v==null ? '—' : Math.round(v).toLocaleString(); }
+function num(v){ return v==null ? '—' : Math.round(v).toLocaleString('en-US'); }   // one number format in every language
 function esc(s){ return s==null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 const SPLIT = `linear-gradient(135deg,${'#2171b5'} 0 50%,${'#9ecae1'} 50% 100%)`;   // 'being updated': half active, half development
 function bgFor(st){ return st==='updating' ? SPLIT : (COLOR[st] || COLOR.development); }
@@ -1890,14 +1932,14 @@ function pinStyle(f){ const l = visLayer(f) || f.layer;
   return {bg: LAYER_COLOR[l], cls: l}; }
 function badge(st, label){ st = st || 'development';
   const cls = st==='active' ? 'endorsed' : st==='updating' ? 'updating' : st==='retired' ? 'retired' : st==='adhoc' ? 'adhoc' : st==='pipeline' ? 'pipeline' : 'development';
-  return `<span class='badge b-${cls}'>${esc(label || KBLABEL[st] || st.replace(/_/g,' '))}</span>`; }
+  return `<span class='badge b-${cls}'>${esc(tr8(label || KBLABEL[st] || st.replace(/_/g,' ')))}</span>`; }
 function verBadge(st){ st=st||''; const m = {endorsed:'endorsed', superseded:'superseded', development:'development', 'pre-development':'pre-development', retired:'retired'};
   const lbl = {development:'in development', 'pre-development':'pre-development'}[st] || st || '?';
-  return `<span class='badge b-${m[st]||'retired'}'>${esc(lbl)}</span>`; }
+  return `<span class='badge b-${m[st]||'retired'}'>${esc(tr8(lbl))}</span>`; }
 function hzColor(h){ return HAZ[h] || '#7a8699'; }
 function iconHTML(f, extra=''){ const ps = pinStyle(f);
   const rec = dotActs(f).map(isRecent).sort((a, b) => b - a), nRec = rec.filter(Boolean).length;   // recent dots first: the 16-dot cap never hides one
-  const ttl = `${rec.length} activation${rec.length>1?'s':''}${nRec ? ` · ${nRec} in the last ${RECENT_DAYS} days` : ''}`;
+  const ttl = tr8(rec.length > 1 ? '{0} activations' : '{0} activation', rec.length) + (nRec ? ' · ' + tr8('{0} in the last {1} days', nRec, RECENT_DAYS) : '');
   return `<span class='iconbox ${f.ring==='now'?'able-now':''} ${ps.cls} ${extra}' style='background:${ps.bg}' data-hz='${f.hazard}'>`
   + `<svg viewBox='0 0 24 24' class='hz'>${GLYPH[f.glyph]||GLYPH.other}</svg>`
   + (rec.length ? `<span class='actdots' title='${ttl}'>${rec.slice(0, 16).map(r => `<span class="actdot${r ? ' recent' : ''}"></span>`).join('')}</span>` : '') + `</span>`; }
@@ -1935,12 +1977,12 @@ function fixHeight(){
 }
 // phones: callouts are unusable at 350 px, so the panel lists the countries instead
 function renderWorldList(){
-  const rows = Object.entries(L).filter(([iso,c]) => vis(c).length).sort((a,b)=>a[1].name.localeCompare(b[1].name)).map(([iso,c]) =>
+  const rows = Object.entries(L).filter(([iso,c]) => vis(c).length).sort((a,b)=>tr8(a[1].name).localeCompare(tr8(b[1].name))).map(([iso,c]) =>
     `<div class='fcardx wl' style='--hz:${hzColor(vis(c)[0].hazard)}' onclick='selectCountry("${iso}")'>
-      <div class='fhead'><b>${esc(c.name)}</b><span class='muted'>${nounCount(vis(c))}</span></div>
-      <div class='wl-pins'>${vis(c).map(f=>`<span class='wl-pin'>${iconHTML(f)}<span class='hlab'>${esc(f.hz_label)}</span> ${badge(f.disp)}</span>`).join('')}</div>
+      <div class='fhead'><b>${esc(tr8(c.name))}</b><span class='muted'>${nounCount(vis(c))}</span></div>
+      <div class='wl-pins'>${vis(c).map(f=>`<span class='wl-pin'>${iconHTML(f)}<span class='hlab'>${esc(tr8(f.hz_label))}</span> ${badge(f.disp)}</span>`).join('')}</div>
     </div>`).join('');
-  side.innerHTML = `<div class='muted' style='margin:2px 0 8px'>Tap a country to zoom in.</div><div class='fwlist'>${rows}</div>`;
+  side.innerHTML = `<div class='muted' style='margin:2px 0 8px'>${esc(tr8('Tap a country to zoom in.'))}</div><div class='fwlist'>${rows}</div>`;
 }
 let P = worldProj;                                    // projection the country layers use
 function ringsD(rings, proj=P){ let d=''; for(const r of rings){ let first=true; for(const [x,y] of r){ const q=proj(x,y); d += (first?'M':'L') + q[0].toFixed(1) + ',' + q[1].toFixed(1); first=false; } d+='Z'; } return d; }
@@ -2050,7 +2092,7 @@ function drawAdmin(iso, fade){
   if(!g) return;
   const c = L[iso];
   let html = '';
-  (g.nb||[]).forEach(n => html += `<path class='nb' data-n='${esc(L[n.iso]?.name || WORLD[n.iso]?.n || n.iso)}' d='${ringsD(n.r)}'/>`);
+  (g.nb||[]).forEach(n => html += `<path class='nb' data-n='${esc(tr8(L[n.iso]?.name || WORLD[n.iso]?.n || n.iso))}' d='${ringsD(n.r)}'/>`);
   if(g.adm0.length) html += `<path class='a0' d='${ringsD(g.adm0)}'/>`;
   g.adm1.forEach(a => html += `<path class='a1' data-n='${esc(a.n)}' d='${ringsD(a.r)}'/>`);
 
@@ -2062,7 +2104,7 @@ function drawAdmin(iso, fade){
     if(!v || !v.scope) return;
     const ts = (v.scope.tiers && v.scope.tiers.length) ? v.scope.tiers
              : [{label:null, pcodes:v.scope.pcodes, rest:!!v.scope.national}];
-    ts.forEach((t, i) => tiers.push({hz:f.hazard, hzl:f.hz_label, label:t.label, pcodes:t.pcodes||[], rest:!!t.rest,
+    ts.forEach((t, i) => tiers.push({hz:f.hazard, hzl:tr8(f.hz_label), label:t.label, pcodes:t.pcodes||[], rest:!!t.rest,
       color: shade(hzColor(f.hazard), ts.length > 1 ? i/(ts.length-1) : 0)}));
   });
   // country-wide tiers (national trigger, 'all other provinces', unmapped zone): a wash under everything
@@ -2082,8 +2124,8 @@ function drawAdmin(iso, fade){
   adm.innerHTML = html;
   if(fade) void adm.getBoundingClientRect();
   adm.classList.add('show');
-  legend.innerHTML = `<b>${esc(c.name)}</b><br>` + tiers.map(t =>
-      `<span class='sq' style='background:${t.color}'></span>${esc(t.hzl)}${t.label?` — ${esc(t.label)}`:''}${t.rest?' (whole country)':''}<br>`).join('');
+  legend.innerHTML = `<b>${esc(tr8(c.name))}</b><br>` + tiers.map(t =>
+      `<span class='sq' style='background:${t.color}'></span>${esc(t.hzl)}${t.label?` — ${esc(t.label)}`:''}${t.rest?' ' + esc(tr8('(whole country)')):''}<br>`).join('');
 }
 
 // ---------- world legend (KB style)
@@ -2095,27 +2137,27 @@ function worldLegend(){
   const nRec = shown.reduce((s,f)=>s+dotActs(f).filter(isRecent).length,0);
   const swatch = { framework: `<span class='dot' style='background:${COLOR.active}'></span>`, adhoc: `<span class='dot' style='background:${LAYER_COLOR.adhoc}'></span>`,
                    retired: `<span class='dot' style='background:${LAYER_COLOR.retired}'></span>`, tech: `<span class='dot dot-hollow'></span>` };
-  const lab = k => k === 'framework' && pastY() ? `Frameworks at the end of ${YEAR}` : k === 'adhoc' && YEAR != null ? `Ad hoc allocations in ${YEAR}` : LAYER_LABEL[k];
+  const lab = k => k === 'framework' && pastY() ? tr8('Frameworks at the end of {0}', YEAR) : k === 'adhoc' && YEAR != null ? tr8('Ad hoc allocations in {0}', YEAR) : tr8(LAYER_LABEL[k]);
   const row = k => `<label><input type='checkbox' ${LAYERS[k]?'checked':''} onchange='setLayer("${k}", this.checked)'>${swatch[k]}${lab(k)} <span class='cnt'>${onLayer(k).length}</span></label>`;
   const st = `<div class='lsub${LAYERS.framework?'':' off'}'>`
-    + `<span><span class='dot' style='background:${COLOR.active}'></span>Active <span class='cnt'>${n('active')}</span></span>`
-    + `<span><span class='dot' style='background:${SPLIT}'></span>Being updated <span class='cnt'>${n('updating')}</span></span>`
-    + `<span><span class='dot' style='background:${COLOR.development}'></span>In development <span class='cnt'>${n('development')}</span></span></div>`;
-  legend.innerHTML = `<div class='layerctl' role='group' aria-label='Map layers'>` + row('framework') + st + row('adhoc') + row('retired') + row('tech') + `</div>`
-    + `<div class='lsub'><span><span class='dot' style='background:#e3322d'></span>Activations${YEAR != null ? ` in ${YEAR}` : ''} <span class='cnt'>${nAct}</span></span>`
-    + (nRec ? `<span><span class='dot recent' style='background:#e3322d'></span>In the last ${RECENT_DAYS} days <span class='cnt'>${nRec}</span></span>` : '')
-    + (pastY() ? '' : `<span><span class='dot' style='background:#fff;border:2.5px solid #f5a300;box-sizing:border-box'></span>In monitoring season <span class='cnt'>${nNow}</span></span>`) + `</div>`;
+    + `<span><span class='dot' style='background:${COLOR.active}'></span>${esc(tr8('Active'))} <span class='cnt'>${n('active')}</span></span>`
+    + `<span><span class='dot' style='background:${SPLIT}'></span>${esc(tr8('Being updated'))} <span class='cnt'>${n('updating')}</span></span>`
+    + `<span><span class='dot' style='background:${COLOR.development}'></span>${esc(tr8('In development'))} <span class='cnt'>${n('development')}</span></span></div>`;
+  legend.innerHTML = `<div class='layerctl' role='group' aria-label='${esc(tr8('Map layers'))}'>` + row('framework') + st + row('adhoc') + row('retired') + row('tech') + `</div>`
+    + `<div class='lsub'><span><span class='dot' style='background:#e3322d'></span>${esc(YEAR != null ? tr8('Activations in {0}', YEAR) : tr8('Activations'))} <span class='cnt'>${nAct}</span></span>`
+    + (nRec ? `<span><span class='dot recent' style='background:#e3322d'></span>${esc(tr8('In the last {0} days', RECENT_DAYS))} <span class='cnt'>${nRec}</span></span>` : '')
+    + (pastY() ? '' : `<span><span class='dot' style='background:#fff;border:2.5px solid #f5a300;box-sizing:border-box'></span>${esc(tr8('In monitoring season'))} <span class='cnt'>${nNow}</span></span>`) + `</div>`;
 }
 // what a list of map entries is called: frameworks, unless some are ad hoc allocations or technical support
 function nounCount(fs){
   const k = {framework:0, retired:0, adhoc:0, tech:0};
   fs.forEach(f => { k[visLayer(f) || f.layer] = (k[visLayer(f) || f.layer] || 0) + 1; });
   const out = [];
-  if(k.framework) out.push(`${k.framework} framework${k.framework>1?'s':''}`);
-  if(k.retired) out.push(`${k.retired} retired framework${k.retired>1?'s':''}`);
-  if(k.adhoc) out.push(`${k.adhoc} with ad hoc allocations`);
-  if(k.tech) out.push(`${k.tech} with technical support`);
-  return out.join(' · ') || 'nothing shown';
+  if(k.framework) out.push(tr8(k.framework > 1 ? '{0} frameworks' : '{0} framework', k.framework));
+  if(k.retired) out.push(tr8(k.retired > 1 ? '{0} retired frameworks' : '{0} retired framework', k.retired));
+  if(k.adhoc) out.push(tr8('{0} with ad hoc allocations', k.adhoc));
+  if(k.tech) out.push(tr8('{0} with technical support', k.tech));
+  return out.join(' · ') || tr8('nothing shown');
 }
 // re-draw everything that depends on the layer set: pins, callouts, legend, tiles, sidebar
 function syncOn(){ for(const [iso, c] of Object.entries(L)){ const el = WP[iso] && WP[iso].el; if(el) el.classList.toggle('on', vis(c).length > 0); } }
@@ -2132,59 +2174,66 @@ function updateTiles(){
   // the label is text; `drv` appends the 'derived' marker (past years: reconstructed figures)
   const set = (id, v, l, drv) => { const el = document.getElementById(id); if(!el) return; el.querySelector('.v').textContent = v;
     el.querySelector('.l').innerHTML = esc(l) + (drv ? DRV(drv === true ? null : drv) : ''); };
-  const past = pastY(), at = past ? ` at the end of ${YEAR}` : YEAR != null ? ' today' : '';
-  set('t-fw', fw.length, `frameworks on the map${at} · ${n('active')} active · ${n('updating')} being updated · ${n('development')} in development`,
-      past && 'Which frameworks existed at 31 December, and their status, are reconstructed from the version dates and status history; a framework whose validity ended during the year still counts as active for that year');
-  const noEnv = []; Object.values(L).forEach(c => c.fws.forEach(f => { if(fw.includes(f) && !f.pre_now) noEnv.push(`${c.name} ${f.hz_label.toLowerCase()}`); }));
+  const past = pastY();
+  set('t-fw', fw.length, tr8(past ? 'frameworks on the map at the end of {3} · {0} active · {1} being updated · {2} in development'
+                              : YEAR != null ? 'frameworks on the map today · {0} active · {1} being updated · {2} in development'
+                              : 'frameworks on the map · {0} active · {1} being updated · {2} in development',
+                              n('active'), n('updating'), n('development'), YEAR),
+      past && tr8('Which frameworks existed at 31 December, and their status, are reconstructed from the version dates and status history; a framework whose validity ended during the year still counts as active for that year'));
+  const noEnv = []; Object.values(L).forEach(c => c.fws.forEach(f => { if(fw.includes(f) && !f.pre_now) noEnv.push(`${tr8(c.name)} ${tr8(f.hz_label).toLowerCase()}`); }));
   let pre = fw.reduce((s,f)=>s+(f.pre_now||0),0), preX = 0;
   if(past){   // pooled-fund rows of no single framework count with the country's frameworks shown
     Object.entries(L).forEach(([iso, c]) => { const x = (c.pre_x || {})[String(YEAR)]; if(x && c.fws.some(f => fw.includes(f))) preX += x[0]; }); pre += preX; }
   const ser = (YEARS.series || {})[String(YEAR)];
   set('t-pre', '$' + Math.round(pre/1e6) + 'M', past
-      ? `pre-arranged in ${YEAR}, frameworks shown`
-        + (noEnv.length ? ` · ${noEnv.length} with no figure for ${YEAR}` : '')
-      : 'pre-arranged now (CERF and Country and Regional Funds), all current frameworks incl. in development'
-        + (noEnv.length ? ` · ${noEnv.length} without an envelope recorded yet: ${noEnv.join(', ')}` : ''),
-      past && fw.some(f => f.pre_drv) && 'Part of this year\'s figure is inferred from the envelope of the version valid during the year (no reported figure for that framework-year)');
+      ? tr8('pre-arranged in {0}, frameworks shown', YEAR)
+        + (noEnv.length ? ' · ' + tr8('{0} with no figure for {1}', noEnv.length, YEAR) : '')
+      : tr8('pre-arranged now (CERF and Country and Regional Funds), all current frameworks incl. in development')
+        + (noEnv.length ? ' · ' + tr8('{0} without an envelope recorded yet: {1}', noEnv.length, noEnv.join(', ')) : ''),
+      past && fw.some(f => f.pre_drv) && tr8("Part of this year's figure is inferred from the envelope of the version valid during the year (no reported figure for that framework-year)"));
   const tp = document.getElementById('t-pre'); if(tp) tp.title = !past ? '' : [
-    `A stock for ${YEAR}: each framework valid at any time in the year, counted once; never summed over years.`,
-    preX ? `Includes ${money(preX)} of pooled-fund allocations not tied to one hazard.` : '',
-    ser != null && Math.abs(ser - pre) >= 5e5 ? `The funding page's ${YEAR} figure (${money(ser)}) also counts AA-tagged pooled-fund allocations in countries without a framework shown here.` : '',
-    noEnv.length ? `No figure for ${YEAR}: ${noEnv.join(', ')}.` : ''].filter(Boolean).join(' ');
+    tr8('A stock for {0}: each framework valid at any time in the year, counted once; never summed over years.', YEAR),
+    preX ? tr8('Includes {0} of pooled-fund allocations not tied to one hazard.', money(preX)) : '',
+    ser != null && Math.abs(ser - pre) >= 5e5 ? tr8("The funding page's {0} figure ({1}) also counts AA-tagged pooled-fund allocations in countries without a framework shown here.", YEAR, money(ser)) : '',
+    noEnv.length ? tr8('No figure for {0}: {1}.', YEAR, noEnv.join(', ')) : ''].filter(Boolean).join(' ');
   const cov = fw.reduce((s,f)=>s+(f.covered||0),0);
   set('t-cov', (past && !cov) || !fw.length ? '—' : (cov/1e6).toFixed(1) + 'M', past
-      ? (cov ? `people covered at the end of ${YEAR}, frameworks shown (latest figure reported by then)` : `people covered: no figure recorded by the end of ${YEAR}`)
-      : fw.length ? `people covered now by the frameworks shown (${fw.filter(f=>f.covered).length} of ${fw.length} have a figure)` : 'people covered now: no framework shown');
+      ? (cov ? tr8('people covered at the end of {0}, frameworks shown (latest figure reported by then)', YEAR) : tr8('people covered: no figure recorded by the end of {0}', YEAR))
+      : fw.length ? tr8('people covered now by the frameworks shown ({0} of {1} have a figure)', fw.filter(f=>f.covered).length, fw.length) : tr8('people covered now: no framework shown'));
   // the flows: every activation to date (or of the year shown) on the layers shown
-  const F = flowFigures(shown), when = YEAR != null ? ` in ${YEAR}` : ' to date', what = flowWhat(F);
+  const F = flowFigures(shown), what = flowWhat(F);
   // what the layers switched off would add: named in each label, so no figure is taken for the whole
   const all = Object.values(L).flatMap(c=>c.fws);
   const offs = [['adhoc','ad hoc allocations'],['retired','retired frameworks'],['framework','current frameworks']]
     .filter(([k]) => !LAYERS[k]).map(([k, lab]) => [lab, flowFigures(all, {[k]: true})]);
-  const notShown = fn => { const xs = offs.map(([lab, G]) => fn(lab, G)).filter(Boolean); return xs.length ? ` · not shown: ${xs.join(', ')}` : ''; };
-  set('t-act', F.n, (!F.n ? `no activation${when} on the layers shown`
-      : F.nAd && F.nAd < F.n ? `activations${when}: ${F.n - F.nAd} framework activations, ${F.nAd} ad hoc allocations` : what + when)
-      + notShown((lab, G) => G.n ? `${G.n} ${G.nAd ? `ad hoc allocation${G.n === 1 ? '' : 's'}` : `on ${lab}`}` : null));
-  const pooled = F.usd - F.usdCerf, funds = pooled < 5e4 ? 'CERF' : F.usdCerf < 5e4 ? 'Country and Regional Funds'
-      : `CERF ${money(F.usdCerf)} · Country and Regional Funds ${money(pooled)}`;
-  set('t-rel', F.n ? money(F.usd) : '—', (!F.n ? `nothing released${when} on the layers shown` : `released${when} on ${what} — ${funds}`)
-      + notShown((lab, G) => G.usd >= 5e4 ? `${lab} ${money(G.usd)}` : null));
-  const tr = document.getElementById('t-rel'); if(tr) tr.title = 'Money released when a framework activated'
-    + (F.nAd ? ' or allocated ad hoc for anticipatory action' : '') + ', from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.'
-    + (F.noUsd ? ` ${F.noUsd} of the ${F.n} have no amount recorded.` : '');
-  const by = YEAR != null ? ` with the ${YEAR} releases` : ' to date';
+  const notShown = fn => { const xs = offs.map(([lab, G]) => fn(lab, G)).filter(Boolean); return xs.length ? ' · ' + tr8('not shown: {0}', xs.join(', ')) : ''; };
+  set('t-act', F.n, (!F.n ? yr('no activation to date on the layers shown', 'no activation in {0} on the layers shown')
+      : F.nAd && F.nAd < F.n ? tr8(YEAR != null ? 'activations in {2}: {0} framework activations, {1} ad hoc allocations' : 'activations to date: {0} framework activations, {1} ad hoc allocations', F.n - F.nAd, F.nAd, YEAR)
+      : yr(...WHAT_WHEN[what]))
+      + notShown((lab, G) => G.n ? (G.nAd ? tr8(G.n === 1 ? '{0} ad hoc allocation' : '{0} ad hoc allocations', G.n)
+                                          : tr8(lab === 'retired frameworks' ? '{0} on retired frameworks' : '{0} on current frameworks', G.n)) : null));
+  const pooled = F.usd - F.usdCerf, funds = pooled < 5e4 ? 'CERF' : F.usdCerf < 5e4 ? tr8('Country and Regional Funds')
+      : `CERF ${money(F.usdCerf)} · ${tr8('Country and Regional Funds')} ${money(pooled)}`;
+  set('t-rel', F.n ? money(F.usd) : '—', (!F.n ? yr('nothing released to date on the layers shown', 'nothing released in {0} on the layers shown')
+      : tr8(YEAR != null ? 'released in {2} on {0} — {1}' : 'released to date on {0} — {1}', tr8(what), funds, YEAR))
+      + notShown((lab, G) => G.usd >= 5e4 ? `${tr8(lab)} ${money(G.usd)}` : null));
+  const tr = document.getElementById('t-rel'); if(tr) tr.title = tr8(F.nAd
+      ? 'Money released when a framework activated or allocated ad hoc for anticipatory action, from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.'
+      : 'Money released when a framework activated, from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.')
+    + (F.noUsd ? ' ' + tr8('{0} of the {1} have no amount recorded.', F.noUsd, F.n) : '');
   set('t-reach', F.nRep ? people(F.reached) : '—',
-      (!F.nCerf ? `people reached: no CERF allocation${YEAR != null ? ` in ${YEAR}` : ''} on the layers shown`
-      : !F.nRep ? `people reached${by}: no report yet for ${F.nCerf === 1 ? 'the CERF allocation' : `the ${F.nCerf} CERF allocations`}`
-      : `people reached${by} — CERF allocations, as reported so far (${F.nRep} of ${F.nCerf} have a figure)`)
-      + notShown((lab, G) => G.reached ? `${lab} ${people(G.reached)}` : null));
-  const tp2 = document.getElementById('t-reach'); if(tp2) tp2.title = 'Summed over CERF allocations: CERF\'s own de-duplicated figure for each one, from its final report'
-    + (F.nInterim ? `, or the sum over its projects where the allocation has none yet (${F.nInterim} interim)` : '')
-    + '. A person reached under two allocations counts twice. Reports come about nine months after an allocation, so recent years are incomplete.'
-    + ' Country and Regional Funds report no figure here. Not people covered: that is what the plans cover now.';
+      (!F.nCerf ? yr('people reached: no CERF allocation on the layers shown', 'people reached: no CERF allocation in {0} on the layers shown')
+      : !F.nRep ? (F.nCerf === 1 ? yr('people reached to date: no report yet for the CERF allocation', 'people reached with the {0} releases: no report yet for the CERF allocation')
+                                 : tr8(YEAR != null ? 'people reached with the {1} releases: no report yet for the {0} CERF allocations' : 'people reached to date: no report yet for the {0} CERF allocations', F.nCerf, YEAR))
+      : tr8(YEAR != null ? 'people reached with the {2} releases — CERF allocations, as reported so far ({0} of {1} have a figure)' : 'people reached to date — CERF allocations, as reported so far ({0} of {1} have a figure)', F.nRep, F.nCerf, YEAR))
+      + notShown((lab, G) => G.reached ? `${tr8(lab)} ${people(G.reached)}` : null));
+  const tp2 = document.getElementById('t-reach'); if(tp2) tp2.title = tr8("Summed over CERF allocations: CERF's own de-duplicated figure for each one, from its final report")
+    + (F.nInterim ? tr8(', or the sum over its projects where the allocation has none yet ({0} interim)', F.nInterim) : '')
+    + tr8('. A person reached under two allocations counts twice. Reports come about nine months after an allocation, so recent years are incomplete.')
+    + ' ' + tr8('Country and Regional Funds report no figure here. Not people covered: that is what the plans cover now.');
   const g = document.getElementById('gtiles'); if(g) g.classList.toggle('global', !!state.iso);
-  const cap = document.getElementById('gcap'); if(cap) cap.textContent = (state.iso ? `Global portfolio — not ${L[state.iso].name}: its own figures are in the panel` : 'Global portfolio — all layers currently shown on the map')
-    + (past ? ` · as at 31 December ${YEAR}` : YEAR != null ? ` · ${YEAR}, as of today` : '');
+  const cap = document.getElementById('gcap'); if(cap) cap.textContent = (state.iso ? tr8('Global portfolio — not {0}: its own figures are in the panel', tr8(L[state.iso].name)) : tr8('Global portfolio — all layers currently shown on the map'))
+    + (past ? ' · ' + tr8('as at 31 December {0}', YEAR) : YEAR != null ? ' · ' + tr8('{0}, as of today', YEAR) : '');
 }
 
 // ---------- callouts: one per country, laid out clear of every framework country (ported from the KB map)
@@ -2197,12 +2246,14 @@ function buildCallouts(){
     const fws = vis(c);
     if(!c.centroid || !fws.length) return;
     const el = document.createElement('div'); el.className = 'callout';
-    el.innerHTML = `<span class='cname' data-iso='${iso}'>${esc(c.name)}</span>` +
+    el.innerHTML = `<span class='cname' data-iso='${iso}'>${esc(tr8(c.name))}</span>` +
       fws.map(f => { const extra = Math.ceil(Math.min(f.n_act||0,16)/4) - 1;   // stacked activation-dot rows need head room
-        return `<span class='hrow'${extra>0?` style='margin-top:${extra*11}px'`:''}>${iconHTML(f)}<span class='hlab'>${esc(f.hz_label)}</span></span>`; }).join('');
+        return `<span class='hrow'${extra>0?` style='margin-top:${extra*11}px'`:''}>${iconHTML(f)}<span class='hlab'>${esc(tr8(f.hz_label))}</span></span>`; }).join('');
     el.querySelector('.cname').onclick = e => { e.stopPropagation(); selectCountry(iso); };
     el.querySelectorAll('.iconbox').forEach(ib => { ib.onclick = e => { e.stopPropagation(); selectCountry(iso, ib.dataset.hz); };
-      ib.onmouseenter = ev => { const f = c.fws.find(x=>x.hazard===ib.dataset.hz); const nA = f.n_act_all; showTip(ev, `${c.name} — ${f.hz_label}: ${f.disp_label}${statusNote(f)}${f.tech?' · technical support':''}${nA?` · ${nA} activation${nA>1?'s':''}${YEAR!=null?` in ${YEAR}`:''}`:''}`); };
+      ib.onmouseenter = ev => { const f = c.fws.find(x=>x.hazard===ib.dataset.hz); const nA = f.n_act_all;
+        showTip(ev, `${tr8(c.name)} — ${tr8(f.hz_label)}: ${tr8(f.disp_label)}${statusNote(f)}${f.tech ? ' · ' + tr8('technical support') : ''}`
+          + (nA ? ' · ' + (YEAR != null ? tr8(nA > 1 ? '{0} activations in {1}' : '{0} activation in {1}', nA, YEAR) : tr8(nA > 1 ? '{0} activations' : '{0} activation', nA)) : '')); };
       ib.onmouseleave = () => tip.hidden = true; });
     lpane.appendChild(el);
     const ln = document.createElementNS(NS, 'line'); ln.setAttribute('class','leader'); leaders.appendChild(ln);
@@ -2341,9 +2392,9 @@ function showTip(ev, txt){ const box = mapbox.getBoundingClientRect(); tip.textC
   tip.style.left = (ev.clientX-box.left)+'px'; tip.style.top = (ev.clientY-box.top)+'px'; }
 svg.addEventListener('mousemove', ev => {
   const t = ev.target; let txt = null;
-  if(t.classList.contains('cty') && !state.iso){ const c = L[t.dataset.iso], nv = c ? vis(c).length : 0; txt = nv ? `${c.name} · ${nounCount(vis(c))}` : t.dataset.name; }
+  if(t.classList.contains('cty') && !state.iso){ const c = L[t.dataset.iso], nv = c ? vis(c).length : 0; txt = nv ? `${tr8(c.name)} · ${nounCount(vis(c))}` : tr8(t.dataset.name); }
   else if(t.classList.contains('sc')) txt = `${t.dataset.n} · ${t.dataset.hz}`;
-  else if(t.classList.contains('a1') || t.classList.contains('nb')) txt = t.dataset.n;
+  else if(t.classList.contains('a1') || t.classList.contains('nb')) txt = t.dataset.n;   // area names as recorded; neighbours translated
   if(txt) showTip(ev, txt); else tip.hidden = true;
 });
 svg.addEventListener('mouseleave', ()=> tip.hidden = true);
@@ -2361,7 +2412,7 @@ function goWorld(){
   state = { iso:null, hz:null, ver:null, pillar: state.pillar };
   document.querySelectorAll('.cty.sel').forEach(x=>x.classList.remove('sel'));
   adm.classList.remove('show'); back.hidden = true; worldLegend(); updateTiles();
-  if(isMobile()){ renderWorldList(); fixHeight(); } else { side.innerHTML = `<div class='muted' style='padding:20px 6px'>Select a country or a pin on the map.</div>`; side.style.opacity = '0'; setTimeout(()=>{ side.style.opacity=''; }, 900); }
+  if(isMobile()){ renderWorldList(); fixHeight(); } else { side.innerHTML = `<div class='muted' style='padding:20px 6px'>${esc(tr8('Select a country or a pin on the map.'))}</div>`; side.style.opacity = '0'; setTimeout(()=>{ side.style.opacity=''; }, 900); }
   setTimeout(()=>{ adm.innerHTML=''; }, 300);
   zoomOut(() => scheduleLayout());
   history.replaceState(null, '', location.pathname + (YEAR != null ? '#' + YEAR : ''));
@@ -2396,53 +2447,58 @@ function selectFramework(hz){ selectCountry(state.iso, hz, null); }
 function selectVersion(v){ state.ver = v; renderSide(); drawAdmin(state.iso, false); location.hash = hashFor([state.iso, state.hz, v]); }
 
 // ---------- sidebar
-function monthStrip(months){ months = months||[]; return [...MONL].map((m,i)=>`<span class='mm ${months.includes(i+1)?'on':''}'>${m}</span>`).join(''); }
+function monthStrip(months){ months = months||[]; return [...MONL()].map((m,i)=>`<span class='mm ${months.includes(i+1)?'on':''}'>${m}</span>`).join(''); }
 // the country's OWN figures, at the top of the panel — never to be confused with the global tiles
 function countryTiles(c){
   const fws = vis(c), fw = fws.filter(f=>visLayer(f)==='framework');
   const pre = fw.reduce((s,f)=>s+(f.pre_now||0),0), cov = fw.reduce((s,f)=>s+(f.covered||0),0);
-  const F = flowFigures(fws), when = YEAR != null ? ` in ${YEAR}` : ' to date';   // the global tiles' rule, this country
-  const actL = (F.nAd && F.nAd === F.n ? 'ad hoc allocation' : F.nAd ? 'activation' : 'framework activation') + (F.n===1?'':'s') + when + (F.nAd && F.nAd < F.n ? `, ${F.nAd} of them ad hoc` : '');
-  return `<div class='ctiles'><div class='ccap'>${esc(c.name)} only</div>
-    <div class='ctile'><div class='v'>${fw.length}</div><div class='l'>framework${fw.length===1?'':'s'}${fws.length>fw.length?` · ${fws.length-fw.length} other`:''}</div></div>
-    <div class='ctile'><div class='v'>${pre?money(pre):'—'}</div><div class='l'>pre-arranged ${pastY()?`in ${YEAR}`:'now'}</div></div>
-    <div class='ctile'><div class='v'>${cov?num(cov):'—'}</div><div class='l'>people covered${pastY()?'':' now'}</div></div>
-    <div class='ctile'><div class='v'>${F.n}</div><div class='l'>${actL}</div></div>
-    <div class='ctile'><div class='v'>${F.n?money(F.usd):'—'}</div><div class='l'>released${when}</div></div>
-    <div class='ctile'><div class='v'>${F.nRep?num(F.reached):'—'}</div><div class='l'>people reached${F.nCerf?` · ${F.nRep} of ${F.nCerf} CERF allocation${F.nCerf===1?'':'s'} reported`:''}</div></div></div>`;
+  const F = flowFigures(fws);   // the global tiles' rule, this country
+  const kind = F.nAd && F.nAd === F.n ? 'ad hoc allocation' : F.nAd ? 'activation' : 'framework activation', one = F.n === 1;
+  const ACT = {'ad hoc allocation': one ? ['ad hoc allocation to date', 'ad hoc allocation in {0}'] : ['ad hoc allocations to date', 'ad hoc allocations in {0}'],
+               'activation': one ? ['activation to date', 'activation in {0}'] : ['activations to date', 'activations in {0}'],
+               'framework activation': one ? ['framework activation to date', 'framework activation in {0}'] : ['framework activations to date', 'framework activations in {0}']};
+  const actL = yr(...ACT[kind]) + (F.nAd && F.nAd < F.n ? ', ' + tr8('{0} of them ad hoc', F.nAd) : '');
+  return `<div class='ctiles'><div class='ccap'>${esc(tr8('{0} only', tr8(c.name)))}</div>
+    <div class='ctile'><div class='v'>${fw.length}</div><div class='l'>${esc(tr8(fw.length === 1 ? 'framework' : 'frameworks'))}${fws.length>fw.length?' · ' + esc(tr8('{0} other', fws.length-fw.length)):''}</div></div>
+    <div class='ctile'><div class='v'>${pre?money(pre):'—'}</div><div class='l'>${esc(pastY() ? tr8('pre-arranged in {0}', YEAR) : tr8('pre-arranged now'))}</div></div>
+    <div class='ctile'><div class='v'>${cov?num(cov):'—'}</div><div class='l'>${esc(tr8(pastY() ? 'people covered' : 'people covered now'))}</div></div>
+    <div class='ctile'><div class='v'>${F.n}</div><div class='l'>${esc(actL)}</div></div>
+    <div class='ctile'><div class='v'>${F.n?money(F.usd):'—'}</div><div class='l'>${esc(yr('released to date', 'released in {0}'))}</div></div>
+    <div class='ctile'><div class='v'>${F.nRep?num(F.reached):'—'}</div><div class='l'>${esc(tr8('people reached'))}${F.nCerf ? ' · ' + esc(tr8(F.nCerf === 1 ? '{0} of {1} CERF allocation reported' : '{0} of {1} CERF allocations reported', F.nRep, F.nCerf)) : ''}</div></div></div>`;
 }
 function hiddenNote(c){
   const h = hidden(c); if(!h.length) return '';
-  return `<div class='small' style='margin:6px 0;color:#64748b'>Not drawn by the current layers: ` + h.map(f => `${esc(f.hz_label)} (<a style='cursor:pointer' onclick='setLayer("${f.layer}", true)'>${LAYER_LABEL[f.layer].toLowerCase()}</a>)`).join(', ') + `</div>`;
+  return `<div class='small' style='margin:6px 0;color:#64748b'>${esc(tr8('Not drawn by the current layers:'))} ` + h.map(f => `${esc(tr8(f.hz_label))} (<a style='cursor:pointer' onclick='setLayer("${f.layer}", true)'>${esc(tr8(LAYER_LABEL[f.layer]).toLowerCase())}</a>)`).join(', ') + `</div>`;
 }
 function renderSide(){
   const c = L[state.iso];
-  const crumb = `<div class='crumb'><a onclick='goWorld()'>World</a> › ` +
-    (state.hz ? `<a onclick='selectCountry("${state.iso}", null)'>${esc(c.name)}</a> › ${esc(c.fws.find(f=>f.hazard===state.hz)?.hz_label||state.hz)}` : `<b>${esc(c.name)}</b>`) + `</div>`;
+  const crumb = `<div class='crumb'><a onclick='goWorld()'>${esc(tr8('World'))}</a> › ` +
+    (state.hz ? `<a onclick='selectCountry("${state.iso}", null)'>${esc(tr8(c.name))}</a> › ${esc(tr8(c.fws.find(f=>f.hazard===state.hz)?.hz_label||state.hz))}` : `<b>${esc(tr8(c.name))}</b>`) + `</div>`;
   if(!state.hz){
     const fws = vis(c);
-    side.innerHTML = crumb + `<h3>${esc(c.name)}</h3><div class='muted'>${esc(c.region||'')} · ${nounCount(fws)} — select one</div>` + countryTiles(c) + hiddenNote(c) +
+    side.innerHTML = crumb + `<h3>${esc(tr8(c.name))}</h3><div class='muted'>${esc(tr8(c.region||''))} · ${esc(tr8('{0} — select one', nounCount(fws)))}</div>` + countryTiles(c) + hiddenNote(c) +
       `<div class='fwlist'>` + fws.map(f => {
         const v = f.versions.find(x=>x.v===f.current);
         return `<div class='fcardx' style='--hz:${hzColor(f.hazard)}' onclick='selectFramework("${f.hazard}")'>
-          <div class='fhead'><b>${iconHTML(f)}${esc(f.hz_label)}</b>${badge(f.disp)}${pastY()?DRV(statusNote(f).slice(3)):''}${f.tech?` <span class='badge b-tech'>technical support</span>`:''}</div>
+          <div class='fhead'><b>${iconHTML(f)}${esc(tr8(f.hz_label))}</b>${badge(f.disp)}${pastY()?DRV(statusNote(f).slice(3)):''}${f.tech?` <span class='badge b-tech'>${esc(tr8('technical support'))}</span>`:''}</div>
           <table class='mini'>
-           <tr><td class='lbl'>${pastY()?`Version, end of ${YEAR}`:'Latest version'}</td><td>${f.current ? `<code>${f.current}</code> <span class='muted'>(${f.versions.length} total)</span>` : '<span class="muted">no framework version</span>'}</td></tr>
-           <tr><td class='lbl'>Pre-arranged</td><td>${money(f.pre_now ?? f.prearranged)}${f.pre_now==null && f.prearranged_year?` <span class='muted'>(${f.prearranged_year})</span>`:''}</td></tr>
-           <tr><td class='lbl'>People covered</td><td>${num(f.covered)}</td></tr>
-           <tr><td class='lbl'>Activations${YEAR!=null?` ${YEAR}`:''}</td><td>${f.n_act_all||'—'}${f.n_adhoc?` <span class='muted'>(${f.n_adhoc} ad hoc)</span>`:''}</td></tr>
-           <tr><td class='lbl'>Monitoring</td><td>${monthStrip(v ? v.months : [])}</td></tr>
+           <tr><td class='lbl'>${esc(pastY() ? tr8('Version, end of {0}', YEAR) : tr8('Latest version'))}</td><td>${f.current ? `<code>${f.current}</code> <span class='muted'>${esc(tr8('({0} total)', f.versions.length))}</span>` : `<span class="muted">${esc(tr8('no framework version'))}</span>`}</td></tr>
+           <tr><td class='lbl'>${esc(tr8('Pre-arranged'))}</td><td>${money(f.pre_now ?? f.prearranged)}${f.pre_now==null && f.prearranged_year?` <span class='muted'>(${f.prearranged_year})</span>`:''}</td></tr>
+           <tr><td class='lbl'>${esc(tr8('People covered'))}</td><td>${num(f.covered)}</td></tr>
+           <tr><td class='lbl'>${esc(tr8('Activations'))}${YEAR!=null?` ${YEAR}`:''}</td><td>${f.n_act_all||'—'}${f.n_adhoc?` <span class='muted'>${esc(tr8('({0} ad hoc)', f.n_adhoc))}</span>`:''}</td></tr>
+           <tr><td class='lbl'>${esc(tr8('Monitoring'))}</td><td>${monthStrip(v ? v.months : [])}</td></tr>
           </table></div>`; }).join('') + `</div>`;
     annotate(side, side);
     return;
   }
   const f = c.fws.find(x=>x.hazard===state.hz); if(!f){ state.hz=null; return renderSide(); }
   if(!f.versions.length){
-    const why = f.layer==='adhoc' ? `Ad hoc anticipatory-action allocations for this hazard — no framework behind them.`
-              : f.layer==='tech' ? `OCHA technical support — no framework version in the registry yet${f.status?` (tracking sheets: ${esc(f.status.replace(/_/g,' '))})`:''}.`
-              : `No framework version in the registry yet — status comes from the tracking sheets (${esc((f.status||'').replace(/_/g,' '))}).`;
+    const st = esc((f.status||'').replace(/_/g,' '));
+    const why = f.layer==='adhoc' ? esc(tr8('Ad hoc anticipatory-action allocations for this hazard — no framework behind them.'))
+              : f.layer==='tech' ? (f.status ? esc(tr8('OCHA technical support — no framework version in the registry yet (tracking sheets: {0}).', st)) : esc(tr8('OCHA technical support — no framework version in the registry yet.')))
+              : esc(tr8('No framework version in the registry yet — status comes from the tracking sheets ({0}).', st));
     side.innerHTML = crumb + fwHeader(c, f) + countryTiles(c) + `<p class='muted'>${why}</p>` + adhocBlock(f) +
-      learningBlock(f, null) + partnersBlock(c, f, null) + (f.page ? `<p><a href='${f.page}'>framework page →</a></p>` : '');
+      learningBlock(f, null) + partnersBlock(c, f, null) + (f.page ? `<p><a href='${f.page}'>${esc(tr8('framework page →'))}</a></p>` : '');
     annotate(side, side);
     return;
   }
@@ -2450,10 +2506,10 @@ function renderSide(){
   const v = f.versions.find(x=>x.v===ver) || f.versions[f.versions.length-1];
   const isCur = v.v === f.current;
   side.innerHTML = crumb + fwHeader(c, f) + countryTiles(c) + versionBar(f, v, isCur) +
-    (isCur ? '' : f.current ? `<div class='warnbox'>Viewing ${pastY()?'another':'an older'} version (${esc(v.superseded?'superseded':(v.status||'past'))}). The map shows this version's scope. ${pastY()?`In force or most recent at the end of ${YEAR}`:'Most recent'}: <a onclick='selectVersion("${f.current}")' style='cursor:pointer'>${f.current}</a>.</div>`
-       : `<div class='warnbox'>No dated version by the end of ${YEAR}${f.layers.length?' (in development by the status reports)':''}; showing the latest version.</div>`) +
+    (isCur ? '' : f.current ? `<div class='warnbox'>${esc(tr8(pastY() ? 'Viewing another version ({0}). The map shows this version\'s scope.' : 'Viewing an older version ({0}). The map shows this version\'s scope.', tr8(v.superseded?'superseded':(v.status||'past'))))} ${esc(pastY() ? tr8('In force or most recent at the end of {0}', YEAR) : tr8('Most recent'))}: <a onclick='selectVersion("${f.current}")' style='cursor:pointer'>${f.current}</a>.</div>`
+       : `<div class='warnbox'>${esc(tr8(f.layers.length ? 'No dated version by the end of {0} (in development by the status reports); showing the latest version.' : 'No dated version by the end of {0}; showing the latest version.', YEAR))}</div>`) +
     factsBlock(f, v) + pillarsBar(f, v) + `<div id='pillarbody'>${pillarBody(f, v)}</div>` +
-    (f.page && f.page!=='#' ? `<p class='small' style='margin-top:12px'><a href='${f.page}'>full framework page →</a></p>` : '');
+    (f.page && f.page!=='#' ? `<p class='small' style='margin-top:12px'><a href='${f.page}'>${esc(tr8('full framework page →'))}</a></p>` : '');
   annotate(side, side);
 }
 // ---------- the building blocks of AA: model · plan · funding · learning (always shown)
@@ -2465,11 +2521,14 @@ function pillarsBar(f, v){
   const Pv = (v.partners||[]).length ? v.partners : (([...f.versions].reverse().find(x => (x.partners||[]).length) || {}).partners || []);
   const nPart = new Set(Pv.map(p => (p.name||'').toLowerCase())).size;
   const nUN = new Set(F.agency.map(x => x.agency)).size || v.agencies.length;
+  const nA = f.activations.length;
   const boxes = [
-    ['model', 'Model', nTrig ? `${nTrig} trigger window${nTrig>1?'s':''}` : (v.basis ? esc(v.basis) : '—'), [v.basis, v.months.length ? `${v.months.length} months monitored` : null, f.activations.length ? `${f.activations.length} activation${f.activations.length>1?'s':''}` : 'never activated'].filter(Boolean).join(' · ')],
-    ['plan', 'Plan', nUN ? `${nUN} UN agenc${nUN>1?'ies':'y'} funded` : '—', [v.target_people ? `${num(v.target_people)} people targeted` : (f.covered ? `${num(f.covered)} people covered` : null), nPart ? `${nPart} partner${nPart>1?'s':''} in total` : null].filter(Boolean).join('<br>')],
-    ['funding', 'Funding', money(v.prearranged_doc ?? v.envelope), (v.prearranged_doc ?? v.envelope) ? `pre-arranged${funds.length?' · '+funds.map(x=>x.toUpperCase().replace('CBPF-','CBPF ')).join(', '):''}` : (f.tech ? 'technical support only' : 'no figure yet')],
-    ['learning', 'Learning', nDocs ? `${nDocs} document${nDocs>1?'s':''}` : 'no documents yet', 'evaluations, reviews, reports'],
+    ['model', tr8('Model'), nTrig ? esc(tr8(nTrig > 1 ? '{0} trigger windows' : '{0} trigger window', nTrig)) : (v.basis ? esc(tr8(v.basis)) : '—'),
+     esc([v.basis && tr8(v.basis), v.months.length ? tr8('{0} months monitored', v.months.length) : null, nA ? tr8(nA > 1 ? '{0} activations' : '{0} activation', nA) : tr8('never activated')].filter(Boolean).join(' · '))],
+    ['plan', tr8('Plan'), nUN ? esc(tr8(nUN > 1 ? '{0} UN agencies funded' : '{0} UN agency funded', nUN)) : '—',
+     [v.target_people ? esc(tr8('{0} people targeted', num(v.target_people))) : (f.covered ? esc(tr8('{0} people covered', num(f.covered))) : null), nPart ? esc(tr8(nPart > 1 ? '{0} partners in total' : '{0} partner in total', nPart)) : null].filter(Boolean).join('<br>')],
+    ['funding', tr8('Funding'), money(v.prearranged_doc ?? v.envelope), esc((v.prearranged_doc ?? v.envelope) ? tr8('pre-arranged') + (funds.length?' · '+funds.map(x=>x.toUpperCase().replace('CBPF-','CBPF ')).join(', '):'') : tr8(f.tech ? 'technical support only' : 'no figure yet'))],
+    ['learning', tr8('Learning'), esc(nDocs ? tr8(nDocs > 1 ? '{0} documents' : '{0} document', nDocs) : tr8('no documents yet')), esc(tr8('evaluations, reviews, reports'))],
   ];
   if(!PILLARS.includes(state.pillar)) state.pillar = 'model';
   return `<div class='pillars four'>` + boxes.map(([k, name, val, sub]) =>
@@ -2482,24 +2541,24 @@ function pillarBody(f, v){
   const rows = [];
   const c = L[state.iso];
   if(state.pillar==='funding'){
-    rows.push(['Pre-arranged', `${money(v.prearranged_doc ?? v.envelope)}${v.regional?` <span class='muted'>· regional document total (all countries)</span>`:''}${v.all_in===false?` <span class='muted'>· split budget per window</span>`:v.all_in===true?` <span class='muted'>· all-in</span>`:''}`]);
-    if(v.envelope!=null && v.prearranged_doc!=null && Math.abs(v.envelope - v.prearranged_doc) > 0.01*Math.max(v.envelope, v.prearranged_doc)) rows.push(['Envelope (registry)', `${money(v.envelope)} <span class='muted'>from the version's window funding; the document says ${money(v.prearranged_doc)}</span>`]);
-    if(v.cofin) rows.push(['Co-financing', `${money(v.cofin)}${v.cofin_sources.length?` <span class='muted'>${esc(v.cofin_sources.join(', '))}</span>`:''}`]);
-    if(f.tech) rows.push(['OCHA role', `<span class='badge b-tech'>technical support</span> <span class='muted'>no funding commitment</span>`]);
+    rows.push([tr8('Pre-arranged'), `${money(v.prearranged_doc ?? v.envelope)}${v.regional?` <span class='muted'>· ${esc(tr8('regional document total (all countries)'))}</span>`:''}${v.all_in===false?` <span class='muted'>· ${esc(tr8('split budget per window'))}</span>`:v.all_in===true?` <span class='muted'>· ${esc(tr8('all-in'))}</span>`:''}`]);
+    if(v.envelope!=null && v.prearranged_doc!=null && Math.abs(v.envelope - v.prearranged_doc) > 0.01*Math.max(v.envelope, v.prearranged_doc)) rows.push([tr8('Envelope (registry)'), `${money(v.envelope)} <span class='muted'>${esc(tr8("from the version's window funding; the document says {0}", money(v.prearranged_doc)))}</span>`]);
+    if(v.cofin) rows.push([tr8('Co-financing'), `${money(v.cofin)}${v.cofin_sources.length?` <span class='muted'>${esc(v.cofin_sources.join(', '))}</span>`:''}`]);
+    if(f.tech) rows.push([tr8('OCHA role'), `<span class='badge b-tech'>${esc(tr8('technical support'))}</span> <span class='muted'>${esc(tr8('no funding commitment'))}</span>`]);
     return miniTable(rows) + fundingBlock(v);
   }
   if(state.pillar==='model'){
-    rows.push(['Monitored', `${monthStrip(v.months)}${v.months_src?` <span class='muted'>${esc(v.months_src)}</span>`:''}${v.months_note?`<div class='small' style='margin-top:3px'>${esc(v.months_note)}</div>`:''}`]);
-    if(v.basis||v.indicators.length) rows.push(['Trigger basis', `${esc(v.basis||'')}${v.calibration?` · ${esc(v.calibration)}`:''}${v.indicators.length?`<div class='chips'>${v.indicators.map(i=>`<span>${esc(i)}</span>`).join('')}</div>`:''}`]);
-    if(v.data_sources.length) rows.push(['Data sources', esc(v.data_sources.map(d=>typeof d==='string'?d:(d.name||d.source||JSON.stringify(d))).join(', '))]);
+    rows.push([tr8('Monitored'), `${monthStrip(v.months)}${v.months_src?` <span class='muted'>${esc(tr8(v.months_src))}</span>`:''}${v.months_note?`<div class='small' style='margin-top:3px'>${esc(v.months_note)}</div>`:''}`]);
+    if(v.basis||v.indicators.length) rows.push([tr8('Trigger basis'), `${esc(tr8(v.basis||''))}${v.calibration?` · ${esc(v.calibration)}`:''}${v.indicators.length?`<div class='chips'>${v.indicators.map(i=>`<span>${esc(i)}</span>`).join('')}</div>`:''}`]);
+    if(v.data_sources.length) rows.push([tr8('Data sources'), esc(v.data_sources.map(d=>typeof d==='string'?d:(d.name||d.source||JSON.stringify(d))).join(', '))]);
     // trigger design, then (at the bottom of the trigger section) the historical activations
     // simulation with the real ones marked in, the table of real activations, scope, docs
     return miniTable(rows) + triggersBlock(v) + actualBlock(f, v) + backtestBlock(f, v) + scopeBlock(v) + techDocsBlock(v);
   }
   if(state.pillar==='plan'){
-    if(v.agencies.length) rows.push(['Agencies', esc(v.agencies.join(', '))]);
-    if(v.target_people) rows.push(['People targeted', num(v.target_people)]);
-    if(f.covered && f.current===v.v) rows.push(['People covered', `${num(f.covered)} <span class='muted'>(tracking sheet)</span>`]);
+    if(v.agencies.length) rows.push([tr8('Agencies'), esc(v.agencies.join(', '))]);
+    if(v.target_people) rows.push([tr8('People targeted'), num(v.target_people)]);
+    if(f.covered && f.current===v.v) rows.push([tr8('People covered'), `${num(f.covered)} <span class='muted'>${esc(tr8('(tracking sheet)'))}</span>`]);
     return miniTable(rows) + partnersBlock(c, f, v) + sectorBlock(v);
   }
   return learningBlock(f, v);
@@ -2511,21 +2570,21 @@ const DOCTYPE = {aar:'AAR', evaluation:'evaluation', impact_evaluation:'impact e
 function learningBlock(f, v){
   const docs = f.learning_docs || [], links = (v && v.learning) || [];
   const n = docs.length + links.length;
-  let html = `<h4>Learning · ${n ? `${n} document${n>1?'s':''}` : 'no documents yet'}</h4>`;
-  if(!n) return html + `<div class='muted'>No learning documents recorded for this framework yet — after-action reviews, evaluations and activation reports will appear here.</div>`;
+  let html = `<h4>${esc(tr8('Learning'))} · ${esc(n ? tr8(n > 1 ? '{0} documents' : '{0} document', n) : tr8('no documents yet'))}</h4>`;
+  if(!n) return html + `<div class='muted'>${esc(tr8('No learning documents recorded for this framework yet — after-action reviews, evaluations and activation reports will appear here.'))}</div>`;
   html += `<ul class='small' style='margin:2px 0 6px;padding-left:18px'>`;
-  docs.forEach(d => { html += `<li>${d.url?`<a href='${esc(d.url)}' target='_blank' rel='noopener'>${esc(d.title)}</a>`:esc(d.title)}${d.publisher?` · ${esc(d.publisher)}`:''}${d.year?` · ${d.year}`:''}${d.type?` <span class='dtag'>${esc(DOCTYPE[d.type]||d.type.replace(/_/g,' '))}</span>`:''}${d.stat?`<div class='muted'>${esc(d.stat)}</div>`:''}</li>`; });
-  links.forEach(d => { html += `<li>${d.url?`<a href='${esc(d.url)}' target='_blank' rel='noopener'>${esc(d.title||d.url)}</a>`:esc(d.title||'')}${d.date?` <span class='muted'>(${esc(d.date)})</span>`:''} <span class='dtag'>framework page</span></li>`; });
+  docs.forEach(d => { html += `<li>${d.url?`<a href='${esc(d.url)}' target='_blank' rel='noopener'>${esc(d.title)}</a>`:esc(d.title)}${d.publisher?` · ${esc(d.publisher)}`:''}${d.year?` · ${d.year}`:''}${d.type?` <span class='dtag'>${esc(tr8(DOCTYPE[d.type]||d.type.replace(/_/g,' ')))}</span>`:''}${d.stat?`<div class='muted'>${esc(d.stat)}</div>`:''}</li>`; });
+  links.forEach(d => { html += `<li>${d.url?`<a href='${esc(d.url)}' target='_blank' rel='noopener'>${esc(d.title||d.url)}</a>`:esc(d.title||'')}${d.date?` <span class='muted'>(${esc(d.date)})</span>`:''} <span class='dtag'>${esc(tr8('framework page'))}</span></li>`; });
   return html + `</ul>`;
 }
 // Model: technical documentation links (trigger analysis, framework document, validation folder)
 function techDocsBlock(v){
   const items = [];
-  if(v.analysis_ref) items.push(v.analysis_url ? `<a href='${esc(v.analysis_url)}' target='_blank' rel='noopener'>trigger analysis ↗</a> <span class='muted'>${esc(v.analysis_ref)}</span>` : `trigger analysis: <code>${esc(v.analysis_ref)}</code>`);
-  if(v.doc_url) items.push(`<a href='${esc(v.doc_url)}' target='_blank' rel='noopener'>framework document ↗</a>${v.doc_title?` <span class='muted'>${esc(v.doc_title)}</span>`:''}`);
-  if(TRIGGER_VALIDATION_URL) items.push(`<a href='${esc(TRIGGER_VALIDATION_URL)}' target='_blank' rel='noopener'>trigger validation (Drive) ↗</a>`);
+  if(v.analysis_ref) items.push(v.analysis_url ? `<a href='${esc(v.analysis_url)}' target='_blank' rel='noopener'>${esc(tr8('trigger analysis ↗'))}</a> <span class='muted'>${esc(v.analysis_ref)}</span>` : `${esc(tr8('trigger analysis:'))} <code>${esc(v.analysis_ref)}</code>`);
+  if(v.doc_url) items.push(`<a href='${esc(v.doc_url)}' target='_blank' rel='noopener'>${esc(tr8('framework document ↗'))}</a>${v.doc_title?` <span class='muted'>${esc(v.doc_title)}</span>`:''}`);
+  if(TRIGGER_VALIDATION_URL) items.push(`<a href='${esc(TRIGGER_VALIDATION_URL)}' target='_blank' rel='noopener'>${esc(tr8('trigger validation (Drive) ↗'))}</a>`);
   if(!items.length) return '';
-  return `<h4>Technical documentation</h4>` + items.map(x=>`<div class='tdoc'>${x}</div>`).join('');
+  return `<h4>${esc(tr8('Technical documentation'))}</h4>` + items.map(x=>`<div class='tdoc'>${x}</div>`).join('');
 }
 // Plan: the framework's partner list (aa.framework_partner, this version or the latest that
 // has one) and the funded sub-grantees of the country's CERF AA allocations (aa.cerf_subgrant)
@@ -2533,63 +2592,63 @@ const PGROUPS = ['Government', 'UN', 'International NGOs', 'National NGOs', 'Red
 const ROLE = {implementing:'implementing', sub_grantee:'sub-grantee', technical:'technical', coordination:'coordination', government_counterpart:'counterpart', funding:'funding'};
 function partnersBlock(c, f, v){
   const P = (v && v.partners) || [], S = c.subgrants || [];
-  let html = `<h4>Partners${P.length?` · ${P.length}`:''}</h4>`;
-  if(!P.length && !S.length) return html + `<div class='muted'>No partner list yet.</div>`;
+  let html = `<h4>${esc(tr8('Partners'))}${P.length?` · ${P.length}`:''}</h4>`;
+  if(!P.length && !S.length) return html + `<div class='muted'>${esc(tr8('No partner list yet.'))}</div>`;
   if(P.length){
-    html += `<div class='small'><b>${P.length} partner${P.length>1?'s':''}</b> named in the framework${v && v.partners_from ? ` <span class='muted'>(from version ${esc(v.partners_from)} — none extracted for ${esc(v.v)})</span>` : ''}</div>`;
+    html += `<div class='small'>${tr8(P.length > 1 ? '<b>{0} partners</b> named in the framework' : '<b>{0} partner</b> named in the framework', P.length)}${v && v.partners_from ? ` <span class='muted'>${esc(tr8('(from version {0} — none extracted for {1})', v.partners_from, v.v))}</span>` : ''}</div>`;
     PGROUPS.forEach(g => { const rows = P.filter(p=>p.group===g); if(!rows.length) return;
-      html += `<div class='pgrp'>${g} <span class='muted' style='font-weight:400'>(${rows.length})</span></div>` + rows.map(p =>
-        `<div class='prow'>${esc(p.name)}${p.acronym?` (${esc(p.acronym)})`:''}${p.parent?` <span class='muted'>· under ${esc(p.parent)}</span>`:''}${p.roles.map(r=>`<span class='rtag'>${esc(ROLE[r]||r.replace(/_/g,' '))}</span>`).join('')}${p.usd?` <span class='muted'>· ${money(p.usd)}</span>`:''}</div>`).join(''); });
-  } else html += `<div class='muted'>No partner list extracted from the framework document yet.</div>`;
+      html += `<div class='pgrp'>${esc(tr8(g))} <span class='muted' style='font-weight:400'>(${rows.length})</span></div>` + rows.map(p =>
+        `<div class='prow'>${esc(p.name)}${p.acronym?` (${esc(p.acronym)})`:''}${p.parent?` <span class='muted'>· ${esc(tr8('under {0}', p.parent))}</span>`:''}${p.roles.map(r=>`<span class='rtag'>${esc(tr8(ROLE[r]||r.replace(/_/g,' ')))}</span>`).join('')}${p.usd?` <span class='muted'>· ${money(p.usd)}</span>`:''}</div>`).join(''); });
+  } else html += `<div class='muted'>${esc(tr8('No partner list extracted from the framework document yet.'))}</div>`;
   if(S.length){
     const tot = S.reduce((s,a)=>s+a.partners.reduce((t,p)=>t+(p.usd||0),0),0), nP = S.reduce((s,a)=>s+a.partners.length,0);
-    html += `<h4>Funded sub-grantees <span class='muted' style='text-transform:none'>(CERF AA allocations, ${esc(c.name)}, all hazards)</span></h4>
-      <div class='small'>${nP} sub-grant${nP>1?'s':''} · ${money(tot)}</div>` + S.map(a =>
+    html += `<h4>${esc(tr8('Funded sub-grantees'))} <span class='muted' style='text-transform:none'>${esc(tr8('(CERF AA allocations, {0}, all hazards)', tr8(c.name)))}</span></h4>
+      <div class='small'>${esc(tr8(nP > 1 ? '{0} sub-grants' : '{0} sub-grant', nP))} · ${money(tot)}</div>` + S.map(a =>
       `<div class='pgrp'>${esc(a.agency)} <span class='muted' style='font-weight:400'>· ${money(a.partners.reduce((t,p)=>t+(p.usd||0),0))}</span></div>` +
       a.partners.map(p=>`<div class='prow'>${esc(p.name)}${p.acronym&&p.acronym!==p.name?` (${esc(p.acronym)})`:''}${p.type?`<span class='rtag'>${esc(p.type)}</span>`:''}${p.usd?` <span class='muted'>· ${money(p.usd)}</span>`:''}</div>`).join('')).join('');
   }
   return html;
 }
-function miniTable(rows){ return rows.length ? `<table class='mini' style='margin-top:4px'>${rows.map(([k,val])=>`<tr><td class='lbl'>${k}</td><td>${val}</td></tr>`).join('')}</table>` : ''; }
+function miniTable(rows){ return rows.length ? `<table class='mini' style='margin-top:4px'>${rows.map(([k,val])=>`<tr><td class='lbl'>${esc(k)}</td><td>${val}</td></tr>`).join('')}</table>` : ''; }
 function sectorBlock(v){
   const F = v.funding; if(!F.sector.length) return '';
   const tot = groupBy(F.sector, x=>x.sector, x=>x.usd);
   const keys = Object.keys(tot).sort((a,b)=>tot[b]-tot[a]);
-  return `<h4>Budget by sector</h4><table class='mini'><tr><th>sector</th><th class='num'>USD</th></tr>` + keys.map(k=>`<tr><td>${esc(k)}</td><td class='num'>${money(tot[k])}</td></tr>`).join('') + `</table>`;
+  return `<h4>${esc(tr8('Budget by sector'))}</h4><table class='mini'><tr><th>${esc(tr8('sector'))}</th><th class='num'>USD</th></tr>` + keys.map(k=>`<tr><td>${esc(k)}</td><td class='num'>${money(tot[k])}</td></tr>`).join('') + `</table>`;
 }
 // the CERF allocations behind a pair's ad hoc AA allocations: amount, agencies, sectors, people
 function adhocBlock(f){
   const A = f.adhoc_cerf || [];
-  if(!A.length) return f.n_adhoc ? `<div class='muted small'>No CERF allocation found for these allocations in the CERF data.</div>` : '';
+  if(!A.length) return f.n_adhoc ? `<div class='muted small'>${esc(tr8('No CERF allocation found for these allocations in the CERF data.'))}</div>` : '';
   const CW = Math.max(280, Math.min(560, (side.clientWidth || 420) - 36));
-  return `<h4>Ad hoc allocations (${A.length})</h4>` + A.map(a => `<div class='trig'>
+  return `<h4>${esc(tr8('Ad hoc allocations ({0})', A.length))}</h4>` + A.map(a => `<div class='trig'>
       <div class='tn'><a href='${esc(a.url)}' target='_blank' rel='noopener'>CERF ${esc(a.code)} ↗</a> <span class='muted'>· ${esc(a.emergency||'')} · ${a.year}</span></div>
-      <div class='tt'><b>${money(a.usd)}</b>${a.planned?` · ${num(a.planned)} people planned`:''}${a.reached?` · ${num(a.reached)} reached`:''}</div>
+      <div class='tt'><b>${money(a.usd)}</b>${a.planned?' · ' + esc(tr8('{0} people planned', num(a.planned))):''}${a.reached?' · ' + esc(tr8('{0} reached', num(a.reached))):''}</div>
       ${a.title?`<div class='tm'>${esc(a.title)}</div>`:''}
-      ${a.agencies.length?`<div class='small' style='margin-top:4px'><b>Agencies</b></div>` + hbarsSVG(a.agencies.map(x=>({label:x.agency, v:x.usd})), {width:CW, fmt:money, colorBy:'a', label:'CERF allocation by agency'}):''}
-      ${a.sectors.length?`<div class='small' style='margin-top:4px'><b>Sectors</b></div>` + hbarsSVG(a.sectors.map(x=>({label:x.sector, v:x.usd})), {width:CW, fmt:money, color:'#64748b', label:'CERF allocation by sector'}):''}
-      <div class='tm'>${a.how==='recorded allocation code' ? 'Allocation code recorded with the ad hoc allocation.' : 'Matched to the CERF allocation of the same country, year and emergency type (no code recorded).'}</div>
+      ${a.agencies.length?`<div class='small' style='margin-top:4px'><b>${esc(tr8('Agencies'))}</b></div>` + hbarsSVG(a.agencies.map(x=>({label:x.agency, v:x.usd})), {width:CW, fmt:money, colorBy:'a', label:tr8('CERF allocation by agency')}):''}
+      ${a.sectors.length?`<div class='small' style='margin-top:4px'><b>${esc(tr8('Sectors'))}</b></div>` + hbarsSVG(a.sectors.map(x=>({label:x.sector, v:x.usd})), {width:CW, fmt:money, color:'#64748b', label:tr8('CERF allocation by sector')}):''}
+      <div class='tm'>${esc(tr8(a.how==='recorded allocation code' ? 'Allocation code recorded with the ad hoc allocation.' : 'Matched to the CERF allocation of the same country, year and emergency type (no code recorded).'))}</div>
     </div>`).join('');
 }
 function groupBy(rows, kf, vf){ const m = {}; rows.forEach(r=>{ const k = kf(r); m[k] = (m[k]||0) + (vf(r)||0); }); return m; }
 function fwHeader(c, f){
-  return `<h3 style='display:flex;align-items:center;gap:8px'>${iconHTML(f)}<span>${esc(c.name)} — ${esc(f.hz_label)}</span></h3>
-   <div>${pastY() && !f.layers.length ? `<span class='badge b-retired'>no framework at the end of ${YEAR}</span>` : badge(f.disp) + (pastY() ? DRV(statusNote(f).slice(3)) : '')}${f.tech?` <span class='badge b-tech'>OCHA technical support</span>`:''} ${f.ring ? `<span class='small' style='color:#c8860a'>&bull; in its monitoring season</span>` : ''}
-   ${f.kb?` <span class='muted'>· KB <code>${f.kb}</code></span>`:''}${f.in_force && f.in_force!==f.current ? ` <span class='muted'>· tracking view in force: ${f.in_force}</span>` : ''}</div>`;
+  return `<h3 style='display:flex;align-items:center;gap:8px'>${iconHTML(f)}<span>${esc(tr8(c.name))} — ${esc(tr8(f.hz_label))}</span></h3>
+   <div>${pastY() && !f.layers.length ? `<span class='badge b-retired'>${esc(tr8('no framework at the end of {0}', YEAR))}</span>` : badge(f.disp) + (pastY() ? DRV(statusNote(f).slice(3)) : '')}${f.tech?` <span class='badge b-tech'>${esc(tr8('OCHA technical support'))}</span>`:''} ${f.ring ? `<span class='small' style='color:#c8860a'>&bull; ${esc(tr8('in its monitoring season'))}</span>` : ''}
+   ${f.kb?` <span class='muted'>· KB <code>${f.kb}</code></span>`:''}${f.in_force && f.in_force!==f.current ? ` <span class='muted'>· ${esc(tr8('tracking view in force: {0}', f.in_force))}</span>` : ''}</div>`;
 }
 function versionBar(f, v, isCur){
-  const opts = [...f.versions].reverse().map(x=>`<option value='${x.v}' ${x.v===v.v?'selected':''}>${x.v}${x.v===f.current?(pastY()?` (at the end of ${YEAR})`:' (latest)'):''} — ${x.superseded?'superseded':(x.status||'?')}</option>`).join('');
-  return `<div class='verbar'><label class='small'>Version</label><select onchange='selectVersion(this.value)'>${opts}</select>
-    ${v.doc_url ? `<a class='docbtn' href='${esc(v.doc_url)}' target='_blank' rel='noopener' title='${esc(v.doc_title||'')}'>Framework doc ↗</a>` : `<span class='badge b-retired'>no document link</span>`}</div>`;
+  const opts = [...f.versions].reverse().map(x=>`<option value='${x.v}' ${x.v===v.v?'selected':''}>${x.v}${x.v===f.current?' ' + esc(pastY() ? tr8('(at the end of {0})', YEAR) : tr8('(latest)')):''} — ${esc(tr8(x.superseded?'superseded':(x.status||'?')))}</option>`).join('');
+  return `<div class='verbar'><label class='small'>${esc(tr8('Version'))}</label><select onchange='selectVersion(this.value)'>${opts}</select>
+    ${v.doc_url ? `<a class='docbtn' href='${esc(v.doc_url)}' target='_blank' rel='noopener' title='${esc(v.doc_title||'')}'>${esc(tr8('Framework doc ↗'))}</a>` : `<span class='badge b-retired'>${esc(tr8('no document link'))}</span>`}</div>`;
 }
 function factsBlock(f, v){
   const rows = [];
-  rows.push(['Status', `${verBadge(v.superseded?'superseded':v.status)}${v.endorsed_by?` <span class='muted'>endorsed by ${esc(v.endorsed_by)}</span>`:''}${v.superseded?` <span class='muted'>· a newer endorsed version exists</span>`:''}`]);
-  if(v.windows.length){ const n = v.windows.filter(w=>w.triggered===true).length;
-    rows.push(['Triggered', `${n?`<b>${n}</b> of ${v.windows.length} window${v.windows.length>1?'s':''}`:`none of ${v.windows.length} window${v.windows.length>1?'s':''}`}${v.fully_triggered?` <span class='badge b-endorsed'>fully triggered</span>`:''}${n&&!v.fully_triggered?` <span class='muted'>· partial (independent windows)</span>`:''}`]); }
-  rows.push(['Valid', `${v.valid_from||'?'} → ${v.valid_until||'<span class="muted">open</span>'}${v.valid_until_source?` <span class='muted'>(${esc(v.valid_until_source)})</span>`:''}`]);
-  if(v.doc_title) rows.push(['Document', `${esc(v.doc_title)}${v.doc_date?` <span class='muted'>(${v.doc_date})</span>`:''}`]);
-  if(v.supersedes) rows.push(['Supersedes', `<a onclick='selectVersion("${esc(v.supersedes)}")' style='cursor:pointer'>${esc(v.supersedes)}</a>`]);
+  rows.push([tr8('Status'), `${verBadge(v.superseded?'superseded':v.status)}${v.endorsed_by?` <span class='muted'>${esc(tr8('endorsed by {0}', v.endorsed_by))}</span>`:''}${v.superseded?` <span class='muted'>· ${esc(tr8('a newer endorsed version exists'))}</span>`:''}`]);
+  if(v.windows.length){ const n = v.windows.filter(w=>w.triggered===true).length, m = v.windows.length;
+    rows.push([tr8('Triggered'), `${n ? tr8(m > 1 ? '<b>{0}</b> of {1} windows' : '<b>{0}</b> of {1} window', n, m) : esc(tr8(m > 1 ? 'none of {0} windows' : 'none of {0} window', m))}${v.fully_triggered?` <span class='badge b-endorsed'>${esc(tr8('fully triggered'))}</span>`:''}${n&&!v.fully_triggered?` <span class='muted'>· ${esc(tr8('partial (independent windows)'))}</span>`:''}`]); }
+  rows.push([tr8('Valid'), `${v.valid_from||'?'} → ${v.valid_until||`<span class="muted">${esc(tr8('open'))}</span>`}${v.valid_until_source?` <span class='muted'>(${esc(v.valid_until_source)})</span>`:''}`]);
+  if(v.doc_title) rows.push([tr8('Document'), `${esc(v.doc_title)}${v.doc_date?` <span class='muted'>(${v.doc_date})</span>`:''}`]);
+  if(v.supersedes) rows.push([tr8('Supersedes'), `<a onclick='selectVersion("${esc(v.supersedes)}")' style='cursor:pointer'>${esc(v.supersedes)}</a>`]);
   return `<table class='mini' style='margin-top:6px'>${rows.map(([k,val])=>`<tr><td class='lbl'>${k}</td><td>${val}</td></tr>`).join('')}</table>`;
 }
 function sameWin(a, b){ if(!a||!b) return false; a=String(a).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim(); b=String(b).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
@@ -2597,27 +2656,27 @@ function sameWin(a, b){ if(!a||!b) return false; a=String(a).toLowerCase().repla
 function triggersBlock(v){
   let html = '';
   if(v.triggers.length){
-    html += `<h4>Triggers (${v.triggers.length} window${v.triggers.length>1?'s':''})</h4>`;
+    html += `<h4>${esc(tr8(v.triggers.length > 1 ? 'Triggers ({0} windows)' : 'Triggers ({0} window)', v.triggers.length))}</h4>`;
     v.triggers.forEach(t => {
       const name = t.window || t.trigger || t.component || Object.values(t)[0];
-      const sub = [t.basin, t.basis, t.country].filter(Boolean).join(' · ');
+      const sub = [t.basin, t.basis && tr8(t.basis), t.country].filter(Boolean).join(' · ');
       const ind = t.indicator || t.indicators || '', thr = t.threshold || t.condition || '';
-      const meta = [t['lead time'] ? `lead ${t['lead time']}` : null, t['return period'] ? `RP ${t['return period']}` : null,
-                    t.releases ? `releases: ${t.releases}` : null].filter(Boolean);
+      const meta = [t['lead time'] ? tr8('lead {0}', t['lead time']) : null, t['return period'] ? tr8('RP {0}', t['return period']) : null,
+                    t.releases ? tr8('releases: {0}', t.releases) : null].filter(Boolean);
       const bt = v.windows.find(w => sameWin(w.name, name));
       html += `<div class='trig'><div class='tn'>${esc(name)}${sub?` <span class='muted'>· ${esc(sub)}</span>`:''}</div>
         <div class='tt'>${esc(ind)}${ind&&thr?' — ':''}<b>${esc(thr)}</b></div>
         ${meta.length?`<div class='tm'>${esc(meta.join(' · '))}</div>`:''}
-        ${bt?`<div class='tm'>${bt.triggered===true?`<b style='color:#b45309'>triggered${bt.triggered_on?' '+bt.triggered_on:''}</b> · `:''}backtest: ${bt.rp?`1-in-${bt.rp.toFixed(1)} yr`:''}${bt.prob?` · ${(bt.prob*100).toFixed(0)}%/yr`:''}${bt.sim!=null?` · ${bt.sim} in ${bt.years} yrs`:''}${bt.budget?` · budget ${money(bt.budget)}`:''}</div>`:''}
+        ${bt?`<div class='tm'>${bt.triggered===true?`<b style='color:#b45309'>${esc(tr8('triggered'))}${bt.triggered_on?' '+bt.triggered_on:''}</b> · `:''}${esc(tr8('backtest:'))} ${bt.rp?esc(tr8('1-in-{0} yr', bt.rp.toFixed(1))):''}${bt.prob?' · ' + esc(tr8('{0}%/yr', (bt.prob*100).toFixed(0))):''}${bt.sim!=null?' · ' + esc(tr8('{0} in {1} yrs', bt.sim, bt.years)):''}${bt.budget?' · ' + esc(tr8('budget {0}', money(bt.budget))):''}</div>`:''}
       </div>`;
     });
   }
   const extra = v.windows.filter(w => !v.triggers.some(t => sameWin(w.name, t.window || t.trigger || Object.values(t)[0])));
   if(extra.length){
-    html += `<h4>${v.triggers.length?'Other backtested windows':'Windows (backtest registry)'}</h4><table class='mini'><tr><th>window</th><th>basis</th><th>state</th><th>budget</th><th>return period</th><th>annual prob</th></tr>` +
-      extra.map(w=>`<tr><td>${esc(w.name)}</td><td>${esc(w.basis||'')}${w.all_in===true?' · all-in':''}</td><td>${w.triggered===true?`<b style='color:#b45309'>triggered</b>${w.triggered_on?` <span class='muted'>${w.triggered_on}</span>`:''}`:w.triggered===false?'<span class="muted">not triggered</span>':''}</td><td class='num'>${money(w.budget)}</td><td class='num'>${w.rp?w.rp.toFixed(1)+' yr':''}</td><td class='num'>${w.prob?(w.prob*100).toFixed(0)+'%':''}</td></tr>`).join('') + `</table>`;
+    html += `<h4>${esc(tr8(v.triggers.length?'Other backtested windows':'Windows (backtest registry)'))}</h4><table class='mini'><tr>${['window','basis','state','budget','return period','annual prob'].map(h=>`<th>${esc(tr8(h))}</th>`).join('')}</tr>` +
+      extra.map(w=>`<tr><td>${esc(w.name)}</td><td>${esc(w.basis||'')}${w.all_in===true?' · ' + esc(tr8('all-in')):''}</td><td>${w.triggered===true?`<b style='color:#b45309'>${esc(tr8('triggered'))}</b>${w.triggered_on?` <span class='muted'>${w.triggered_on}</span>`:''}`:w.triggered===false?`<span class="muted">${esc(tr8('not triggered'))}</span>`:''}</td><td class='num'>${money(w.budget)}</td><td class='num'>${w.rp?esc(tr8('{0} yr', w.rp.toFixed(1))):''}</td><td class='num'>${w.prob?(w.prob*100).toFixed(0)+'%':''}</td></tr>`).join('') + `</table>`;
   }
-  if(!html) html = `<h4>Triggers</h4><div class='muted'>No structured trigger information for this version yet — see the framework document.</div>`;
+  if(!html) html = `<h4>${esc(tr8('Triggers'))}</h4><div class='muted'>${esc(tr8('No structured trigger information for this version yet — see the framework document.'))}</div>`;
   return html;
 }
 function fundingBlock(v){
@@ -2626,17 +2685,17 @@ function fundingBlock(v){
   // add up to more than the version's envelope — a flag here is a genuine data problem
   const splitTot = F.fund.reduce((s,x)=>s+x.usd,0), env = v.envelope ?? v.prearranged_doc;
   const over = env != null && splitTot > env * 1.01;
-  let html = `<div class='small' style='margin:8px 0 4px'>Split total <b>${money(splitTot)}</b>${env!=null?` of a ${money(env)} envelope`:' — no envelope recorded'}${F.src==='sheet'?' <span class="muted">(tracking sheet)</span>':''}${over?`<span class='warntag' title='the agency × sector split adds up to more than the version envelope'>split exceeds envelope</span>`:''}</div>`;
-  if(F.fund.length > 1) html += `<div class='small muted'>By fund: ${F.fund.map(x=>`${esc(x.fund)} ${money(x.usd)}`).join(' · ')}</div>`;
+  let html = `<div class='small' style='margin:8px 0 4px'>${esc(tr8('Split total'))} <b>${money(splitTot)}</b>${env!=null?' ' + esc(tr8('of a {0} envelope', money(env))):' — ' + esc(tr8('no envelope recorded'))}${F.src==='sheet'?` <span class="muted">${esc(tr8('(tracking sheet)'))}</span>`:''}${over?`<span class='warntag' title='${esc(tr8('the agency × sector split adds up to more than the version envelope'))}'>${esc(tr8('split exceeds envelope'))}</span>`:''}</div>`;
+  if(F.fund.length > 1) html += `<div class='small muted'>${esc(tr8('By fund:'))} ${F.fund.map(x=>`${esc(x.fund)} ${money(x.usd)}`).join(' · ')}</div>`;
   const CW = Math.max(280, Math.min(560, (side.clientWidth || 420) - 36));
   const bars = (rows, label) => { const m = groupBy(rows, x=>x[label], x=>x.usd);
-    return hbarsSVG(Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([k,u])=>({label:k, v:u})), {width:CW, fmt:money, label:`budget by ${label}`, colorBy: label==='agency' ? 'a' : null, color:'#64748b'}); };
-  if(F.agency.length) html += `<h4>Budget by agency</h4>` + bars(F.agency, 'agency');
-  if(F.sector.length) html += `<h4>Budget by sector</h4>` + bars(F.sector, 'sector');
+    return hbarsSVG(Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([k,u])=>({label:k, v:u})), {width:CW, fmt:money, label:tr8(label === 'agency' ? 'budget by agency' : 'budget by sector'), colorBy: label==='agency' ? 'a' : null, color:'#64748b'}); };
+  if(F.agency.length) html += `<h4>${esc(tr8('Budget by agency'))}</h4>` + bars(F.agency, 'agency');
+  if(F.sector.length) html += `<h4>${esc(tr8('Budget by sector'))}</h4>` + bars(F.sector, 'sector');
   if((F.pair||[]).length > 1){
     const ag = [...new Set(F.pair.map(x=>x.agency))], se = [...new Set(F.pair.map(x=>x.sector))];
-    html += `<h4>Which agency, which sector</h4>` + sankeySVG({columns:[ag.map(a=>({id:'a:'+a, label:a})), se.map(x=>({id:'s:'+x, label:x}))],
-      links: F.pair.map(x=>({s:'a:'+x.agency, t:'s:'+x.sector, v:x.usd})), width:CW, fmt:money, labelW:110, label:'agency to sector'});
+    html += `<h4>${esc(tr8('Which agency, which sector'))}</h4>` + sankeySVG({columns:[ag.map(a=>({id:'a:'+a, label:a})), se.map(x=>({id:'s:'+x, label:x}))],
+      links: F.pair.map(x=>({s:'a:'+x.agency, t:'s:'+x.sector, v:x.usd})), width:CW, fmt:money, labelW:110, label:tr8('agency to sector')});
   }
   return html;
 }
@@ -2644,29 +2703,29 @@ function scopeBlock(v){
   const s = v.scope; if(!s) return '';
   const names = (L[state.iso].area_names) || {};
   const nm = pcs => pcs.map(p => names[p] || p).sort((a,b)=>a.localeCompare(b));
-  let html = `<h4>Geographic scope${v.admin_level!=null?` <span class='muted' style='text-transform:none'>(trigger at admin ${v.admin_level})</span>`:''}</h4>`;
-  if(s.inherited_from) html += `<div class='warnbox'>Scope not yet extracted for this version — the map shows the ${esc(s.inherited_from)} scope.</div>`;
-  if(s.approx) html += `<div class='warnbox'>The framework's zone could not be mapped to admin areas${s.unmatched.length?` (${esc(s.unmatched.join('; '))})`:''} — the whole country is shown.</div>`;
+  let html = `<h4>${esc(tr8('Geographic scope'))}${v.admin_level!=null?` <span class='muted' style='text-transform:none'>${esc(tr8('(trigger at admin {0})', v.admin_level))}</span>`:''}</h4>`;
+  if(s.inherited_from) html += `<div class='warnbox'>${esc(tr8('Scope not yet extracted for this version — the map shows the {0} scope.', s.inherited_from))}</div>`;
+  if(s.approx) html += `<div class='warnbox'>${esc(s.unmatched.length ? tr8("The framework's zone could not be mapped to admin areas ({0}) — the whole country is shown.", s.unmatched.join('; ')) : tr8("The framework's zone could not be mapped to admin areas — the whole country is shown."))}</div>`;
   const nt = (s.tiers||[]).length;
   if(nt){
-    html += s.tiers.map((t,i)=>`<div class='scopelist'><span class='sq' style='display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px;background:${shade(hzColor(state.hz), nt>1?i/(nt-1):0)}'></span><b>${esc(t.label||'named areas')}</b>${t.rest ? ' — everywhere not named above' : `: ${nm(t.pcodes).map(esc).join(', ')}`}</div>`).join('');
-  } else if(s.national && !s.approx) html += `<div class='scopelist'>National trigger — whole country.</div>`;
+    html += s.tiers.map((t,i)=>`<div class='scopelist'><span class='sq' style='display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px;background:${shade(hzColor(state.hz), nt>1?i/(nt-1):0)}'></span><b>${esc(t.label||tr8('named areas'))}</b>${t.rest ? ' — ' + esc(tr8('everywhere not named above')) : `: ${nm(t.pcodes).map(esc).join(', ')}`}</div>`).join('');
+  } else if(s.national && !s.approx) html += `<div class='scopelist'>${esc(tr8('National trigger — whole country.'))}</div>`;
   else if(s.pcodes.length) html += `<div class='scopelist'>${nm(s.pcodes).map(esc).join(', ')}</div>`;
-  if(!s.national && !s.pcodes.length && !s.inherited_from) html += `<div class='muted'>Scope not extracted for this version yet.</div>`;
-  if(s.unmatched.length && !s.approx) html += `<div class='small' style='margin-top:4px;color:#8a5c0a'>Not on the map (no boundary match): ${s.unmatched.map(esc).join('; ')}</div>`;
+  if(!s.national && !s.pcodes.length && !s.inherited_from) html += `<div class='muted'>${esc(tr8('Scope not extracted for this version yet.'))}</div>`;
+  if(s.unmatched.length && !s.approx) html += `<div class='small' style='margin-top:4px;color:#8a5c0a'>${esc(tr8('Not on the map (no boundary match):'))} ${s.unmatched.map(esc).join('; ')}</div>`;
   return html;
 }
 // the link for a real activation: its announcement, else its CERF allocation page
 function actLinks(a){
   const out = [];
-  if(a.url) out.push(`<a href='${esc(a.url)}' target='_blank' rel='noopener'>announcement↗</a>`);
-  (a.funding||[]).forEach(x => { if(x.cerf_url) out.push(`<a href='${esc(x.cerf_url)}' target='_blank' rel='noopener'>CERF allocation↗</a>`); });
+  if(a.url) out.push(`<a href='${esc(a.url)}' target='_blank' rel='noopener'>${esc(tr8('announcement↗'))}</a>`);
+  (a.funding||[]).forEach(x => { if(x.cerf_url) out.push(`<a href='${esc(x.cerf_url)}' target='_blank' rel='noopener'>${esc(tr8('CERF allocation↗'))}</a>`); });
   return [...new Set(out)];
 }
 function actMoney(a){ return (a.funding||[]).filter(x=>x.usd!=null).map(x=>`${String(x.fund).toUpperCase()} ${money(x.usd)}`).join(' + ') || (a.released ? money(a.released) : ''); }
 function realMark(a, v){
   const old = !!(v && a.version && a.version !== v.v && !String(a.version).startsWith(v.v) && !String(v.v).startsWith(a.version));
-  const title = `${a.date} · ${a.window||'window not recorded'}${actMoney(a)?' · '+actMoney(a):''}${old?` · under version ${a.version}`:''}${a.full===false?' · partial':''}`;
+  const title = `${a.date} · ${a.window||tr8('window not recorded')}${actMoney(a)?' · '+actMoney(a):''}${old?' · ' + tr8('under version {0}', a.version):''}${a.full===false?' · ' + tr8('partial'):''}`;
   const href = a.url || ((a.funding||[]).find(x=>x.cerf_url)||{}).cerf_url;
   return href ? `<a class='rm ${old?'old':''}' href='${esc(href)}' target='_blank' rel='noopener' title='${esc(title)}'></a>`
               : `<span class='rm ${old?'old':''}' title='${esc(title)}'></span>`;
@@ -2681,39 +2740,39 @@ function backtestBlock(f, v){
     const y = +String(a.date).slice(0,4), col = bt.windows.find(w => sameWin(w, a.window));
     if(!y) return;
     let r = bt.per_event ? null : rows.find(x => x.year === y && !x.label);
-    if(!r){ r = {year:y, label: bt.per_event ? 'activation' : null, fired:[], real:{}, realYear:[], extra:true}; rows.push(r); }
+    if(!r){ r = {year:y, label: bt.per_event ? tr8('activation') : null, fired:[], real:{}, realYear:[], extra:true}; rows.push(r); }
     if(col) (r.real[col] ??= []).push(a); else r.realYear.push(a);
   });
   rows.sort((a,b) => b.year - a.year || String(a.label||'').localeCompare(String(b.label||'')));
   // from the year the version took effect: real activations only (its backtest was fixed before)
   const use0 = bt.in_use_from || null, inUse = y => use0 != null && y >= use0;
   const useTip = y => bt.in_use_to && y > bt.in_use_to
-    ? `${y}: after version ${v.v} was replaced (${bt.in_use_to}) — real activations only`
-    : `${y}: version ${v.v} in use (took effect ${v.valid_from || use0}) — real activations only; its simulation covers the years before`;
+    ? tr8('{0}: after version {1} was replaced ({2}) — real activations only', y, v.v, bt.in_use_to)
+    : tr8('{0}: version {1} in use (took effect {2}) — real activations only; its simulation covers the years before', y, v.v, v.valid_from || use0);
   const simYears = new Set(bt.rows.filter(r => !inUse(r.year)).map(r => r.year));
-  const dot = (w, r) => `<span class='bt-dot' style='background:${hzColor(f.hazard)}' title='would have activated ${r && r.when && r.when[w] ? 'on '+esc(r.when[w]) : 'in '+(r ? r.year : 'that year')} (simulation)'></span>`;
+  const dot = (w, r) => `<span class='bt-dot' style='background:${hzColor(f.hazard)}' title='${esc(r && r.when && r.when[w] ? tr8('would have activated on {0} (simulation)', r.when[w]) : tr8('would have activated in {0} (simulation)', r ? r.year : tr8('that year')))}'></span>`;
   const cell = (r, w) => inUse(r.year) ? `<td class='bt-c bt-use' title='${esc(useTip(r.year))}'>`
     : simYears.has(r.year) && !r.extra ? `<td class='bt-c'>`
-    : `<td class='bt-c bt-na' title='${r.year} is not covered by the historical simulation'>`;
-  let html = `<h4>Historical activations</h4>
-    <div class='small' style='margin-bottom:4px'>Simulation ${bt.start}–${bt.end}: would each trigger of this version have activated${bt.per_event?' for each storm':' each year'}?${use0 ? ` From ${use0}, when the version took effect, real activations only.` : ''} Real activations are marked in, linked to their announcement.${bt.after_note ? ` <span class='muted'>${esc(bt.after_note)}</span>` : ''}</div>
-    <table class='mini bt'><thead><tr><th>${bt.per_event?'storm':'year'}</th>${bt.windows.map(w=>`<th class='bt-c'>${trigName(w)}</th>`).join('')}</tr></thead><tbody>`;
-  html += rows.map(r => `<tr class='${r.fired.length?'bt-on':''}'><td class='lbl'>${r.year}${r.label?` <span class='muted'>${esc(r.label)}</span>`:''}${inUse(r.year) && !r.label && !(bt.in_use_to && r.year > bt.in_use_to) ? ` <span class='bt-usetag' title='${esc(useTip(r.year))}'>in use</span>` : ''}${r.realYear.map(a=>realMark(a, v)).join('')}</td>`
+    : `<td class='bt-c bt-na' title='${esc(tr8('{0} is not covered by the historical simulation', r.year))}'>`;
+  let html = `<h4>${esc(tr8('Historical activations'))}</h4>
+    <div class='small' style='margin-bottom:4px'>${esc(tr8(bt.per_event ? 'Simulation {0}–{1}: would each trigger of this version have activated for each storm?' : 'Simulation {0}–{1}: would each trigger of this version have activated each year?', bt.start, bt.end))}${use0 ? ' ' + esc(tr8('From {0}, when the version took effect, real activations only.', use0)) : ''} ${esc(tr8('Real activations are marked in, linked to their announcement.'))}${bt.after_note ? ` <span class='muted'>${esc(tr8(bt.after_note))}</span>` : ''}</div>
+    <table class='mini bt'><thead><tr><th>${esc(tr8(bt.per_event?'storm':'year'))}</th>${bt.windows.map(w=>`<th class='bt-c'>${trigName(w)}</th>`).join('')}</tr></thead><tbody>`;
+  html += rows.map(r => `<tr class='${r.fired.length?'bt-on':''}'><td class='lbl'>${r.year}${r.label?` <span class='muted'>${esc(r.label)}</span>`:''}${inUse(r.year) && !r.label && !(bt.in_use_to && r.year > bt.in_use_to) ? ` <span class='bt-usetag' title='${esc(useTip(r.year))}'>${esc(tr8('in use'))}</span>` : ''}${r.realYear.map(a=>realMark(a, v)).join('')}</td>`
     + bt.windows.map(w => `${cell(r, w)}${r.fired.includes(w) && !inUse(r.year) ? dot(w, r) : ''}${(r.real[w]||[]).map(a=>realMark(a, v)).join('')}</td>`).join('') + `</tr>`).join('');
-  return html + `</tbody></table><div class='small bt-key'>${dot()} would have activated (simulation) · <span class='rm'></span> activated, money released · <span class='rm old'></span> activated under an earlier version${use0 ? ` · <span class='bt-sw bt-use'></span> version in use: real activations only` : ''}</div>`;
+  return html + `</tbody></table><div class='small bt-key'>${dot()} ${esc(tr8('would have activated (simulation)'))} · <span class='rm'></span> ${esc(tr8('activated, money released'))} · <span class='rm old'></span> ${esc(tr8('activated under an earlier version'))}${use0 ? ` · <span class='bt-sw bt-use'></span> ${esc(tr8('version in use: real activations only'))}` : ''}</div>`;
 }
 // the real activations of the framework, all versions: when, which window, how much, links
 function actualBlock(f, v){
   const A = f.activations;
-  let html = `<h4>Actual activations (${A.length})</h4>`;
-  if(!A.length) return html + `<div class='muted'>Never activated.</div>`;
+  let html = `<h4>${esc(tr8('Actual activations ({0})', A.length))}</h4>`;
+  if(!A.length) return html + `<div class='muted'>${esc(tr8('Never activated.'))}</div>`;
   return html + `<table class='mini acttbl'><colgroup><col style='width:22%'><col style='width:30%'><col style='width:22%'><col style='width:26%'></colgroup>
-    <tr><th>date</th><th>window</th><th>funding</th><th>links</th></tr>` + A.map(a => {
+    <tr>${['date','window','funding','links'].map(h=>`<th>${esc(tr8(h))}</th>`).join('')}</tr>` + A.map(a => {
       const old = !!(v && a.version && a.version !== v.v && !String(a.version).startsWith(v.v) && !String(v.v).startsWith(a.version));
-      const tags = (a.type!=='framework_aa'?` <span class='badge b-retired'>${esc(a.type.replace(/_/g,' '))}</span>`:'')
-        + (a.full===false?` <span class='badge b-development'>partial</span>`:'')
-        + (old?` <span class='vtag other' title='Fired under version ${esc(a.version)}, an earlier version than the one shown (${esc(v.v)}); its triggers and budget may differ.'>v ${esc(a.version)}</span>`:'');
-      return `<tr${old?" class='oldv'":''}><td>${esc(a.date)}${tags}</td><td>${a.window?esc(a.window):'<span class="muted">not recorded</span>'}${a.people?`<div class='muted'>${num(a.people)} people</div>`:''}</td><td>${actMoney(a)||'<span class="muted">—</span>'}</td><td>${actLinks(a).join('<br>')||'<span class="muted">—</span>'}</td></tr>`;
+      const tags = (a.type!=='framework_aa'?` <span class='badge b-retired'>${esc(tr8(a.type.replace(/_/g,' ')))}</span>`:'')
+        + (a.full===false?` <span class='badge b-development'>${esc(tr8('partial'))}</span>`:'')
+        + (old?` <span class='vtag other' title='${esc(tr8('Fired under version {0}, an earlier version than the one shown ({1}); its triggers and budget may differ.', a.version, v.v))}'>v ${esc(a.version)}</span>`:'');
+      return `<tr${old?" class='oldv'":''}><td>${esc(a.date)}${tags}</td><td>${a.window?esc(a.window):`<span class="muted">${esc(tr8('not recorded'))}</span>`}${a.people?`<div class='muted'>${esc(tr8('{0} people', num(a.people)))}</div>`:''}</td><td>${actMoney(a)||'<span class="muted">—</span>'}</td><td>${actLinks(a).join('<br>')||'<span class="muted">—</span>'}</td></tr>`;
     }).join('') + `</table>`;
 }
 
@@ -2737,6 +2796,19 @@ const ABBR = {CERF:'Central Emergency Response Fund', CBPF:'Country-Based Pooled
   UNFPA:'United Nations Population Fund', UNHCR:'UN Refugee Agency', UNICEF:'United Nations Children\'s Fund', WFP:'World Food Programme', FAO:'Food and Agriculture Organization of the United Nations',
   IOM:'International Organization for Migration', WHO:'World Health Organization', IFRC:'International Federation of Red Cross and Red Crescent Societies'};
 const ABBR_RE = new RegExp('(?<![\\w-])(' + Object.keys(ABBR).sort((a,b)=>b.length-a.length).join('|') + ')(?![\\w-])');
+// the same terms in the French and Spanish panels (the tips are translated by tr8); \p{L}
+// rather than \b, which takes an accented letter for a word boundary
+const HELP_RE = {
+  fr: {'pre-arranged': /(?<!\p{L})pré-?arrangée?s?(?!\p{L})/iu, trigger: /(?<!\p{L})déclencheurs?(?!\p{L})/iu,
+       window: /(?<!\p{L})fenêtres?(?!\p{L})/iu, 'return period': /(?<!\p{L})périodes? de retour(?!\p{L})/iu,
+       'activation probability': /(?<!\p{L})(probabilité d’activation|prob\. annuelle)(?!\p{L})/iu,
+       'all-in': /(?<!\p{L})(all-in|enveloppe unique)(?!\p{L})/iu, 'lead time': /(?<!\p{L})délais?(?!\p{L})/iu,
+       readiness: /(?<!\p{L})mobilisation(?!\p{L})/iu},
+  es: {'pre-arranged': /(?<!\p{L})preestablecid[oa]s?(?!\p{L})/iu, trigger: /(?<!\p{L})disparador(es)?(?!\p{L})/iu,
+       window: /(?<!\p{L})ventanas?(?!\p{L})/iu, 'return period': /(?<!\p{L})períodos? de retorno(?!\p{L})/iu,
+       'activation probability': /(?<!\p{L})(probabilidad de activación|prob\. anual)(?!\p{L})/iu,
+       'all-in': /(?<!\p{L})all-in(?!\p{L})/iu, 'lead time': /(?<!\p{L})tiempo de anticipación(?!\p{L})/iu,
+       readiness: /(?<!\p{L})alistamiento(?!\p{L})/iu}};
 const SKIP = new Set(['SCRIPT','STYLE','SELECT','OPTION','TEXTAREA','CODE','ABBR','INPUT']);
 function annotate(root, scope){
   scope = scope || root;
@@ -2746,11 +2818,12 @@ function annotate(root, scope){
     for(let p = n.parentNode; p && p !== root.parentNode; p = p.parentNode){ if(p.nodeType===1 && (SKIP.has(p.tagName) || p.namespaceURI === NS || (p.classList && p.classList.contains('info')))) return NodeFilter.FILTER_REJECT; }
     return n.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP; } });
   const nodes = []; for(let n; (n = walker.nextNode());) nodes.push(n);
+  const RE = HELP_RE[aaLang()] || {};
   for(let node of nodes){
     for(;;){
       const txt = node.nodeValue; let best = null;
-      for(const [key, re, tip] of HELP){ if(doneHelp.has(key)) continue; const m = re.exec(txt); if(m && (!best || m.index < best.idx)) best = {idx:m.index, len:m[0].length, key, tip, kind:'help'}; }
-      const am = ABBR_RE.exec(txt); if(am && !doneAbbr.has(am[1]) && (!best || am.index < best.idx)) best = {idx:am.index, len:am[0].length, key:am[1], tip:ABBR[am[1]], kind:'abbr'};
+      for(const [key, re0, tip] of HELP){ if(doneHelp.has(key)) continue; const m = (RE[key] || re0).exec(txt); if(m && (!best || m.index < best.idx)) best = {idx:m.index, len:m[0].length, key, tip:tr8(tip), kind:'help'}; }
+      const am = ABBR_RE.exec(txt); if(am && !doneAbbr.has(am[1]) && (!best || am.index < best.idx)) best = {idx:am.index, len:am[0].length, key:am[1], tip:tr8(ABBR[am[1]]), kind:'abbr'};
       if(!best) break;
       const after = node.splitText(best.idx), rest = after.splitText(best.len);   // node | after (the match) | rest
       if(best.kind==='abbr'){ const ab = document.createElement('abbr'); ab.title = best.tip; ab.dataset.ab = best.key; ab.textContent = after.nodeValue; after.replaceWith(ab); doneAbbr.add(best.key); }
@@ -2772,5 +2845,8 @@ if(HASH0.year != null){ YEAR = HASH0.year; applyYear(); syncYearUI(); }
 fixHeight(); buildWorld(); syncOn(); worldLegend(); updateTiles(); buildCallouts(); runLayout();
 if(isMobile()){ maprow.classList.add('open'); renderWorldList(); }
 setTimeout(runLayout, 300);   // once fonts have settled
+// a language switch: everything the script wrote is written again (legend, tiles, callouts —
+// laid out anew, their widths change — or the open country's panel and area legend)
+document.addEventListener('aalang', () => { applyLayers(); syncYearUI(); });
 (function(){ const h = HASH0.path; if(h[0] && L[h[0]]) selectCountry(h[0], h[1]||null, h[2]||null); })();
 """

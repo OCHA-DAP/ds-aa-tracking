@@ -75,7 +75,15 @@ COUNTRY = {
            "TCD": "Tchad", "TON": "Tonga", "UGA": "Ouganda", "VEN": "Venezuela",
            "VUT": "Vanuatu", "YEM": "Yémen", "ZWE": "Zimbabwe", "AGO": "Angola",
            "BDI": "Burundi", "PAK": "Pakistan", "LKA": "Sri Lanka", "LAO": "Laos",
-           "PNG": "Papouasie-Nouvelle-Guinée", "SLB": "Îles Salomon"},
+           "PNG": "Papouasie-Nouvelle-Guinée", "SLB": "Îles Salomon", "LSO": "Lesotho",
+           "MNG": "Mongolie", "SYR": "Syrie", "IND": "Inde", "IDN": "Indonésie", "ZMB": "Zambie",
+           "TZA": "Tanzanie", "RWA": "Rwanda", "SEN": "Sénégal", "GHA": "Ghana", "TLS": "Timor-Leste",
+           "JOR": "Jordanie", "LBN": "Liban", "IRQ": "Iraq", "LBR": "Libéria", "SLE": "Sierra Leone",
+           "GIN": "Guinée", "CAF": "République centrafricaine", "TGO": "Togo", "BEN": "Bénin",
+           "CIV": "Côte d’Ivoire", "PER": "Pérou", "ECU": "Équateur", "BOL": "Bolivie", "DOM": "République dominicaine",
+           "VNM": "Viet Nam", "KHM": "Cambodge", "THA": "Thaïlande", "BTN": "Bhoutan", "TJK": "Tadjikistan",
+           "KGZ": "Kirghizistan", "EGY": "Égypte", "MAR": "Maroc", "LBY": "Libye", "PSE": "Palestine",
+           "UKR": "Ukraine"},
     "es": {"AFG": "Afganistán", "BFA": "Burkina Faso", "BGD": "Bangladés", "COD": "RD del Congo",
            "CMR": "Camerún", "COL": "Colombia", "CUB": "Cuba", "DJI": "Yibuti",
            "ERI": "Eritrea", "ETH": "Etiopía", "FJI": "Fiyi", "GMB": "Gambia",
@@ -87,7 +95,15 @@ COUNTRY = {
            "TCD": "Chad", "TON": "Tonga", "UGA": "Uganda", "VEN": "Venezuela",
            "VUT": "Vanuatu", "YEM": "Yemen", "ZWE": "Zimbabue", "AGO": "Angola",
            "BDI": "Burundi", "PAK": "Pakistán", "LKA": "Sri Lanka", "LAO": "Laos",
-           "PNG": "Papúa Nueva Guinea", "SLB": "Islas Salomón"},
+           "PNG": "Papúa Nueva Guinea", "SLB": "Islas Salomón", "LSO": "Lesoto",
+           "MNG": "Mongolia", "SYR": "Siria", "IND": "India", "IDN": "Indonesia", "ZMB": "Zambia",
+           "TZA": "Tanzania", "RWA": "Ruanda", "SEN": "Senegal", "GHA": "Ghana", "TLS": "Timor-Leste",
+           "JOR": "Jordania", "LBN": "Líbano", "IRQ": "Iraq", "LBR": "Liberia", "SLE": "Sierra Leona",
+           "GIN": "Guinea", "CAF": "República Centroafricana", "TGO": "Togo", "BEN": "Benín",
+           "CIV": "Côte d’Ivoire", "PER": "Perú", "ECU": "Ecuador", "BOL": "Bolivia", "DOM": "República Dominicana",
+           "VNM": "Viet Nam", "KHM": "Camboya", "THA": "Tailandia", "BTN": "Bután", "TJK": "Tayikistán",
+           "KGZ": "Kirguistán", "EGY": "Egipto", "MAR": "Marruecos", "LBY": "Libia", "PSE": "Palestina",
+           "UKR": "Ucrania"},
 }
 
 MONTH_ABBR = {"fr": ["", "janv", "févr", "mars", "avr", "mai", "juin", "juil", "août", "sept", "oct", "nov", "déc"],
@@ -177,6 +193,13 @@ def T(en: str, fr: str | None = None, es: str | None = None) -> str:
             + f'>{html.escape(str(v["en"]))}</span>')
 
 
+def TD(en: str) -> str:
+    """A label from the data (a folder named after a country, say): T() when the tables know it,
+    else the text as it is, not reported missing."""
+    k = key(en)
+    return T(en) if all(k in TABLES[l] for l in LANGS) else html.escape(str(en))
+
+
 def TF(en: str, **kw) -> str:
     """T() with {name} placeholders filled in every language."""
     v = _all(en, None, **kw)
@@ -241,6 +264,14 @@ def OPT(value: str, en: str, selected: bool = False) -> str:
             + (" selected" if selected else "") + f'>{html.escape(v["en"])}</option>')
 
 
+def OPTC(value: str, build, selected: bool = False) -> str:
+    """OPT() of a composed string (a name and a count, say)."""
+    v = _composed(build)
+    return (f'<option value="{_attr(value)}" class="tr"'
+            + "".join(f' data-{l}="{_attr(x)}"' for l, x in v.items())
+            + (" selected" if selected else "") + f'>{html.escape(v["en"])}</option>')
+
+
 # the quoted strings of a page, single- and double-quoted scanned apart (each pairing stays on
 # its line; a template literal's ${…} would throw a combined scan's pairing off and swallow the
 # strings after it — the strings inside template literals go through tr8('…') anyway)
@@ -255,6 +286,36 @@ def _unesc(s: str) -> str:
     return s.replace("\\'", "'").replace('\\"', '"').replace("\\`", "`").replace("\\\\", "\\")
 
 
+_CALL = re.compile(r"\b(?:tr8|yr)\(")
+
+
+def _call_literals(text: str):
+    """Every string literal in the arguments of the tr8(…) and yr(…) calls of a script, quotes
+    and nested parentheses followed: the line scans pair quotes along a line, so a literal
+    inside an HTML attribute of a template (title='${tr8('…')}') escapes them."""
+    for m in _CALL.finditer(text):
+        i, depth, n = m.end(), 1, len(text)
+        while i < n and depth:
+            c = text[i]
+            if c in "'\"`":
+                j, buf, expr, brace = i + 1, [], False, 0
+                while j < n and (brace or text[j] != c):
+                    if text[j] == "\\" and j + 1 < n:
+                        buf.append(text[j:j + 2]); j += 2; continue
+                    if c == "`" and text.startswith("${", j):      # a template with ${…}: not a key
+                        expr, brace, j = True, brace + 1, j + 2; continue
+                    if brace and text[j] == "}":
+                        brace -= 1
+                    buf.append(text[j]); j += 1
+                if not expr:
+                    yield _unesc("".join(buf))
+                i = j + 1
+                continue
+            depth += c == "("
+            depth -= c == ")"
+            i += 1
+
+
 def js_dict(page_text: str) -> dict[str, dict[str, str]]:
     """The entries a page's scripts can need: every string literal or data value in the page
     the tables know (labels in the page data — hazards, regions, statuses — included). A
@@ -264,6 +325,7 @@ def js_dict(page_text: str) -> dict[str, dict[str, str]]:
         for l in LANGS:
             tr(l, k)
     keys = {key(_unesc(m.group(1))) for rx in (_JS_SQ, _JS_DQ) for m in rx.finditer(page_text)}
+    keys |= {key(k) for k in _call_literals(page_text)}
     # node ids carry their label after a prefix ('d:Other donors', 'p:nr|partner not recorded')
     keys |= {k.rsplit("|", 1)[-1].split(":", 1)[-1] for k in keys if "|" in k or ":" in k}
     return {l: {k: TABLES[l][k] for k in sorted(keys) if k in TABLES[l]} for l in LANGS}

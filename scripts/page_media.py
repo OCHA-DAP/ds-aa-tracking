@@ -23,6 +23,7 @@ from datetime import date
 from pathlib import Path
 
 from dashboards import DASH_CSS
+from site_i18n import ATTR, TB, TBC, TBF, TC, TD, TF, T
 
 MANIFEST = Path(__file__).parents[1] / "site_src" / "media.json"
 PREVIEW = 12        # photos of a folder, and posts, shown before "show all"
@@ -110,11 +111,14 @@ MEDIA_JS = """
   function hydrate(box) {
     box.querySelectorAll('img[data-src]').forEach(i => { i.src = i.dataset.src; i.removeAttribute('data-src'); });
   }
+  // a "show all" button's words, in the page's language: data-k (photo / post) and data-c (count)
+  const allOf = b => tr8(b.dataset.k === 'post' ? 'Show all {0} posts' : b.dataset.c === '1' ? 'Show all {0} photo' : 'Show all {0} photos',
+                         Number(b.dataset.c).toLocaleString('en-US'));
   function expand(box, on) {
     box.classList.toggle('clip', !on);
     if (on) hydrate(box);
     const b = box.parentNode.querySelector('.mmore');
-    if (b) b.textContent = on ? 'Show fewer' : b.dataset.all;
+    if (b) b.textContent = on ? tr8('Show fewer') : allOf(b);
   }
   function close() {
     if (cur) cur.classList.remove('on');
@@ -176,9 +180,17 @@ MEDIA_JS = """
     const sifted = !!(plat || words), more = document.getElementById('mpmore');
     pbox.classList.toggle('clip', !sifted && pbox.dataset.open !== '1');
     if (sifted || pbox.dataset.open === '1') hydrate(pbox);
-    if (more) { more.hidden = sifted; more.textContent = pbox.dataset.open === '1' ? 'Show fewer' : more.dataset.all; }
-    document.getElementById('mpcnt').textContent = sifted ? n + ' of ' + posts.length + ' posts' : '';
+    if (more) { more.hidden = sifted; more.textContent = pbox.dataset.open === '1' ? tr8('Show fewer') : allOf(more); }
+    document.getElementById('mpcnt').textContent = sifted ? tr8('{0} of {1} posts', n, posts.length) : '';
   }
+  // a language switch: the buttons and the count the script wrote
+  document.addEventListener('aalang', () => {
+    document.querySelectorAll('.mgrid').forEach(g => {
+      const b = g.parentNode.querySelector('.mmore');
+      if (b) b.textContent = g.classList.contains('clip') ? allOf(b) : tr8('Show fewer');
+    });
+    if (pbox) sift();
+  });
 
   document.addEventListener('click', e => {
     const t = e.target.closest('.mt');
@@ -230,16 +242,23 @@ def _size(n):
     return f"{n / 1e9:.1f} GB" if n >= 1e9 else f"{n / 1e6:.0f} MB" if n >= 1e6 else f"{max(n / 1e3, 1):.0f} KB"
 
 
-def _n(n, one, many=None):
-    return f"{n:,} {one if n == 1 else many or one + 's'}"
-
-
-def _day(iso):
+def _day_txt(iso, w=lambda x: x):
+    """'5 Oct 2025' (w: one language's month names); '' when there is no date."""
     try:
         d = date.fromisoformat(iso)
     except (TypeError, ValueError):
         return ""
-    return f"{d.day} {d:%b %Y}"
+    return f"{d.day} {w(f'{d:%b}')} {d.year}"
+
+
+def _day(iso):
+    """_day_txt in every language (a T span); '' when there is no date."""
+    return TC(lambda w: _day_txt(iso, w)) if _day_txt(iso) else ""
+
+
+def _count(n, one, many):
+    """'1,234 photos' in every language (one / many: the English templates, '{n} photo')."""
+    return TF(one if n == 1 else many, n=f"{n:,}")
 
 
 def _tile(item, k):
@@ -260,21 +279,21 @@ def _group(g):
     label = " › ".join(g["path"][1:])
     weight = _size(sum(i.get("bytes", 0) for i in shown))
     counts = " · ".join(x for x in (
-        _n(len(shown), "photo") if shown else "",
-        f"{weight} of originals" if weight else "",
-        _n(len(docs), "document") if docs and not shown else "") if x)
+        _count(len(shown), "{n} photo", "{n} photos") if shown else "",
+        TF("{w} of originals", w=weight) if weight else "",
+        _count(len(docs), "{n} document", "{n} documents") if docs and not shown else "") if x)
     out = [f'<section class="mgroup" data-g="{_e(" › ".join(g["path"]))}"><div class="mh">'
            + (f"<b>{_e(label)}</b>" if label else "")
            + f'<span class="n">{counts}</span>'
-           f'<a href="{_e(FOLDER_URL.format(id=g["id"]))}" target="_blank" rel="noopener">Open the folder in Drive ↗</a></div>']
+           f'<a href="{_e(FOLDER_URL.format(id=g["id"]))}" target="_blank" rel="noopener">{T("Open the folder in Drive ↗")}</a></div>']
     if shown:
         clip = " clip" if len(shown) > PREVIEW else ""
         out.append(f'<div class="mgrid{clip}">' + "".join(_tile(i, k) for k, i in enumerate(shown)) + "</div>")
         if clip:
-            all_ = f"Show all {_n(len(shown), 'photo')}"
-            out.append(f'<button type="button" class="mmore" data-all="{_e(all_)}">{_e(all_)}</button>')
+            all_ = _count(len(shown), "Show all {n} photo", "Show all {n} photos")
+            out.append(f'<button type="button" class="mmore" data-k="photo" data-c="{len(shown)}">{all_}</button>')
     if docs:
-        out.append('<div class="mdocs">Documents in this folder: ' + " · ".join(
+        out.append(f'<div class="mdocs">{T("Documents in this folder:")} ' + " · ".join(
             f'<a href="{_e(FILE_URL.format(id=i["id"]))}" target="_blank" rel="noopener">{_e(i["name"])}</a>'
             + (f' ({_size(i["bytes"])})' if i.get("bytes", 0) >= 5e6 else "") for i in docs) + "</div>")
     return "".join(out) + "</section>"
@@ -291,17 +310,16 @@ def _post(p, k):
             f'<span class="d">{_day(p.get("date"))}</span></div>'
             + (f'<div class="pc">{_e(where)}</div>' if where else "")
             + (f'<p class="pt">{_e(p["text"])}</p>' if p.get("text") else "")
-            + f'<a class="pl" href="{_e(p["url"])}" target="_blank" rel="noopener">Open the post on {_e(p["platform"])} ↗</a>'
+            + f'<a class="pl" href="{_e(p["url"])}" target="_blank" rel="noopener">{TF("Open the post on {p} ↗", p=p["platform"])}</a>'
             "</div></article>")
 
 
 def _empty():
-    return """
+    return f"""
 <div class='card' style='text-align:center;padding:40px 20px'>
 <div style='font-size:34px;line-height:1'>▶</div>
-<div class='empty' style='margin-top:10px'>No media collected yet.</div>
-<p class='meta' style='margin:8px 0 0'>Meanwhile: <a href='pillar-learning.html'>Learning</a> lists the evaluations,
-after-action reviews and stories on record.</p>
+<div class='empty' style='margin-top:10px'>{T("No media collected yet.")}</div>
+<p class='meta' style='margin:8px 0 0'>{TB("Meanwhile: <a href='pillar-learning.html'>Learning</a> lists the evaluations, after-action reviews and stories on record.")}</p>
 </div>"""
 
 
@@ -321,58 +339,59 @@ def build_media(page):
         return sum(1 for g in gs for i in g["items"] if i["kind"] in ("image", "video"))
 
     n_photos, n_docs = photos(groups), sum(1 for g in groups for i in g["items"] if i["kind"] == "document")
-    listed = _day(m.get("synced"))
-    tiles = "".join(f"<div class='tile'><div class='v'>{v:,}</div><div class='l'>{label}</div></div>"
+    synced = m.get("synced")
+    tiles = "".join(f"<div class='tile'><div class='v'>{v:,}</div><div class='l'>{T(label)}</div></div>"
                     for v, label in ((n_photos, "photos"), (len(countries), "countries"),
                                      (len(posts), "social posts"), (n_docs, "captions and documents")) if v)
-    jump = "".join(f'<a href="#m-{k}">{_e(c)}<span class="n">{photos(gs):,}</span></a>'
+    jump = "".join(f'<a href="#m-{k}">{TD(c)}<span class="n">{photos(gs):,}</span></a>'
                    for k, (c, gs) in enumerate(countries.items()))
     if posts:
-        jump += f'<a href="#posts">Social posts<span class="n">{len(posts):,}</span></a>'
+        jump += f'<a href="#posts">{T("Social posts")}<span class="n">{len(posts):,}</span></a>'
 
     body = [f"""
-<div class='card'><b>A first collection, shown as it was gathered.</b> Photos of anticipatory action
-shared by agencies and OCHA teams, and posts about it on social media, from the shared folder
-<i>{_e(m["folder"]["title"])}</i>. Nothing has been selected, captioned or credited yet: a photo carries
-its file name and the folder it came in, and the full-size original opens in Drive.
-{f"Listed on {listed}." if listed else ""}
+<div class='card'>{TBF("<b>A first collection, shown as it was gathered.</b> Photos of anticipatory action shared by agencies and OCHA teams, and posts about it on social media, from the shared folder <i>{folder}</i>. Nothing has been selected, captioned or credited yet: a photo carries its file name and the folder it came in, and the full-size original opens in Drive.", folder=_e(m["folder"]["title"]))}
+{TBC(lambda w: w("Listed on {d}.").format(d=_day_txt(synced, w))) if _day_txt(synced) else ""}
 <div class='tiles'>{tiles}</div>
 <div class='mjump'>{jump}</div></div>"""]
 
     if groups:
-        body.append("<h2 id='photos'>Photos, by country</h2>")
+        body.append(f"<h2 id='photos'>{T('Photos, by country')}</h2>")
         for k, (c, gs) in enumerate(countries.items()):
-            body.append(f'<h3 class="mcountry" id="m-{k}">{_e(c)}<span class="n">{_n(photos(gs), "photo")}</span></h3>')
+            body.append(f'<h3 class="mcountry" id="m-{k}">{TD(c)}<span class="n">{_count(photos(gs), "{n} photo", "{n} photos")}</span></h3>')
             body += [_group(g) for g in gs]
-        body.append("""
+        body.append(f"""
 <div id="mview" class="mview" hidden>
  <div class="mvbar"><span class="mvcap"><b class="nm"></b><span class="wh"></span></span>
-  <span><button type="button" class="pv" aria-label="Previous photo">‹</button><span class="pos"></span><button type="button" class="nx" aria-label="Next photo">›</button></span>
-  <a class="og" target="_blank" rel="noopener">Open the original in Drive ↗</a>
-  <button type="button" class="cl" aria-label="Close">✕</button></div>
- <div class="mvstage"><img alt="" referrerpolicy="no-referrer"><iframe hidden title="Video" allow="autoplay; fullscreen" allowfullscreen></iframe></div>
+  <span><button type="button" class="pv" {ATTR("aria-label", "Previous photo")}>‹</button><span class="pos"></span><button type="button" class="nx" {ATTR("aria-label", "Next photo")}>›</button></span>
+  <a class="og" target="_blank" rel="noopener">{T("Open the original in Drive ↗")}</a>
+  <button type="button" class="cl" {ATTR("aria-label", "Close")}>✕</button></div>
+ <div class="mvstage"><img alt="" referrerpolicy="no-referrer"><iframe hidden {ATTR("title", "Video")} allow="autoplay; fullscreen" allowfullscreen></iframe></div>
 </div>""")
 
     if posts:
         by = {}
         for p in posts:
             by[p["platform"]] = by.get(p["platform"], 0) + 1
-        chips = (f'<button type="button" class="on" data-p="">All<span class="n">{len(posts):,}</span></button>'
+        chips = (f'<button type="button" class="on" data-p="">{T("All")}<span class="n">{len(posts):,}</span></button>'
                  + "".join(f'<button type="button" data-p="{_e(k)}">{_e(k)}<span class="n">{v:,}</span></button>'
                            for k, v in sorted(by.items(), key=lambda kv: -kv[1])))
         years = sorted(p["date"][:4] for p in posts if p.get("date"))
-        span = f", from {years[0]} to {years[-1]}" if years else ""
         clip = " clip" if len(posts) > PREVIEW else ""
-        all_ = f"Show all {_n(len(posts), 'post')}"
+        all_ = _count(len(posts), "Show all {n} post", "Show all {n} posts")
+        posts_note = TBC(lambda w: w(
+            "{n} about anticipatory action by OCHA, CERF and partner accounts{span}, newest first. They come "
+            "from the catalogue kept with the folder ({cat}), which is partial: it is not a record of "
+            "everything posted. Each post opens on its platform.").format(
+                n=w("{n} post" if len(posts) == 1 else "{n} posts").format(n=f"{len(posts):,}"),
+                span=w(", from {a} to {b}").format(a=years[0], b=years[-1]) if years else "",
+                cat=_e(m.get("catalogue", ""))))
         body.append(f"""
-<h2 id='posts'>Social posts</h2>
-<p class='meta'>{_n(len(posts), "post")} about anticipatory action by OCHA, CERF and partner accounts{span},
-newest first. They come from the catalogue kept with the folder ({_e(m.get("catalogue", ""))}), which is
-partial: it is not a record of everything posted. Each post opens on its platform.</p>
-<div class='mpbar'>{chips}<input id='mpq' type='search' placeholder='search the posts…' aria-label='Search the posts'>
+<h2 id='posts'>{T("Social posts")}</h2>
+<p class='meta'>{posts_note}</p>
+<div class='mpbar'>{chips}<input id='mpq' type='search' {ATTR("placeholder", "search the posts…")} {ATTR("aria-label", "Search the posts")}>
 <span class='cnt' id='mpcnt'></span></div>
 <div class='mposts{clip}' id='mposts'>{"".join(_post(p, k) for k, p in enumerate(posts))}</div>
-{f'<button type="button" class="mmore" id="mpmore" data-all="{_e(all_)}">{_e(all_)}</button>' if clip else ""}""")
+{f'<button type="button" class="mmore" id="mpmore" data-k="post" data-c="{len(posts)}">{all_}</button>' if clip else ""}""")
 
     body.append(f"<style>{DASH_CSS}{MEDIA_CSS}</style><script>{MEDIA_JS}</script>")
     page("media.html", "Media & visuals", "".join(body))
