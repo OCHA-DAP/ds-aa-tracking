@@ -25,6 +25,9 @@ os.environ.setdefault("PGSSLMODE", "require")
 
 import ocha_stratus as stratus  # noqa: E402
 
+import site_i18n as i18n  # noqa: E402  (EN / FR / ES: the team mechanism, KB D86)
+from site_i18n import ATTR, T, TB, TF  # noqa: E402
+
 from ds_aa_tracking import schema as trk_schema  # noqa: E402
 
 OUT = Path(__file__).parents[1] / "site_build"
@@ -80,7 +83,7 @@ button.dl:hover { background:#eef4fc; }
 .b-mirror { background:#fdf1dc; color:#8a5c0a; } .b-warn { background:#fde3e3; color:#a11; }
 code { background:#f0f0f0; padding:1px 5px; border-radius:3px; font-size:12px; }
 ul.tight li { margin:3px 0; }
-"""
+""" + i18n.LANG_CSS
 
 FILTER_JS = """
 function filt(inp) {
@@ -119,23 +122,26 @@ ROOT_ASSETS = ("chart.umd.js", "sankey.js")           # the public pages load th
 ADMIN_ASSETS = ("pdf.min.js", "pdf.worker.min.js")    # data entry only
 ADMIN_DIR = "admin"
 
-BANNER = ("<div class='devbanner' role='note'><b>OCHA internal product under development</b>, "
-          "subject to change without warning. The figures may be incorrect and should not be used.</div>")
+BANNER = ("<div class='devbanner' role='note'>"
+          + TB("<b>OCHA internal product under development</b>, subject to change without warning. "
+               "The figures may be incorrect and should not be used.") + "</div>")
 
 # public nav: the map, then the building blocks of AA (model · plan · financing), learning and
 # media. Donor shares left the public site on 2026-10-15 (the Financing page's money flows,
 # donors ticked, show the same): it is an admin page now
-NAV = """
+# (French and Spanish: the toggle at the right, site_i18n; the choice is kept per browser)
+NAV = f"""
 <header>
-  <span class="t"><a href="index.html" style="color:#fff;text-decoration:none">Anticipatory action</a></span>
+  <span class="t"><a href="index.html" style="color:#fff;text-decoration:none">{T("Anticipatory action")}</a></span>
   <nav class="pub">
-   <a href="index.html">Map</a>
-   <a href="pillar-model.html">Model</a><a class="sub" href="pillar-history.html" title="simulated and real activations of the current triggers">historical activations</a>
-   <a href="pillar-plan.html">Plan</a>
-   <a href="dash-funding.html">Financing</a>
-   <a href="pillar-learning.html">Learning</a>
-   <a href="media.html">Media</a>
+   <a href="index.html">{T("Map")}</a>
+   <a href="pillar-model.html">{T("Model")}</a><a class="sub" href="pillar-history.html" {ATTR("title", "simulated and real activations of the current triggers")}>{T("historical activations")}</a>
+   <a href="pillar-plan.html">{T("Plan")}</a>
+   <a href="dash-funding.html">{T("Financing")}</a>
+   <a href="pillar-learning.html">{T("Learning")}</a>
+   <a href="media.html">{T("Media")}</a>
   </nav>
+  {i18n.TOGGLE_HTML}
 </header>
 """
 
@@ -217,12 +223,22 @@ def public_pages():
     return {n for n in _PAGES if n in PUBLIC_TABS or n in on_map}
 
 
-def _render(name, title, body, nav, meta):
-    return f"""<!doctype html><html><head><meta charset="utf-8">
+def _render(name, title, body, nav, meta, public=False):
+    """A page. A public page follows the language toggle (site_i18n): its head applies the
+    stored language and carries the translations its scripts need; the admin site stays
+    English (its pages carry no toggle and ignore the stored choice)."""
+    lang_js, h1 = i18n.LANG_STUB_JS, html.escape(title)
+    if public:
+        h1 = T(title)
+        lang_js = (i18n.LANG_HEAD_JS
+                   + f"window.I18N = {json.dumps(i18n.js_dict(body), ensure_ascii=False)};\n"
+                   + f"window.AA_TITLES = {json.dumps(i18n.titles(title), ensure_ascii=False)};\n"
+                   + i18n.LANG_JS)
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)}</title><style>{CSS}{POLICY_CSS}</style>
-<script>{FILTER_JS}</script></head><body>
-{BANNER}{nav}<main><h1>{html.escape(title)}</h1>
+<script>{lang_js}{FILTER_JS}</script></head><body>
+{BANNER}{nav}<main><h1>{h1}</h1>
 <p class="meta">{meta}</p>
 {policy_box(name)}{body}</main></body></html>"""
 
@@ -287,7 +303,9 @@ def write_site():
                 for n in set(to_admin.findall(body)):
                     cut.setdefault(name, set()).add(n)
                 body = to_admin.sub("#", body)
-            doc = _render(name, title, body, NAV, f"Generated {stamp} · {DATA_STAMP}")
+            data = (TF("data snapshot {at} UTC", at=SNAPSHOT_AT) if SNAPSHOT_AT else T("live dev DB"))
+            doc = _render(name, title, body, NAV, TF("Generated {stamp}", stamp=stamp) + " · " + data,
+                          public=True)
             if (token and token in doc) or "x-site-token" in doc:
                 raise SystemExit(f"FATAL: public page {name} carries the data service's token")
             (OUT / name).write_text(doc)
@@ -596,6 +614,7 @@ cerf_allocation_storm · cerf_supplement
 """
     page("overview.html", "AA tracking — schema & data review", idx)
     write_site()
+    i18n.report_missing()
 
 
 def _latest_status_pivot(e, since="2025-12-01"):
