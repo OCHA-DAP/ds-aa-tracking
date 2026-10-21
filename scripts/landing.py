@@ -1473,6 +1473,7 @@ def build_landing(page, d, e):
   <button id='back' class='backbtn' hidden>{T("← world")}</button>
   <div id='tip' class='tip' hidden></div>
   {svg}
+  <div id='mapov' class='mapov'></div>
   <div id='lpane' class='labelpane'><svg id='leaders' class='leadersvg'></svg></div>
   <div class='maplegend' id='legend'></div>
  </div>
@@ -1573,6 +1574,13 @@ LANDING_CSS = r"""
   .mapbox.compact .callout, .mapbox.compact .leader { display:none; }
   .mapbox.compact .cdot { r:2.5; }
   .mapbox.compact .maplegend { display:none; }
+  /* the world in two panels, each about twice the scale (buildOverview) */
+  .mapbox.ov { height:auto; }
+  .mapbox.ov #map, .mapbox.ov .labelpane { display:none; }   /* the hidden map's callout dots too */
+  .mapbox.ov .mapov { display:block; }
+  .mapov svg { display:block; width:100%; height:auto; }
+  .mapov svg + svg { border-top:1px dashed #cdd6e0; }
+  .ovdot { fill:#334155; stroke:#fff; stroke-width:1.2; vector-effect:non-scaling-stroke; }
   .mapbox.compact #map.zoomed ~ .maplegend { display:block; left:8px; bottom:8px; font-size:10.5px; padding:6px 9px; max-width:70%; }
   .backbtn { top:8px; left:8px; padding:5px 10px; font-size:12px; }
   .hero p { font-size:13px; }
@@ -1581,6 +1589,7 @@ LANDING_CSS = r"""
   .wl-pin .iconbox { width:20px; height:20px; cursor:default; } .wl-pin .iconbox svg.hz { width:13px; height:13px; }
   .tiles { gap:8px; } .tile { min-width:0; flex:1 1 40%; padding:10px 12px; } .tile .v { font-size:18px; }
 }
+.mapov { display:none; }
 .mapbox { background:linear-gradient(180deg,#eef3f8 0%,#e9eff5 100%); border-radius:12px; box-shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px -12px rgba(16,24,40,.18); position:relative; overflow:hidden; border:1px solid #e6eaef; height:var(--maph); }
 #map { width:100%; height:100%; display:block; }
 .cty { fill:#f7f8fa; stroke:#d3d9df; stroke-width:.45; vector-effect:non-scaling-stroke; transition: opacity .5s, fill .3s; }
@@ -1985,6 +1994,47 @@ function renderWorldList(){
     </div>`).join('');
   side.innerHTML = `<div class='muted' style='margin:2px 0 8px'>${esc(tr8('Tap a country to zoom in.'))}</div><div class='fwlist'>${rows}</div>`;
 }
+// phones, world view: the world at 332 px is ~135 px tall, too small to tap. The overview draws the
+// part of the world the portfolio covers in two stacked panels, split at 55°E (Americas · Africa ·
+// Yemen | Asia · Pacific): each about twice the scale. Tap a country -> the usual zoomed view.
+const ov = document.getElementById('mapov');
+let OVBOX = null, OVPATHS = null;
+function ovBoxes(){   // the two panels' view boxes, from every country the map can show (any year, any layer)
+  if(OVBOX) return OVBOX;
+  const cut = worldProj(55, 10)[0], pad = 14, G = [[], []];
+  Object.values(L).forEach(c => {
+    if(!c.lbbox || !c.fws.some(f => ((LIVE.get(f) || f).layers || []).length)) return;
+    const b = c.lbbox; let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for(let i = 0; i <= 8; i++) for(let j = 0; j <= 8; j++){
+      const q = worldProj(b[0] + (b[2]-b[0])*i/8, b[1] + (b[3]-b[1])*j/8);
+      x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); y0 = Math.min(y0, q[1]); y1 = Math.max(y1, q[1]); }
+    G[(x0 + x1)/2 < cut ? 0 : 1].push([x0, y0, x1, y1]); });   // by place on the map (Tonga sits right of Fiji)
+  OVBOX = G.map(g => { const x0 = Math.min(...g.map(b=>b[0])) - pad, y0 = Math.min(...g.map(b=>b[1])) - pad;
+    return [x0, y0, Math.max(...g.map(b=>b[2])) + pad - x0, Math.max(...g.map(b=>b[3])) + pad - y0]; });
+  return OVBOX;
+}
+function buildOverview(){
+  const on = isMobile() && !state.iso;
+  mapbox.classList.toggle('ov', on);
+  if(!on){ ov.innerHTML = ''; return; }
+  if(!OVPATHS) OVPATHS = Object.entries(WORLD).map(([iso, c]) => {   // each country once: its path and its box
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    c.r.forEach(r => r.forEach(([lon, lat]) => { const q = worldProj(lon, lat);
+      x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); y0 = Math.min(y0, q[1]); y1 = Math.max(y1, q[1]); }));
+    return {iso, d: ringsD(c.r, worldProj), b: [x0, y0, x1, y1]}; });
+  const w = ov.clientWidth || mapbox.clientWidth || 330;
+  ov.innerHTML = ovBoxes().map(([x, y, bw, bh], i) => {
+    const r = 3.6 * bw / w;   // a dot of about 3.6 px whatever the panel's scale
+    const paths = OVPATHS.filter(o => o.b[2] > x && o.b[0] < x + bw && o.b[3] > y && o.b[1] < y + bh)
+      .map(o => `<path class='cty${L[o.iso] && vis(L[o.iso]).length ? ' on' : ''}' data-iso='${o.iso}' d='${o.d}'/>`).join('');
+    const dots = Object.entries(L).filter(([iso, c]) => c.centroid && vis(c).length).map(([iso, c]) => {
+      const q = worldProj(c.centroid[1], c.centroid[0]);
+      return `<circle class='ovdot' data-iso='${iso}' cx='${q[0].toFixed(1)}' cy='${q[1].toFixed(1)}' r='${r.toFixed(2)}'/>`; }).join('');
+    return `<svg viewBox='${x.toFixed(1)} ${y.toFixed(1)} ${bw.toFixed(1)} ${bh.toFixed(1)}' role='img' aria-label='${esc(tr8(i ? 'Asia and the Pacific' : 'The Americas, Africa and Yemen'))}'>${paths}${dots}</svg>`;
+  }).join('');
+}
+ov.addEventListener('click', ev => { const t = ev.target.closest('[data-iso]'), c = t && L[t.dataset.iso];
+  if(c && vis(c).length) selectCountry(t.dataset.iso); });
 let P = worldProj;                                    // projection the country layers use
 function ringsD(rings, proj=P){ let d=''; for(const r of rings){ let first=true; for(const [x,y] of r){ const q=proj(x,y); d += (first?'M':'L') + q[0].toFixed(1) + ',' + q[1].toFixed(1); first=false; } d+='Z'; } return d; }
 function kpx(){ return svg.getBoundingClientRect().width / VB.w; }
@@ -2165,7 +2215,7 @@ function syncOn(){ for(const [iso, c] of Object.entries(L)){ const el = WP[iso] 
 function applyLayers(){
   syncOn(); worldLegend(); updateTiles();
   if(state.iso){ renderSide(); if(GEO[state.iso]) drawAdmin(state.iso, false); }
-  else { buildCallouts(); runLayout(); if(isMobile()) renderWorldList(); }
+  else { buildCallouts(); runLayout(); if(isMobile()) renderWorldList(); buildOverview(); }
 }
 // headline tiles: recomputed from the pairs the map currently shows (see tile_figures in Python)
 function updateTiles(){
@@ -2381,7 +2431,8 @@ function runLayout(){
 // out) — callouts are positioned in CSS px, so a stale width puts them off the countries
 let rto = null;
 let lastLayoutW = 0;
-function scheduleLayout(){ clearTimeout(rto); rto = setTimeout(() => { if(!state.iso){ fixHeight(); runLayout(); lpane.classList.remove('hide'); if(isMobile()){ maprow.classList.add('open'); if(!side.querySelector('.wl')) renderWorldList(); }
+function scheduleLayout(){ clearTimeout(rto); rto = setTimeout(() => { if(!state.iso){ if(!isMobile()) maprow.classList.remove('open');   // a phone turned to landscape: the world view's own layout
+  fixHeight(); runLayout(); lpane.classList.remove('hide'); buildOverview(); if(isMobile()){ maprow.classList.add('open'); if(!side.querySelector('.wl')) renderWorldList(); }
   lastLayoutW = svg.getBoundingClientRect().width;
   // a resize can land while this tab is throttled: re-check once the dust settles
   setTimeout(() => { if(!state.iso && Math.abs(svg.getBoundingClientRect().width - lastLayoutW) > 1) scheduleLayout(); }, 600); } }, 120); }
@@ -2426,6 +2477,7 @@ async function selectCountry(iso, hz, ver){
   if(want && want.layer && !visLayer(want)){ LAYERS[want.layer] = true; syncOn(); }
   const fws = vis(c);
   state = { iso, hz: hz || (fws.length===1 ? fws[0].hazard : null), ver: ver || null, pillar: state.pillar };
+  buildOverview();   // a phone: the map itself shows the country
   document.querySelectorAll('.cty.sel').forEach(x=>x.classList.remove('sel'));
   svg.querySelectorAll(`.cty[data-iso='${iso}']`).forEach(el => el.classList.add('sel'));
   back.hidden = false; lpane.classList.add('hide'); tip.hidden = true; maprow.classList.add('open');
@@ -2845,6 +2897,7 @@ snapLive();
 if(HASH0.year != null){ YEAR = HASH0.year; applyYear(); syncYearUI(); }
 fixHeight(); buildWorld(); syncOn(); worldLegend(); updateTiles(); buildCallouts(); runLayout();
 if(isMobile()){ maprow.classList.add('open'); renderWorldList(); }
+buildOverview();
 setTimeout(runLayout, 300);   // once fonts have settled
 // a language switch: everything the script wrote is written again (legend, tiles, callouts —
 // laid out anew, their widths change — or the open country's panel and area legend)
