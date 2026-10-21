@@ -193,6 +193,13 @@ def T(en: str, fr: str | None = None, es: str | None = None) -> str:
             + f'>{html.escape(str(v["en"]))}</span>')
 
 
+def TD(en: str) -> str:
+    """A label from the data (a folder named after a country, say): T() when the tables know it,
+    else the text as it is, not reported missing."""
+    k = key(en)
+    return T(en) if all(k in TABLES[l] for l in LANGS) else html.escape(str(en))
+
+
 def TF(en: str, **kw) -> str:
     """T() with {name} placeholders filled in every language."""
     v = _all(en, None, **kw)
