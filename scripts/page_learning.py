@@ -466,15 +466,17 @@ def build_learning(page, d):
 
     data = {"docs": recs, "countries": countries, "featured": featured, "prem": prem,
             "on": on,
-            "hazard": HAZARD_LABEL, "vb": {"w": landing.VB_W, "h": round(landing.VB_H, 1)}}
+            "hazard": HAZARD_LABEL, "vb": {"w": landing.VB_W, "h": round(landing.VB_H, 1),
+                                           "cut": round(xy(55, 10)[0], 1)}}   # a phone's two panels
     # "</" never appears inside the page's script element, whatever a title holds
     data_js = json.dumps(data, separators=(",", ":"), ensure_ascii=False).replace("</", "<\\/")
     body = f"""<style>{LEARNING_CSS}</style>
 <div class='lmapwrap'>
-<div class='lmapbox' id='lmapbox' style='aspect-ratio:{landing.VB_W:.0f}/{landing.VB_H:.1f}'>
+<div class='lmapbox' id='lmapbox' style='--ar:{landing.VB_W:.0f}/{landing.VB_H:.1f}'>
  <svg id='lmap' viewBox='0 0 {landing.VB_W:.1f} {landing.VB_H:.1f}' preserveAspectRatio='xMidYMid meet'
   role='img' {ATTR("aria-label", "World map of headline findings on anticipatory action")}>
   <g id='lworld'>{paths}</g><g id='ldots'>{dots}</g></svg>
+ <div id='lmapov' class='lmapov'></div>
  <div id='lpane' class='lpane'><svg id='leaders' class='leadersvg'></svg></div>
  <div id='hcard' class='hcard' hidden></div>
  <div class='llegend' id='llegend'><b>{T(LEDE)}</b>{legend}
@@ -509,14 +511,24 @@ def build_learning(page, d):
 LEARNING_CSS = r"""
 .lmapbox { position:relative; width:100%; overflow:hidden; border-radius:12px; border:1px solid #e6eaef;
   background:linear-gradient(180deg,#eef3f8 0%,#e9eff5 100%);
-  box-shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px -12px rgba(16,24,40,.18); }
+  box-shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px -12px rgba(16,24,40,.18); aspect-ratio:var(--ar); }
 #lmap { width:100%; height:100%; display:block; }
-#lmap .cty { fill:#f7f8fa; stroke:#d3d9df; stroke-width:.45; vector-effect:non-scaling-stroke; transition:fill .2s; }
-#lmap .cty.on { fill:#cfe1f3; stroke:#8fb4d9; stroke-width:.7; cursor:pointer; }
-#lmap .cty.on:hover, #lmap .cty.on.sel { fill:#a9c9e8; }
-#lmap .ldot { fill:#51627a; stroke:#fff; stroke-width:1.2; vector-effect:non-scaling-stroke; cursor:pointer; }
-#lmap .ldot.feat { fill:#0f2540; stroke-width:1.8; }
-#lmap .lpip { stroke:#fff; stroke-width:.8; vector-effect:non-scaling-stroke; pointer-events:none; }
+/* the map and, on a phone, its two panels (.lmapov) */
+.lmapbox .cty { fill:#f7f8fa; stroke:#d3d9df; stroke-width:.45; vector-effect:non-scaling-stroke; transition:fill .2s; }
+.lmapbox .cty.on { fill:#cfe1f3; stroke:#8fb4d9; stroke-width:.7; cursor:pointer; }
+.lmapbox .cty.on:hover, .lmapbox .cty.on.sel { fill:#a9c9e8; }
+.lmapbox .ldot { fill:#51627a; stroke:#fff; stroke-width:1.2; vector-effect:non-scaling-stroke; cursor:pointer; }
+.lmapbox .ldot.feat { fill:#0f2540; stroke-width:1.8; }
+.lmapbox .lpip { stroke:#fff; stroke-width:.8; vector-effect:non-scaling-stroke; pointer-events:none; }
+.lmapov { display:none; }
+@media (max-width:760px){
+  /* a phone: the countries in two stacked panels, each about twice the scale (buildOverview) */
+  .lmapbox.ov { aspect-ratio:auto; }
+  .lmapbox.ov #lmap { display:none; }
+  .lmapbox.ov .lmapov { display:block; }
+  .lmapov svg { display:block; width:100%; height:auto; }
+  .lmapov svg + svg { border-top:1px dashed #cdd6e0; }
+}
 .lpane { position:absolute; inset:0; pointer-events:none; transition:opacity .2s; }
 .leadersvg { position:absolute; inset:0; width:100%; height:100%; overflow:visible; }
 .leader { stroke:#7c8ba1; stroke-width:1; stroke-linecap:round; transition:opacity .2s; }
@@ -566,7 +578,7 @@ LEARNING_CSS = r"""
 .lg-i { display:flex; align-items:center; gap:6px; } .lg-d { width:9px; height:9px; border-radius:50%; flex:none; }
 .lg-h { color:#6b7a8f; font-size:10.5px; line-height:1.3; margin-top:2px; }
 /* narrow screens: the callouts do not fit on the map, the findings are listed under it */
-.hlstack { display:none; }
+.hlstack { display:none; scroll-margin-top:35vh; }
 .lmapbox.compact .lpane, .lmapbox.compact .hcard, .lmapbox.compact .llegend { display:none; }
 .lmapbox.compact + .hlstack { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:8px; margin-top:10px; }
 .hlstack .hc-h, .hlstack .hc-f, .hlstack .hc-k { grid-column:1/-1; margin:0; }
@@ -760,9 +772,46 @@ function pairCost(Lb, c, o){
 const costOf = (Lb, c) => labels.reduce((s, o) => o === Lb || !o.at ? s : s + pairCost(Lb, c, o), c.cost);
 function seeded(a){ return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a);
   t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+// a phone: the map at 332 px is ~135 px tall and most of its countries a few pixels wide. The
+// overview draws the countries in two stacked panels split at 55°E, as on the map page (the
+// Americas and Africa | Asia and the Pacific): each about twice the scale. A tap works as on the map.
+const ov = $('lmapov'), PHONE = window.matchMedia('(max-width: 760px)');
+let OVBOX = null, OVPATHS = null;
+function ovBoxes(){   // the two panels' view boxes, from the countries on the map
+  if(OVBOX) return OVBOX;
+  const pad = 14, G = [[], []];
+  Object.values(C).forEach(c => G[(c.r[0] + c.r[2])/2 < VB.cut ? 0 : 1].push(c.r));   // by place on the map
+  OVBOX = G.filter(g => g.length).map(g => { const x0 = Math.min(...g.map(b=>b[0])) - pad, y0 = Math.min(...g.map(b=>b[1])) - pad;
+    return [x0, y0, Math.max(...g.map(b=>b[2])) + pad - x0, Math.max(...g.map(b=>b[3])) + pad - y0]; });
+  return OVBOX;
+}
+function buildOverview(on){
+  mapbox.classList.toggle('ov', on);
+  if(!on){ ov.innerHTML = ''; return; }
+  if(!OVPATHS) OVPATHS = [...svg.querySelectorAll('#lworld .cty')].map(p => {   // each country once: its path and its box
+    const d = p.getAttribute('d'), n = d.match(/-?[\d.]+/g).map(Number);
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for(let i = 0; i < n.length; i += 2){ x0 = Math.min(x0, n[i]); x1 = Math.max(x1, n[i]); y0 = Math.min(y0, n[i+1]); y1 = Math.max(y1, n[i+1]); }
+    return {html: `<path class='cty${p.classList.contains('on') ? ' on' : ''}' data-iso='${p.dataset.iso}' d='${d}'/>`, b: [x0, y0, x1, y1]}; });
+  const w = ov.clientWidth || mapbox.clientWidth || 330;
+  const feat = iso => C[iso].f.some(shown);
+  const isos = Object.keys(C).sort((a, b) => feat(a) - feat(b));   // the countries with a callout on top, as on the map
+  ov.innerHTML = ovBoxes().map(([x, y, bw, bh], i) => {
+    const u = 1.2 * bw / w;   // the map's dots and pips at 1.2 px a unit, whatever the panel's scale
+    const paths = OVPATHS.filter(o => o.b[2] > x && o.b[0] < x + bw && o.b[3] > y && o.b[1] < y + bh).map(o => o.html).join('');
+    const dots = isos.filter(iso => C[iso].x > x && C[iso].x < x + bw && C[iso].y > y && C[iso].y < y + bh).map(iso => {
+      const c = C[iso], r = (feat(iso) ? 4.2 : 2.8) * u;
+      return `<circle class='ldot${feat(iso) ? ' feat' : ''}' data-iso='${iso}' cx='${c.x}' cy='${c.y}' r='${r.toFixed(2)}'/>`
+        + c.pips.map((k, j) => `<circle class='lpip' cx='${(c.x + r + (3.2 + 4.2*j)*u).toFixed(1)}' cy='${c.y}' r='${(1.7*u).toFixed(2)}' style='fill:${P(k).c}'/>`).join('');
+    }).join('');
+    return `<svg viewBox='${x.toFixed(1)} ${y.toFixed(1)} ${bw.toFixed(1)} ${bh.toFixed(1)}' role='img' aria-label='${esc(tr8(i ? 'Asia and the Pacific' : 'The Americas and Africa'))}'>${paths}${dots}</svg>`;
+  }).join('');
+  if(pinned) mark(pinned);
+}
 let compact = false;
 function runLayout(){
-  const r = svg.getBoundingClientRect(), W = r.width, H = r.height;
+  const phone = PHONE.matches; buildOverview(phone);
+  const r = svg.getBoundingClientRect(), W = phone ? mapbox.clientWidth : r.width, H = r.height;
   if(!W) return;
   const k = W / VB.w, was = compact;
   compact = W < 1100;                                     // the cards no longer fit on the map: list them under it
@@ -832,8 +881,8 @@ function placeCard(iso){
   }
   hcard.style.left = (best.cx-w/2)+'px'; hcard.style.top = (best.cy-h/2)+'px';
 }
-function mark(iso){ svg.querySelectorAll('.cty.sel').forEach(e => e.classList.remove('sel'));
-  if(iso){ const p = svg.querySelector(`.cty[data-iso='${iso}']`); if(p) p.classList.add('sel'); } }
+function mark(iso){ mapbox.querySelectorAll('.cty.sel').forEach(e => e.classList.remove('sel'));   // the map and a phone's panels
+  if(iso) mapbox.querySelectorAll(`.cty[data-iso='${iso}']`).forEach(p => p.classList.add('sel')); }
 function lit(iso){ labels.forEach(Lb => { const on = !!iso && Lb.isos.includes(iso);
   Lb.el.classList.toggle('keep', on); Lb.lns.forEach(ln => ln.classList.toggle('keep', on)); }); }
 function showCountry(iso, pin){
@@ -853,8 +902,12 @@ function unpin(){ pinned = null; hideCountry();
 const isoOf = t => (t && t.dataset && t.dataset.iso && C[t.dataset.iso] && (t.classList.contains('on') || t.classList.contains('ldot'))) ? t.dataset.iso : null;
 svg.addEventListener('mouseover', e => { const iso = isoOf(e.target); if(iso && !pinned) showCountry(iso, false); });
 svg.addEventListener('mouseout', e => { if(!pinned && isoOf(e.target) && !isoOf(e.relatedTarget)) hideCountry(); });
-svg.addEventListener('click', e => { const iso = isoOf(e.target); closeMapPanel(false);
-  if(iso && iso !== pinned){ pinned = iso; showCountry(iso, true); } else unpin(); });
+function tap(e){ const iso = isoOf(e.target); closeMapPanel(false);
+  if(iso && iso !== pinned){ pinned = iso; showCountry(iso, true); if(compact) reveal(stack); } else unpin(); }
+// narrow: the country's card is under the map, often below the screen; bring its top up, with
+// the end of the map still above it (scroll-margin-top)
+function reveal(el){ if(el.getBoundingClientRect().top > innerHeight * .7) el.scrollIntoView({behavior:'smooth', block:'start'}); }
+svg.addEventListener('click', tap); ov.addEventListener('click', tap);
 // a finding opens its source in the panel over the map; the pinned card can also filter the list
 function onHeadlineClick(e){
   const b = e.target.closest('button'); if(!b) return;
@@ -1007,22 +1060,24 @@ document.addEventListener('keydown', e => { if(e.key !== 'Escape') return;
 
 // relayout whenever the map's rendered size changes: the callouts are positioned in CSS px
 // (a hidden tab gets no resize observations, hence the two extra listeners)
+// (the box's width, not the map's: on a phone the map is hidden behind its two panels)
 let rto = null, laidW = 0;
+const boxW = () => mapbox.getBoundingClientRect().width;
 function relayout(){ clearTimeout(rto); rto = setTimeout(() => {
-  const w = svg.getBoundingClientRect().width; syncNarrow(); placeListPanel();
+  const w = boxW(); syncNarrow(); placeListPanel();
   if(Math.abs(w - laidW) < 1) return;
   laidW = w; runLayout(); if(pinned && !compact) placeCard(pinned); }, 120); }
-new ResizeObserver(relayout).observe(svg);
+new ResizeObserver(relayout).observe(mapbox);
 window.addEventListener('resize', relayout);
 document.addEventListener('visibilitychange', relayout);
-buildCallouts(); syncNarrow(); renderTable(); runLayout(); laidW = svg.getBoundingClientRect().width;
+buildCallouts(); syncNarrow(); renderTable(); runLayout(); laidW = boxW();
 // a language switch: the callouts are rebuilt and laid out again (their widths change), the
 // cards, the list and its count are written again; an open panel closes
 document.addEventListener('aalang', () => {
   labels.forEach(Lb => { Lb.el.remove(); Lb.lns.forEach(ln => ln.remove()); }); labels.length = 0;
   buildCallouts(); closeMapPanel(false); closeListPanel(false);
   const pin = pinned; unpin();
-  renderTable(); runLayout(); laidW = svg.getBoundingClientRect().width;
-  if(pin && C[pin] && !compact){ pinned = pin; showCountry(pin, true); }
+  renderTable(); runLayout(); laidW = boxW();
+  if(pin && C[pin]){ pinned = pin; showCountry(pin, true); }
 });
 """

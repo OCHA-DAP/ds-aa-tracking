@@ -2833,7 +2833,7 @@ function actualBlock(f, v){
 // use of an acronym, applied to the TEXT NODES of a rendered block (never by hand in strings).
 // `scope` is the container whose earlier annotations count as "already explained".
 const HELP = [
-  ['pre-arranged', /\bpre-?arranged\b/i, 'money set aside in advance so it can be released the moment a trigger is met'],
+  ['pre-arranged', /\bpre-?arranged\b/i, 'funding approved and committed before a shock, then released for the pre-agreed activities when the trigger is met'],
   ['trigger', /\btriggers?\b/i, 'the pre-agreed forecast or observation threshold that releases the money'],
   ['window', /\bwindows?\b/i, 'the period in the year during which a trigger is monitored'],
   ['return period', /\breturn periods?\b/i, 'how rare the trigger threshold is: a 1-in-5-year trigger is expected to be met about once every five years'],
