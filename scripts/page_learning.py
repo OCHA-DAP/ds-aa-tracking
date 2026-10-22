@@ -5,7 +5,8 @@ studies so far (FEATURED), each called out of the countries it is about: on savi
 and livelihoods, on cost effectiveness and on speed. A small dot beside a country says
 what its findings are about, and hovering the country keeps its own callouts lit and shows
 its further headlines (HEADLINES, then its documents' key statistics). (2) The repository:
-every public learning document, filterable by country and hazard, sortable by year.
+every public learning document, filterable by country and hazard, newest first by publication
+month and year (re-sortable).
 
 A finding or a document opens in a panel INSIDE the page: over the map when it was opened
 from the map, beside its row when it was opened from the list. Nothing is fixed to the
@@ -81,7 +82,7 @@ FEATURED = [
        "chance of going a day without eating for families who received cash before the "
        "flood peak.",
        "Pople, Hill, Dercon and Brunckhorst, Centre for Disaster Protection (2021)", CDP_2021,
-       chips=[("+17%", "evacuated livestock"), ("−12%", "interest on loans")],
+       chips=[("+3 points", "evacuated livestock"), ("−12%", "interest on loans")],
        vs="similar households on the same lists who could not be reached in time; 8,954 "
           "households surveyed.",
        caveat="Not randomised, and compared with no assistance rather than a later "
@@ -110,6 +111,23 @@ FEATURED = [
        "innovating-anticipatory-action-lessons-2022-south-sudan-floods",
        caveat="An estimate for one supply route, with no method given. It compares road "
               "with air transport, not the cost per person or per outcome."),
+    # the fastest CERF releases on record (2025), added 2026-10-22: as reported by OCHA/CERF,
+    # from the activation being confirmed to the allocation — not the time to reach people
+    _f("speed", ("PHL",), "Programme data",
+       "Philippines, Super Typhoon Fung-wong (November 2025)", "2 min",
+       "from confirming the activation to nearly US$6 million released by CERF, ahead of "
+       "the typhoon's landfall.",
+       "UN, How anticipatory action shaped the response to the Philippines' twin typhoons (2025)",
+       "https://www.un.org/en/delegate/"
+       "how-anticipatory-action-shaped-response-philippines%E2%80%99-twin-typhoons",
+       caveat="The time to release the money once the activation was confirmed, as OCHA "
+              "reports it; not the time for assistance to reach people."),
+    _f("speed", ("CUB",), "Programme data", "Cuba, Hurricane Melissa (October 2025)", "4 min",
+       "to allocate US$4 million to Cuba ahead of Hurricane Melissa.",
+       "CERF, CERF at the forefront of anticipatory action (2025)",
+       "https://cerf.un.org/sites/default/files/resources/CERF_Atforefront_AA.pdf",
+       caveat="The time to allocate the money, as CERF reports it; not the time for "
+              "assistance to reach people."),
     _f("speed", ("BGD",), "Programme data", "Bangladesh, floods (July 2024)", "16 min",
        "from the flood alert to a US$6.2 million CERF allocation. About 430,000 people "
        "were reached within five days, before the peak.",
@@ -312,6 +330,8 @@ def build_learning(page, d):
         recs.append({
             "id": int(r.id), "t": str(r.title).strip(), "u": _url(r.url),
             "pub": _t(r.publisher), "y": int(r.year) if pd.notna(r.year) else None,
+            # the publication month (1-12), when recorded; an older snapshot has no column
+            "m": int(r.month) if pd.notna(getattr(r, "month", None)) else None,
             "ty": DOC_TYPE_LABEL.get(r.doc_type, _t(r.doc_type) or "document").capitalize(),
             "type": r.doc_type, "iso": isos, "hz": hz,
             "pr": [p for p in _aslist(r.premises) if p in premise_label],
@@ -497,7 +517,7 @@ def build_learning(page, d):
  </div>
  <div class='lbody' id='lbody'>
  <table class='data ldocs'><thead><tr><th>{T("Document")}</th><th>{T("Country")}</th><th>{T("Hazard")}</th>
-  <th class='yr'><button type='button' id='ysort' {ATTR("title", "Sort by year")}>{T("Year")} <span id='yarrow'>▼</span></button></th>
+  <th class='yr'><button type='button' id='ysort' {ATTR("title", "Sort by publication date")}>{T("Published")} <span id='yarrow'>▼</span></button></th>
   <th>{T("Link")}</th></tr></thead><tbody id='lrows'></tbody></table>
  <aside id='tpanel' class='lpanel tpanel' role='region' {ATTR("aria-label", "The document opened from the list")} tabindex='-1' hidden></aside>
  </div>
@@ -670,7 +690,12 @@ const svg = $('lmap'), mapbox = $('lmapbox'), lpane = $('lpane'), leaders = $('l
       legend = $('llegend'), hcard = $('hcard'), stack = $('hlstack');
 const NS = 'http://www.w3.org/2000/svg';
 function esc(s){ return s==null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
-const srcOf = d => [d.pub, d.y].filter(Boolean).join(' · ');
+// "Mar 2025" in the page's language, or the bare year when no month is recorded
+const pubDate = d => d.y == null ? null : d.m
+  ? new Date(d.y, d.m - 1, 15).toLocaleDateString(aaLang(), {month:'short', year:'numeric'}) : String(d.y);
+// sort key: year, then month; a document with a year but no month sorts after that year's dated ones
+const pubKey = d => d.y * 100 + (d.m || 0);
+const srcOf = d => [d.pub, pubDate(d)].filter(Boolean).join(' · ');
 // a default finding as a card: where and study design / the figure / the claim. On the map its
 // colour says the premise (the legend names the three); listed under the map, the card says it.
 function featButton(i, named, cls){
@@ -930,11 +955,11 @@ function matches(d){
 }
 function renderTable(){
   const list = DOCS.filter(matches).sort((a, b) => (a.y == null) - (b.y == null)       // no year: last, either way
-    || (state.desc ? b.y - a.y : a.y - b.y) || a.t.localeCompare(b.t));
+    || (state.desc ? pubKey(b) - pubKey(a) : pubKey(a) - pubKey(b)) || a.t.localeCompare(b.t));
   rows.innerHTML = list.map(d => `<tr data-id='${d.id}' tabindex='0'>`
     + `<td class='lt'><span class='lt-t'>${esc(d.t)}</span>${d.pub ? `<span class='lt-p'>${esc(d.pub)}</span>` : ''}</td>`
     + `<td>${d.cn.length ? esc(d.cn.map(n => tr8(n)).join(', ')) : esc(tr8('Global'))}</td><td>${d.hz ? esc(tr8(LD.hazard[d.hz] || d.hz)) : '—'}</td>`
-    + `<td class='yr'>${d.y == null ? '—' : d.y}</td>`
+    + `<td class='yr'>${d.y == null ? '—' : esc(pubDate(d))}</td>`
     + `<td class='lk'>${d.u ? `<a href='${esc(d.u)}' target='_blank' rel='noopener'>${esc(tr8('open ↗'))}</a>` : `<span class='lnone' title='${esc(tr8('No public link recorded'))}'>${esc(tr8('none'))}</span>`}</td></tr>`).join('')
     || `<tr><td colspan='5' class='lnone'>${esc(tr8('No document matches these filters.'))}</td></tr>`;
   const filtered = !!(fC.value || fH.value);
@@ -979,7 +1004,7 @@ function facts(d, lead){
 const tagsHTML = tags => `<div class='sd-tags'>${tags.map(t => `<span class='sd-tag'>${esc(t)}</span>`).join('')}</div>`;
 function docHTML(d, lead){
   const ff = [...d.ff].sort((a, b) => (b === lead.f) - (a === lead.f)), f = facts(d, lead);
-  return `<div class='sd-k'>${esc(tr8(d.ty))}${d.y ? ' · ' + d.y : ''}</div><h3>${esc(d.t)}</h3>`
+  return `<div class='sd-k'>${esc(tr8(d.ty))}${d.y ? ' · ' + esc(pubDate(d)) : ''}</div><h3>${esc(d.t)}</h3>`
     + (d.pub ? `<div class='sd-pub'>${esc(d.pub)}</div>` : '')
     + tagsHTML([...(d.cn.length ? d.cn : ['Global']), ...(d.hz ? [LD.hazard[d.hz] || d.hz] : [])].map(x => tr8(x)))
     + (d.u ? `<a class='sd-open' href='${esc(d.u)}' target='_blank' rel='noopener'>${esc(tr8('Open the document ↗'))}</a>` : `<div class='sd-nolink'>${esc(tr8('No public link is recorded for this document.'))}</div>`)

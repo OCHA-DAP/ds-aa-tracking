@@ -622,17 +622,20 @@ def _fetch(e):
     # learning documents and framework partners: filled by a parallel import, possibly
     # empty (or absent in an older snapshot) — every consumer degrades to "none yet".
     # Internal documents are NEVER rendered: filtered out here, at the source.
+    # Neither are posts on X/Twitter: a tweet is not a learning document (they belong on
+    # the media page, site_src/media.json), so the repository never lists one.
     try:
         d["learning"] = pd.read_sql(
-            """SELECT id, title, url, publisher, year, doc_type, scope, country_iso3, hazard,
+            r"""SELECT id, title, url, publisher, year, month, doc_type, scope, country_iso3, hazard,
                       premises, key_stat, summary, section, source
                FROM aa.learning_document WHERE NOT internal
-               ORDER BY year DESC NULLS LAST, title""", e)
+                 AND coalesce(url, '') !~* '^https?://([a-z]+\.)?(x|twitter)\.com/|^https?://t\.co/'
+               ORDER BY year DESC NULLS LAST, month DESC NULLS LAST, title""", e)
         d["n_internal_docs"] = int(pd.read_sql(
             "SELECT count(*) AS n FROM aa.learning_document WHERE internal", e)["n"].iloc[0])
     except Exception as exc:
         print(f"  learning: aa.learning_document unavailable ({exc.__class__.__name__})")
-        d["learning"] = pd.DataFrame(columns=["id", "title", "url", "publisher", "year",
+        d["learning"] = pd.DataFrame(columns=["id", "title", "url", "publisher", "year", "month",
                                               "doc_type", "scope", "country_iso3", "hazard",
                                               "premises", "key_stat", "summary", "section",
                                               "source"])

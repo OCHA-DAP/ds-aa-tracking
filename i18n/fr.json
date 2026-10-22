@@ -343,6 +343,7 @@
  "GHO contexts only": "contextes du GHO uniquement",
  "GHO plans": "plans du GHO",
  "Gains came in the weeks after the flood. Once the later group was paid, outcomes converged, with no differences in income or assets.": "Les gains sont apparus dans les semaines suivant l’inondation. Une fois le groupe tardif payé, les résultats ont convergé, sans différence de revenus ni d’actifs.",
+ "+3 points": "+3 points",
  "Generated from the OCHA CHD Data Science knowledge base and the CERF OneGMS allocation feed by <code>scripts/gen_framework_pages.py</code>.": "Généré à partir de la base de connaissances de l’équipe Science des données du Centre de données humanitaires (OCHA) et du flux d’allocations OneGMS du CERF par <code>scripts/gen_framework_pages.py</code>.",
  "Generated {stamp}": "Généré le {stamp}",
  "Geographic scope": "Zone géographique",
@@ -1389,5 +1390,15 @@
  "≤ 1-in-3": "≤ 1 sur 3",
  "⚠️ <b>Work in progress.</b> Auto-generated from an internal knowledge base; figures are indicative, not authoritative.": "⚠️ <b>Travail en cours.</b> Généré automatiquement à partir d’une base de connaissances interne ; les chiffres sont indicatifs, sans valeur officielle.",
  "⚠️ <b>Work in progress.</b> This site is in active development and is auto-generated from an internal knowledge base. Details may be incomplete, out of date, or inaccurate — treat figures and statuses as indicative, not authoritative.": "⚠️ <b>Travail en cours.</b> Ce site est en cours de développement et est généré automatiquement à partir d’une base de connaissances interne. Les détails peuvent être incomplets, obsolètes ou inexacts — considérez les chiffres et les statuts comme indicatifs, sans valeur officielle.",
- "🛠 The current version of this framework is an in-development redesign — not yet endorsed. Details below describe the design being built; the last endorsed design is under <a href=\"#prev\">previous versions</a>.": "🛠 La version actuelle de ce cadre est une refonte en cours de développement — pas encore approuvée. Les détails ci-dessous décrivent la conception en cours ; la dernière conception approuvée figure sous <a href=\"#prev\">versions précédentes</a>."
+ "🛠 The current version of this framework is an in-development redesign — not yet endorsed. Details below describe the design being built; the last endorsed design is under <a href=\"#prev\">previous versions</a>.": "🛠 La version actuelle de ce cadre est une refonte en cours de développement — pas encore approuvée. Les détails ci-dessous décrivent la conception en cours ; la dernière conception approuvée figure sous <a href=\"#prev\">versions précédentes</a>.",
+ "Philippines, Super Typhoon Fung-wong (November 2025)": "Philippines, super typhon Fung-wong (novembre 2025)",
+ "2 min": "2 min",
+ "4 min": "4 min",
+ "from confirming the activation to nearly US$6 million released by CERF, ahead of the typhoon's landfall.": "entre la confirmation de l’activation et le déblocage par le CERF de près de 6 millions de dollars US, avant l’arrivée du typhon sur les côtes.",
+ "The time to release the money once the activation was confirmed, as OCHA reports it; not the time for assistance to reach people.": "Le délai de déblocage des fonds une fois l’activation confirmée, selon OCHA ; pas le délai pour que l’assistance atteigne les personnes.",
+ "Cuba, Hurricane Melissa (October 2025)": "Cuba, ouragan Melissa (octobre 2025)",
+ "to allocate US$4 million to Cuba ahead of Hurricane Melissa.": "pour allouer 4 millions de dollars US à Cuba avant l’ouragan Melissa.",
+ "The time to allocate the money, as CERF reports it; not the time for assistance to reach people.": "Le délai d’allocation des fonds, selon le CERF ; pas le délai pour que l’assistance atteigne les personnes.",
+ "Published": "Publication",
+ "Sort by publication date": "Trier par date de publication"
 }
