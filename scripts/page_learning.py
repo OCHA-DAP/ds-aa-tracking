@@ -82,7 +82,7 @@ FEATURED = [
        "chance of going a day without eating for families who received cash before the "
        "flood peak.",
        "Pople, Hill, Dercon and Brunckhorst, Centre for Disaster Protection (2021)", CDP_2021,
-       chips=[("+3 points", "evacuated livestock"), ("−12%", "interest on loans")],
+       chips=[("+17%", "evacuated livestock"), ("−12%", "interest on loans")],
        vs="similar households on the same lists who could not be reached in time; 8,954 "
           "households surveyed.",
        caveat="Not randomised, and compared with no assistance rather than a later "

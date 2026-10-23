@@ -961,10 +961,12 @@ def assemble(d, e):
                  for code, g in cerf_f.groupby("allocation_code")}
     n_adhoc = {(a.country_iso3, a.hazard): int(a.n) for a in adhoc.itertuples()}
     hist = _year_history(d, e, excl, _try)        # the year selector's dated records, per pair
+    from dashboards import NOT_SOCIAL_SQL
     learn = _try(
-        """SELECT id, title, url, publisher, year, doc_type, country_iso3, hazard, key_stat
+        f"""SELECT id, title, url, publisher, year, doc_type, country_iso3, hazard, key_stat
            FROM aa.learning_document
-           WHERE scope = 'country' AND NOT internal ORDER BY year DESC NULLS LAST, title""",
+           WHERE scope = 'country' AND NOT internal AND {NOT_SOCIAL_SQL}
+           ORDER BY year DESC NULLS LAST, title""",
         ["id", "title", "url", "publisher", "year", "doc_type", "country_iso3", "hazard", "key_stat"])
     partners = _try(
         """SELECT country_iso3, hazard, version, name, acronym, org_type, roles, agency_parent,
