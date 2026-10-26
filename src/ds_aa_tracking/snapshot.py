@@ -206,14 +206,16 @@ def prune(stage: str = "dev", keep_days: int = KEEP_DAYS, today: dt.date | None 
     )
     old: dict[str, list[str]] = {}
     for n in names:
-        m = re.match(rf"^{re.escape(PREFIX)}/(\d{{4}}-\d{{2}}-\d{{2}})/", n)
+        # (/|$): a hierarchical-namespace account also lists the dated folder itself
+        m = re.match(rf"^{re.escape(PREFIX)}/(\d{{4}}-\d{{2}}-\d{{2}})(/|$)", n)
         if (m and not m.group(1).endswith("-12-31")
                 and (today - dt.date.fromisoformat(m.group(1))).days > keep_days):
             old.setdefault(m.group(1), []).append(n)
     if old:
         cc = stratus.get_container_client(container_name=CONTAINER, stage=stage, write=True)
         for names_ in old.values():
-            for n in names_:
+            # ...and refuses to delete a folder that still holds anything: deepest first
+            for n in sorted(names_, key=lambda n: n.count("/"), reverse=True):
                 cc.delete_blob(n)
     return sorted(old)
 
