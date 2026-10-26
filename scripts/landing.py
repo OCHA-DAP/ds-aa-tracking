@@ -993,11 +993,15 @@ def assemble(d, e):
         """SELECT country_iso3, hazard, version, fund_code, total_usd
            FROM aa.v_version_funding WHERE kind = 'prearranged' AND total_usd IS NOT NULL""", e)
     envelope = _envelopes(vfa)
-    pre_now = {}                          # pair -> pre-arranged now (the landing tile's rule)
-    pre_parts = {}                        # pair -> the same by fund, and the version it comes from
+    pre_parts = {}                        # pair -> pre-arranged now by fund, and the version it comes from
     for (c_, h_, v_), parts in _envelope_parts(d["vfund"]).items():
-        pre_now[(c_, h_)] = pre_now.get((c_, h_), 0.0) + sum(parts.values())
-        pre_parts[(c_, h_)] = dict(parts, version=v_)   # prearranged_now(): one version per pair
+        p = pre_parts.setdefault((c_, h_), {"version": v_})
+        if p["version"] != v_:            # prearranged_now() picks one version per pair: never two
+            p["version"] = None
+        for k_, usd in parts.items():
+            p[k_] = p.get(k_, 0.0) + usd
+    # pair -> pre-arranged now (the landing tile's rule): the sum of its parts, by construction
+    pre_now = {k_: sum(u for x, u in p.items() if x != "version") for k_, p in pre_parts.items()}
 
     # ad hoc pairs absent from country_hazard (food insecurity, locusts…) still get a pin
     # on the ad hoc layer: synthesise a row with the country's name from any known row
@@ -2963,6 +2967,7 @@ function fwPreX(R){
 }
 function buildFwTable(){
   const tab = document.getElementById('fwtab'), cap = document.getElementById('fwtcap'); if(!tab) return;
+  if(pastY() && (FWT.k === 'cerf' || FWT.k === 'pooled')) Object.assign(FWT, {k: 'country', dir: 1});   // a past year has no split columns
   const R = fwRows(), past = pastY(), split = !past, preX = fwPreX(R), n = R.length;
   const sum = k => R.reduce((s, r) => s + (r[k] || 0), 0);
   const usd = v => v == null ? '—' : `<span title='$${Math.round(v).toLocaleString('en-US')}'>${money(v)}</span>`;
@@ -2995,7 +3000,7 @@ function buildFwTable(){
   const foot = n ? `<tfoot>${xrow}<tr><td colspan='5'>${esc(tr8(n === 1 ? 'Total, {0} framework' : 'Total, {0} frameworks', n))}</td>`
       + `<td class='num'>${usd(sum('pre') + preX)}</td>`
       + (split ? `<td class='num'>${usd(sum('cerf'))}</td><td class='num'>${usd(sum('pooled'))}</td>` : '')
-      + `<td class='num'>${num(sum('covered'))}</td><td class='num'>${sum('n') || '—'}</td><td class='num'>${usd(R.some(r => r.released != null) ? sum('released') : null)}</td></tr></tfoot>` : '';
+      + `<td class='num'>${num(R.some(r => r.covered != null) ? sum('covered') : null)}</td><td class='num'>${sum('n') || '—'}</td><td class='num'>${usd(R.some(r => r.released != null) ? sum('released') : null)}</td></tr></tfoot>` : '';
   tab.innerHTML = head + body + foot;
   if(cap) cap.textContent = !LAYERS.framework ? tr8('The current-frameworks layer is switched off in the map legend: switch it on to list the frameworks.')
     : past ? tr8(n === 1 ? '{0} framework at the end of {1}, as counted at the top of the page (same pre-arranged and people-covered totals). Status and figures for past years are reconstructed from the framework records.'
