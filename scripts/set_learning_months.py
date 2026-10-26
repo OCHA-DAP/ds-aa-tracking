@@ -2,9 +2,10 @@
 
 1. adds aa.learning_document.month (the same ALTER as schema.ADDITIVE_MIGRATIONS, so a later
    ensure_schema is a no-op for it);
-2. sets the month of the public documents listed (each with its evidence), and
-   their year where none is recorded. A row is touched only when its id AND title
-   match and it has no month yet, so a re-run changes nothing. Add rows to the "set" list of
+2. sets the month and year of the public documents listed (each with its evidence): `year` is
+   the publication year, `year_now` the year recorded before (null when none was). A row is
+   touched only when its id AND title match, its year is still `year_now` and it has no month
+   yet, so a re-run changes nothing. Add rows to the "set" list of
    reference/learning_publication_months.json to date more documents.
 
 One transaction: all of it or none. Prints what it changed. Run against whatever
@@ -28,8 +29,9 @@ import ocha_stratus as stratus  # noqa: E402
 ALTER = ("ALTER TABLE IF EXISTS aa.learning_document ADD COLUMN IF NOT EXISTS month smallint "
          "CHECK (month BETWEEN 1 AND 12)")
 UPDATE = sa.text("""UPDATE aa.learning_document
-    SET month = :month, year = coalesce(year, :year), updated_at = now()
-    WHERE id = :id AND title = :title AND month IS NULL AND NOT internal""")
+    SET month = :month, year = :year, updated_at = now()
+    WHERE id = :id AND title = :title AND month IS NULL AND year IS NOT DISTINCT FROM :year_now
+      AND NOT internal""")
 
 
 def main():
@@ -43,19 +45,22 @@ def main():
     tx = conn.begin()
     try:
         conn.execute(sa.text(ALTER))
-        done, dated, missed = 0, 0, []
+        done, dated, moved, missed = 0, 0, [], []
         for r in rows:
-            n = conn.execute(UPDATE, {k: r[k] for k in ("id", "title", "month", "year")}).rowcount
+            n = conn.execute(UPDATE, {k: r[k] for k in ("id", "title", "month", "year", "year_now")}).rowcount
             done += n
             if n:
                 continue
-            had = conn.execute(sa.text("SELECT month FROM aa.learning_document WHERE id = :id AND title = :title"),
+            had = conn.execute(sa.text("SELECT month, year FROM aa.learning_document WHERE id = :id AND title = :title"),
                                {"id": r["id"], "title": r["title"]}).first()
             if had is not None and had.month is not None:
                 dated += 1
+            elif had is not None and had.year != r["year_now"]:
+                moved.append(f"{r['id']} (year {had.year}, not {r['year_now']})")
             else:
                 missed.append(r["id"])
         print(f"  month set on {done} documents; {dated} had one already"
+              + (f"; year changed since, left alone: {moved}" if moved else "")
               + (f"; not found under that id and title (renamed or gone): {missed}" if missed else ""))
         print("  " + ", ".join(f"{m}:{n}" for m, n in conn.execute(sa.text(
             "SELECT coalesce(month::text, '-') AS m, count(*) AS n FROM aa.learning_document "

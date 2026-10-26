@@ -1,5 +1,5 @@
 {
- "about": "Publication months of the public learning documents (aa.learning_document.month), researched 2026-10-23 from each document's own date: the date printed on it or in its title, else its web page's publication date. A month is set only where that date's year agrees with the year recorded; where no year was recorded, both are set. Applied by scripts/set_learning_months.py (id AND title must match, an existing month is never overwritten).",
+ "about": "Publication months of the public learning documents (aa.learning_document.month), researched 2026-10-23 from each document's own date: the date printed on it or in its title, else its web page's publication date. The year becomes that date's year too: for 5 documents (ids 15, 31, 72, 79, 81) it replaces the year of the event or project they were recorded under (decided 2026-10-26); where no year was recorded, both are set. Applied by scripts/set_learning_months.py (id AND title must match, an existing month is never overwritten).",
  "set": [
   {
    "id": 1,
@@ -114,6 +114,14 @@
    "evidence": "title; page 8 Dec 2022"
   },
   {
+   "id": 15,
+   "title": "CERF Allocation Report — Afghanistan Anticipatory Action against Drought (2025)",
+   "year_now": 2025,
+   "year": 2026,
+   "month": 1,
+   "evidence": "report dated 14 Jan 2026 (the allocation is 2025)"
+  },
+  {
    "id": 17,
    "title": "Bangladesh, Anticipatory Action: Impact Evaluation (WFP Office of Evaluation & World Bank DIME, 2026)",
    "year_now": 2026,
@@ -168,6 +176,14 @@
    "year": 2021,
    "month": 2,
    "evidence": "title; PDF dated February 2021"
+  },
+  {
+   "id": 31,
+   "title": "Safeguarding Menstrual Health During Floods (2020)",
+   "year_now": 2020,
+   "year": 2021,
+   "month": 1,
+   "evidence": "UNFPA's page gives publication 10 January 2021 (the floods were 2020)"
   },
   {
    "id": 32,
@@ -442,6 +458,14 @@
    "evidence": "title; page 11 Jan 2022"
   },
   {
+   "id": 72,
+   "title": "Joint Post-Distribution Monitoring (PDM) of Forecast-based Anticipatory Action Project (FbAA) – 2022",
+   "year_now": 2022,
+   "year": 2023,
+   "month": 5,
+   "evidence": "WFP's page is dated 12 May 2023 (the project was 2022)"
+  },
+  {
    "id": 73,
    "title": "Nepal, Anticipatory Action: Impact evaluation",
    "year_now": null,
@@ -480,6 +504,22 @@
    "year": 2022,
    "month": 9,
    "evidence": "title; page 16 Sep 2022"
+  },
+  {
+   "id": 79,
+   "title": "Qualitative Evaluation of Anticipatory Action Pilot in Niger – 2022",
+   "year_now": 2022,
+   "year": 2024,
+   "month": 4,
+   "evidence": "ReliefWeb published it 11 April 2024 (the pilot was 2022)"
+  },
+  {
+   "id": 81,
+   "title": "Nigeria: After Activation Review — Workshop Report (Yola, Adamawa State, 25–27 November 2025)",
+   "year_now": 2025,
+   "year": 2026,
+   "month": 2,
+   "evidence": "the report's page is dated 24 Feb 2026 (the workshop was 25-27 Nov 2025)"
   },
   {
    "id": 84,
@@ -664,33 +704,6 @@
    "year": 2024,
    "month": 1,
    "evidence": "ReliefWeb posted 18 Jan 2024"
-  }
- ],
- "year_disagrees": [
-  {
-   "id": "15",
-   "title": "CERF Allocation Report — Afghanistan Anticipatory Action against Drought (2025)",
-   "note": "CERF report on a 2025 allocation; the report is dated 14 Jan 2026"
-  },
-  {
-   "id": "31",
-   "title": "Safeguarding Menstrual Health During Floods (2020)",
-   "note": "recorded 2020 (the floods); UNFPA's page gives publication 10 January 2021"
-  },
-  {
-   "id": "72",
-   "title": "Joint Post-Distribution Monitoring (PDM) of Forecast-based Anticipatory Action Project (FbAA) – 2022",
-   "note": "recorded 2022 (the project); WFP's page is dated 12 May 2023"
-  },
-  {
-   "id": "79",
-   "title": "Qualitative Evaluation of Anticipatory Action Pilot in Niger – 2022",
-   "note": "recorded 2022 (the pilot); ReliefWeb published it 11 April 2024"
-  },
-  {
-   "id": "81",
-   "title": "Nigeria: After Activation Review — Workshop Report (Yola, Adamawa State, 25–27 November 2025)",
-   "note": "recorded 2025 (workshop of 25-27 Nov 2025); the report's page is dated 24 Feb 2026"
   }
  ],
  "cerf_reports_left_blank": [
