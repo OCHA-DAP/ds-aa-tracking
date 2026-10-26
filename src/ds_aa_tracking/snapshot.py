@@ -17,7 +17,7 @@ defaults, sequences, constraints, indexes, view definitions, comments) and
 the ~60 ad-hoc queries in the build, and the schema/ERD page, work unchanged against
 ``localhost``. Nothing is ported to another SQL dialect.
 
-The KB-owned and CERF-mirror tables that live in ``aa`` but are not in ``schema.py`` are
+The CERF-mirror tables that live in ``aa`` but are not in ``schema.py`` are
 captured the same way (the DDL comes from the catalog, not from this repo).
 """
 
@@ -71,9 +71,9 @@ _CATALOG = {
         JOIN pg_class c ON c.oid = con.conrelid
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = :s
-          AND con.contype <> 't'   -- constraint TRIGGERS (the backtest span checks) are
-                                   -- listed here too, but their functions are not in the
-                                   -- snapshot: a restore is tables + data + views, no guards
+          AND con.contype <> 't'   -- constraint triggers are listed here too, but their
+                                   -- functions are not in the snapshot: a restore is
+                                   -- tables + data + views, no triggers
         ORDER BY CASE con.contype WHEN 'p' THEN 0 WHEN 'u' THEN 1 WHEN 'c' THEN 2
                                   WHEN 'x' THEN 3 ELSE 9 END, 1, 2""",
     "indexes": """

@@ -423,7 +423,7 @@ Ordering notes: 0 and 1 are independent and immediate; 2–3 need a KB PR cycle;
 ## Open questions
 
 2. ~~**Writer of the unified registry**~~ — settled: this repo writes it, and since
-   2026-10-05 every other AA table the KB used to write (see "Backtests owned here").
+   2026-10-05 every other AA table the KB used to write (see "AA tables owned here").
 3. **Event labels**: for same-month multi-event cases the `event_label` needs a
    convention (e.g. storm name, 'phase-2') — propose curating during the activation
    adjudication pass.

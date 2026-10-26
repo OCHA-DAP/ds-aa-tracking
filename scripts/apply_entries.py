@@ -231,7 +231,7 @@ def main():
             with engine.connect() as conn:  # one transaction per file: all or nothing
                 tx = conn.begin()
                 n = apply_file(conn, name, payload, dry=a.dry_run)
-                # deferred checks (span, foreign keys) now, so a failure names this file
+                # any deferred constraint is checked now, so a failure names this file
                 conn.execute(sa.text("SET CONSTRAINTS ALL IMMEDIATE"))
                 if a.dry_run:               # applied and checked by the database, then undone
                     tx.rollback()

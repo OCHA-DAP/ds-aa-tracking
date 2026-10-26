@@ -736,11 +736,11 @@ DURABLE_TABLES = {
         CREATE TABLE IF NOT EXISTS aa.actual_activation (
             kb_framework text NOT NULL,
             event_date text NOT NULL,
-            window_name text NOT NULL,     -- 'unspecified' when the page did not say
+            window_name text NOT NULL DEFAULT 'unspecified',   -- when the page did not say
             country_iso3 text,
             hazard text,
             version text,
-            full_activation boolean NOT NULL,
+            full_activation boolean NOT NULL DEFAULT true,
             released_usd bigint,
             url text,                      -- the announcement
             note text,
@@ -808,6 +808,9 @@ INDEXES = [
     """CREATE UNIQUE INDEX IF NOT EXISTS version_document_current_uniq ON aa.version_document
        (country_iso3, hazard, version, role)
        WHERE superseded_by IS NULL AND role IN ('endorsed', 'published')""",
+    # the KB-era link table's natural key (no PK: any of the three may be null)
+    """CREATE UNIQUE INDEX IF NOT EXISTS activation_allocation_uniq ON aa.activation_allocation
+       (COALESCE(kb_framework, ''), COALESCE(event_date, ''), COALESCE(application_code, ''))""",
 ]
 
 LEGACY_TABLES = [   # renamed zz_legacy_<name> by the window-first migration; read-only history
@@ -1318,7 +1321,8 @@ VIEWS = {
         WHERE vf.kind = 'prearranged' AND vf.fund_code = 'cerf'
     """,
     # the backtest curation queue: error = breaks a backtest rule
-    # (and the follow-up guards will refuse); warn = worth a look; info = still to record
+    # (the follow-up sealing PR makes the database refuse them); warn = worth a look;
+    # info = still to record
     "v_trk_backtest_check": """
         CREATE OR REPLACE VIEW aa.v_trk_backtest_check AS
         SELECT 'error' AS severity, 'simulated year outside the analysis span' AS "check",

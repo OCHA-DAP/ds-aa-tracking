@@ -874,8 +874,8 @@ TARGET_NODES = [
     ("fund", "new", "fund_code — OCHA pooled funds only"),
     ("country_hazard", "new", "country_iso3 · hazard (identity only)"),
     ("framework_version", "new", "+ version — THE unified registry"),
-    ("version_performance_reported", "kb", "gsheet_tab · excel_fv · *_reported"),
-    ("window", "kb", "+ window_name · basis · trigger_statement"),
+    ("version_performance_reported", "new", "gsheet_tab · excel_fv · *_reported"),
+    ("window", "new", "+ window_name · basis · trigger_statement"),
     ("v_version_funding", "future", "window × fund_code × agency × sector"),
     ("window_activation", "new", "+ event_date (partial ISO → datetime) · event_label"),
     ("activation_funding", "new", "+ fund_code · allocation_code · amount"),
@@ -903,13 +903,13 @@ TARGET_FULL_NODES = [
     ("fund", "new", "fund_code — OCHA pooled funds only"),
     ("country_hazard", "new", "country_iso3 · hazard (identity only)"),
     ("framework_version", "new", "+ version = an ENDORSED doc · endorsed_by"),
-    ("version_performance_reported", "kb", "gsheet_tab · excel_fv · *_reported"),
-    ("window", "kb", "+ window_name · basis · trigger_statement"),
+    ("version_performance_reported", "new", "gsheet_tab · excel_fv · *_reported"),
+    ("window", "new", "+ window_name · basis · trigger_statement"),
     ("window_month", "future", "+ month (monitoring period)"),
     ("version_funding", "future", "window × fund × agency × sector · provenance"),
     ("prearranged_commitment", "new", "= window_funding (fund_code/financier built)"),
     ("people_covered", "new", "window-attached · as_of · source"),
-    ("simulated_activation", "kb", "+ window_name · event_year"),
+    ("simulated_activation", "new", "+ window_name · event_year"),
     ("framework_status", "new", "observed snapshots (vs v_expected_status)"),
     ("framework_focal_point", "new", "+ role · person · as_of"),
     ("report_channel_inclusion", "new", "report_year · channel"),
@@ -1086,7 +1086,6 @@ def build_roadmap_page():
           f"{_target_erd(TARGET_FULL_NODES, TARGET_FULL_EDGES, TARGET_COUNTRY_NODES, 'full')}</div></div>"
         + "<div class='card'><b>What changes (focused view)</b> — gray boxes are future objects; "
         "<span class='badge b-new'>ds-aa-tracking</span>"
-        "<span class='badge b-kb'>ds-knowledge-base</span>"
         "<span class='badge b-mirror'>mirror repo</span> as elsewhere. Full plan below "
         "(also in the repo as <code>DESIGN.md</code>)."
         f"<div class='scroll' style='max-height:none'>{erd}</div></div>"
@@ -1095,10 +1094,6 @@ def build_roadmap_page():
     page("roadmap.html", "Roadmap — unified versions & multi-fund model", body)
 
 
-KB_TABLES = [
-    "version_performance_reported", "window", "simulated_activation", "funding_breakdown",
-    "actual_activation", "activation_allocation",
-]
 MIRROR_TABLES = [
     "cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country",
     "cerf_allocation_storm", "cerf_supplement",
@@ -1358,8 +1353,6 @@ def build_schema_page(e):
     def owner_of(t):
         if t in trk_schema.TABLES or t in trk_schema.DURABLE_TABLES:
             return "ds-aa-tracking"
-        if t in KB_TABLES:
-            return "ds-knowledge-base"
         if t in MIRROR_TABLES:
             return "ds-cerf-supplement"
         return "other"
@@ -1376,7 +1369,6 @@ def build_schema_page(e):
     sections.append(
         "<div class='card'><p class='meta'>"
         "<span class='badge b-new'>ds-aa-tracking</span>"
-        "<span class='badge b-kb'>ds-knowledge-base</span>"
         "<span class='badge b-mirror'>ds-cerf-supplement</span> · "
         "Crow's-foot notation: crow = many, double bar = exactly one, bar+circle = "
         "zero-or-one, crow+circle = zero-or-many. Solid green edges = declared "

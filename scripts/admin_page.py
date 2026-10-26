@@ -13,7 +13,7 @@ the page never carries a data snapshot. Two roles:
   delete on the tables this repo owns; every field change is audited to
   aa.entry_audit under the editor's name.
 
-Tables owned by other writers (KB loaders, OneGMS mirrors) and the audit table are
+Tables owned by other writers (OneGMS mirrors), the frozen KB-era record and the audit table are
 read-only regardless of role — the proxy enforces it, the page just says so.
 """
 
