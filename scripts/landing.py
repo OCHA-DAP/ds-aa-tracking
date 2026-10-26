@@ -629,6 +629,12 @@ def _s(v):
 def _envelopes(vf):
     """(country, hazard, version) -> pre-arranged USD from v_version_funding rows: the
     'all' total only counts where no per-fund split exists (the dashboards' rule)."""
+    return {k: sum(p.values()) for k, p in _envelope_parts(vf).items()}
+
+
+def _envelope_parts(vf):
+    """_envelopes() by fund: {'cerf', 'pooled' (the Country and Regional Funds), 'all' (a
+    total recorded with no per-fund split)} per (country, hazard, version)."""
     out = {}
     if vf is None or not len(vf):
         return out
@@ -639,7 +645,9 @@ def _envelopes(vf):
         if r.fund_code == "all" and k in has_comp:
             continue
         if _num(r.total_usd) is not None:
-            out[k] = out.get(k, 0.0) + float(r.total_usd)
+            part = r.fund_code if r.fund_code in ("cerf", "all") else "pooled"
+            p = out.setdefault(k, {})
+            p[part] = p.get(part, 0.0) + float(r.total_usd)
     return out
 
 
@@ -986,8 +994,10 @@ def assemble(d, e):
            FROM aa.v_version_funding WHERE kind = 'prearranged' AND total_usd IS NOT NULL""", e)
     envelope = _envelopes(vfa)
     pre_now = {}                          # pair -> pre-arranged now (the landing tile's rule)
-    for (c_, h_, _), usd in _envelopes(d["vfund"]).items():
-        pre_now[(c_, h_)] = pre_now.get((c_, h_), 0.0) + usd
+    pre_parts = {}                        # pair -> the same by fund, and the version it comes from
+    for (c_, h_, v_), parts in _envelope_parts(d["vfund"]).items():
+        pre_now[(c_, h_)] = pre_now.get((c_, h_), 0.0) + sum(parts.values())
+        pre_parts[(c_, h_)] = dict(parts, version=v_)   # prearranged_now(): one version per pair
 
     # ad hoc pairs absent from country_hazard (food insecurity, locusts…) still get a pin
     # on the ad hoc layer: synthesise a row with the country's name from any known row
@@ -1256,6 +1266,7 @@ def assemble(d, e):
             "prearranged": _num(r.get("cerf_prearranged_usd")),
             "prearranged_year": _num(r.get("prearranged_year")),
             "pre_now": pre_now.get((c, h)),           # the landing tile's pre-arranged 'now'
+            "pre_parts": pre_parts.get((c, h)),       # ... by fund, for the frameworks table
             "covered": _num(r.get("people_covered")),
             "current": latest, "versions": versions, "activations": activations,
             "hist": hist["pair"].get((c, h)) or {},   # the year selector's past-year records
@@ -1521,6 +1532,13 @@ def build_landing(page, d, e):
   </div>
  </div>
 </details>
+<section class='fwt' id='fwt'>
+ <div class='fwt-head'><h2>{T("Frameworks on the map")}</h2>
+  <button type='button' class='dl' onclick='fwCSV()'>{T("Download CSV")}</button></div>
+ <p class='fwt-cap' id='fwtcap'></p>
+ <div class='fwt-scroll'><table class='fwtab' id='fwtab'></table></div>
+ <p class='fwt-note'>{TB("<b>Pre-arranged now</b>: for each framework, the envelope of its most recent version that has one, from CERF and the Country and Regional Funds; a framework being updated keeps its last envelope, and one in development shows the envelope recorded for it so far. <b>Activations</b> and <b>released</b> count the framework activations of the frameworks listed; ad hoc allocations and retired frameworks are not listed. Click a column heading to sort.")}</p>
+</section>
 <!-- 2026-10-02 meeting: the internal links that sat here (dashboards, explorer, data entry,
      data & schema review) were easy to miss below the map; they all live in the Internal menu -->
 <script>window.L = {json.dumps(countries, default=str)};
@@ -1779,6 +1797,28 @@ abbr[title] { text-decoration:underline dotted #94a3b8; text-underline-offset:2p
 .dtag { display:inline-block; font-size:10px; padding:0 6px; border-radius:8px; background:#f3e8ff; color:#6b21a8; margin-left:4px; vertical-align:1px; }
 .warntag { display:inline-block; font-size:10.5px; padding:0 7px; border-radius:8px; background:#fde2e1; color:#b3261e; font-weight:600; margin-left:6px; }
 .tdoc { font-size:12px; margin:4px 0; }
+/* the frameworks table under the map */
+.fwt { margin-top:14px; background:#fff; border:1px solid #e6eaef; border-radius:12px; padding:12px 16px; }
+.fwt-head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.fwt h2 { font-size:17px; margin:0; color:#0f2540; }
+.fwt-cap { font-size:12.5px; color:#475569; margin:6px 0 8px; }
+.fwt-note { font-size:12px; color:#64748b; margin:8px 0 0; line-height:1.45; }
+.fwt-scroll { overflow-x:auto; }   /* a phone scrolls the table, never the page */
+table.fwtab { border-collapse:collapse; width:100%; font-size:12.5px; }
+table.fwtab th { text-align:left; font-weight:600; color:#334155; background:#f4f6f9; border-bottom:2px solid #cbd6e2;
+  padding:6px 8px; line-height:1.25; white-space:normal; cursor:pointer; user-select:none; vertical-align:bottom; }
+table.fwtab th.num { max-width:110px; } table.fwtab th.nosort { cursor:default; }
+table.fwtab th:hover { color:var(--ocha); }
+table.fwtab th .ar { color:#94a3b8; font-size:10px; margin-left:3px; }
+table.fwtab th.sub { font-weight:500; font-size:11.5px; }
+table.fwtab td { padding:5px 8px; border-bottom:1px solid #eef1f5; vertical-align:middle; }
+table.fwtab tbody tr:hover td { background:#f5f9fd; }
+table.fwtab .num { text-align:right; font-variant-numeric:tabular-nums; } table.fwtab td.num { white-space:nowrap; }
+table.fwtab td .sm { display:block; font-size:10.5px; color:#64748b; white-space:nowrap; }
+table.fwtab tfoot td { font-weight:700; background:#f8fafc; border-top:2px solid #cbd6e2; border-bottom:none; }
+table.fwtab tfoot tr.x td { font-weight:400; color:#475569; border-top:1px solid #e2e8f0; }
+table.fwtab .mstrip, table.fwtab td.nw { white-space:nowrap; }
+table.fwtab .mm { width:14px; height:15px; font-size:8.5px; }
 """
 
 LANDING_JS = r"""
@@ -1807,7 +1847,7 @@ function setLayer(k, on){ LAYERS[k] = !!on; applyLayers(); }
 // a past year is RECONSTRUCTED from the version dates and the status reports (f.hist).
 let YEAR = null;
 const LIVE = new Map();   // f -> its live (all-years) fields, which applyYear() overwrites
-const LIVE_KEYS = ['disp','disp_label','layers','layer','n_act','n_act_all','n_adhoc','ring','current','pre_now','prearranged','covered'];
+const LIVE_KEYS = ['disp','disp_label','layers','layer','n_act','n_act_all','n_adhoc','ring','current','pre_now','pre_parts','prearranged','covered'];
 function snapLive(){ Object.values(L).forEach(c => c.fws.forEach(f => { const o = {}; LIVE_KEYS.forEach(k => o[k] = f[k]); LIVE.set(f, o); })); }
 const pastY = () => YEAR != null && YEAR < YEARS.now;
 const dateY = () => YEAR == null || YEAR >= YEARS.now ? YEARS.today : `${YEAR}-12-31`;
@@ -1903,7 +1943,7 @@ function applyYear(){
       if(f.n_adhoc) layers.push('adhoc');
       if(f.tech && st) layers.push('tech');
       f.disp = st || (f.n_adhoc ? 'adhoc' : 'pipeline'); f.disp_label = KBLABEL[f.disp] || f.disp;
-      f.ring = null; f.current = ver; f.prearranged = null;
+      f.ring = null; f.current = ver; f.prearranged = null; f.pre_parts = null;   // a past year's figure has no split by fund
       const p = (H.pre || {})[Y]; f.pre_now = p ? p[0] : null; f.pre_drv = !!(p && p[1]);
       const cv = lastAt(H.cov, D); f.covered = cv ? cv[1] : null;
     }
@@ -2215,7 +2255,7 @@ function nounCount(fs){
 // re-draw everything that depends on the layer set: pins, callouts, legend, tiles, sidebar
 function syncOn(){ for(const [iso, c] of Object.entries(L)){ const el = WP[iso] && WP[iso].el; if(el) el.classList.toggle('on', vis(c).length > 0); } }
 function applyLayers(){
-  syncOn(); worldLegend(); updateTiles();
+  syncOn(); worldLegend(); updateTiles(); buildFwTable();
   if(state.iso){ renderSide(); if(GEO[state.iso]) drawAdmin(state.iso, false); }
   else { buildCallouts(); runLayout(); if(isMobile()) renderWorldList(); buildOverview(); }
 }
@@ -2889,6 +2929,103 @@ function annotate(root, scope){
   }
 }
 
+// ---------- the frameworks table under the map: one row per framework the tiles count (the
+// current-frameworks layer, in the year shown), so its pre-arranged and people-covered totals
+// are the tiles' figures; activations and released count the framework activations listed
+const FWT = {k: 'country', dir: 1};
+const ST_ORDER = {active: 0, updating: 1, development: 2};
+function fwRows(){
+  const R = [];
+  Object.entries(L).forEach(([iso, c]) => c.fws.forEach(f => {
+    if(!(LAYERS.framework && f.layers.includes('framework'))) return;
+    const v = f.versions.find(x => x.v === f.current), acts = dotActs(f), P = f.pre_parts || {};
+    const rows = acts.flatMap(a => a.funding || []);
+    R.push({iso, c, f, v, country: tr8(c.name), hazard: tr8(f.hz_label), status: ST_ORDER[f.disp] ?? 9,
+            version: f.current || '', pre: f.pre_now, cerf: P.cerf, pooled: P.pooled, all: P.all, pre_v: P.version,
+            covered: f.covered, n: acts.length,
+            // no amount recorded for any of them: '—', not $0
+            released: rows.some(x => x.usd != null) ? rows.reduce((s, x) => s + (x.usd || 0), 0) : null,
+            months: (v && v.months) || []});
+  }));
+  const {k, dir} = FWT;
+  const cmp = (a, b) => { const x = a[k], y = b[k];
+    if(typeof x === 'string' || typeof y === 'string') return dir * String(x ?? '').localeCompare(String(y ?? ''));
+    if(x == null || y == null) return x == null && y == null ? 0 : x == null ? 1 : -1;   // no figure: last, either way
+    return dir * (x - y); };
+  return R.sort((a, b) => cmp(a, b) || a.country.localeCompare(b.country) || a.hazard.localeCompare(b.hazard));
+}
+// a past year: the pooled-fund money of no single framework, as the pre-arranged tile counts it
+function fwPreX(R){
+  if(!pastY()) return 0;
+  const fs = new Set(R.map(r => r.f)); let x = 0;
+  Object.values(L).forEach(c => { const p = (c.pre_x || {})[String(YEAR)]; if(p && c.fws.some(f => fs.has(f))) x += p[0]; });
+  return x;
+}
+function buildFwTable(){
+  const tab = document.getElementById('fwtab'), cap = document.getElementById('fwtcap'); if(!tab) return;
+  const R = fwRows(), past = pastY(), split = !past, preX = fwPreX(R), n = R.length;
+  const sum = k => R.reduce((s, r) => s + (r[k] || 0), 0);
+  const usd = v => v == null ? '—' : `<span title='$${Math.round(v).toLocaleString('en-US')}'>${money(v)}</span>`;
+  const cols = [['country', tr8('Country')], ['hazard', tr8('Hazard')], ['status', tr8('Status')],
+      ['version', past ? tr8('Version, end of {0}', YEAR) : tr8('Latest version')], [null, tr8('Monitoring')],
+      ['pre', past ? tr8('Pre-arranged in {0}', YEAR) : tr8('Pre-arranged now'), 1]]
+    .concat(split ? [['cerf', tr8('of which CERF'), 1, 'sub'], ['pooled', tr8('of which Country and Regional Funds'), 1, 'sub']] : [])
+    .concat([['covered', tr8('People covered'), 1],
+             ['n', YEAR != null ? tr8('Activations in {0}', YEAR) : tr8('Activations to date'), 1],
+             ['released', YEAR != null ? tr8('Released in {0}', YEAR) : tr8('Released to date'), 1]]);
+  const on = k => FWT.k === k;
+  const head = '<thead><tr>' + cols.map(([k, lab, isNum, cls]) => k
+      ? `<th data-k='${k}' tabindex='0' aria-sort='${on(k) ? (FWT.dir > 0 ? 'ascending' : 'descending') : 'none'}' class='${isNum ? 'num' : ''} ${cls || ''}'>${esc(lab)}<span class='ar'>${on(k) ? (FWT.dir > 0 ? '▲' : '▼') : ''}</span></th>`
+      : `<th class='nosort'>${esc(lab)}</th>`).join('') + '</tr></thead>';
+  const body = '<tbody>' + R.map(r => { const f = r.f, v = r.v;
+    const ver = !f.current ? '—' : v && v.doc_url
+      ? `<a href='${esc(v.doc_url)}' target='_blank' rel='noopener' title='${esc(v.doc_title || tr8('framework document'))}'><code>${esc(f.current)}</code> ↗</a>`
+      : `<code>${esc(f.current)}</code>`;
+    const notes = [r.pre_v && r.pre_v !== f.current ? tr8('envelope of version {0}', r.pre_v) : null,
+                   r.all ? tr8('not split by fund') : null].filter(Boolean).map(t => `<span class='sm'>${esc(t)}</span>`).join('');
+    const drvPre = past && f.pre_drv ? DRV(tr8('Inferred from the envelope of the version valid during the year (no reported figure for that framework-year)')) : '';
+    return `<tr><td>${f.page ? `<a href='${esc(f.page)}'>${esc(r.country)}</a>` : esc(r.country)}</td><td>${esc(r.hazard)}</td>`
+      + `<td class='nw'>${badge(f.disp)}${past ? DRV(statusNote(f).slice(3)) : ''}</td><td class='nw'>${ver}</td>`
+      + `<td class='mstrip'>${r.months.length ? monthStrip(r.months) : '—'}</td>`
+      + `<td class='num'>${usd(r.pre)}${drvPre}${notes}</td>`
+      + (split ? `<td class='num'>${usd(r.cerf)}</td><td class='num'>${usd(r.pooled)}</td>` : '')
+      + `<td class='num'>${num(r.covered)}</td><td class='num'>${r.n || '—'}</td><td class='num'>${usd(r.released)}</td></tr>`; }).join('') + '</tbody>';
+  const xrow = preX ? `<tr class='x'><td colspan='5'>${esc(tr8('Country and Regional Fund allocations in {0} not tied to one framework', YEAR))}</td>`
+      + `<td class='num'>${usd(preX)}</td><td colspan='3'></td></tr>` : '';
+  const foot = n ? `<tfoot>${xrow}<tr><td colspan='5'>${esc(tr8(n === 1 ? 'Total, {0} framework' : 'Total, {0} frameworks', n))}</td>`
+      + `<td class='num'>${usd(sum('pre') + preX)}</td>`
+      + (split ? `<td class='num'>${usd(sum('cerf'))}</td><td class='num'>${usd(sum('pooled'))}</td>` : '')
+      + `<td class='num'>${num(sum('covered'))}</td><td class='num'>${sum('n') || '—'}</td><td class='num'>${usd(R.some(r => r.released != null) ? sum('released') : null)}</td></tr></tfoot>` : '';
+  tab.innerHTML = head + body + foot;
+  if(cap) cap.textContent = !LAYERS.framework ? tr8('The current-frameworks layer is switched off in the map legend: switch it on to list the frameworks.')
+    : past ? tr8(n === 1 ? '{0} framework at the end of {1}, as counted at the top of the page (same pre-arranged and people-covered totals). Status and figures for past years are reconstructed from the framework records.'
+                         : '{0} frameworks at the end of {1}, as counted at the top of the page (same pre-arranged and people-covered totals). Status and figures for past years are reconstructed from the framework records.', n, YEAR)
+    : tr8(n === 1 ? '{0} framework, as counted at the top of the page (same pre-arranged and people-covered totals). Pick a year above the map to see an earlier year.'
+                  : '{0} frameworks, as counted at the top of the page (same pre-arranged and people-covered totals). Pick a year above the map to see an earlier year.', n);
+}
+function fwSort(k){ FWT.dir = FWT.k === k ? -FWT.dir : (['country', 'hazard', 'status', 'version'].includes(k) ? 1 : -1); FWT.k = k; buildFwTable(); }
+(function(){ const tab = document.getElementById('fwtab'); if(!tab) return;
+  tab.addEventListener('click', e => { const h = e.target.closest('th[data-k]'); if(h) fwSort(h.dataset.k); });
+  tab.addEventListener('keydown', e => { const h = e.target.closest('th[data-k]');
+    if(h && (e.key === 'Enter' || e.key === ' ')){ e.preventDefault(); fwSort(h.dataset.k); tab.querySelector(`th[data-k='${h.dataset.k}']`)?.focus(); } }); })();
+// the table as a CSV file: English labels and whole dollars (data files are not translated)
+function fwCSV(){
+  const R = fwRows(), split = !pastY(), MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const q = v => v == null ? '' : /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
+  const r0 = v => v == null ? null : Math.round(v);
+  const yr = YEAR == null ? 'to date' : String(YEAR);
+  const cols = ['country', 'country_iso3', 'hazard', 'status', 'version', 'framework_document', 'monitoring_months',
+                pastY() ? `prearranged_${YEAR}_usd` : 'prearranged_now_usd', 'prearranged_cerf_usd', 'prearranged_country_regional_funds_usd',
+                'prearranged_from_version', 'people_covered', `activations_${yr.replace(' ', '_')}`, `released_${yr.replace(' ', '_')}_usd`, 'framework_page'];
+  const lines = [cols.join(',')].concat(R.map(r => [r.c.name, r.iso, r.f.hz_label, r.f.disp_label, r.f.current,
+      r.v && r.v.doc_url, r.months.map(m => MON[m - 1]).join(' '), r0(r.pre),
+      split ? r0(r.cerf) : null, split ? r0(r.pooled) : null, split ? r.pre_v : null,
+      r0(r.covered), r.n, r0(r.released), r.f.page ? new URL(r.f.page, location.href).href : null].map(q).join(',')));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + lines.join('\n') + '\n'], {type: 'text/csv;charset=utf-8'}));
+  a.download = `aa-frameworks-${YEAR == null ? YEARS.today : YEAR}.csv`; a.click(); URL.revokeObjectURL(a.href);
+}
+
 // ---------- boot
 // deep links: #ISO/hazard/version, with the year as a '|2024' suffix, or a bare #2024
 const HASH0 = (function(){ let [p, y] = decodeURIComponent(location.hash.replace('#','')).split('|');
@@ -2897,7 +3034,7 @@ const HASH0 = (function(){ let [p, y] = decodeURIComponent(location.hash.replace
   return {path: (p || '').split('/'), year: y}; })();
 snapLive();
 if(HASH0.year != null){ YEAR = HASH0.year; applyYear(); syncYearUI(); }
-fixHeight(); buildWorld(); syncOn(); worldLegend(); updateTiles(); buildCallouts(); runLayout();
+fixHeight(); buildWorld(); syncOn(); worldLegend(); updateTiles(); buildFwTable(); buildCallouts(); runLayout();
 if(isMobile()){ maprow.classList.add('open'); renderWorldList(); }
 buildOverview();
 setTimeout(runLayout, 300);   // once fonts have settled
