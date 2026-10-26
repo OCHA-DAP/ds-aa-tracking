@@ -2,9 +2,10 @@
 
 Conventions (shared with the existing `aa` writers):
 - natural text keys; UNIQUE NULLS NOT DISTINCT composites on fact tables
-- this repo is the single writer of every table below; it never writes the
-  KB-owned tables (framework_version_map, window, simulated_activation,
-  funding_breakdown, actual_activation, activation_allocation) or the
+- this repo is the single writer of every table below — since 2026-10-05 that includes
+  the tables the knowledge base's loaders used to write (window, simulated_activation,
+  version_performance_reported, funding_breakdown, actual_activation,
+  activation_allocation; see BACKTEST_TABLES / KB_ERA_TABLES). It never writes the
   ds-cerf-supplement mirror tables (cerf_allocation, cerf_project*, cerf_supplement,
   cerf_allocation_storm)
 - full-refresh loads (truncate + insert in one transaction)
@@ -648,7 +649,123 @@ DURABLE_TABLES = {
             old_value text,
             new_value text
         )""",
+    # ------------------------------------------- backtests (simulated activations)
+    # Written by the knowledge base's load_aa_performance.py until 2026-10-05 (from its
+    # gsheet / insurance-Excel crosswalk); owned here since. Shapes are the live ones.
+    # A version's backtest = its aa.window rows + aa.simulated_activation rows + its
+    # aa.version_performance_reported row. Edited freely for now — entries files (op:
+    # replace re-enters a version's backtest as a set), the admin page — and corrected as
+    # errors are found; v_trk_backtest_check lists the rows that break the rules below.
+    # Sealing a checked backtest (and refusing changes to a sealed one) is a follow-up.
+    # Rules the data should meet: a simulated year lies inside its window's analysis span;
+    # a backtest sits under a registered framework_version.
+    "window": """
+        CREATE TABLE IF NOT EXISTS aa.window (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,
+            window_name text NOT NULL,
+            kb_framework text,             -- attribute (KB folder slug), not part of the key
+            all_in boolean NOT NULL DEFAULT false,
+            basis text,                    -- forecast | observational | mixed
+            allocation_usd bigint,         -- legacy envelope; budgets live in window_funding
+            analysis_start integer,        -- the backtest's analysed years: the RP
+            analysis_end integer,          --   denominator (wrong span = wrong RP)
+            rp_reported numeric,           -- as published (compare v_window_performance)
+            prob_reported numeric,
+            source text,                   -- where the backtest came from: report (the
+                                           -- endorsed document) | repo (the analysis code)
+                                           -- | gsheet | excel (KB-era crosswalk) | recon-*
+            note text,                     -- reported-vs-derived discrepancies etc.
+            PRIMARY KEY (country_iso3, hazard, version, window_name)
+        )""",
+    "simulated_activation": """
+        CREATE TABLE IF NOT EXISTS aa.simulated_activation (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,
+            window_name text NOT NULL,
+            event_year integer NOT NULL,   -- the year the trigger would have fired, as the
+                                           -- document labels it (seasons that straddle two
+                                           -- calendar years are labelled either way: MOZ
+                                           -- by end year, NER floods by start year) —
+                                           -- never a real activation of the version itself
+            event_label text,
+            kb_framework text,
+            event_date date,
+            event_time timestamptz,
+            time_precision text,           -- year | month | day | hour
+            source_note text,
+            PRIMARY KEY (country_iso3, hazard, version, window_name, event_year)
+        )""",
+    "version_performance_reported": """
+        CREATE TABLE IF NOT EXISTS aa.version_performance_reported (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,
+            kb_framework text,
+            kb_status text,
+            gsheet_tab text,               -- provenance of the reported numbers
+            excel_fv text,
+            overall_rp_reported numeric,   -- published overall return period
+            overall_prob_reported numeric,
+            overall_spend_reported bigint,
+            flag text,                     -- KB-era crosswalk flag (PRE_KB, EXCEL_SOURCE, …)
+            PRIMARY KEY (country_iso3, hazard, version)
+        )""",
+    # ------------------------------------------------ KB-era record, frozen
+    # Written by the knowledge base until its pages stopped being a source (the KB flip,
+    # 2026-09-28); owned here since 2026-10-05 and no longer loaded by anything.
+    # funding_breakdown -> superseded by window_funding (+ v_window_funding_split);
+    # actual_activation -> window_activation; activation_allocation -> activation_funding.
+    # Kept because views and pages still read them (announcement URLs, v_aa_allocation).
+    "funding_breakdown": """
+        CREATE TABLE IF NOT EXISTS aa.funding_breakdown (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,
+            window_name text,              -- null = whole-framework envelope
+            fund_source text,              -- CERF | AHF | NHF | … ; null = unspecified
+            agency text,
+            sector text,
+            amount_usd bigint NOT NULL,
+            provenance text NOT NULL DEFAULT 'stated',   -- stated | imputed-5-95
+            kb_framework text
+        )""",
+    "actual_activation": """
+        CREATE TABLE IF NOT EXISTS aa.actual_activation (
+            kb_framework text NOT NULL,
+            event_date text NOT NULL,
+            window_name text NOT NULL DEFAULT 'unspecified',   -- when the page did not say
+            country_iso3 text,
+            hazard text,
+            version text,
+            full_activation boolean NOT NULL DEFAULT true,
+            released_usd bigint,
+            url text,                      -- the announcement
+            note text,
+            PRIMARY KEY (kb_framework, event_date, window_name)
+        )""",
+    # three row kinds: link (kb_framework, event_date, application_code), NO_CERF
+    # (kb_framework, event_date, NULL), ADHOC_AA (NULL, NULL, application_code). The live
+    # table also carries FOREIGN KEY (application_code) REFERENCES aa.cerf_allocation —
+    # not repeated here: that table belongs to the ds-cerf-supplement mirror.
+    "activation_allocation": """
+        CREATE TABLE IF NOT EXISTS aa.activation_allocation (
+            kb_framework text,
+            event_date text,
+            application_code text,
+            flag text,                     -- SHARED_APP | NO_CERF | ADHOC_AA
+            note text,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            CHECK (kb_framework IS NOT NULL OR application_code IS NOT NULL),
+            CHECK ((kb_framework IS NULL) = (event_date IS NULL))
+        )""",
 }
+
+# the backtest tables (edited here) and the KB-era tables kept read-only
+BACKTEST_TABLES = ["window", "simulated_activation", "version_performance_reported"]
+KB_ERA_TABLES = ["funding_breakdown", "actual_activation", "activation_allocation"]
 
 # ------------------------------------------------------------ additive migrations
 # DB-first era (2026-09-10): the dev DB is the single source of truth — nothing
@@ -669,6 +786,8 @@ ADDITIVE_MIGRATIONS = [
     "ALTER TABLE IF EXISTS aa.simulated_activation ADD COLUMN IF NOT EXISTS event_time timestamptz",
     "ALTER TABLE IF EXISTS aa.simulated_activation ADD COLUMN IF NOT EXISTS time_precision text",
     "ALTER TABLE IF EXISTS aa.simulated_activation ADD COLUMN IF NOT EXISTS source_note text",
+    # 2026-10-05: backtests owned here (the KB loader that truncated aa.window is retired)
+    "ALTER TABLE IF EXISTS aa.window ADD COLUMN IF NOT EXISTS note text",
     # 2026-10-05: when a version went into development — in-development frameworks count toward
     # pre-arranged money, also in the yearly figures, FROM this date (the dates before this
     # column existed are lost; the nightly stamps it the first night a development version exists)
@@ -689,6 +808,9 @@ INDEXES = [
     """CREATE UNIQUE INDEX IF NOT EXISTS version_document_current_uniq ON aa.version_document
        (country_iso3, hazard, version, role)
        WHERE superseded_by IS NULL AND role IN ('endorsed', 'published')""",
+    # the KB-era link table's natural key (no PK: any of the three may be null)
+    """CREATE UNIQUE INDEX IF NOT EXISTS activation_allocation_uniq ON aa.activation_allocation
+       (COALESCE(kb_framework, ''), COALESCE(event_date, ''), COALESCE(application_code, ''))""",
 ]
 
 LEGACY_TABLES = [   # renamed zz_legacy_<name> by the window-first migration; read-only history
@@ -697,6 +819,124 @@ LEGACY_TABLES = [   # renamed zz_legacy_<name> by the window-first migration; re
 ]
 
 VIEWS = {
+    # ---- backtest performance (moved from the KB's load_aa_performance.py, 2026-10-05).
+    # Weibull: RP = (analysed years + 1) / activations; overall = any window firing in a year.
+    # Names and columns unchanged — the CERF trigger-allocations app and old ERDs read them.
+    "v_window_performance": """
+        CREATE OR REPLACE VIEW aa.v_window_performance AS
+        SELECT w.country_iso3, w.hazard, w.version, w.window_name, w.kb_framework,
+               w.version AS kb_version, w.all_in,
+               w.allocation_usd, w.analysis_start, w.analysis_end,
+               (w.analysis_end - w.analysis_start + 1)              AS analysis_years,
+               count(a.event_year)                                  AS n_activations,
+               round((w.analysis_end - w.analysis_start + 1 + 1.0)
+                     / nullif(count(a.event_year), 0), 2)           AS return_period,
+               round(count(a.event_year)::numeric
+                     / nullif(w.analysis_end - w.analysis_start + 1, 0), 3) AS activation_prob,
+               w.rp_reported, w.prob_reported
+        FROM aa.window w
+        LEFT JOIN aa.simulated_activation a
+          ON (a.country_iso3, a.hazard, a.version, a.window_name)
+           = (w.country_iso3, w.hazard, w.version, w.window_name)
+        GROUP BY w.country_iso3, w.hazard, w.version, w.window_name, w.kb_framework, w.all_in,
+                 w.allocation_usd, w.analysis_start, w.analysis_end, w.rp_reported,
+                 w.prob_reported
+    """,
+    "v_framework_performance": """
+        CREATE OR REPLACE VIEW aa.v_framework_performance AS
+        WITH act AS (
+            SELECT country_iso3, hazard, version, event_year
+            FROM aa.simulated_activation GROUP BY 1, 2, 3, 4
+        ),
+        dims AS (
+            SELECT country_iso3, hazard, version, max(kb_framework) AS kb_framework,
+                   min(analysis_start) AS a0, max(analysis_end) AS a1,
+                   bool_or(all_in) AS all_in, sum(allocation_usd) AS total_budget
+            FROM aa.window GROUP BY 1, 2, 3
+        )
+        SELECT d.country_iso3, d.hazard, d.version, d.kb_framework, d.version AS kb_version,
+               d.a1 - d.a0 + 1                                    AS analysis_years,
+               count(a.event_year)                                AS n_activation_years,
+               round((d.a1 - d.a0 + 1 + 1.0)
+                     / nullif(count(a.event_year), 0), 2)         AS overall_return_period,
+               round(count(a.event_year)::numeric
+                     / nullif(d.a1 - d.a0 + 1, 0), 3)             AS overall_activation_prob,
+               d.all_in, d.total_budget
+        FROM dims d
+        LEFT JOIN act a
+          ON (a.country_iso3, a.hazard, a.version) = (d.country_iso3, d.hazard, d.version)
+        GROUP BY d.country_iso3, d.hazard, d.version, d.kb_framework, d.a0, d.a1, d.all_in,
+                 d.total_budget
+    """,
+    # the old crosswalk shape, for readers still keyed (kb_framework, kb_version, country_iso3)
+    "framework_version_map": """
+        CREATE OR REPLACE VIEW aa.framework_version_map AS
+        SELECT kb_framework, version AS kb_version, country_iso3, kb_status, gsheet_tab,
+               excel_fv, overall_rp_reported, overall_prob_reported, overall_spend_reported,
+               flag
+        FROM aa.version_performance_reported
+    """,
+    # ---- KB-era record (frozen tables), views unchanged
+    "v_funding_by_sector": """
+        CREATE OR REPLACE VIEW aa.v_funding_by_sector AS
+        SELECT country_iso3, hazard, version, kb_framework, version AS kb_version,
+               sector, sum(amount_usd) AS amount_usd
+        FROM aa.funding_breakdown WHERE sector IS NOT NULL
+        GROUP BY 1, 2, 3, 4, 6
+    """,
+    "v_funding_by_agency": """
+        CREATE OR REPLACE VIEW aa.v_funding_by_agency AS
+        SELECT country_iso3, hazard, version, kb_framework, version AS kb_version,
+               agency, sum(amount_usd) AS amount_usd
+        FROM aa.funding_breakdown WHERE agency IS NOT NULL
+        GROUP BY 1, 2, 3, 4, 6
+    """,
+    "v_funding_by_window": """
+        CREATE OR REPLACE VIEW aa.v_funding_by_window AS
+        SELECT country_iso3, hazard, version, kb_framework, version AS kb_version, window_name,
+               bool_or(provenance <> 'stated') AS any_imputed, sum(amount_usd) AS amount_usd
+        FROM aa.funding_breakdown WHERE window_name IS NOT NULL
+        GROUP BY 1, 2, 3, 4, 6
+    """,
+    "v_aa_allocation": """
+        CREATE OR REPLACE VIEW aa.v_aa_allocation AS
+        SELECT ca.application_code, ca.year, ca.country_iso3, ca.emergency_type, ca.title,
+               ca.amount_approved, ca.individuals_planned, ca.individuals_reached,
+               ca.allocation_status, l.kb_framework, l.event_date,
+               l.flag = 'ADHOC_AA' AS aa_adhoc, l.note AS aa_note
+        FROM aa.activation_allocation l
+        JOIN aa.cerf_allocation ca USING (application_code)
+    """,
+    "v_activation_funding": """
+        CREATE OR REPLACE VIEW aa.v_activation_funding AS
+        WITH ev AS (
+            SELECT kb_framework, event_date,
+                   max(country_iso3) AS country_iso3, max(hazard) AS hazard,
+                   max(version) AS version,
+                   string_agg(DISTINCT window_name, ' + ' ORDER BY window_name) AS window_name,
+                   bool_or(full_activation) AS full_activation,
+                   sum(released_usd) AS released_usd
+            FROM aa.actual_activation
+            GROUP BY kb_framework, event_date
+        )
+        SELECT ev.kb_framework, ev.event_date, ev.version, ev.version AS kb_version,
+               ev.country_iso3, ev.hazard, ev.window_name, ev.full_activation,
+               ev.released_usd,
+               count(ca.application_code) AS n_allocations,
+               string_agg(ca.application_code, ' + ' ORDER BY ca.application_code)
+                   AS application_codes,
+               bool_or(l.flag = 'SHARED_APP') AS shared_app,
+               sum(ca.amount_approved) AS cerf_amount_approved,
+               sum(ca.individuals_planned) AS individuals_planned,
+               sum(ca.individuals_reached) AS individuals_reached,
+               min(ca.allocation_status) AS allocation_status,
+               min(ca.erc_endorsement_date) AS erc_endorsement_date
+        FROM ev
+        LEFT JOIN aa.activation_allocation l USING (kb_framework, event_date)
+        LEFT JOIN aa.cerf_allocation ca USING (application_code)
+        GROUP BY ev.kb_framework, ev.event_date, ev.version, ev.country_iso3, ev.hazard,
+                 ev.window_name, ev.full_activation, ev.released_usd
+    """,
     # ---- compatibility names (one release): the old table names as views
     "framework_registry": """
         CREATE OR REPLACE VIEW aa.framework_registry AS SELECT * FROM aa.country_hazard
@@ -1079,5 +1319,62 @@ VIEWS = {
         FROM aa.v_version_funding vf
         JOIN aa.framework_version fv USING (country_iso3, hazard, version)
         WHERE vf.kind = 'prearranged' AND vf.fund_code = 'cerf'
+    """,
+    # the backtest curation queue: error = breaks a backtest rule
+    # (the follow-up sealing PR makes the database refuse them); warn = worth a look;
+    # info = still to record
+    "v_trk_backtest_check": """
+        CREATE OR REPLACE VIEW aa.v_trk_backtest_check AS
+        SELECT 'error' AS severity, 'simulated year outside the analysis span' AS "check",
+               s.country_iso3, s.hazard, s.version, s.window_name,
+               s.event_year || ' outside ' || w.analysis_start || '-' || w.analysis_end AS detail
+        FROM aa.simulated_activation s
+        JOIN aa.window w USING (country_iso3, hazard, version, window_name)
+        WHERE s.event_year NOT BETWEEN w.analysis_start AND w.analysis_end
+        UNION ALL
+        SELECT 'error', 'backtest under a label that is no version',
+               w.country_iso3, w.hazard, w.version, w.window_name, 'not in framework_version'
+        FROM aa.window w
+        LEFT JOIN aa.framework_version f USING (country_iso3, hazard, version)
+        WHERE f.version IS NULL
+        UNION ALL
+        SELECT 'error', 'simulated year without its window',
+               s.country_iso3, s.hazard, s.version, s.window_name, s.event_year::text
+        FROM aa.simulated_activation s
+        LEFT JOIN aa.window w USING (country_iso3, hazard, version, window_name)
+        WHERE w.window_name IS NULL
+        UNION ALL
+        SELECT 'error', 'reported performance under a label that is no version',
+               r.country_iso3, r.hazard, r.version, NULL, 'not in framework_version'
+        FROM aa.version_performance_reported r
+        LEFT JOIN aa.framework_version f USING (country_iso3, hazard, version)
+        WHERE f.version IS NULL
+        UNION ALL
+        SELECT 'warn', 'window without an analysis span',
+               country_iso3, hazard, version, window_name, 'the RP has no denominator'
+        FROM aa.window WHERE analysis_start IS NULL OR analysis_end IS NULL
+        UNION ALL
+        SELECT 'warn', 'simulated year in or after the year the version took effect',
+               s.country_iso3, s.hazard, s.version, s.window_name,
+               s.event_year || ' vs valid from ' || f.valid_from
+               || ' (a real activation, unless the document labels seasons by start year)'
+        FROM aa.simulated_activation s
+        JOIN aa.framework_version f USING (country_iso3, hazard, version)
+        WHERE s.event_year >= extract(year FROM f.valid_from)
+        UNION ALL
+        SELECT 'warn', 'computed RP differs from the reported one by more than a tenth',
+               country_iso3, hazard, version, window_name,
+               return_period || ' computed (Weibull) vs ' || rp_reported || ' reported'
+        FROM aa.v_window_performance
+        WHERE rp_reported IS NOT NULL AND return_period IS NOT NULL
+          AND abs(return_period - rp_reported) > 0.1 * rp_reported
+        UNION ALL
+        SELECT 'info', 'endorsed version with no backtest recorded',
+               f.country_iso3, f.hazard, f.version, NULL, NULL
+        FROM aa.framework_version f
+        WHERE f.kb_status = 'endorsed'
+          AND NOT EXISTS (SELECT 1 FROM aa.window w
+                          WHERE (w.country_iso3, w.hazard, w.version)
+                              = (f.country_iso3, f.hazard, f.version))
     """,
 }

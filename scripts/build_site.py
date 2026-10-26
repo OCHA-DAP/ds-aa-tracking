@@ -369,6 +369,8 @@ def tbl(df, max_rows=8000, name="data"):
 # per-table reviewer notes
 NOTES = {
     "country_hazard": "The (country, hazard) pair — the identity everything hangs off: pipeline entries with no version yet, plus descriptive attributes that aren't approved per version (region, language, coordination group) the manual <code>retired</code> flag (a retired framework is hidden from the map whatever its versions say) and <code>technical_support</code> (OCHA supported the framework technically, without a funding commitment). The framework status everyone shows comes from <code>v_framework_lifecycle</code>. Hierarchy: country_hazard → framework_version → window → {window_activation, simulated_activation, window_funding}; ad hoc / early-action allocations attach to the pair (adhoc_activation).",
+    "window": "A framework version's trigger windows as BACKTESTED: analysis span (the RP denominator), all-in flag, reported RP/prob. With <code>simulated_activation</code> and <code>version_performance_reported</code> it is the version's backtest. Owned and edited here since 2026-10-05 (entries files with <code>op: replace</code>, this admin page); corrected as errors are found — <code>v_trk_backtest_check</code> lists the rows that break a rule. Written by the KB's loader until then.",
+    "simulated_activation": "The years a version's trigger WOULD have fired, per window — never a real activation of the version itself (those are <code>window_activation</code>). Should fall inside the window's analysis span: the KB-era data broke that where real activations were appended (listed by <code>v_trk_backtest_check</code>).",
     "framework_version": "The unit that actually gets approved: one row per framework version, seeded from KB page frontmatter (incl. superseded/retired versions), the historical sweep of the OCHA AA web page and the pa-anticipatory-action monorepo (<code>source='ocha-web'/'pa-monorepo'</code>, with <code>doc_url</code>/<code>analysis_ref</code>), plus sheet-reported revision dates with no KB page (<code>source='sheet-revision'</code> — a KB completeness gap). Version-specific facts (budgets, sector budgets, coverage, calendar, activations, status) carry a <code>version</code> attribution: direct from the KB for matched activations, otherwise inferred from the version in force at the fact's date (<code>version_match</code>; NULL = no version exists to attribute to). Caveat: figures reported mid-revision may belong to the upcoming version — interval inference can't see that; overrides are a curation pass.",
     "framework_status": "Operational lifecycle snapshots from every source sheet, kept side by side (PK includes <code>source</code>). Canonical <code>status</code> vocabulary; raw spelling preserved. This is deliberately distinct from the KB page-status vocabulary.",
     "framework_focal_point": "Focal points by role from the 2026 planning sheet, attributed to the version in force at the snapshot date.",
@@ -378,7 +380,7 @@ NOTES = {
     "fund": "OCHA pooled funds only (CERF, CBPFs, regional funds) — the fund dimension every funding row references. Agency co-financing is deliberately NOT here (free-text financier on commitments instead). Seeded from the CBPF mirror's fund registry.",
     "window_activation": "A framework activation is a WINDOW firing: keyed (country, hazard, version, window, date). <code>window_name</code> should be one of the version's windows — sheet-era rows carry the KB's free-text window until curated (<code>v_trk_activation_window_check</code> lists the ones not in the window registry). <code>event_date</code> is partial ISO at the source's precision.",
     "adhoc_activation": "Ad hoc AA and early-action allocations, off the (country, hazard) pair — no version, no window.",
-    "window_status": "Curated trigger state per window: <code>triggered</code> yes/no (+ date, note). The KB loader truncates <code>window</code>, so the flag lives here. A version is <i>fully triggered</i> when any window fired (all-in / exclusive rollup) or every window fired (independent windows); that, with validity, drives the framework status on the map. Seeded once from <code>window_activation</code> — a window is flagged when an activation names it, the version has a single window, or an activation is marked full.",
+    "window_status": "Curated trigger state per window: <code>triggered</code> yes/no (+ date, note). It lives apart from <code>window</code> because the KB loader used to truncate that table (until 2026-10-05). A version is <i>fully triggered</i> when any window fired (all-in / exclusive rollup) or every window fired (independent windows); that, with validity, drives the framework status on the map. Seeded once from <code>window_activation</code> — a window is flagged when an activation names it, the version has a single window, or an activation is marked full.",
     "activation_funding": "One row per activation × fund allocation — the multi-fund reality (e.g. Nigeria floods Sep 2025 = CERF $5.0M + NHF $2.0M under one activation). <code>allocation_code</code> resolves through <code>aa.v_allocation</code> (CERF application codes and Country and Regional Fund codes alike).",
     "report_channel_inclusion": "Which frameworks/countries count toward which external reports per year (A-Hub, UK BCs, SG, CERF/OCHA annual reports, SF KPI, CPC), attributed to the version in force during the report year.",
     "plan_inclusion": "GHO/HNRP plan inclusion + AA feasibility flags per country-year, per source.",
@@ -596,16 +598,16 @@ the DB becomes the single authoritative source and the sheets can be retired.
 </div>
 <div class='card'>
 <b>Ownership map</b> (single writer per table, schema <code>aa</code>):<br>
-<span class='badge b-new'>ds-aa-tracking (this repo, 22 tables + 7 views)</span>
+<span class='badge b-new'>ds-aa-tracking (this repo; since 2026-10-05 also the KB-era tables below)</span>
 country_hazard · framework_version · framework_status · framework_focal_point ·
 framework_calendar · fund ·
 window_funding · window_funding · people_covered · activation ·
 activation_funding · report_channel_inclusion · plan_inclusion · start_network · cirv · cerf_subgrant ·
 cerf_application_people · cerf_application_report · cerf_allocation_extra ·
 cerf_project_supplement · cerf_cva_history · emergency_type_override<br>
-<span class='badge b-kb'>ds-knowledge-base</span>
-window · simulated_activation · funding_breakdown · version_performance_reported (framework_version_map = compat view) ·
-actual_activation · activation_allocation<br>
+<span class='badge b-new'>ds-aa-tracking, from the KB loaders</span>
+window · simulated_activation · version_performance_reported (framework_version_map = compat view) — the backtests ·
+funding_breakdown · actual_activation · activation_allocation — frozen<br>
 <span class='badge b-mirror'>ds-cerf-supplement</span>
 cerf_allocation · cerf_project · cerf_project_sector · cerf_project_country ·
 cerf_allocation_storm · cerf_supplement
@@ -872,8 +874,8 @@ TARGET_NODES = [
     ("fund", "new", "fund_code — OCHA pooled funds only"),
     ("country_hazard", "new", "country_iso3 · hazard (identity only)"),
     ("framework_version", "new", "+ version — THE unified registry"),
-    ("version_performance_reported", "kb", "gsheet_tab · excel_fv · *_reported"),
-    ("window", "kb", "+ window_name · basis · trigger_statement"),
+    ("version_performance_reported", "new", "gsheet_tab · excel_fv · *_reported"),
+    ("window", "new", "+ window_name · basis · trigger_statement"),
     ("v_version_funding", "future", "window × fund_code × agency × sector"),
     ("window_activation", "new", "+ event_date (partial ISO → datetime) · event_label"),
     ("activation_funding", "new", "+ fund_code · allocation_code · amount"),
@@ -901,13 +903,13 @@ TARGET_FULL_NODES = [
     ("fund", "new", "fund_code — OCHA pooled funds only"),
     ("country_hazard", "new", "country_iso3 · hazard (identity only)"),
     ("framework_version", "new", "+ version = an ENDORSED doc · endorsed_by"),
-    ("version_performance_reported", "kb", "gsheet_tab · excel_fv · *_reported"),
-    ("window", "kb", "+ window_name · basis · trigger_statement"),
+    ("version_performance_reported", "new", "gsheet_tab · excel_fv · *_reported"),
+    ("window", "new", "+ window_name · basis · trigger_statement"),
     ("window_month", "future", "+ month (monitoring period)"),
     ("version_funding", "future", "window × fund × agency × sector · provenance"),
     ("prearranged_commitment", "new", "= window_funding (fund_code/financier built)"),
     ("people_covered", "new", "window-attached · as_of · source"),
-    ("simulated_activation", "kb", "+ window_name · event_year"),
+    ("simulated_activation", "new", "+ window_name · event_year"),
     ("framework_status", "new", "observed snapshots (vs v_expected_status)"),
     ("framework_focal_point", "new", "+ role · person · as_of"),
     ("report_channel_inclusion", "new", "report_year · channel"),
@@ -1084,7 +1086,6 @@ def build_roadmap_page():
           f"{_target_erd(TARGET_FULL_NODES, TARGET_FULL_EDGES, TARGET_COUNTRY_NODES, 'full')}</div></div>"
         + "<div class='card'><b>What changes (focused view)</b> — gray boxes are future objects; "
         "<span class='badge b-new'>ds-aa-tracking</span>"
-        "<span class='badge b-kb'>ds-knowledge-base</span>"
         "<span class='badge b-mirror'>mirror repo</span> as elsewhere. Full plan below "
         "(also in the repo as <code>DESIGN.md</code>)."
         f"<div class='scroll' style='max-height:none'>{erd}</div></div>"
@@ -1093,10 +1094,6 @@ def build_roadmap_page():
     page("roadmap.html", "Roadmap — unified versions & multi-fund model", body)
 
 
-KB_TABLES = [
-    "version_performance_reported", "window", "simulated_activation", "funding_breakdown",
-    "actual_activation", "activation_allocation",
-]
 MIRROR_TABLES = [
     "cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country",
     "cerf_allocation_storm", "cerf_supplement",
@@ -1137,12 +1134,12 @@ ERD_NODES = [
     ("cerf_allocation_extra", "new", "application_code"),
     ("cerf_project_supplement", "new", "project_code"),
     ("emergency_type_override", "new", "application_code"),
-    ("version_performance_reported", "kb", "country_iso3 · hazard · version (reported RP/prob + source tabs)"),
-    ("window", "kb", "country_iso3 · hazard · version · window_name"),
-    ("simulated_activation", "kb", "+ window_name · event_year"),
-    ("funding_breakdown", "kb", "+ window · fund · agency · sector"),
-    ("actual_activation", "kb", "kb_framework · event_date · window_name"),
-    ("activation_allocation", "kb", "kb_framework+event_date ⇄ app_code"),
+    ("version_performance_reported", "new", "country_iso3 · hazard · version (reported RP/prob + source tabs)"),
+    ("window", "new", "country_iso3 · hazard · version · window_name"),
+    ("simulated_activation", "new", "+ window_name · event_year"),
+    ("funding_breakdown", "new", "+ window · fund · agency · sector (frozen)"),
+    ("actual_activation", "new", "kb_framework · event_date · window_name (frozen)"),
+    ("activation_allocation", "new", "kb_framework+event_date ⇄ app_code (frozen)"),
     ("cerf_allocation", "mirror", "application_code"),
     ("cerf_project", "mirror", "project_code"),
     ("cerf_project_sector", "mirror", "project_code + sector"),
@@ -1356,8 +1353,6 @@ def build_schema_page(e):
     def owner_of(t):
         if t in trk_schema.TABLES or t in trk_schema.DURABLE_TABLES:
             return "ds-aa-tracking"
-        if t in KB_TABLES:
-            return "ds-knowledge-base"
         if t in MIRROR_TABLES:
             return "ds-cerf-supplement"
         return "other"
@@ -1368,14 +1363,12 @@ def build_schema_page(e):
         "repo that owns (i.e. is the single writer of) each table. Constraints and "
         "indexes are shown as Postgres reports them; row counts are as of generation "
         "time. The <code>v_trk_*</code> view SQL at the bottom is this repo's — the "
-        "other repos' view definitions aren't readable by the reader role but are "
-        "documented in the KB ERD.</div>"
+        "mirror repo's view definitions are documented in the KB ERD.</div>"
     ]
     sections.append("<h2>ERD</h2>" + LEGEND_CARD.format(svg=build_erd_legend()))
     sections.append(
         "<div class='card'><p class='meta'>"
         "<span class='badge b-new'>ds-aa-tracking</span>"
-        "<span class='badge b-kb'>ds-knowledge-base</span>"
         "<span class='badge b-mirror'>ds-cerf-supplement</span> · "
         "Crow's-foot notation: crow = many, double bar = exactly one, bar+circle = "
         "zero-or-one, crow+circle = zero-or-many. Solid green edges = declared "
@@ -1463,8 +1456,8 @@ def build_schema_page(e):
     ]
     if others:
         sections.append(
-            "<p class='meta'>Other views in the schema (KB-owned, documented in the "
-            "KB ERD): " + ", ".join(f"<code>aa.{v}</code>" for v in others) + "</p>"
+            "<p class='meta'>Other views in the schema (the OneGMS mirror's, documented "
+            "in the KB ERD): " + ", ".join(f"<code>aa.{v}</code>" for v in others) + "</p>"
         )
     page("schema.html", "DB schema — the full aa schema by owner", "\n".join(sections))
 

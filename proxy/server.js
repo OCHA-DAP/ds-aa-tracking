@@ -30,7 +30,9 @@
  * password), so "has the admin-site password" = viewer) and EDITOR_TOKEN (editor — never embedded; the pages prompt for it
  * once and keep it in localStorage). Reads need viewer; /extract, /entry, /save
  * and /delete need editor. Generic writes are refused on tables other writers
- * own (KB loaders, OneGMS mirrors) and on the append-only audit table.
+ * own (OneGMS mirrors), on the frozen KB-era record and on the append-only audit table.
+ * The backtest tables (window, simulated_activation, version_performance_reported) are
+ * this repo's since 2026-10-05 and editable here like any other owned table.
  *
  * Other guards: origin allowlist, model allowlist, size cap, per-IP rate limits.
  * The Anthropic key can never be used for arbitrary requests.
@@ -51,9 +53,9 @@ const READONLY_TABLES = new Set([
   "entry_audit",
   // document registry: content-addressed, written only by scripts/register_documents.py
   "framework_document", "version_document",
-  // ds-knowledge-base loaders
-  "window", "simulated_activation", "funding_breakdown", "actual_activation",
-  "activation_allocation", "version_performance_reported",
+  // the KB-era record, frozen 2026-10-05 (superseded by window_funding / window_activation /
+  // activation_funding); the backtest tables the KB used to load are editable here
+  "funding_breakdown", "actual_activation", "activation_allocation",
   // ds-cerf-supplement OneGMS mirrors
   "cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country",
   "cerf_allocation_storm", "cerf_supplement", "cerf_contribution",
@@ -64,9 +66,8 @@ const TABLE_OWNER = (t) =>
   READONLY_PREFIXES.some((p) => t.startsWith(p)) || t.startsWith("cerf_allocation_storm") ||
   ["cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country", "cerf_supplement", "cerf_contribution"].includes(t)
     ? "ds-cerf-supplement"
-    : ["window", "simulated_activation", "funding_breakdown", "actual_activation",
-       "activation_allocation", "version_performance_reported"].includes(t)
-      ? "ds-knowledge-base" : "ds-aa-tracking";
+    : ["funding_breakdown", "actual_activation", "activation_allocation"].includes(t)
+      ? "nobody — the frozen KB-era record" : "ds-aa-tracking";
 const isReadonly = (t) => READONLY_TABLES.has(t) || READONLY_PREFIXES.some((p) => t.startsWith(p));
 const hits = new Map();
 
@@ -76,7 +77,7 @@ const pool = process.env.DSCI_AZ_DB_DEV_HOST
       user: process.env.DSCI_AZ_DB_DEV_UID_WRITE,
       password: process.env.DSCI_AZ_DB_DEV_PW_WRITE,
       database: "postgres",
-      ssl: { rejectUnauthorized: false },
+      ssl: process.env.DB_SSL === "disable" ? false : { rejectUnauthorized: false },  // disable: a local test DB
       max: 3,
     })
   : null;
