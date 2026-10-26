@@ -673,6 +673,10 @@ ADDITIVE_MIGRATIONS = [
     # pre-arranged money, also in the yearly figures, FROM this date (the dates before this
     # column existed are lost; the nightly stamps it the first night a development version exists)
     "ALTER TABLE IF EXISTS aa.framework_version ADD COLUMN IF NOT EXISTS development_since date",
+    # 2026-10-22: the month a learning document was published (1-12), beside its year, so the
+    # repository lists documents newest first by month and shows "Mar 2025"; NULL = unknown
+    "ALTER TABLE IF EXISTS aa.learning_document ADD COLUMN IF NOT EXISTS month smallint "
+    "CHECK (month BETWEEN 1 AND 12)",
 ]
 
 INDEXES = [

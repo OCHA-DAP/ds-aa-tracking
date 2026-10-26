@@ -48,6 +48,10 @@ _CERF_AA_CODES_SQL = ("SELECT DISTINCT allocation_code FROM aa.activation_fundin
 # ... of which the framework activations' (ad hoc allocations left out): the Plan page's set, and
 # the map's by default (2026-10-14: the headline figures are framework-based)
 CERF_FW_CODES_SQL = _CERF_AA_CODES_SQL + " AND event_type <> 'adhoc_aa'"
+# A post on X/Twitter is not a learning document (two crossed over from the compendium; they
+# belong on the media page): every query of aa.learning_document the site renders adds this,
+# the Learning page's and the map's per-country lists alike (2026-10-23)
+NOT_SOCIAL_SQL = r"coalesce(url, '') !~* '^https?://([a-z]+\.)?(x|twitter)\.com/|^https?://t\.co/'"
 
 
 def canonical(df, keys):
@@ -621,18 +625,25 @@ def _fetch(e):
            FROM aa.v_version_funding WHERE kind = 'prearranged' AND fund_code IS NOT NULL""", e)
     # learning documents and framework partners: filled by a parallel import, possibly
     # empty (or absent in an older snapshot) — every consumer degrades to "none yet".
-    # Internal documents are NEVER rendered: filtered out here, at the source.
+    # Internal documents are NEVER rendered: filtered out here, at the source. Neither are
+    # posts on X/Twitter (NOT_SOCIAL_SQL).
     try:
+        # the publication month (2026-10-23) is NULL until ensure_schema has added the column
+        # on dev and a snapshot carries it: the page shows the year alone meanwhile
+        has_month = not pd.read_sql(
+            """SELECT 1 FROM information_schema.columns WHERE table_schema = 'aa'
+                 AND table_name = 'learning_document' AND column_name = 'month'""", e).empty
+        month = "month" if has_month else "NULL::smallint AS month"
         d["learning"] = pd.read_sql(
-            """SELECT id, title, url, publisher, year, doc_type, scope, country_iso3, hazard,
-                      premises, key_stat, summary, section, source
-               FROM aa.learning_document WHERE NOT internal
-               ORDER BY year DESC NULLS LAST, title""", e)
+            f"""SELECT id, title, url, publisher, year, {month}, doc_type, scope, country_iso3,
+                      hazard, premises, key_stat, summary, section, source
+               FROM aa.learning_document WHERE NOT internal AND {NOT_SOCIAL_SQL}
+               ORDER BY year DESC NULLS LAST, {"month DESC NULLS LAST, " if has_month else ""}title""", e)
         d["n_internal_docs"] = int(pd.read_sql(
             "SELECT count(*) AS n FROM aa.learning_document WHERE internal", e)["n"].iloc[0])
     except Exception as exc:
         print(f"  learning: aa.learning_document unavailable ({exc.__class__.__name__})")
-        d["learning"] = pd.DataFrame(columns=["id", "title", "url", "publisher", "year",
+        d["learning"] = pd.DataFrame(columns=["id", "title", "url", "publisher", "year", "month",
                                               "doc_type", "scope", "country_iso3", "hazard",
                                               "premises", "key_stat", "summary", "section",
                                               "source"])
