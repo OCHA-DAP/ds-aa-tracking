@@ -1405,9 +1405,10 @@ def geo_pass(countries, bboxes):
         cd["has_geo"] = m is not None
 
 
-def _flow_acts(f, layers):
+def _flow_acts(f, layers, year=None):
     """The activation records a pair contributes to the flow tiles (activations, money released,
-    people reached) — mirrors flowActs() in LANDING_JS: its framework activations while its own
+    people reached) — mirrors flowActs() in LANDING_JS: those of `year` (None: all years, to
+    today), its framework activations while its own
     framework layer is on (current frameworks; retired for a retired framework), its ad hoc
     allocations while the ad hoc layer is on, and the activations of an earlier framework it
     replaced (`old`) while the retired layer is on — never under the current-frameworks layer.
@@ -1415,8 +1416,9 @@ def _flow_acts(f, layers):
     current. The Financing page's layer rule: same layers, same total on both pages."""
     own = next((k for k in ("framework", "retired") if k in f["layers"]), None)
     return [a for a in f["activations"]
-            if ("adhoc" in layers if a["type"] == "adhoc_aa"
-                else "retired" in layers if a["old"] else own in layers)]
+            if (year is None or str(a["date"])[:4] == str(year))
+            and ("adhoc" in layers if a["type"] == "adhoc_aa"
+                 else "retired" in layers if a["old"] else own in layers)]
 
 
 # headline tile icons (24x24 strokes; coloured by CSS)
@@ -1431,14 +1433,15 @@ TILE_ICONS = {
 }
 
 
-def tile_figures(countries, layers):
+def tile_figures(countries, layers, year=None):
     """Headline figures for a set of enabled layers — mirrors updateTiles() in LANDING_JS.
     A pair is shown when any of its layers is enabled; the stock figures (count, pre-arranged
     now, people covered now) count pairs shown ON the framework layer; the flow figures
-    (activations, released, people reached: all to date) count _flow_acts()."""
+    (activations, released, people reached) count _flow_acts(): to date, or of `year` — the
+    current year only: the stock figures are today's (a past year is reconstructed in JS)."""
     shown = [f for cd in countries.values() for f in cd["fws"] if set(f["layers"]) & set(layers)]
     fw = [f for f in shown if "framework" in layers and "framework" in f["layers"]]
-    acts = [a for f in shown for a in _flow_acts(f, layers)]
+    acts = [a for f in shown for a in _flow_acts(f, layers, year)]
     rows = [x for a in acts for x in a["funding"]]
     # people reached: CERF allocations only, each counted once (see _reach_fields)
     cerf = [x for x in rows if x["fund"] == "cerf" and not x.get("shared")]
@@ -1455,6 +1458,22 @@ def tile_figures(countries, layers):
             "reached": sum(x.get("reached") or 0 for x in cerf),
             "n_rep": sum(1 for x in cerf if x.get("reached") is not None),
             "n_cerf": len(cerf)}
+
+
+def _money(v):
+    """money() in LANDING_JS: $12M, $4.5M, $800k."""
+    return (f"${v / 1e6:.{0 if v >= 1e7 else 1}f}M" if v >= 1e6
+            else f"${_jsround(v / 1e3)}k" if v >= 1e3 else f"${_jsround(v)}")
+
+
+def _jsround(x):
+    """Math.round(): halves up (Python's round() goes to the even neighbour)."""
+    return math.floor(x + 0.5)
+
+
+def _people(v):
+    """people() in LANDING_JS: 1.2M, 450k."""
+    return f"{v / 1e6:.1f}M" if v >= 1e6 else f"{_jsround(v / 1e3)}k" if v >= 1e3 else str(_jsround(v))
 
 
 # ---------------------------------------------------------------- page
@@ -1474,23 +1493,46 @@ def build_landing(page, d, e):
     geo_pass(countries, bboxes)
 
     # headline tiles follow the map: the same rule as the page's updateTiles() (JS), here
-    # for the default layer set so the static HTML matches what the page first shows.
+    # for the default layer set AND the default year so the static HTML matches what the page
+    # first shows. The map opens on the current year (team meeting, 9 Oct 2026): stock figures
+    # as of today, activations / released / reached of this year.
     # Status from aa.v_framework_lifecycle; pre-arranged = the latest version's envelope of
     # every framework shown (development ones included — they just have no envelope yet)
-    t = tile_figures(countries, {"framework"})
+    Y = TODAY.year
+    t = tile_figures(countries, {"framework"}, Y)
     n_shown = t["n_fw"]
     # the flow tiles name what the layers switched off would add (updateTiles: notShown)
-    ad, ret = tile_figures(countries, {"adhoc"}), tile_figures(countries, {"retired"})
+    ad, ret = tile_figures(countries, {"adhoc"}, Y), tile_figures(countries, {"retired"}, Y)
 
     def not_shown(*xs):
         xs = [x for x in xs if x]
         return f" · not shown: {', '.join(xs)}" if xs else ""
     ns_act = not_shown(ad["n_act"] and f"{ad['n_act']} ad hoc allocation{'s' if ad['n_act'] > 1 else ''}",
                        ret["n_act"] and f"{ret['n_act']} on retired frameworks")
-    ns_rel = not_shown(ad["released"] >= 5e4 and f"ad hoc allocations ${ad['released']/1e6:,.0f}M",
-                       ret["released"] >= 5e4 and f"retired frameworks ${ret['released']/1e6:,.0f}M")
-    ns_reach = not_shown(ad["reached"] and f"ad hoc allocations {ad['reached']/1e6:,.1f}M",
-                         ret["reached"] and f"retired frameworks {ret['reached']/1e6:,.1f}M")
+    ns_rel = not_shown(ad["released"] >= 5e4 and f"ad hoc allocations {_money(ad['released'])}",
+                       ret["released"] >= 5e4 and f"retired frameworks {_money(ret['released'])}")
+    ns_reach = not_shown(ad["reached"] and f"ad hoc allocations {_people(ad['reached'])}",
+                         ret["reached"] and f"retired frameworks {_people(ret['reached'])}")
+    # the labels updateTiles() writes for the current year (framework layer only: no ad hoc
+    # allocation is counted, so 'framework activations')
+    no_env = [f"{cd['name']} {f['hz_label'].lower()}" for cd in countries.values() for f in cd["fws"]
+              if "framework" in f["layers"] and not f["pre_now"]]
+    l_pre = ("pre-arranged now (CERF and Country and Regional Funds), all current frameworks incl. in development"
+             + (f" · {len(no_env)} without an envelope recorded yet: {', '.join(no_env)}" if no_env else ""))
+    pooled = t["released"] - t["released_cerf"]
+    funds = ("CERF" if pooled < 5e4 else "Country and Regional Funds" if t["released_cerf"] < 5e4
+             else f"CERF {_money(t['released_cerf'])} · Country and Regional Funds {_money(pooled)}")
+    l_act = (f"framework activations in {Y}" if t["n_act"]
+             else f"no activation in {Y} on the layers shown") + ns_act
+    l_rel = (f"released in {Y} on framework activations — {funds}" if t["n_act"]
+             else f"nothing released in {Y} on the layers shown") + ns_rel
+    l_reach = (f"people reached: no CERF allocation in {Y} on the layers shown" if not t["n_cerf"]
+               else f"people reached with the {Y} releases: no report yet for the CERF allocation"
+               if not t["n_rep"] and t["n_cerf"] == 1
+               else f"people reached with the {Y} releases: no report yet for the {t['n_cerf']} CERF allocations"
+               if not t["n_rep"]
+               else f"people reached with the {Y} releases — CERF allocations, as reported so far "
+                    f"({t['n_rep']} of {t['n_cerf']} have a figure)") + ns_reach
     # each tile opens with an icon and its name in large type (2026-10-27 review comments)
     def tile_key(icon, name):
         return (f"<div class='k'><svg viewBox='0 0 24 24' aria-hidden='true'>{TILE_ICONS[icon]}</svg>"
@@ -1499,19 +1541,25 @@ def build_landing(page, d, e):
     body = f"""
 <div class='hero'>
  <div class='yearbar' id='yearbar' role='group' {ATTR("aria-label", "Year shown on the map")}><span class='yl'>{T("Year")}</span>
-  <button type='button' data-y='' class='on' aria-pressed='true'>{T("All years, to today")}</button>{"".join(
-      f"<button type='button' data-y='{y}' aria-pressed='false'>{y}{' ' + T('(today)') if y == TODAY.year else ''}</button>"
+  <button type='button' data-y='' aria-pressed='false'>{T("All years, to today")}</button>{"".join(
+      f"<button type='button' data-y='{y}'{' class=' + chr(39) + 'on' + chr(39) if y == Y else ''} aria-pressed='{str(y == Y).lower()}'>{y}{' ' + T('(today)') if y == Y else ''}</button>"
       for y in range(TODAY.year, YEAR_FIRST - 1, -1))}
  </div>
  <p class='yearnote' id='yearnote' hidden>{TB("Past years are reconstructed from the framework records (version dates and status history): a framework counts for a year if a version was valid at any time during it. They will be replaced by the official year-end figures once those are loaded.")}</p>
+ <div class='herorow'>
  <div class='tiles gtiles' id='gtiles'>
-  <div class='gcap' id='gcap'>Global portfolio — all layers currently shown on the map</div>
-  <div class='tile' id='t-fw'>{tile_key('doc', 'Frameworks')}<div class='v'>{t["n_fw"]}</div><div class='l'>frameworks on the map · {t["n_active"]} active · {t["n_upd"]} being updated · {t["n_dev"]} in development</div></div>
-  <div class='tile' id='t-pre'>{tile_key('money', 'Pre-arranged')}<div class='v'>${t["pre"]/1e6:,.0f}M</div><div class='l'>pre-arranged now (CERF and Country and Regional Funds), frameworks shown</div></div>
-  <div class='tile' id='t-cov'>{tile_key('people', 'People covered')}<div class='v'>{t["covered"]/1e6:,.1f}M</div><div class='l'>people covered now by the frameworks shown ({t["n_cov"]} of {t["n_fw"]} have a figure)</div></div>
-  <div class='tile' id='t-act'>{tile_key('bolt', 'Activations')}<div class='v'>{t["n_act"]}</div><div class='l'>framework activations to date{ns_act}</div></div>
-  <div class='tile' id='t-rel'>{tile_key('money', 'Released')}<div class='v'>${t["released"]/1e6:,.0f}M</div><div class='l'>released to date on framework activations — CERF ${t["released_cerf"]/1e6:,.0f}M · Country and Regional Funds ${(t["released"] - t["released_cerf"])/1e6:,.0f}M{ns_rel}</div></div>
-  <div class='tile' id='t-reach'>{tile_key('people', 'Reached')}<div class='v'>{t["reached"]/1e6:,.1f}M</div><div class='l'>people reached to date — CERF allocations, as reported so far ({t["n_rep"]} of {t["n_cerf"]} have a figure){ns_reach}</div></div>
+  <div class='gcap' id='gcap'>Global portfolio — all layers currently shown on the map · {Y}, as of today</div>
+  <div class='tile' id='t-fw'>{tile_key('doc', 'Frameworks')}<div class='v'>{t["n_fw"]}</div><div class='l'>frameworks on the map today · {t["n_active"]} active · {t["n_upd"]} being updated · {t["n_dev"]} in development</div></div>
+  <div class='tile' id='t-pre'>{tile_key('money', 'Pre-arranged')}<div class='v'>${_jsround(t["pre"]/1e6)}M</div><div class='l'>{l_pre}</div></div>
+  <div class='tile' id='t-cov'>{tile_key('people', 'People covered')}<div class='v'>{t["covered"]/1e6:.1f}M</div><div class='l'>people covered now by the frameworks shown ({t["n_cov"]} of {t["n_fw"]} have a figure)</div></div>
+  <div class='tile' id='t-act'>{tile_key('bolt', 'Activations')}<div class='v'>{t["n_act"]}</div><div class='l'>{l_act}</div></div>
+  <div class='tile' id='t-rel'>{tile_key('money', 'Released')}<div class='v'>{_money(t["released"]) if t["n_act"] else "—"}</div><div class='l'>{l_rel}</div></div>
+  <div class='tile' id='t-reach'>{tile_key('people', 'Reached')}<div class='v'>{_people(t["reached"]) if t["n_rep"] else "—"}</div><div class='l'>{l_reach}</div></div>
+ </div>
+ <aside class='news' id='news' {ATTR("aria-label", "What's new in the last 30 days")}>
+  <div class='news-h'><b>{T("What's new")}</b> · {T("last 30 days")}</div>
+  <ul class='news-l' id='newsl'></ul>
+ </aside>
  </div>
 </div>
 <div class='maprow' id='maprow'>
@@ -1527,7 +1575,7 @@ def build_landing(page, d, e):
   <div class='muted' style='padding:20px 6px'>{T("Select a country or a pin to see its frameworks — status, funding, monitoring window, triggers, versions and activations.")}</div>
  </div>
 </div>
-<p class='maphelp'>{TB("<b>Reading the map.</b> Published triggers, windows, pre-arranged financing and activations across the AA portfolio — CERF, country-based and regional pooled funds. Pin colour = framework status, inferred from the most recent version; each red dot = one past activation; an amber ring = in its monitoring season this month. <b>Click a country or a pin</b> to zoom in and see the areas each framework covers; the <b>layer toggles</b> in the map legend choose what is drawn, and the figures above follow them.")}</p>
+<p class='maphelp'>{TB("<b>Reading the map.</b> Published triggers, windows, pre-arranged financing and activations across the AA portfolio — CERF, country-based and regional pooled funds. Pin colour = framework status, inferred from the most recent version; each red dot = one past activation; a red ring = activated in the last 30 days; an amber ring = in its monitoring season this month. <b>Click a country or a pin</b> to zoom in and see the areas each framework covers; the <b>layer toggles</b> in the map legend choose what is drawn, and the figures above follow them.")}</p>
 <details id='statushelp' class='statushelp'><summary>{T("How statuses work — version lifecycle and the framework status inferred from it")}</summary>
  <div class='sh-grid'>
   <svg viewBox='0 0 780 362' class='sh-svg' role='img' {ATTR("aria-label", "Status diagram")}>
@@ -1696,14 +1744,13 @@ table.acttbl { table-layout:fixed; width:100%; } table.acttbl td, table.acttbl t
 table.acttbl tr.oldv td { background:#f8fafc; }
 .fhead .actdots, .wl-pin .actdots { display:none; }
 .actdot { width:7px; height:7px; border-radius:50%; background:#e3322d; border:1.5px solid #fff; display:inline-block; }
-/* an activation in the last 30 days: its dot blinks (2026-10-08) — the one animation on the map;
-   the monitoring ring stays static (above). Readers who prefer reduced motion get a static red
-   halo instead, so the information survives without the movement. */
-@keyframes actblink { 0%, 100% { opacity:1; } 50% { opacity:.15; } }
-.actdot.recent, .maplegend .dot.recent { animation: actblink 1s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) {
-  .actdot.recent, .maplegend .dot.recent { animation:none; box-shadow:0 0 0 2px #e3322d; }
-}
+/* activated in the last 30 days (2026-10-27, option B of the mock-up; replaces the blinking dot of
+   2026-10-08): a static red ring — thicker and closer than the amber monitoring ring, so the two
+   read apart. When both apply the red ring stays inside and the amber one shows as a thin outer
+   line. Static: a screenshot keeps it, and nothing moves on the map. */
+.iconbox.act-recent { box-shadow:0 0 0 1.5px #fff, 0 0 0 4.5px #e3322d, 0 1px 3px rgba(0,0,0,.35); }
+.iconbox.act-recent.able-now { box-shadow:0 0 0 1.5px #fff, 0 0 0 4.5px #e3322d, 0 0 0 6px #fff, 0 0 0 8px #f5a300, 0 1px 3px rgba(0,0,0,.35); }
+.actchip { display:inline-block; margin-left:4px; padding:0 6px; border-radius:8px; font-size:10.5px; font-weight:600; background:#fde2e1; color:#b3261e; white-space:nowrap; vertical-align:1px; }
 .maplegend { position:absolute; left:12px; bottom:12px; font-size:11.5px; line-height:1.55; background:rgba(255,255,255,.86); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); padding:9px 12px;
   border-radius:10px; box-shadow:0 1px 2px rgba(16,24,40,.08), 0 6px 18px -8px rgba(16,24,40,.25); border:1px solid rgba(226,232,240,.9); z-index:3; color:#334155; transition: opacity .3s; }
 .maplegend b { color:#0f2540; }
@@ -1791,6 +1838,25 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
 @media (max-width:1199px){ .gtiles { grid-template-columns:repeat(3, minmax(0, 1fr)); } }
 @media (max-width:759px){ .gtiles { grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; }
   .gtiles .tile .k { font-size:13.5px; gap:5px; } .gtiles .tile .k svg { width:18px; height:18px; } .gtiles .tile .v { font-size:19px; } }
+/* the headline tiles and the what's-new box (9 Oct 2026 meeting): side by side on a wide screen,
+   the box below the tiles otherwise, its lines in columns — the tile grid keeps its own rules.
+   Its caption is built like the tiles' (.gcap), so the box lines up with the tiles */
+.herorow { display:flex; flex-direction:column; gap:10px; margin:12px 0; }
+.herorow .gtiles { margin:0; }
+.news { display:flex; flex-direction:column; gap:10px; min-width:0; }
+.news-h { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#64748b; margin:-2px 0 -6px 2px; }
+.news-h b { color:#b3261e; }
+.news-l { list-style:none; margin:0; padding:8px 14px; background:#fff; border:1px solid #e6eaef; border-radius:12px; box-shadow:0 1px 2px rgba(16,24,40,.05);
+  columns:250px; column-gap:22px; font-size:12px; line-height:1.35; }
+.news-l li { break-inside:avoid; padding:2px 0; }
+.news-l button { background:none; border:0; padding:0; font:inherit; color:#334155; text-align:left; cursor:pointer; }
+.news-l button:hover, .news-l button:focus-visible { color:var(--ocha); text-decoration:underline; }
+.news-l .nd { color:#b3261e; font-weight:650; margin-right:2px; }
+.news-0 { color:#64748b; }
+@media (min-width:1400px){
+  .herorow { flex-direction:row; align-items:stretch; } .herorow .gtiles { flex:1 1 auto; min-width:0; }
+  /* the box takes the tiles' height; a long list scrolls (height:0 keeps it from growing the row) */
+  .news { flex:0 0 260px; } .news-l { columns:auto; flex:1 1 auto; height:0; overflow-y:auto; } }
 .gtiles.global { opacity:.72; } .gtiles.global .tile { background:#f6f8fa; border-style:dashed; box-shadow:none; }
 .gtiles.global .tile .v { font-size:18px; color:#475569; } .gtiles.global .tile .k { color:#475569; } .gtiles.global .tile .k svg { stroke:#64748b; } .gtiles.global .gcap { color:#b45309; font-weight:700; }
 .ctiles { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin:8px 0 4px; }
@@ -1882,6 +1948,7 @@ function setLayer(k, on){ LAYERS[k] = !!on; applyLayers(); }
 // null = all years, to today (the live record: current status, every activation). The
 // current year keeps the live status and filters activations / ad hoc allocations to it;
 // a past year is RECONSTRUCTED from the version dates and the status reports (f.hist).
+// The page opens on the current year (team meeting, 9 Oct 2026; set at boot from the link).
 let YEAR = null;
 const LIVE = new Map();   // f -> its live (all-years) fields, which applyYear() overwrites
 const LIVE_KEYS = ['disp','disp_label','layers','layer','n_act','n_act_all','n_adhoc','ring','current','pre_now','pre_parts','prearranged','covered'];
@@ -1954,24 +2021,37 @@ const WHAT_WHEN = {'framework activations': ['framework activations to date', 'f
   'ad hoc allocations': ['ad hoc allocations to date', 'ad hoc allocations in {0}'],
   'framework activations and ad hoc allocations': ['framework activations and ad hoc allocations to date', 'framework activations and ad hoc allocations in {0}']};
 const people = v => v >= 1e6 ? (v/1e6).toFixed(1) + 'M' : v >= 1e3 ? Math.round(v/1e3) + 'k' : String(Math.round(v));
-// an activation in the last RECENT_DAYS days, by the browser's clock (the page is static: one
-// published weeks ago must not keep blinking on the build date). Dates are partial ISO: a full
-// date is used as is (the KB crosswalk date sharpens a month-only one when it falls in that
-// month); a month-only date counts while the month's last day — or today, inside the month — is
-// within the window; a year-only date is too coarse to count.
+// 'recent' = in the last RECENT_DAYS days, by the browser's clock (the page is static: one
+// published weeks ago must not keep showing it on the build date). ONE rule for the pin's red
+// ring, the frameworks table's chip and the what's-new box. Dates are partial ISO: a full date
+// counts from that day (an activation's KB crosswalk date sharpens a month-only one when it falls
+// in that month); a month-only date counts from the 1st of the month (the owner's rule,
+// 2026-10-27; it was the month's last day while the dot blinked); a year-only date is too coarse.
 const RECENT_DAYS = 30;
-function isRecent(a){
-  let d = String(a.date || ''); const k = String(a.kb_date || '');
-  if(k.length === 10 && k.startsWith(d)) d = k;
-  if(d.length < 7) return false;
-  const y = +d.slice(0, 4), m = +d.slice(5, 7), now = new Date(),
-        today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
-  let end;
-  if(d.length >= 10) end = Date.UTC(y, m - 1, +d.slice(8, 10));
-  else { if(Date.UTC(y, m - 1, 1) > today) return false; end = Math.min(Date.UTC(y, m, 0), today); }
-  const age = (today - end) / 864e5;
-  return age >= 0 && age <= RECENT_DAYS;
-}
+// a partial ISO date -> [UTC day in ms, month only?]; null when coarser than a month
+function dayOf(s){ s = String(s || ''); if(!/^\d{4}-\d{2}/.test(s)) return null;
+  const full = /^\d{4}-\d{2}-\d{2}/.test(s);
+  return [Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, full ? +s.slice(8, 10) : 1), !full]; }
+function actDate(a){ const d = String(a.date || ''), k = String(a.kb_date || '');
+  return k.length === 10 && k.startsWith(d) ? k : d; }
+// within the last RECENT_DAYS days of the reader's today (a date still to come is not)
+function inWindow(s){ const d = dayOf(s); if(!d) return false;
+  const n = new Date(), age = (Date.UTC(n.getFullYear(), n.getMonth(), n.getDate()) - d[0]) / 864e5;
+  return age >= 0 && age <= RECENT_DAYS; }
+const isRecent = a => inWindow(actDate(a));
+// '15 Oct' in the page's language; a month-only date shows the month alone ('Oct')
+function shortDate(s){ const d = dayOf(s); if(!d) return String(s || '');
+  return new Date(d[0]).toLocaleDateString({fr: 'fr-FR', es: 'es-ES'}[aaLang()] || 'en-GB',
+    d[1] ? {month: 'short', timeZone: 'UTC'} : {day: 'numeric', month: 'short', timeZone: 'UTC'}); }
+// the framework's most recent framework activation, when it is recent: the pin's red ring and
+// the chip. Not the year filter's (a December activation is still recent in January); none in a
+// past year's view, like the monitoring ring. A replaced framework's activations are not its own.
+function recentAct(f){ if(pastY()) return null;
+  return f.activations.filter(a => a.type === 'framework_aa' && !a.old && isRecent(a))
+    .sort((a, b) => dayOf(actDate(b))[0] - dayOf(actDate(a))[0])[0] || null; }
+function actLabel(a){ const d = actDate(a); return tr8(dayOf(d)[1] ? 'activated in {0}' : 'activated {0}', shortDate(d)); }
+// the chip next to a status badge (frameworks table, panel): 'activated 15 Oct'
+function actChip(f){ const a = recentAct(f); return a ? ` <span class='actchip'>${esc(actLabel(a))}</span>` : ''; }
 function applyYear(){
   const Y = String(YEAR), D = dateY();
   Object.values(L).forEach(c => c.fws.forEach(f => {
@@ -1996,8 +2076,10 @@ function applyYear(){
     f.layers = layers; f.layer = LAYER_ORDER.find(l => layers.includes(l)) || null;
   }));
 }
-function hashFor(parts){ const p = parts.filter(Boolean).join('/');
-  return p ? p + (YEAR != null ? '|' + YEAR : '') : (YEAR != null ? String(YEAR) : ''); }
+// the year in a deep link: the current year is the default and is left out; all years is 'all'
+const yearTag = () => YEAR == null ? 'all' : YEAR === YEARS.now ? '' : String(YEAR);
+function hashFor(parts){ const p = parts.filter(Boolean).join('/'), y = yearTag();
+  return p ? p + (y ? '|' + y : '') : y; }
 function syncYearUI(){
   document.querySelectorAll('#yearbar button').forEach(b => { const on = b.dataset.y === (YEAR == null ? '' : String(YEAR));
     b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
@@ -2035,12 +2117,13 @@ function verBadge(st){ st=st||''; const m = {endorsed:'endorsed', superseded:'su
   const lbl = {development:'in development', 'pre-development':'pre-development'}[st] || st || '?';
   return `<span class='badge b-${m[st]||'retired'}'>${esc(tr8(lbl))}</span>`; }
 function hzColor(h){ return HAZ[h] || '#7a8699'; }
-function iconHTML(f, extra=''){ const ps = pinStyle(f);
-  const rec = dotActs(f).map(isRecent).sort((a, b) => b - a), nRec = rec.filter(Boolean).length;   // recent dots first: the 16-dot cap never hides one
-  const ttl = tr8(rec.length > 1 ? '{0} activations' : '{0} activation', rec.length) + (nRec ? ' · ' + tr8('{0} in the last {1} days', nRec, RECENT_DAYS) : '');
-  return `<span class='iconbox ${f.ring==='now'?'able-now':''} ${ps.cls} ${extra}' style='background:${ps.bg}' data-hz='${f.hazard}'>`
+// a pin: status colour, the amber ring in its monitoring season, the red ring for 30 days after
+// a framework activation (recentAct: static, so a screenshot keeps it — the dot no longer blinks)
+function iconHTML(f, extra=''){ const ps = pinStyle(f), n = dotActs(f).length;
+  const ttl = tr8(n > 1 ? '{0} activations' : '{0} activation', n);
+  return `<span class='iconbox ${f.ring==='now'?'able-now':''} ${recentAct(f)?'act-recent':''} ${ps.cls} ${extra}' style='background:${ps.bg}' data-hz='${f.hazard}'>`
   + `<svg viewBox='0 0 24 24' class='hz'>${GLYPH[f.glyph]||GLYPH.other}</svg>`
-  + (rec.length ? `<span class='actdots' title='${ttl}'>${rec.slice(0, 16).map(r => `<span class="actdot${r ? ' recent' : ''}"></span>`).join('')}</span>` : '') + `</span>`; }
+  + (n ? `<span class='actdots' title='${ttl}'>${'<span class="actdot"></span>'.repeat(Math.min(n, 16))}</span>` : '') + `</span>`; }
 // ---------- projections
 // World: Equal Earth (UN GA A/80/L.104, Sep 2026), centred on EE.lam0, fitted to the view box.
 // Country: local equirectangular fit (cos-lat corrected). Zooming MORPHS one into the other.
@@ -2078,7 +2161,7 @@ function renderWorldList(){
   const rows = Object.entries(L).filter(([iso,c]) => vis(c).length).sort((a,b)=>tr8(a[1].name).localeCompare(tr8(b[1].name))).map(([iso,c]) =>
     `<div class='fcardx wl' style='--hz:${hzColor(vis(c)[0].hazard)}' onclick='selectCountry("${iso}")'>
       <div class='fhead'><b>${esc(tr8(c.name))}</b><span class='muted'>${nounCount(vis(c))}</span></div>
-      <div class='wl-pins'>${vis(c).map(f=>`<span class='wl-pin'>${iconHTML(f)}<span class='hlab'>${esc(tr8(f.hz_label))}</span> ${badge(f.disp)}</span>`).join('')}</div>
+      <div class='wl-pins'>${vis(c).map(f=>`<span class='wl-pin'>${iconHTML(f)}<span class='hlab'>${esc(tr8(f.hz_label))}</span> ${badge(f.disp)}${actChip(f)}</span>`).join('')}</div>
     </div>`).join('');
   side.innerHTML = `<div class='muted' style='margin:2px 0 8px'>${esc(tr8('Tap a country to zoom in.'))}</div><div class='fwlist'>${rows}</div>`;
 }
@@ -2273,7 +2356,7 @@ function worldLegend(){
   const onLayer = k => all.filter(f=>f.layers.includes(k));
   const n = k => onLayer('framework').filter(f=>f.disp===k).length;
   const nAct = flowFigures(shown).n, nNow = shown.filter(f=>f.ring==='now').length;
-  const nRec = shown.reduce((s,f)=>s+dotActs(f).filter(isRecent).length,0);
+  const nRec = shown.filter(f => recentAct(f)).length;   // frameworks with the red ring
   const swatch = { framework: `<span class='dot' style='background:${COLOR.active}'></span>`, adhoc: `<span class='dot' style='background:${LAYER_COLOR.adhoc}'></span>`,
                    retired: `<span class='dot' style='background:${LAYER_COLOR.retired}'></span>`, tech: `<span class='dot dot-hollow'></span>` };
   const lab = k => k === 'framework' && pastY() ? tr8('Frameworks at the end of {0}', YEAR) : k === 'adhoc' && YEAR != null ? tr8('Ad hoc allocations in {0}', YEAR) : tr8(LAYER_LABEL[k]);
@@ -2284,8 +2367,8 @@ function worldLegend(){
     + `<span><span class='dot' style='background:${COLOR.development}'></span>${esc(tr8('In development'))} <span class='cnt'>${n('development')}</span></span></div>`;
   legend.innerHTML = `<div class='layerctl' role='group' aria-label='${esc(tr8('Map layers'))}'>` + row('framework') + st + row('adhoc') + row('retired') + row('tech') + `</div>`
     + `<div class='lsub'><span><span class='dot' style='background:#e3322d'></span>${esc(YEAR != null ? tr8('Activations in {0}', YEAR) : tr8('Activations'))} <span class='cnt'>${nAct}</span></span>`
-    + (nRec ? `<span><span class='dot recent' style='background:#e3322d'></span>${esc(tr8('In the last {0} days', RECENT_DAYS))} <span class='cnt'>${nRec}</span></span>` : '')
-    + (pastY() ? '' : `<span><span class='dot' style='background:#fff;border:2.5px solid #f5a300;box-sizing:border-box'></span>${esc(tr8('In monitoring season'))} <span class='cnt'>${nNow}</span></span>`) + `</div>`;
+    + (pastY() ? '' : `<span><span class='dot' style='background:#fff;border:3px solid #e3322d;box-sizing:border-box'></span>${esc(tr8('Activated in the last {0} days', RECENT_DAYS))} <span class='cnt'>${nRec}</span></span>`
+      + `<span><span class='dot' style='background:#fff;border:2px solid #f5a300;box-sizing:border-box'></span>${esc(tr8('In monitoring season'))} <span class='cnt'>${nNow}</span></span>`) + `</div>`;
 }
 // what a list of map entries is called: frameworks, unless some are ad hoc allocations or technical support
 function nounCount(fs){
@@ -2301,10 +2384,45 @@ function nounCount(fs){
 // re-draw everything that depends on the layer set: pins, callouts, legend, tiles, sidebar
 function syncOn(){ for(const [iso, c] of Object.entries(L)){ const el = WP[iso] && WP[iso].el; if(el) el.classList.toggle('on', vis(c).length > 0); } }
 function applyLayers(){
-  syncOn(); worldLegend(); updateTiles(); buildFwTable();
+  syncOn(); worldLegend(); updateTiles(); buildNews(); buildFwTable();
   if(state.iso){ renderSide(); if(GEO[state.iso]) drawAdmin(state.iso, false); }
   else { buildCallouts(); runLayout(); if(isMobile()) renderWorldList(); buildOverview(); }
 }
+// ---------- what's new (team meeting, 9 Oct 2026): what changed in the last RECENT_DAYS days by
+// the reader's clock, newest first — framework activations, versions endorsed (the version's
+// valid_from: the records carry no separate endorsement date) and versions that went into
+// development (development_since; its nightly stamp's first run, 5 Oct 2026, dated every version
+// then in development, so a version listed as such must still be in development). It is about
+// today, so it reads the live records whatever year the map shows; it follows the layer toggles
+// as the tiles do: a framework's own items while the current-frameworks layer is on, ad hoc
+// allocations while the ad hoc layer is on (a replaced framework's activations are never news).
+function newsItems(){
+  const out = [];
+  Object.entries(L).forEach(([iso, c]) => c.fws.forEach(f => {
+    const cur = LAYERS.framework && (LIVE.get(f) || f).layers.includes('framework');
+    const who = `${tr8(c.name)} ${tr8(f.hz_label).toLowerCase()}`, add = (d, what) => out.push({d, iso, hz: f.hazard, who, what});
+    f.activations.forEach(a => { if(a.old || !isRecent(a)) return;
+      if(a.type === 'framework_aa' && cur) add(actDate(a), '{0} activated');
+      else if(a.type === 'adhoc_aa' && LAYERS.adhoc) add(actDate(a), '{0}: ad hoc allocation'); });
+    if(!cur) return;
+    f.versions.forEach((v, i) => { const again = f.versions.slice(0, i).some(x => x.status === 'endorsed');
+      if(v.status === 'endorsed' && inWindow(v.valid_from)) add(v.valid_from, again ? '{0}: new version endorsed' : '{0} endorsed');
+      if(['development', 'pre-development'].includes(v.status) && inWindow(v.dev_since))
+        add(v.dev_since, again ? '{0}: new version in development' : '{0} entered development'); });
+  }));
+  return out.sort((a, b) => dayOf(b.d)[0] - dayOf(a.d)[0] || a.who.localeCompare(b.who));
+}
+function buildNews(){
+  const ul = document.getElementById('newsl'); if(!ul) return;
+  const xs = newsItems();
+  ul.innerHTML = xs.length ? xs.map(x => `<li><button type='button' data-iso='${x.iso}' data-hz='${esc(x.hz)}'>`
+      + `<span class='nd'>${esc(shortDate(x.d))}</span> ${esc(tr8(x.what, x.who))}</button></li>`).join('')
+    : `<li class='news-0'>${esc(tr8('Nothing new in the last {0} days on the layers shown.', RECENT_DAYS))}</li>`;
+}
+(function(){ const ul = document.getElementById('newsl'); if(!ul) return;
+  ul.addEventListener('click', e => { const b = e.target.closest('button[data-iso]'); if(!b) return;
+    if(pastY()) setYear(YEARS.now);   // the news is today's: a past year may not have the framework
+    selectCountry(b.dataset.iso, b.dataset.hz); }); })();
 // headline tiles: recomputed from the pairs the map currently shows (see tile_figures in Python)
 function updateTiles(){
   const shown = Object.values(L).flatMap(c=>c.fws).filter(f=>visLayer(f));
@@ -2392,7 +2510,8 @@ function buildCallouts(){
     el.querySelectorAll('.iconbox').forEach(ib => { ib.onclick = e => { e.stopPropagation(); selectCountry(iso, ib.dataset.hz); };
       ib.onmouseenter = ev => { const f = c.fws.find(x=>x.hazard===ib.dataset.hz); const nA = f.n_act_all;
         showTip(ev, `${tr8(c.name)} — ${tr8(f.hz_label)}: ${tr8(f.disp_label)}${statusNote(f)}${f.tech ? ' · ' + tr8('technical support') : ''}`
-          + (nA ? ' · ' + (YEAR != null ? tr8(nA > 1 ? '{0} activations in {1}' : '{0} activation in {1}', nA, YEAR) : tr8(nA > 1 ? '{0} activations' : '{0} activation', nA)) : '')); };
+          + (nA ? ' · ' + (YEAR != null ? tr8(nA > 1 ? '{0} activations in {1}' : '{0} activation in {1}', nA, YEAR) : tr8(nA > 1 ? '{0} activations' : '{0} activation', nA)) : '')
+          + (recentAct(f) ? ' · ' + actLabel(recentAct(f)) : '')); };
       ib.onmouseleave = () => tip.hidden = true; });
     lpane.appendChild(el);
     const ln = document.createElementNS(NS, 'line'); ln.setAttribute('class','leader'); leaders.appendChild(ln);
@@ -2555,7 +2674,7 @@ function goWorld(){
   if(isMobile()){ renderWorldList(); fixHeight(); } else { side.innerHTML = `<div class='muted' style='padding:20px 6px'>${esc(tr8('Select a country or a pin on the map.'))}</div>`; side.style.opacity = '0'; setTimeout(()=>{ side.style.opacity=''; }, 900); }
   setTimeout(()=>{ adm.innerHTML=''; }, 300);
   zoomOut(() => scheduleLayout());
-  history.replaceState(null, '', location.pathname + (YEAR != null ? '#' + YEAR : ''));
+  const h = hashFor([]); history.replaceState(null, '', location.pathname + (h ? '#' + h : ''));
 }
 async function selectCountry(iso, hz, ver){
   const c = L[iso]; if(!c) return;
@@ -2621,7 +2740,7 @@ function renderSide(){
       `<div class='fwlist'>` + fws.map(f => {
         const v = f.versions.find(x=>x.v===f.current);
         return `<div class='fcardx' style='--hz:${hzColor(f.hazard)}' onclick='selectFramework("${f.hazard}")'>
-          <div class='fhead'><b>${iconHTML(f)}${esc(tr8(f.hz_label))}</b>${badge(f.disp)}${pastY()?DRV(statusNote(f).slice(3)):''}${f.tech?` <span class='badge b-tech'>${esc(tr8('technical support'))}</span>`:''}</div>
+          <div class='fhead'><b>${iconHTML(f)}${esc(tr8(f.hz_label))}</b><span>${badge(f.disp)}${actChip(f)}</span>${pastY()?DRV(statusNote(f).slice(3)):''}${f.tech?` <span class='badge b-tech'>${esc(tr8('technical support'))}</span>`:''}</div>
           <table class='mini'>
            <tr><td class='lbl'>${esc(pastY() ? tr8('Version, end of {0}', YEAR) : tr8('Latest version'))}</td><td>${f.current ? `<code>${f.current}</code> <span class='muted'>${esc(tr8('({0} total)', f.versions.length))}</span>` : `<span class="muted">${esc(tr8('no framework version'))}</span>`}</td></tr>
            <tr><td class='lbl'>${esc(tr8('Pre-arranged'))}</td><td>${money(f.pre_now ?? f.prearranged)}${f.pre_now==null && f.prearranged_year?` <span class='muted'>(${f.prearranged_year})</span>`:''}</td></tr>
@@ -2774,7 +2893,7 @@ function adhocBlock(f){
 function groupBy(rows, kf, vf){ const m = {}; rows.forEach(r=>{ const k = kf(r); m[k] = (m[k]||0) + (vf(r)||0); }); return m; }
 function fwHeader(c, f){
   return `<h3 style='display:flex;align-items:center;gap:8px'>${iconHTML(f)}<span>${esc(tr8(c.name))} — ${esc(tr8(f.hz_label))}</span></h3>
-   <div>${pastY() && !f.layers.length ? `<span class='badge b-retired'>${esc(tr8('no framework at the end of {0}', YEAR))}</span>` : badge(f.disp) + (pastY() ? DRV(statusNote(f).slice(3)) : '')}${f.tech?` <span class='badge b-tech'>${esc(tr8('OCHA technical support'))}</span>`:''} ${f.ring ? `<span class='small' style='color:#c8860a'>&bull; ${esc(tr8('in its monitoring season'))}</span>` : ''}
+   <div>${pastY() && !f.layers.length ? `<span class='badge b-retired'>${esc(tr8('no framework at the end of {0}', YEAR))}</span>` : badge(f.disp) + (pastY() ? DRV(statusNote(f).slice(3)) : '')}${f.tech?` <span class='badge b-tech'>${esc(tr8('OCHA technical support'))}</span>`:''}${actChip(f)} ${f.ring ? `<span class='small' style='color:#c8860a'>&bull; ${esc(tr8('in its monitoring season'))}</span>` : ''}
    ${f.kb?` <span class='muted'>· KB <code>${f.kb}</code></span>`:''}${f.in_force && f.in_force!==f.current ? ` <span class='muted'>· ${esc(tr8('tracking view in force: {0}', f.in_force))}</span>` : ''}</div>`;
 }
 function versionBar(f, v, isCur){
@@ -3033,7 +3152,7 @@ function buildFwTable(){
                    r.all ? tr8('not split by fund') : null].filter(Boolean).map(t => `<span class='sm'>${esc(t)}</span>`).join('');
     const drvPre = past && f.pre_drv ? DRV(tr8('Inferred from the envelope of the version valid during the year (no reported figure for that framework-year)')) : '';
     return `<tr><td>${f.page ? `<a href='${esc(f.page)}'>${esc(r.country)}</a>` : esc(r.country)}</td><td>${esc(r.hazard)}</td>`
-      + `<td class='nw'>${badge(f.disp)}${past ? DRV(statusNote(f).slice(3)) : ''}</td><td class='nw'>${ver}</td>`
+      + `<td class='nw'>${badge(f.disp)}${past ? DRV(statusNote(f).slice(3)) : actChip(f)}</td><td class='nw'>${ver}</td>`
       + `<td class='mstrip'>${r.months.length ? monthStrip(r.months) : '—'}</td>`
       + `<td class='num'>${usd(r.pre)}${drvPre}${notes}</td>`
       + (split ? `<td class='num'>${usd(r.cerf)}</td><td class='num'>${usd(r.pooled)}</td>` : '')
@@ -3075,14 +3194,15 @@ function fwCSV(){
 }
 
 // ---------- boot
-// deep links: #ISO/hazard/version, with the year as a '|2024' suffix, or a bare #2024
+// deep links: #ISO/hazard/version, with the year as a '|2024' suffix, or a bare #2024; 'all'
+// for all years. No year (or one out of range): the current year, the page's default.
 const HASH0 = (function(){ let [p, y] = decodeURIComponent(location.hash.replace('#','')).split('|');
-  if(!y && /^\d{4}$/.test(p || '')){ y = p; p = ''; }
-  y = +y; if(!(y >= YEARS.first && y <= YEARS.now)) y = null;
-  return {path: (p || '').split('/'), year: y}; })();
+  if(!y && /^(\d{4}|all)$/.test(p || '')){ y = p; p = ''; }
+  const year = y === 'all' ? null : +y >= YEARS.first && +y <= YEARS.now ? +y : YEARS.now;
+  return {path: (p || '').split('/'), year}; })();
 snapLive();
-if(HASH0.year != null){ YEAR = HASH0.year; applyYear(); syncYearUI(); }
-fixHeight(); buildWorld(); syncOn(); worldLegend(); updateTiles(); buildFwTable(); buildCallouts(); runLayout();
+YEAR = HASH0.year; applyYear(); syncYearUI();
+fixHeight(); buildWorld(); syncOn(); worldLegend(); updateTiles(); buildNews(); buildFwTable(); buildCallouts(); runLayout();
 if(isMobile()){ maprow.classList.add('open'); renderWorldList(); }
 buildOverview();
 setTimeout(runLayout, 300);   // once fonts have settled
