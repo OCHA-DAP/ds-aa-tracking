@@ -877,7 +877,7 @@ function drawPlan(){   // again on a language switch: the labels are translated 
 drawPlan();
 document.addEventListener('aalang', ()=>{ drawPlan();
   sxOrder(document.querySelector("input[name='sxo']:checked").value==='f'); });"""
-    _dash_page(page, "pillar-plan.html", "Plan",
+    _dash_page(page, "pillar-plan.html", "Activities",   # the 'Plan' pillar, renamed (owner, 2026-10-27)
                TB("<b>Who does what, for whom and where</b> — the hazards and IASC sectors where the "
                "portfolio has planned or delivered, the share delivered as cash, the people planned "
                "and reached, the organisations named in the frameworks and those funded through "
