@@ -22,7 +22,8 @@ A sync does three things:
 - makes two renditions of each photo (WIDTHS: the grid's and the viewer's), turned upright
   from the camera's orientation, and keeps them on the dev blob under WEB, named by the
   photo's content (the first 16 hex digits of its sha256): renditions are made once, here,
-  never during the build, so a photo's rendition never changes under the same name;
+  never during the build (--rerender makes them all again, after a change to how they are
+  made: the publish then fetches and commits the new bytes under the same names);
 - rewrites the manifest: each photo and document with its key, name and size, and the
   social posts of the catalogue kept at the folder's root (its posts sheet).
 
@@ -84,6 +85,9 @@ PLATFORMS = {"x.com": "X", "twitter.com": "X", "linkedin.com": "LinkedIn", "bsky
              "youtube.com": "YouTube", "youtu.be": "YouTube"}
 # the only host a post's picture is taken from: its addresses are stable (LinkedIn's expire)
 POST_IMAGE_HOST = "pbs.twimg.com"
+
+
+RENDITION_NAME = re.compile(r"[0-9a-f]{16}-w\d+\.jpg")    # publish.sh's guard allows these only
 
 
 def rendition_names(key):
@@ -236,6 +240,8 @@ def renditions(path):
         im.draft("RGB", (max(WIDTHS), max(WIDTHS)))   # a JPEG decodes at the scale needed, not full size
         icc = im.info.get("icc_profile") if im.mode == "RGB" else None
         im = ImageOps.exif_transpose(im)
+        if im.mode.startswith("I"):              # 16/32-bit grey: scaled to 8 bits, not clipped white
+            im = im.convert("I").point(lambda v: v / 257).convert("L")
         if im.mode != "RGB":
             im = im.convert("RGB")
         out = {}
@@ -253,20 +259,45 @@ def _blobs(cc, prefix):
     return {b.name: b.size for b in cc.list_blobs(name_starts_with=prefix + "/")}
 
 
-def archive(files, manifest, dry_run):
-    """Send what the blob lacks: the originals, the index, the renditions. Says what it sent."""
+def _unreadable(paths):
+    """The photos Pillow cannot open, with the reason: checked before anything is sent, so a
+    bad file stops the run at the start, not after the originals' upload."""
+    from PIL import Image
+
+    bad = []
+    for p in paths:
+        try:
+            with Image.open(p) as im:
+                im.verify()
+        except Exception as e:  # noqa: BLE001 — every reason is listed, then fatal
+            bad.append(f"{p}: {type(e).__name__}: {e}")
+    return bad
+
+
+def archive(files, manifest, dry_run, rerender=False):
+    """Send what the blob lacks: the originals, the index, the renditions (all of them again
+    with rerender: after a change to renditions()). Says what it sent."""
     import ocha_stratus as stratus
+    from azure.core.exceptions import ResourceNotFoundError
     from azure.storage.blob import ContentSettings
 
     cc = stratus.get_container_client(container_name=CONTAINER, stage="dev", write=not dry_run)
     have, web = _blobs(cc, ORIGINALS), _blobs(cc, WEB)
-    send = [f for f in files if have.get(f"{ORIGINALS}/{f['rel']}") != f["bytes"]]
+    try:                                     # the last index: a file of the same size may differ
+        known = {f["path"]: f["sha256"] for f in json.loads(cc.download_blob(INDEX).readall())["files"]}
+    except ResourceNotFoundError:
+        known = {}
+    send = [f for f in files if have.get(f"{ORIGINALS}/{f['rel']}") != f["bytes"]
+            or known.get(f["rel"]) != f["sha256"]]
     photos = {i["key"]: i for g in manifest["groups"] for i in g["items"] if i["kind"] == "image"}
     by_key = {f["sha256"][:16]: f for f in files}
-    make = [k for k in photos if any(f"{WEB}/{n}" not in web for n in rendition_names(k))]
+    make = [k for k in photos if rerender or any(f"{WEB}/{n}" not in web for n in rendition_names(k))]
     print(f"blob ({CONTAINER}, dev): {len(send)} original(s) to send "
           f"({sum(f['bytes'] for f in send) / 1e9:.2f} GB), {len(files) - len(send)} already there · "
           f"{len(make)} photo(s) to render, {len(photos) - len(make)} already rendered")
+    bad = _unreadable(by_key[k]["path"] for k in make)
+    if bad:
+        raise SystemExit(f"FATAL: {len(bad)} photo(s) cannot be read, nothing sent:\n  " + "\n  ".join(bad))
     if dry_run:
         return
     for k, f in enumerate(send, 1):
@@ -293,27 +324,32 @@ def archive(files, manifest, dry_run):
 def fetch(out):
     """The renditions the manifest lists, from the blob into out (and nothing else there)."""
     import ocha_stratus as stratus
-    from azure.core.exceptions import ResourceNotFoundError
 
     m = json.loads(MANIFEST.read_text()) if MANIFEST.exists() else {}
     want = sorted({n for g in m.get("groups", []) for i in g["items"] if i["kind"] == "image"
                    for n in rendition_names(i["key"])})  # a photo kept in two folders: one pair
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    for p in out.iterdir():                  # a cached folder: what the manifest dropped goes
-        if p.name not in want:
+    other = sorted(p.name for p in out.iterdir() if not RENDITION_NAME.fullmatch(p.name.removesuffix(".part")))
+    if other:                                # never a folder of anything else: it is emptied
+        raise SystemExit(f"FATAL: {out} holds files that are not renditions ({', '.join(other[:5])}): "
+                         "--fetch needs a folder of its own")
+    for p in out.iterdir():                  # a cached folder: what the manifest dropped goes,
+        if p.name not in want:               # and what a fetch cut short left
             p.unlink()
     cc = stratus.get_container_client(container_name=CONTAINER, stage="dev")
+    sizes = {k.removeprefix(WEB + "/"): v for k, v in _blobs(cc, WEB).items()}
     got = 0
     for n in want:
         p = out / n
-        if p.exists() and p.stat().st_size:  # the name is the photo's content: never stale
-            continue
-        try:
-            p.write_bytes(cc.download_blob(f"{WEB}/{n}").readall())
-        except ResourceNotFoundError as e:
+        if n not in sizes:
             raise SystemExit(f"FATAL: rendition {WEB}/{n} is not on the blob: "
-                             "run sync_media.py --from on the folder") from e
+                             "run sync_media.py --from on the folder")
+        if p.exists() and p.stat().st_size == sizes[n]:   # cached, and not re-rendered since
+            continue
+        tmp = p.with_name(p.name + ".part")
+        tmp.write_bytes(cc.download_blob(f"{WEB}/{n}").readall())
+        tmp.replace(p)                       # a fetch cut short never leaves half a file
         got += 1
     print(f"media: {len(want)} rendition(s) in {out} ({got} fetched, {len(want) - got} cached)")
 
@@ -357,6 +393,8 @@ def main():
     src.add_argument("--from", dest="root", metavar="DIR", help="the unzipped 'AA visuals' folder")
     src.add_argument("--fetch", metavar="DIR", help="fetch the manifest's renditions into DIR (publish)")
     ap.add_argument("--dry-run", action="store_true", help="say what would change, write and send nothing")
+    ap.add_argument("--rerender", action="store_true",
+                    help="make every rendition again and replace it on the blob (after a change to renditions())")
     a = ap.parse_args()
     if a.fetch:
         return fetch(a.fetch)
@@ -381,7 +419,7 @@ def main():
     old = json.loads(MANIFEST.read_text()) if MANIFEST.exists() else {}
     changes = _changes(old, manifest)
     print("\n".join(changes) if changes else "  no file or post added or removed")
-    archive(files, manifest, a.dry_run)
+    archive(files, manifest, a.dry_run, a.rerender)
     if a.dry_run:
         print("dry run: nothing written, nothing sent")
         return

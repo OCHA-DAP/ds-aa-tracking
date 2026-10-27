@@ -141,7 +141,8 @@ MEDIA_JS = """
     view.querySelector('.og').href = t.dataset.u;
     const small = t.querySelector('img');
     img.alt = t.dataset.n;
-    img.src = small.currentSrc || small.src || big(key);    // at once, then the large one
+    // at once, then the large one (only the large one when the small one did not come)
+    img.src = t.classList.contains('gone') ? big(key) : small.currentSrc || small.src || big(key);
     const large = new Image();
     large.onload = () => { if (cur === t) img.src = large.src; };
     large.src = big(key);
