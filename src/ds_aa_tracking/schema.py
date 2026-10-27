@@ -638,6 +638,42 @@ DURABLE_TABLES = {
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (project_code, indicator, coded_by)
         )""",
+    # when each trigger window of a framework version can activate, on its hazard's own clock
+    # (the Model page's trigger timelines): storms in hours before (-) / after (+) landfall or
+    # closest approach, floods in days before / after the flood peak, drought as the calendar
+    # months a trigger is checked, placed against the rainy season it protects. Read by hand
+    # from the framework document (entries files); one row per bar or set of month marks.
+    "trigger_timeline": """
+        CREATE TABLE IF NOT EXISTS aa.trigger_timeline (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,         -- aa.framework_version (by convention)
+            leg text NOT NULL DEFAULT '',  -- a river or a season ('Jamuna', 'Belg (Mar–May)');
+                                           -- '' when the framework has one
+            seq integer NOT NULL,          -- display order: legs in the order of their first
+                                           -- row, rows by seq within a leg
+            stage text NOT NULL CHECK (stage IN ('readiness', 'action', 'observational')),
+            lead_from numeric,             -- the bar, in `unit` relative to the event (0);
+            lead_to numeric,               --   NULL for month marks
+            unit text NOT NULL CHECK (unit IN ('h', 'd', 'mo')),
+            months integer[]               -- drought: calendar months checked (1 = January)
+                CHECK (cardinality(months) > 0
+                       AND months <@ '{1,2,3,4,5,6,7,8,9,10,11,12}'::integer[]),
+            season_start smallint CHECK (season_start BETWEEN 1 AND 12),  -- drought: first
+            season_len smallint CHECK (season_len BETWEEN 1 AND 12),      -- month, length
+            label text NOT NULL,           -- beside the bar: the document's window name
+            stated text,                   -- the lead time as the document states it
+            indicator text,
+            threshold text,
+            note text,                     -- shown under the hazard's timeline
+            source text NOT NULL,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (country_iso3, hazard, version, leg, seq),
+            CHECK ((unit = 'mo') = (months IS NOT NULL)),
+            CHECK ((months IS NULL) = (lead_from IS NOT NULL AND lead_to IS NOT NULL
+                                       AND lead_from <= lead_to)),
+            CHECK (months IS NULL OR season_start IS NOT NULL)
+        )""",
     "entry_audit": """
         CREATE TABLE IF NOT EXISTS aa.entry_audit (
             id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

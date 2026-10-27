@@ -394,6 +394,7 @@ NOTES = {
     "cerf_cva_history": "CVA by country × agency × emergency × year, 2020–2026 (aggregated to the sheet's grain). Parked: no allocation codes, so it can never link to anything — kept as context, may be revived for a CVA workstream; target-state CVA is project-level.",
     "emergency_type_override": "Yakubu's re-tagged allocations: GMS emergency type vs actual shock (mostly Flood→Storm, with storm name).",
     "cerf_climate_coding": "CERF projects coded against climate-adaptation indicators (one row per project × indicator × coder; NULL value = blank cell). Hand coding on the unlisted climate-adaptation page, model runs (coders model-*) scored against it on the unlisted climate-coding-accuracy page (public password; the two link only to each other); indicator wording in scripts/page_climate.py.",
+    "trigger_timeline": "When each trigger window of a framework version can activate, on its hazard's clock (the Model page's trigger timelines): storms in hours (<code>h</code>) and floods in days (<code>d</code>) before (−) / after (+) landfall or the flood peak, as a bar <code>lead_from</code> → <code>lead_to</code>; drought as the calendar <code>months</code> a trigger is checked, against the rainy season (<code>season_start</code>, <code>season_len</code>). A leg is a river or a season; <code>seq</code> orders the rows. Read by hand from the framework document and entered through entries files (<code>op: replace</code> per version); only the current version's rows are drawn.",
 }
 
 TABLE_ORDER = list(NOTES)

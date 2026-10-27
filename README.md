@@ -105,6 +105,13 @@ are kept forever (the year-end official state, for the map's time view).
   `/schema` `/rows` `/distinct` `/save` `/delete` for the admin page; every field change is
   audited to `aa.entry_audit`; KB-loader and OneGMS-mirror tables are read-only
 - `scripts/dashboards.py` — dashboards, per-framework pages, explorer, entry forms
+- `scripts/page_model.py` — the Model page. Its trigger timelines ("How much warning do the
+  triggers give?") draw `aa.trigger_timeline`: one panel per hazard on its own clock (hours to
+  landfall, days to the flood peak, drought months against the rainy season, with a
+  season / calendar switch), rows grouped by framework, current version only. The rows are
+  hand-entered from the framework documents through an entries file (`op: replace` per
+  version) — never committed here; until the nightly's one-off `--ensure-schema` run creates
+  the table, every framework reads "trigger windows not recorded yet"
 - `scripts/donors.py` — the donor-shares page, admin only (reads `dashboards.funding_series`, so its
   released / pre-arranged totals are the Funding page's)
 - `scripts/page_media.py` — the Media page: the folder "AA visuals" (OCHA-HFSA SharePoint,

@@ -217,6 +217,91 @@ def _window_state():
         return None, None
 
 
+TL_COLS = ["country_iso3", "hazard", "version", "leg", "seq", "stage", "lead_from", "lead_to", "unit",
+           "months", "season_start", "season_len", "label", "stated", "indicator", "threshold", "note"]
+
+
+@functools.lru_cache(maxsize=1)
+def _timeline_rows():
+    """aa.trigger_timeline (hand-entered, one row per bar or set of month marks); empty when the
+    snapshot predates the table — every framework then shows 'trigger windows not recorded yet'."""
+    try:
+        import ocha_stratus as stratus
+        e = stratus.get_engine(stage="dev")
+        if pd.read_sql("SELECT to_regclass('aa.trigger_timeline') AS r", e)["r"].iloc[0] is None:
+            print("  model page: aa.trigger_timeline is not in the snapshot yet (run the nightly with --ensure-schema)")
+            return pd.DataFrame(columns=TL_COLS)
+        return pd.read_sql(f"SELECT {', '.join(TL_COLS)} FROM aa.trigger_timeline", e)
+    except Exception as exc:   # noqa: BLE001 — the page still builds, with no timelines
+        print(f"  model page: trigger timelines unavailable ({exc.__class__.__name__})")
+        return pd.DataFrame(columns=TL_COLS)
+
+
+# one panel per hazard, each on its own clock: (hazard, title, unit, axis from, to, step); a bar
+# beyond the axis widens it. Drought marks are months placed against the season, so its axis
+# spans one year whatever the data.
+TL_PANELS = [("storm", "Tropical cyclones", "h", -168, 72, 24),
+             ("flood", "Floods", "d", -30, 5, 5),
+             ("drought", "Drought", "mo", -7, 5, 1)]
+
+
+def _num(v):
+    return None if v is None or pd.isna(v) else float(v)
+
+
+def _int(v):
+    return None if v is None or pd.isna(v) else int(v)
+
+
+def _leg_order(kv):
+    """Legs in the order of their first row (season start, then name, on a tie)."""
+    leg, g = kv
+    return (g["seq"].min(), _int(g["season_start"].min()) or 0, str(leg))
+
+
+def _first(g, col):
+    return _int(g[col].dropna().iloc[0]) if g[col].notna().any() else None
+
+
+def timelines(fws, rows=None):
+    """The trigger-timeline panels: per hazard, each current framework (its latest version) with its
+    legs (a river, a season) and their rows; frameworks with rows first, then those without.
+    Returns ({hazard: panel data for the page script}, {hazard: [(framework, note)]})."""
+    rows = _timeline_rows() if rows is None else rows
+    rows = rows.assign(version=rows["version"].astype(str))
+    panels, notes = {}, {}
+    for h, title, unit, lo, hi, step in TL_PANELS:
+        out = []
+        for f in (f for f in fws if haz(f["hazard"]) == h):
+            r = rows[(rows["country_iso3"] == f["country_iso3"]) & (rows["hazard"] == f["hazard"])
+                     & (rows["version"] == f["version"])]
+            off = r[r["unit"] != unit]
+            if len(off):
+                print(f"  model page: {f['name']} v{f['version']}: {len(off)} timeline row(s) in "
+                      f"{sorted(off['unit'].unique())}, not {unit} — left out")
+            r = r[r["unit"] == unit]
+            legs = []
+            for leg, g in sorted(r.groupby("leg"), key=_leg_order):
+                g = g.sort_values("seq")
+                legs.append({"leg": str(leg), "start": _first(g, "season_start"), "len": _first(g, "season_len"),
+                             "wins": [{"st": w.stage, "a": _num(w.lead_from), "b": _num(w.lead_to),
+                                       "m": [int(x) for x in w.months] if isinstance(w.months, (list, tuple)) else None,
+                                       "lab": _nofire(w.label), "stated": _nofire(w.stated),
+                                       "ind": _nofire(w.indicator), "thr": _nofire(w.threshold)}
+                                      for w in g.itertuples()]})
+                if unit != "mo":   # month marks wrap into the one year the drought axis spans
+                    lo = min(lo, step * (float(g["lead_from"].astype(float).min()) // step))
+                    hi = max(hi, -step * (-float(g["lead_to"].astype(float).max()) // step))
+            for nt in dict.fromkeys(_nofire(x).strip() for x in r.sort_values("seq")["note"] if _nofire(x).strip()):
+                notes.setdefault(h, []).append((f, nt))
+            out.append({"name": i18n.country(f["country_iso3"], f["country_name"]), "status": f["lifecycle"],
+                        "legs": legs or [{"leg": "", "start": None, "len": None, "wins": []}]})
+        out.sort(key=lambda x: (not any(lg["wins"] for lg in x["legs"]), x["name"]["en"]))
+        if out:
+            panels[h] = {"key": h, "title": title, "unit": unit, "min": lo, "max": hi, "step": step, "fws": out}
+    return panels, notes
+
+
 def _frameworks(d):
     """One row per current framework: current version + its framework record (frontmatter, triggers)."""
     cur = d["current"]
@@ -508,20 +593,10 @@ def build_model(page, d):
         f"<td>{T(f['record'])}</td><td class='small'>{act_cell(f)}</td></tr>" for f in fws)
     n_act = sum(f["record"] != "never activated" for f in fws)
 
-    lead_panels = []
-    for h in hz:
-        items = []
-        for f in (f for f in fws if haz(f["hazard"]) == h):
-            lt = [(t.get("window") or t.get("trigger") or "", t) for t in f["trig"]]
-            lt = [(a, t) for a, t in lt if _lead(t)]
-            cn = T(*i18n.country(f["country_iso3"], f["country_name"]).values())
-            if lt:
-                items.append(f"<li><b>{cn}</b> — "
-                             + "; ".join(f"{_esc(a)}: {_tri(lambda w, t=t: _lead(t, w))}" for a, t in lt) + "</li>")
-            elif f["trig"]:
-                items.append(f"<li><b>{cn}</b> — <span class='muted'>{T('no lead time stated')}</span></li>")
-        if items:
-            lead_panels.append(f"<div class='panel'><h3>{T(h)}</h3><ul class='lead'>{''.join(items)}</ul></div>")
+    tl_data, tl_notes = timelines(fws)
+    data["tl"] = {"panels": [tl_data[h] for h, *_ in TL_PANELS if h in tl_data],
+                  "mon": {"en": MONTHS_EN, **{l: i18n.MONTH_ABBR[l][1:] for l in i18n.LANGS}}}
+    tl_html = _timeline_html(fws, tl_data, tl_notes)
 
     def doc_cell(f):
         links = []
@@ -588,7 +663,7 @@ details.map {{ margin-top:8px; font-size:12px; }} details.map summary {{ cursor:
 details.map table.data {{ margin:6px 0; }}
 p.note2 {{ font-size:12px; color:#555; margin:6px 0; }}
 .span2 {{ grid-column:span 2; }} @media (max-width:900px) {{ .span2 {{ grid-column:auto; }} }}
-ul.lead {{ margin:0; padding-left:16px; }} ul.lead li {{ font-size:12.5px; margin:4px 0; }}
+{TL_CSS}
 </style>
 <div class='tiles'>
  <div class='tile'><div class='v'>{len(fws)}</div><div class='l'>{TF("current frameworks · {a} active · {u} being updated · {d} in development", a=n_life['active'], u=n_life['updating'], d=n_life['development'])}</div></div>
@@ -638,8 +713,7 @@ ul.lead {{ margin:0; padding-left:16px; }} ul.lead li {{ font-size:12.5px; margi
 <div class='scroll'><table class='data' id='wtab'><thead><tr><th>{T('framework')}</th><th>{T('status')}</th><th>{T('version')}</th><th>{T('window')}</th><th>{T('basis')}</th><th>{T('measures')}</th><th>{T('indicator')}</th><th>{T('lead time')}</th><th>{T('return period')}</th><th>{T('backtest')}</th><th>{T('activated on this version')}</th></tr></thead><tbody>{''.join(tr)}</tbody></table></div>
 {loose_html}{unm_html}</section>
 <h2>{T("How much warning do the triggers give?")}</h2>
-<p class='meta'>{TB("Lead times are written in hours, days, months or relative to landfall, so they are listed as stated rather than averaged.")}</p>
-<div class='grid'>{''.join(lead_panels)}</div>
+{tl_html}
 <h2>{T("When are the triggers monitored?")}</h2>
 <p class='meta'>{cal_note}</p>
 <section><div class='scroll'><table class='data'><thead><tr><th>{T('framework')}</th><th>{T('status')}</th><th>{T('months monitored (typical year)')}</th></tr></thead><tbody>{cal_rows}</tbody></table></div></section>
@@ -668,7 +742,8 @@ function mfilt(){
   const q = document.getElementById('wq').value.toLowerCase();
   const on = new Set([...document.querySelectorAll('.lfbar input[type=checkbox]:checked')].map(b=>b.value));
   document.querySelectorAll('#wtab tbody tr').forEach(r=>{
-    r.style.display = (on.has(r.dataset.life) && r.textContent.toLowerCase().includes(q)) ? '' : 'none'; }); }"""
+    r.style.display = (on.has(r.dataset.life) && r.textContent.toLowerCase().includes(q)) ? '' : 'none'; }); }
+""" + TL_JS
     _dash_page(page, "pillar-model.html", "Model",
                TB("<b>The model block of anticipatory action</b> — the triggers: what they measure, "
                   "where and when they are monitored, on what basis, how often they are designed to "
@@ -677,6 +752,227 @@ function mfilt(){
                   "are not included</b>: they have no trigger (they appear only as a comparison in the "
                   "activations-per-year chart)."),
                panels, json.dumps(data, default=str), js)
+
+
+MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def _timeline_html(fws, panels, notes):
+    """The 'How much warning' section: legend, one panel per hazard (drawn by TL_JS from the page
+    data), the frameworks' own notes under each, and cholera in words (no lead time to draw)."""
+    clocks = {"storm": T("hours before (−) / after (+) landfall or closest approach"),
+              "flood": T("days before (−) / after (+) the flood peak"),
+              "drought": (f"<span data-cal='0'>{T('months before (−) / after (+) the start of the rainy season')}</span>"
+                          f"<span data-cal='1' hidden>{T('calendar months, January to December')}</span>")}
+    general = {"drought": TB(
+        "On the season view, rows are aligned on the start of the rainy season each trigger protects, so a "
+        "Sahel Jul–Sep season and an Ethiopian Mar–May season line up at 0; the calendar view puts every mark "
+        "at its own month. The shaded band is the season itself. Each mark is a month in which the trigger is "
+        "checked (a forecast issue, or the month an observation is read); where a framework allows either of "
+        "two issues, both months are marked. Labels use the frameworks’ own window numbers where the "
+        "documents number them; the hover gives each window’s description.")}
+    out = []
+    for h, *_ in TL_PANELS:
+        if h not in panels:
+            continue
+        seg = ""
+        if h == "drought":
+            seg = (f"<div class='tl-seg' role='group' {ATTR('aria-label', 'Drought axis')}>"
+                   f"<button type='button' data-cal='0' aria-pressed='true'>{T('Aligned on the season')}</button>"
+                   f"<button type='button' data-cal='1' aria-pressed='false'>{T('Calendar, Jan–Dec')}</button></div>")
+        fw_notes = "".join(
+            f"<div class='note'><b>{T(*i18n.country(f['country_iso3'], f['country_name']).values())}</b>: "
+            f"{html.escape(nt)}</div>" for f, nt in notes.get(h, []))
+        gen = f"<div class='note'>{general[h]}</div>" if h in general else ""
+        out.append(f"<section class='panel tl-panel' id='tl-{h}'><div class='tl-ph'><h3>{T(panels[h]['title'])}</h3>"
+                   f"<span class='tl-clock'>{clocks[h]}</span>{seg}</div>"
+                   f"<div class='tl-x' data-tl='{h}'></div>{fw_notes}{gen}</section>")
+    chol = [f for f in fws if haz(f["hazard"]) == "cholera"]
+    if chol:
+        names = ", ".join(T(*i18n.country(f["country_iso3"], f["country_name"]).values()) for f in chol)
+        out.append(f"<section class='panel tl-panel' id='tl-cholera'><div class='tl-ph'><h3>{T('Cholera')}</h3>"
+                   f"<span class='tl-clock'>{T('no forecast lead time')}</span></div><div class='note'>"
+                   + TBF("{list}: the triggers use weekly surveillance data — a framework activates when reported "
+                         "cases cross the agreed thresholds, so there is no forecast lead time to draw.", list=names)
+                   + "</div></section>")
+    legend = "".join(f"<span><i class='tl-sw' style='background:var(--s-{k})'></i>{T(s)}</span>"
+                     for k, s in (("ready", "readiness"), ("action", "action"), ("obs", "observational")))
+    legend += f"<span><i class='tl-sw tl-ev'></i>{T('the event (landfall, flood peak, season start)')}</span>"
+    return ("<p class='meta'>" + TB(
+        "One panel per hazard, each on its own clock: hours before landfall for tropical cyclones, days before "
+        "the flood peak for floods, months from the start of the rainy season for drought. Each row is one "
+        "trigger window of a current framework (its latest version): the bar shows when the trigger can "
+        "activate, and for drought each mark is a month in which the trigger is checked. Hover a bar for the "
+        "trigger as the framework document states it. The ranges are read from each framework document by "
+        "hand.") + f"</p><div class='tlx'><div class='tl-legend'>{legend}</div>{''.join(out)}</div>")
+
+
+# the stage colours (validated categorical set) and the Map's status chips (landing.py .badge:
+# green active, two-tone blue being updated, amber in development). The site has no dark theme.
+TL_CSS = """
+.tlx { --s-ready:#2a78d6; --s-action:#eb6834; --s-obs:#1baf7a; --tl-season:#e6eef6; --tl-season-ink:#3d5a78;
+       --tl-ink:#1a1a1a; --tl-muted:#666; --tl-faint:#8a929d; --tl-line:#e0e0e0; --tl-grid:#eef1f3; }
+.tl-legend { display:flex; flex-wrap:wrap; gap:6px 16px; font-size:12.5px; color:#555; margin:8px 0 4px; }
+.tl-legend > span { display:inline-flex; align-items:center; gap:6px; }
+.tl-sw { width:18px; height:10px; border-radius:2px; display:inline-block; }
+.tl-sw.tl-ev { width:2px; height:14px; background:var(--tl-ink); border-radius:0; }
+.tl-panel { margin:12px 0; }
+.tl-ph { display:flex; flex-wrap:wrap; justify-content:space-between; gap:4px 16px; align-items:baseline;
+         max-width:1150px; }   /* the plot's own width */
+.tl-ph h3 { margin:2px 0 4px; }
+.tl-clock { font-size:12px; color:var(--tl-muted); }
+.tl-seg { display:inline-flex; border:1px solid #c9d3de; border-radius:6px; overflow:hidden; background:#fff; }
+.tl-seg button { font:inherit; font-size:12.5px; border:0; background:transparent; color:var(--tl-ink);
+                 padding:4px 10px; cursor:pointer; }
+.tl-seg button[aria-pressed="true"] { background:#1f2a44; color:#fff; font-weight:600; }
+.tl-seg button:focus-visible { outline:2px solid var(--s-ready); outline-offset:-2px; }
+.tl-x { overflow-x:auto; margin-top:6px; }
+svg.tl { display:block; width:100%; min-width:680px; max-width:1150px; height:auto; }
+svg.tl text { fill:var(--tl-ink); font-family:inherit; }
+svg.tl .muted { fill:var(--tl-muted); } svg.tl .faint { fill:var(--tl-faint); }
+svg.tl text.lab { paint-order:stroke; stroke:#fff; stroke-width:3px; stroke-linejoin:round; }   /* readable across the event line */
+svg.tl g[tabindex]:focus { outline:none; } svg.tl g[tabindex]:focus-visible rect.hit { stroke:var(--s-ready); stroke-width:1.5; }
+svg.tl .st-active rect { fill:#e2f3e6; } svg.tl .st-active text { fill:#1e7a37; }
+svg.tl .st-dev rect { fill:#fdf0d5; } svg.tl .st-dev text { fill:#9a6d0a; }
+svg.tl .st-upd rect { stroke:#9ecae1; } svg.tl .st-upd text { fill:#1a5fa0; }
+.tl-tip { position:fixed; z-index:30; pointer-events:none; max-width:340px; background:#1f2a44; color:#fff;
+          font-size:12.5px; line-height:1.35; border-radius:6px; padding:8px 10px; box-shadow:0 6px 20px rgba(0,0,0,.18); }
+.tl-tip b { display:block; margin-bottom:2px; } .tl-tip .k { opacity:.7; }
+"""
+
+# The panels, drawn from D.tl (one SVG per hazard; again on a language switch). Ported from the
+# reviewed mock-up: rows grouped by framework (name + status chip, legs beneath), bars from
+# lead_from to lead_to, drought rows as one mark per month checked, aligned on the season start
+# or on the calendar. Labels sit beside the bars in text ink, never on them.
+TL_JS = r"""
+(function(){
+  const TL = window.D && D.tl; if (!TL || !TL.panels.length) return;
+  const NS = 'http://www.w3.org/2000/svg';
+  const mk = (t, a, txt) => { const e = document.createElementNS(NS, t); for (const k in (a || {})) e.setAttribute(k, a[k]);
+    if (txt != null) e.textContent = txt; return e; };
+  const escH = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const COL = {readiness:'var(--s-ready)', action:'var(--s-action)', observational:'var(--s-obs)'};
+  const stageName = s => s === 'readiness' ? tr8('readiness') : s === 'action' ? tr8('action') : tr8('observational');
+  const CHIP = {active:'st-active', updating:'st-upd', development:'st-dev'};
+  const statusName = s => s === 'active' ? tr8('Active') : s === 'updating' ? tr8('Being updated') : tr8('In development');
+  const evName = k => k === 'storm' ? tr8('landfall') : k === 'flood' ? tr8('flood peak') : tr8('season starts');
+  const sgn = t => t > 0 ? '+' + t : t < 0 ? '−' + (-t) : '0';
+  const tick = (u, t) => u === 'h' ? tr8('{0} h', sgn(t)) : u === 'd' ? tr8('{0} d', sgn(t)) : sgn(t);
+  const nm = n => n[aaLang()] || n.en;
+  const mon = m => (TL.mon[aaLang()] || TL.mon.en)[m - 1];
+  const tip = document.createElement('div'); tip.className = 'tl-tip'; tip.hidden = true; document.body.appendChild(tip);
+  function moveTip(ev){ const w = tip.offsetWidth, h = tip.offsetHeight; let x = ev.clientX + 14, y = ev.clientY + 14;
+    if (x + w > innerWidth - 8) x = Math.max(8, ev.clientX - w - 14); if (y + h > innerHeight - 8) y = Math.max(8, ev.clientY - h - 14);
+    tip.style.left = x + 'px'; tip.style.top = y + 'px'; }
+  function showTip(ev, html){ tip.innerHTML = html; tip.hidden = false; moveTip(ev); }
+  function chip(svg, status, cx, cy, gid){
+    const g = mk('g', {class: CHIP[status] || ''}), lab = statusName(status);
+    const r = mk('rect', {x: cx, y: cy, height: 15, rx: 7.5}), t = mk('text', {y: cy + 11, 'font-size': 10.5, 'font-weight': 600, 'text-anchor': 'middle'}, lab);
+    if (status === 'updating') r.setAttribute('fill', `url(#${gid})`);
+    g.append(r, t); svg.appendChild(g);
+    const w = (t.getComputedTextLength() || lab.length * 6.1) + 14;
+    r.setAttribute('width', w); t.setAttribute('x', cx + w / 2);
+  }
+  function draw(p, host, cal){
+    const W = 1000, L = 230, R = 18, rowH = 22, headH = 20, gH = 12, top = 30;
+    const min = cal ? 0 : p.min, max = cal ? 12 : p.max, ticks = [];
+    for (let t = min; t <= max; t += cal ? 1 : p.step) ticks.push(t);
+    let n = 0; p.fws.forEach(f => f.legs.forEach(l => { n += Math.max(1, l.wins.length); }));
+    const H = top + p.fws.length * (headH + gH) + n * rowH + 26;
+    const x = v => L + (v - min) / (max - min) * (W - L - R);
+    const svg = mk('svg', {viewBox: `0 0 ${W} ${H}`, class: 'tl', role: 'group',
+                           'aria-label': tr8('{0}: trigger windows by framework', tr8(p.title))});
+    host.replaceChildren(svg);
+    const gid = 'tl-upd-' + p.key, gr = mk('linearGradient', {id: gid, x1: 0, y1: 0, x2: 1, y2: 1});
+    [['0', '#dbeafe'], ['0.5', '#dbeafe'], ['0.5', '#eef4fa'], ['1', '#eef4fa']].forEach(([o, c]) => gr.appendChild(mk('stop', {offset: o, 'stop-color': c})));
+    const defs = mk('defs'); defs.appendChild(gr); svg.appendChild(defs);
+    // grid + axis labels (month names between the gridlines on the calendar view)
+    ticks.forEach(t => { svg.appendChild(mk('line', {x1: x(t), x2: x(t), y1: top - 6, y2: H - 22, stroke: 'var(--tl-grid)', 'stroke-width': 1}));
+      if (cal) { if (t < 12) svg.appendChild(mk('text', {x: (x(t) + x(t + 1)) / 2, y: top - 12, 'text-anchor': 'middle', 'font-size': 11, class: 'muted'}, mon(t + 1))); }
+      else svg.appendChild(mk('text', {x: x(t), y: top - 12, 'text-anchor': 'middle', 'font-size': 11, class: 'muted'}, tick(p.unit, t))); });
+    const nGrid = svg.children.length;   // season bands go straight after the grid, under everything else
+    const bands = [];
+    let y = top;
+    p.fws.forEach(f => {
+      const name = nm(f.name), hd = mk('text', {x: 0, y: y + 14, 'font-size': 13.5, 'font-weight': 600}, name);
+      svg.appendChild(hd);
+      chip(svg, f.status, (hd.getComputedTextLength() || name.length * 7.4) + 10, y + 3, gid);
+      y += headH;
+      f.legs.forEach(leg => {
+        const k = Math.max(1, leg.wins.length), y0 = y;
+        if (leg.len && leg.start) bands.push([y0, y0 + k * rowH, leg.len, leg.start]);
+        if (leg.leg) svg.appendChild(mk('text', {x: 12, y: y0 + 15, 'font-size': 12, class: 'muted'}, leg.leg));
+        if (!leg.wins.length) svg.appendChild(mk('text', {x: x(min) + 6, y: y0 + 15, 'font-size': 12, class: 'faint'}, tr8('trigger windows not recorded yet')));
+        leg.wins.forEach((w, i) => {
+          const yy = y0 + i * rowH + 4, full = name + (leg.leg ? ' · ' + leg.leg : ''), st = stageName(w.st);
+          const g = mk('g', {tabindex: 0, 'aria-label': `${full}: ${st}, ${w.lab}`});
+          svg.appendChild(g);
+          let x0, x1;
+          if (w.m) {          // one mark per month checked: at its offset from the season start, or at its own month
+            const offs = w.m.map(m => { let o = cal ? m - 1 : m - (leg.start || 1); if (o < min) o += 12; if (o >= max) o -= 12; return [m, o]; });
+            x0 = Math.min(...offs.map(([, o]) => x(o))); x1 = Math.max(...offs.map(([, o]) => x(o + 1)));
+            g.appendChild(mk('rect', {class: 'hit', x: x0 - 3, y: yy - 4, width: x1 - x0 + 6, height: rowH, fill: 'transparent'}));
+            offs.forEach(([m, o]) => {
+              g.appendChild(mk('rect', {x: x(o) + 1.5, y: yy, width: x(o + 1) - x(o) - 3, height: 14, rx: 3, fill: COL[w.st]}));
+              g.appendChild(mk('text', {x: (x(o) + x(o + 1)) / 2, y: yy + 11, 'font-size': 10.5, 'text-anchor': 'middle', style: 'fill:#10151c;font-weight:600'}, mon(m)));
+            });
+          } else {
+            x0 = x(w.a); x1 = Math.max(x(w.b), x0 + 4);
+            g.appendChild(mk('rect', {class: 'hit', x: x0 - 3, y: yy - 4, width: x1 - x0 + 6, height: rowH, fill: 'transparent'}));   // larger hit target
+            g.appendChild(mk('rect', {x: x0, y: yy, width: x1 - x0, height: 14, rx: 3, fill: COL[w.st]}));
+          }
+          // the label in text ink beside the bar; left of it when the right side would run out of the chart
+          const lt = mk('text', {class: 'lab', x: x1 + 6, y: yy + 11, 'font-size': 11.5}, w.lab);
+          g.appendChild(lt);
+          if (x1 + 6 + (lt.getComputedTextLength() || w.lab.length * 6.2) > W) { lt.setAttribute('x', x0 - 6); lt.setAttribute('text-anchor', 'end'); }
+          const row = (key, v) => v ? `<br><span class="k">${escH(key)}</span> ${escH(v)}` : '';
+          const html = `<b>${escH(full)} · ${escH(st)}</b>${escH(w.lab)}` + row(tr8('As stated:'), w.stated)
+                     + row(tr8('Indicator:'), w.ind) + row(tr8('Threshold:'), w.thr);
+          g.addEventListener('mouseenter', e => showTip(e, html)); g.addEventListener('mousemove', moveTip);
+          g.addEventListener('mouseleave', () => { tip.hidden = true; });
+          g.addEventListener('focus', () => { const r = g.getBoundingClientRect(); showTip({clientX: r.right, clientY: r.top}, html); });
+          g.addEventListener('blur', () => { tip.hidden = true; });
+        });
+        y += k * rowH;
+      });
+      y += gH;
+      svg.appendChild(mk('line', {x1: 0, x2: W, y1: y - gH / 2, y2: y - gH / 2, stroke: 'var(--tl-line)', 'stroke-width': 1}));
+    });
+    // season bands (drought): from the season start on the aligned view, over the season's own months on the calendar
+    let under = nGrid;
+    bands.forEach(([a, b, len, start]) => {
+      const spans = !cal ? [[0, Math.min(len, max)]]
+        : (start - 1 + len <= 12 ? [[start - 1, start - 1 + len]] : [[start - 1, 12], [0, start - 1 + len - 12]]);
+      spans.forEach(([s0, s1]) => { svg.insertBefore(mk('rect', {x: x(s0), y: a + 1, width: x(s1) - x(s0), height: b - a - 2, fill: 'var(--tl-season)', rx: 2}), svg.children[nGrid]); under++; });
+    });
+    if (bands.length) {   // name the band once, above the first one
+      const [a, , , start] = bands[0], s0 = cal ? start - 1 : 0;
+      svg.appendChild(mk('text', {x: x(s0) + 4, y: a - 4, 'font-size': 10.5, style: 'fill:var(--tl-season-ink);font-style:italic'}, tr8('rainy season')));
+    }
+    if (!cal) {
+      // the event line over the bands, under the bars and their labels
+      svg.insertBefore(mk('line', {x1: x(0), x2: x(0), y1: top - 6, y2: H - 22, stroke: 'var(--tl-ink)', 'stroke-width': 2}), svg.children[under]);
+      svg.appendChild(mk('text', {x: x(0), y: H - 6, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 600}, evName(p.key)));
+    }
+  }
+  let droughtCal = false;
+  function drawAll(){
+    tip.hidden = true;
+    TL.panels.forEach(p => { const host = document.querySelector(`.tl-x[data-tl="${p.key}"]`);
+      if (host) draw(p, host, p.key === 'drought' && droughtCal); });
+  }
+  const dsec = document.getElementById('tl-drought');
+  if (dsec) dsec.querySelectorAll('.tl-seg button').forEach(b => b.addEventListener('click', () => {
+    droughtCal = b.dataset.cal === '1';
+    dsec.querySelectorAll('.tl-seg button').forEach(o => o.setAttribute('aria-pressed', String(o === b)));
+    dsec.querySelectorAll('.tl-clock [data-cal]').forEach(s => { s.hidden = (s.dataset.cal === '1') !== droughtCal; });
+    const p = TL.panels.find(q => q.key === 'drought');
+    draw(p, dsec.querySelector('.tl-x'), droughtCal);
+  }));
+  drawAll();
+  document.addEventListener('aalang', drawAll);
+})();
+"""
 
 
 def _flag(v):
