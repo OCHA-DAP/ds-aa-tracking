@@ -1466,8 +1466,9 @@ def build_funding(page, d):
         df["region"] = [region_of.get((c, h)) or "?" for c, h in zip(df["country_iso3"], df["hazard"])]
         vs = df["version"] if "version" in df else [None] * len(df)   # versions: an old one is retired
         df["g"] = [layer(c, h, v) for c, h, v in zip(df["country_iso3"], df["hazard"], vs)]
-        df["funds"] = ["".join(sorted(pair_funds.get((c, h), ()))) for c, h in
-                       zip(df["country_iso3"], df["hazard"])]
+        # a version of a replaced framework carries that framework's funds, not the new one's
+        df["funds"] = ["".join(sorted((old_funds if (c, h, str(v)) in old else pair_funds).get((c, h), ())))
+                       for c, h, v in zip(df["country_iso3"], df["hazard"], vs)]
         df["k"] = pair_key(df)
         return df
 
@@ -1592,15 +1593,17 @@ def build_funding(page, d):
         except Exception:
             return c
     listed = cur[cur["lifecycle"].isin(live_lc + ("retired",))]
+    # g2: the retired layer too, for a pair hosting a replaced framework (its line ticks both)
     fw_list = [{"k": f"{r.country_iso3}|{r.hazard}", "name": country_name(r.country_iso3),
                 "hazard": str(r.hazard).replace("_", " "), "hz": haz(r.hazard),
                 "region": r.region if isinstance(r.region, str) else "?", "lc": r.lifecycle,
-                "g": layer(r.country_iso3, r.hazard)}
+                "g": layer(r.country_iso3, r.hazard),
+                "g2": "r" if (r.country_iso3, r.hazard) in old_pairs and r.lifecycle != "retired" else None}
                for r in listed.itertuples()]
     fw_list.sort(key=lambda f: (f["region"], f["name"], f["hazard"]))
     money_c = (set(pre["country_iso3"]) | set(act["country_iso3"])) - set(listed["country_iso3"])
     fw_list += [{"k": f"{c}|*", "name": country_name(c), "hazard": None, "hz": None,
-                 "region": None, "lc": None, "g": None} for c in sorted(money_c, key=country_name)]
+                 "region": None, "lc": None, "g": None, "g2": None} for c in sorted(money_c, key=country_name)]
 
     def how(body, title="How this is counted"):
         """A per-chart method note, collapsed under the chart (both in every language)."""
@@ -1766,7 +1769,7 @@ function fwFromHash(){ const m = /[#&]fw=([^&]*)/.exec(location.hash); if(!m) re
 // the layers or the hazard / region filter leave out dimmed, and the total — the tile's figure
 function fwPaint(s, N){
   const amt = groupSum(D.now.filter(r=>ftOK(r.ft, s)), r=>r.k, r=>r.total_usd);
-  const inView = f => f.lc ? (!s.hz||f.hz===s.hz) && (!s.rg||f.region===s.rg) && layerOK(f.g, s) : !s.rg && s.adh;
+  const inView = f => f.lc ? (!s.hz||f.hz===s.hz) && (!s.rg||f.region===s.rg) && (layerOK(f.g, s) || (!!f.g2 && layerOK(f.g2, s))) : !s.rg && s.adh;
   const ticked = f => !s.fws || s.fws.has(f.k), gsum = {};
   fwLines().forEach(l=>{ const f = FWBY[l.dataset.k], a = amt[f.k], v = inView(f);
     l.classList.toggle('off', !v); l.title = v ? '' : tr8('left out by the layers or the hazard / region filter');

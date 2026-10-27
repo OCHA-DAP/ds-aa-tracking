@@ -81,14 +81,19 @@ def _vm(a, b):
     return a == b or a.startswith(b) or b.startswith(a)
 
 
-def _backtest(d, c, h, version):
+def _backtest(d, c, h, version, exclude=frozenset()):
     """(shown version, its simulated rows, first year, last year, years analysed, year the
     version took effect, simulated rows dropped) — the same choice, start-year cut and range as
     dashboards._activation_blocks. Only rows dated before the version's start year are
-    simulation (sim_before_start); the kept rows carry `sim_year`."""
+    simulation (sim_before_start); the kept rows carry `sim_year`. `exclude`: versions never
+    shown — an earlier framework's that a distinct new one replaced (_old_line), so the new
+    framework's row never falls back to the old framework's backtest."""
     sim = d["sim"][(d["sim"]["country_iso3"] == c) & (d["sim"]["hazard"] == h)].copy()
     sim["version"] = sim["version"].astype(str)
     fvm = d["fv_meta"][(d["fv_meta"]["country_iso3"] == c) & (d["fv_meta"]["hazard"] == h)]
+    if exclude:
+        fv_lab = [str(x) for x in fvm["version"]]
+        sim = sim[sim["version"].map(lambda v: (_tl_match(fv_lab, v) or v) not in exclude).astype(bool)]
     order = list(fvm.assign(_vf=version_start(fvm))
                  .sort_values("_vf")["version"].astype(str))
     shown = next((sv for sv in set(sim["version"])
@@ -729,13 +734,14 @@ def build_history(page, d):
     n_adhoc = int((act_all["event_type"] != "framework_aa").sum())
 
     for f in fws:
-        (f["shown"], f["ss"], f["y0"], f["y1"], f["n_years"], f["vf_y"],
-         f["n_after"]) = _backtest(d, f["c"], f["h"], f["version"])
-        f["ref"] = f["shown"] or f["version"]
-        # the activations of an earlier framework a distinct new one replaced (Somalia drought
-        # 2020, 2021) are a retired framework's: not on this row, in its summary or its CSV rows
-        # (2026-10-27 ruling), but on a retired row of the timeline and in the version view
+        # an earlier framework a distinct new one replaced (Somalia drought's 2019 / 2020-06-23):
+        # never this framework's backtest, and its activations (2020, 2021) are a retired
+        # framework's — not on this row, in its summary or its CSV rows (2026-10-27 ruling), but
+        # on a retired row of the timeline and in the version view
         f["olds"], f["by"] = _old_line(d, f["c"], f["h"])
+        (f["shown"], f["ss"], f["y0"], f["y1"], f["n_years"], f["vf_y"],
+         f["n_after"]) = _backtest(d, f["c"], f["h"], f["version"], f["olds"])
+        f["ref"] = f["shown"] or f["version"]
         f["events"], f["events_old"] = _split_old(f, _events(d, f["c"], f["h"], f["ref"], f["kb_fw"], umap, f["slug"]))
         f["hit"] = {}   # year -> windows (and labels, dates) that would have activated
         for r in f["ss"].itertuples():
@@ -763,7 +769,7 @@ def build_history(page, d):
         f["events"], f["events_old"] = _split_old(f, _events(d, f["c"], f["h"], f["version"], f["kb_fw"], umap, f["slug"]))
         f["events"] += f["events_old"]
         f["events_old"] = []
-        (f["shown"], _, f["y0"], f["y1"], f["n_years"], f["vf_y"], _) = _backtest(d, f["c"], f["h"], f["version"])
+        (f["shown"], _, f["y0"], f["y1"], f["n_years"], f["vf_y"], _) = _backtest(d, f["c"], f["h"], f["version"], f["olds"])
     tl_rows, tl_fw, tl_by, tl_old = [], {}, {}, []
     for f in fws + ret:
         k = f"{f['c']}-{f['h']}"
