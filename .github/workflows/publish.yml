@@ -68,6 +68,12 @@ jobs:
             data/world
           key: geo-${{ github.run_id }}
           restore-keys: geo-
+      - name: Restore the Media page's photo renditions (named by content: a cache never goes stale)
+        uses: actions/cache@v4
+        with:
+          path: site_media
+          key: media-${{ hashFiles('site_src/media.json') }}
+          restore-keys: media-
       - run: uv sync
       - name: Install graphviz (schema ERD)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz >/dev/null
@@ -82,6 +88,8 @@ jobs:
           EXTRACT_TOKEN: ${{ secrets.EXTRACT_TOKEN }}
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          # read-only: the Media page's photo renditions (scripts/sync_media.py --fetch)
+          DSCI_AZ_BLOB_DEV_SAS: ${{ secrets.DSCI_AZ_BLOB_DEV_SAS }}
         run: |
           # never publish pages without the proxy token: the data-entry and admin pages would go dark
           test -n "$EXTRACT_TOKEN" || { echo "::error::EXTRACT_TOKEN secret is not set"; exit 1; }
