@@ -137,11 +137,18 @@ def _extra():
                     FROM aa.cerf_project p
                     WHERE p.application_code IN """ + fw + " GROUP BY p.application_code",
                  ["application_code", "n_proj", "n_rep", "planned", "reached"]),
-        "alloc_fw": ("""SELECT DISTINCT allocation_code, country_iso3, hazard
-                        FROM aa.activation_funding
-                        WHERE fund_code = 'cerf' AND allocation_code IS NOT NULL
-                          AND event_type NOT IN (""" + excl + ", 'adhoc_aa')",
-                     ["allocation_code", "country_iso3", "hazard"]),
+        # with the activation's version: an earlier framework's (dashboards.old_versions) is not
+        # the live framework's
+        "alloc_fw": ("""SELECT DISTINCT f.allocation_code, f.country_iso3, f.hazard, a.version
+                        FROM aa.activation_funding f
+                        LEFT JOIN aa.activation a
+                          ON a.country_iso3 = f.country_iso3 AND a.hazard = f.hazard
+                         AND a.event_date = f.event_date AND a.event_type = f.event_type
+                         AND a.window_name IS NOT DISTINCT FROM f.window_name
+                         AND coalesce(a.event_label, '') = coalesce(f.event_label, '')
+                        WHERE f.fund_code = 'cerf' AND f.allocation_code IS NOT NULL
+                          AND f.event_type NOT IN (""" + excl + ", 'adhoc_aa')",
+                     ["allocation_code", "country_iso3", "hazard", "version"]),
         "sector": ("""SELECT p.application_code, s.cerf_sector_name AS sector,
                              s.iasc_sector_name AS iasc, s.sector_amount
                       FROM aa.cerf_project_sector s
@@ -244,8 +251,13 @@ def _partners(d, ex):
     the CERF AA sub-grants mapped to frameworks, and the named-vs-funded comparison."""
     cur = d["current"]
     live = cur[cur["lifecycle"].isin(LIVE)]
+    # an earlier framework that a distinct new one replaced (dashboards.old_versions: Somalia
+    # drought 2019 / 2020-06-23) is a retired framework: its partner list and the sub-grants of
+    # its activations are not the live framework's
+    old = d.get("old") or set()
     pt = d["partners"].copy()
     pt["version"] = pt["version"].astype(str)
+    pt = pt.loc[[(c, h, v) not in old for c, h, v in zip(pt["country_iso3"], pt["hazard"], pt["version"])]]
     pt = pt.merge(live[["country_iso3", "hazard"]], on=["country_iso3", "hazard"])
     # latest partner list per framework: dated versions rank above undated labels such as
     # 'development' (a plain string max would put 'development' above every date)
@@ -269,7 +281,11 @@ def _partners(d, ex):
                                                         case=False, regex=True)
            | sg["partner_name"].isna())
     sg["tbd"] = tbd
-    af = {(r.allocation_code, r.country_iso3): r.hazard for r in ex["alloc_fw"].itertuples()}
+    # an old version's allocation maps to no hazard (None, not the emergency-type fallback), so
+    # no live framework claims its sub-grants
+    af = {(r.allocation_code, r.country_iso3): (None if (r.country_iso3, r.hazard, str(r.version)) in old
+                                                else r.hazard)
+          for r in ex["alloc_fw"].itertuples()}
     et = dict(zip(ex["alloc"]["application_code"], ex["alloc"]["emergency_type"]))
     sg["hazard"] = [af.get((a, c), et.get(a)) for a, c in zip(sg["application_code"],
                                                                sg["country_iso3"])]

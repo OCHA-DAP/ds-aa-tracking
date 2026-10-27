@@ -1060,17 +1060,44 @@ VIEWS = {
     # "fully triggered" comes from the curated window_status flags: any window for all-in /
     # exclusive rollups, every window otherwise; a version with no windows registered falls
     # back to its activations (any not marked partial).
+    # "endorsed" looks at the CURRENT LINE only: the latest version and every version reached
+    # back through framework_version.supersedes. A version outside it belongs to an earlier
+    # framework that a distinct new one replaced (Somalia drought: the 2019 / 2020-06-23
+    # food-security framework vs the 2026 one, which supersedes nothing — 2026-10-27 ruling),
+    # so the new one is "in development", not "being updated". A supersedes naming no version
+    # of the pair breaks the chain (Mozambique storm 2026-01-09 -> '2025-05-23'): the line
+    # can't be traced, so every version of that pair counts. The site's pages apply the same
+    # rule (dashboards.old_versions).
     "v_framework_lifecycle": """
         CREATE OR REPLACE VIEW aa.v_framework_lifecycle AS
-        WITH latest AS (
+        WITH RECURSIVE latest AS (
             SELECT DISTINCT ON (country_iso3, hazard)
                 country_iso3, hazard, version, kb_status, valid_from, valid_until, window_rollup
             FROM aa.framework_version
             ORDER BY country_iso3, hazard, valid_from DESC NULLS LAST, version DESC
         ),
+        line AS (
+            SELECT country_iso3, hazard, version FROM latest
+            UNION
+            SELECT f.country_iso3, f.hazard, f.supersedes
+            FROM line l JOIN aa.framework_version f
+              ON f.country_iso3 = l.country_iso3 AND f.hazard = l.hazard AND f.version = l.version
+            WHERE f.supersedes IS NOT NULL
+        ),
+        broken AS (     -- a supersedes that names no version of the pair
+            SELECT DISTINCT l.country_iso3, l.hazard FROM line l
+            WHERE NOT EXISTS (SELECT 1 FROM aa.framework_version f
+                              WHERE f.country_iso3 = l.country_iso3 AND f.hazard = l.hazard
+                                AND f.version = l.version)
+        ),
         endorsed AS (
-            SELECT country_iso3, hazard, bool_or(kb_status = 'endorsed') AS has_endorsed
-            FROM aa.framework_version GROUP BY 1, 2
+            SELECT f.country_iso3, f.hazard, bool_or(f.kb_status = 'endorsed') AS has_endorsed
+            FROM aa.framework_version f
+            WHERE EXISTS (SELECT 1 FROM line l WHERE l.country_iso3 = f.country_iso3
+                            AND l.hazard = f.hazard AND l.version = f.version)
+               OR EXISTS (SELECT 1 FROM broken b WHERE b.country_iso3 = f.country_iso3
+                            AND b.hazard = f.hazard)
+            GROUP BY 1, 2
         ),
         wins AS (
             SELECT w.country_iso3, w.hazard, w.version,
@@ -1134,10 +1161,31 @@ VIEWS = {
                     ELSE 'active' END AS lifecycle
         FROM x
     """,
-    # one row per (country, hazard): pair + latest status + current version's funding/coverage
+    # one row per (country, hazard): pair + latest status + current version's funding/coverage.
+    # The current version comes from the latest version's line (as in v_framework_lifecycle):
+    # a version of an earlier, replaced framework is never the pair's current one.
     "v_trk_framework_current": """
         CREATE OR REPLACE VIEW aa.v_trk_framework_current AS
-        WITH latest_status AS (
+        WITH RECURSIVE latest AS (
+            SELECT DISTINCT ON (country_iso3, hazard) country_iso3, hazard, version
+            FROM aa.framework_version
+            ORDER BY country_iso3, hazard, valid_from DESC NULLS LAST, version DESC
+        ),
+        line AS (
+            SELECT country_iso3, hazard, version FROM latest
+            UNION
+            SELECT f.country_iso3, f.hazard, f.supersedes
+            FROM line l JOIN aa.framework_version f
+              ON f.country_iso3 = l.country_iso3 AND f.hazard = l.hazard AND f.version = l.version
+            WHERE f.supersedes IS NOT NULL
+        ),
+        broken AS (     -- a supersedes that names no version of the pair: every version counts
+            SELECT DISTINCT l.country_iso3, l.hazard FROM line l
+            WHERE NOT EXISTS (SELECT 1 FROM aa.framework_version f
+                              WHERE f.country_iso3 = l.country_iso3 AND f.hazard = l.hazard
+                                AND f.version = l.version)
+        ),
+        latest_status AS (
             SELECT DISTINCT ON (country_iso3, hazard)
                 country_iso3, hazard, status, status_raw, as_of, source
             FROM aa.framework_status
@@ -1153,9 +1201,13 @@ VIEWS = {
         current_version AS (
             SELECT DISTINCT ON (country_iso3, hazard)
                 country_iso3, hazard, version, kb_status AS version_status, valid_until
-            FROM aa.framework_version
+            FROM aa.framework_version f
             WHERE valid_from IS NOT NULL
               AND (kb_status IS NULL OR kb_status NOT IN ('development'))
+              AND (EXISTS (SELECT 1 FROM line l WHERE l.country_iso3 = f.country_iso3
+                             AND l.hazard = f.hazard AND l.version = f.version)
+                   OR EXISTS (SELECT 1 FROM broken b WHERE b.country_iso3 = f.country_iso3
+                                AND b.hazard = f.hazard))
             ORDER BY country_iso3, hazard,
                      (kb_status = 'endorsed') DESC, valid_from DESC
         ),
