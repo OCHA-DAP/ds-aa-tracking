@@ -104,7 +104,22 @@ ANALYSIS_REPO_BASE = "https://github.com/OCHA-DAP/"
 HAZ_COLOR = {"flood": "#2a78d6", "drought": "#eb6834", "storm": "#8e5bd9",
              "cholera": "#1baf7a", "plague": "#b8860b"}
 HAZ_LABEL = {"storm": "Trop. cyclones", "flood": "Floods", "drought": "Drought",
-             "cholera": "Cholera", "plague": "Plague"}
+             "cholera": "Cholera", "plague": "Plague", "food_insecurity": "Food insecurity",
+             "locusts": "Locusts"}
+# the tracking sheets' status codes as words (the Map panel quotes them; a code is never shown)
+SHEET_STATUS_LABEL = {"active": "active", "activated_implementing": "activated, being implemented",
+                      "monitoring": "monitoring", "under_revision": "under revision", "expired": "expired",
+                      "under_development": "in development", "project_finalization": "being finalised",
+                      "dormant": "dormant", "retired": "retired", "advanced_conversations": "advanced conversations",
+                      "early_conversations": "early conversations"}
+
+
+def _haz_label(h):
+    """A hazard's label; a hazard with none is 'Other hazard' on the page (never its code) and
+    named in the build log so a label gets added."""
+    if h not in HAZ_LABEL:
+        print(f"  ! hazard without a label (shown as 'Other hazard'): {h}")
+    return HAZ_LABEL.get(h, "Other hazard")
 HAZ_GLYPH = {"storm": "tropical-cyclone", "flood": "flood", "drought": "drought",
              "cholera": "cholera"}
 HAZARD_SVG = {
@@ -680,6 +695,69 @@ def _svg_tr(svg):
     return re.sub(r"<text([^>]*)>([^<]*)</text>", one, svg)
 
 
+# Kept for the planned definitions page (owner, 2026-10-27: off the Map page); nothing calls it yet.
+def status_help_html():
+    """The 'How statuses work' block: the version lifecycle and framework status diagram (its
+    SVG text follows the language switch) and the map layers, with its CSS."""
+    body = f"""<details id='statushelp' class='statushelp'><summary>{T("How statuses work — version lifecycle and the framework status inferred from it")}</summary>
+ <div class='sh-grid'>
+  <svg viewBox='0 0 780 362' class='sh-svg' role='img' {ATTR("aria-label", "Status diagram")}>
+   <defs><linearGradient id='shsplit' x1='0' y1='0' x2='1' y2='1'><stop offset='50%' stop-color='#dbeafe'/><stop offset='50%' stop-color='#e8f1f8'/></linearGradient><marker id='arr' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' markerHeight='7' orient='auto-start-reverse'><path d='M0,0 L10,5 L0,10 z' fill='#64748b'/></marker></defs>
+   <text x='10' y='22' class='sh-h'>Framework VERSION status (stored: one of three, recorded by the team)</text>
+   <g class='sh-box'><rect x='10' y='40' width='120' height='40' rx='8'/><text x='70' y='65'>pre-development</text></g>
+   <g class='sh-box'><rect x='170' y='40' width='120' height='40' rx='8'/><text x='230' y='65'>in development</text></g>
+   <g class='sh-box sh-on'><rect x='330' y='40' width='120' height='40' rx='8'/><text x='390' y='65'>endorsed</text></g>
+   <g class='sh-box sh-ev'><rect x='500' y='20' width='130' height='34' rx='8'/><text x='565' y='42'>windows triggered</text></g>
+   <g class='sh-box sh-ev'><rect x='500' y='66' width='130' height='34' rx='8'/><text x='565' y='88'>validity ended</text></g>
+   <g class='sh-box sh-off'><rect x='670' y='40' width='100' height='40' rx='8'/><text x='720' y='65'>superseded</text></g>
+   <line x1='130' y1='60' x2='168' y2='60' class='sh-arr'/><line x1='290' y1='60' x2='328' y2='60' class='sh-arr'/>
+   <line x1='450' y1='55' x2='498' y2='40' class='sh-arr'/><line x1='450' y1='65' x2='498' y2='80' class='sh-arr'/>
+   <line x1='630' y1='45' x2='668' y2='56' class='sh-arr'/><line x1='630' y1='78' x2='668' y2='66' class='sh-arr'/>
+   <text x='500' y='118' class='sh-note'>inferred, not stored: each window is marked triggered / not triggered; the version is</text>
+   <text x='500' y='132' class='sh-note'>fully triggered when every window activated (any window if all-in). Superseded = a newer</text>
+   <text x='500' y='146' class='sh-note'>endorsed version exists. The next version starts in development.</text>
+   <text x='10' y='176' class='sh-h'>FRAMEWORK status (inferred from the most recent version)</text>
+   <g class='sh-box sh-on'><rect x='10' y='192' width='220' height='34' rx='8'/><text x='120' y='214'>Active</text></g>
+   <text x='240' y='206' class='sh-note'>most recent version is endorsed, in validity and has not fully triggered</text>
+   <text x='240' y='220' class='sh-note'>(partial triggers of independent windows keep it active) · amber ring = in its monitoring season this month</text>
+   <g class='sh-box sh-upd'><rect x='10' y='234' width='220' height='34' rx='8'/><text x='120' y='256'>Being updated</text></g>
+   <text x='240' y='248' class='sh-note'>an endorsed framework whose most recent version fully triggered or reached the end of its</text>
+   <text x='240' y='262' class='sh-note'>validity, or whose next version is already in development — the framework stands, a new version is coming</text>
+   <g class='sh-box sh-dev'><rect x='10' y='276' width='220' height='34' rx='8'/><text x='120' y='298'>In development</text></g>
+   <text x='240' y='290' class='sh-note'>no endorsed version yet — the framework is being built for the first time</text>
+   <g class='sh-box sh-off'><rect x='10' y='318' width='220' height='34' rx='8'/><text x='120' y='340'>Retired (layer off by default)</text></g>
+   <text x='240' y='332' class='sh-note'>a manual flag on the framework (country × hazard) — overrides everything above</text>
+  </svg>
+  <div class='sh-layers'>
+   {TB("<b>Map layers.</b>")} <span class='dot' style='background:{KB_COLOR["active"]}'></span>{TB("<b>Current frameworks</b> — every framework whose status is active, being updated or in development (the default view; the headline figures follow whatever is shown).")}
+   <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span>{TB("<b>Ad hoc allocations</b> — countries and hazards that received ad hoc anticipatory-action money without a framework version (light green; a framework that also received ad hoc money stays drawn as a framework).")}
+   <span class='dot' style='background:{LAYER_COLOR["retired"]}'></span>{TB("<b>Retired</b> — frameworks flagged retired, drawn in grey so past coverage can be compared with today's.")}
+   <span class='dot dot-hollow' style='border-color:{LAYER_COLOR["tech"]}'></span>{TB("<b>Technical support</b> — countries where OCHA supported the framework technically without a funding commitment, whatever their status (including pipeline ones like Palau and Tonga), drawn as a hollow teal pin.")}
+  </div>
+ </div>
+</details>
+"""
+    a = body.index("<svg viewBox='0 0 780 362'")
+    b = body.index("</svg>", a) + len("</svg>")
+    return body[:a] + _svg_tr(body[a:b]) + body[b:] + "<style>" + STATUS_HELP_CSS + "</style>"
+
+
+STATUS_HELP_CSS = r"""
+.statushelp { margin-top:14px; background:#fff; border:1px solid #e6eaef; border-radius:12px; padding:8px 16px; }
+.statushelp summary { cursor:pointer; color:var(--ocha); font-size:13px; }
+.sh-grid { overflow-x:auto; padding:8px 0 4px; } .sh-svg { width:100%; max-width:820px; height:auto; display:block; font-family:-apple-system,'Segoe UI',Roboto,sans-serif; }
+.sh-h { font-size:12px; font-weight:700; fill:#0f2540; } .sh-note { font-size:10.5px; fill:#475569; }
+.sh-box rect { fill:#f1f5f9; stroke:#cbd5e1; } .sh-box text { font-size:11px; fill:#1e293b; text-anchor:middle; font-weight:600; }
+.sh-box.sh-on rect { fill:#dbeafe; stroke:#2171b5; } .sh-box.sh-dev rect { fill:#e8f1f8; stroke:#9ecae1; }
+.sh-box.sh-ev rect { fill:#fef3c7; stroke:#f59e0b; } .sh-box.sh-off rect { fill:#f1f5f9; stroke:#94a3b8; }
+.sh-box.sh-upd rect { fill:url(#shsplit); stroke:#2171b5; }
+.sh-arr { stroke:#64748b; stroke-width:1.4; marker-end:url(#arr); }
+.sh-layers { font-size:12px; color:#334155; line-height:1.6; margin:6px 0 4px; }
+.sh-layers .dot { display:inline-block; width:11px; height:11px; border-radius:50%; margin:0 4px 0 6px; vertical-align:-1px; }
+.sh-layers .dot-hollow { background:#fff !important; border:2.5px solid #2a9d8f; box-sizing:border-box; }
+"""
+
+
 def _analysis_url(ref):
     """'repo@branch:path' -> GitHub tree URL in the team org; anything else stays text."""
     m = re.match(r"^([\w.-]+)@([\w./-]+):(.*)$", str(ref or ""))
@@ -791,27 +869,25 @@ def _adhoc_cerf(e, acts, actf, _try):
 
 
 def _cerf_reached(codes, _try):
-    """CERF allocation code -> (people reached, interim?): the allocation record (CERF's
-    de-duplicated figure, from the final report) or, where it has none yet, the sum over the
-    allocation's projects that report one (interim; a person reached by two projects counts
-    twice) — the Plan page's rule. A code with no figure is left out. Country and regional
-    funds have no such figure in the mirror."""
+    """CERF allocation code -> (people reached, interim?, people planned): the allocation record
+    (CERF's de-duplicated figure, from the final report) or, where it has none yet, the sum over
+    the allocation's projects that report one (interim; a person reached by two projects counts
+    twice) — the Plan page's rule; reached None when neither has a figure. Planned: the
+    allocation's individuals planned, the stand-in the Map's Reached tile uses where there is no
+    report yet (owner's request, 2026-10-27). Country and regional funds have no such figure."""
     if not codes:
         return {}
     q = ", ".join(f"'{c}'" for c in codes)
-    al = _try(f"""SELECT c.application_code, c.individuals_reached,
+    al = _try(f"""SELECT c.application_code, c.individuals_reached, c.individuals_planned,
                          (SELECT sum(p.people_reached) FILTER (WHERE p.people_reached > 0)
                           FROM aa.cerf_project p
                           WHERE p.application_code = c.application_code) AS proj_reached
                   FROM aa.cerf_allocation c WHERE c.application_code IN ({q})""",
-              ["application_code", "individuals_reached", "proj_reached"])
+              ["application_code", "individuals_reached", "individuals_planned", "proj_reached"])
     out = {}
     for r in al.itertuples():
-        a, pj = _num(r.individuals_reached), _num(r.proj_reached)
-        if a:
-            out[r.application_code] = (a, False)
-        elif pj:
-            out[r.application_code] = (pj, True)
+        a, pj, pl = _num(r.individuals_reached), _num(r.proj_reached), _num(r.individuals_planned) or None
+        out[r.application_code] = (a, False, pl) if a else (pj, True, pl) if pj else (None, False, pl)
     return out
 
 
@@ -1267,13 +1343,14 @@ def assemble(d, e):
         docs = learn[learn["country_iso3"].map(lambda xs: c in _list(xs))
                      & (learn["hazard"].isna() | (learn["hazard"] == h))] if len(learn) else learn
         countries[c]["fws"].append({
-            "hazard": h, "status": sheet_status, "kb": kb_fw,
+            "hazard": h, "status": sheet_status, "status_label": SHEET_STATUS_LABEL.get(sheet_status),
+            "kb": kb_fw,
             "disp": disp, "disp_label": DISP_LABEL.get(disp, disp), "ring": ring, "n_act": n_fw_act,
             "n_act_all": len(activations), "n_adhoc": n_adhoc.get((c, h), 0),
             "adhoc_cerf": adhoc_cerf.get((c, h), []),
             "layers": layers, "layer": next(l for l in LAYER_ORDER if l in layers),
             "tech": tech,
-            "hz_label": HAZ_LABEL.get(h, h.replace("_", " ").capitalize()),
+            "hz_label": _haz_label(h),
             "glyph": HAZ_GLYPH.get(h, "other"),
             "latest": latest, "in_force": in_force,
             "page": None if synthetic else f"fw-{c.lower()}-{h}.html",
@@ -1310,15 +1387,17 @@ def assemble(d, e):
 
 def _reach_fields(x, reach, reach_row):
     """The people-reached fields of one activation funding row (CERF rows only): the
-    allocation's figure on the row that carries it (`interim` when summed over projects),
-    `shared` on a later activation drawing on the same allocation."""
+    allocation's figure on the row that carries it (`interim` when summed over projects;
+    `planned`, the people it planned to reach, when there is no figure yet — the estimate's
+    stand-in), `shared` on a later activation drawing on the same allocation."""
     if x.fund_code != "cerf":
         return {}
     code = _s(x.allocation_code)
     if code and reach_row.get(code) != x.Index:
         return {"reached": None, "shared": True}
-    n, interim = reach.get(code, (None, False))
-    return {"reached": n, "interim": True} if interim else {"reached": n}
+    n, interim, planned = reach.get(code, (None, False, None))
+    return ({"reached": n, "interim": True} if interim else {"reached": n} if n is not None
+            else {"reached": None, "planned": planned} if planned else {"reached": None})
 
 
 def _expired(valid_until):
@@ -1444,8 +1523,11 @@ def tile_figures(countries, layers, year=None):
     fw = [f for f in shown if "framework" in layers and "framework" in f["layers"]]
     acts = [a for f in shown for a in _flow_acts(f, layers, year)]
     rows = [x for a in acts for x in a["funding"]]
-    # people reached: CERF allocations only, each counted once (see _reach_fields)
+    # people reached: CERF allocations only, each counted once (see _reach_fields); where CERF
+    # has no figure yet, the allocation's planned people stand in (the estimate)
     cerf = [x for x in rows if x["fund"] == "cerf" and not x.get("shared")]
+    tgt = [x for x in cerf if x.get("reached") is None and x.get("planned")]
+    part = lambda k: sum(((f["pre_parts"] or {}).get(k) or 0) for f in fw)
     return {"n_fw": len(fw),
             "n_active": sum(1 for f in fw if f["disp"] == "active"),
             "n_upd": sum(1 for f in fw if f["disp"] == "updating"),
@@ -1458,7 +1540,11 @@ def tile_figures(countries, layers, year=None):
             "released_cerf": sum(x["usd"] or 0 for x in rows if x["fund"] == "cerf"),
             "reached": sum(x.get("reached") or 0 for x in cerf),
             "n_rep": sum(1 for x in cerf if x.get("reached") is not None),
-            "n_cerf": len(cerf)}
+            "n_interim": sum(1 for x in cerf if x.get("reached") is not None and x.get("interim")),
+            "targeted": sum(x["planned"] for x in tgt), "n_tgt": len(tgt),
+            "n_cerf": len(cerf),
+            "n_nousd": sum(1 for a in acts if not any(x["usd"] or x.get("shared") for x in a["funding"])),
+            "pre_cerf": part("cerf"), "pre_pooled": part("pooled"), "pre_all": part("all")}
 
 
 def _money(v):
@@ -1513,37 +1599,73 @@ def build_landing(page, d, e):
 
     def not_shown(*xs):
         xs = [x for x in xs if x]
-        return f" · not shown: {', '.join(xs)}" if xs else ""
+        return f"Not shown: {', '.join(xs)}." if xs else ""
+
+    def est(g):   # people reached, with the targeted stand-ins: '~' marks an estimate
+        return ("~" if g["n_tgt"] else "") + _people(g["reached"] + g["targeted"])
     ns_act = not_shown(ad["n_act"] and f"{ad['n_act']} ad hoc allocation{'s' if ad['n_act'] > 1 else ''}",
                        ret["n_act"] and f"{ret['n_act']} on retired frameworks")
     ns_rel = not_shown(ad["released"] >= 5e4 and f"ad hoc allocations {_money(ad['released'])}",
                        ret["released"] >= 5e4 and f"retired frameworks {_money(ret['released'])}")
-    ns_reach = not_shown(ad["reached"] and f"ad hoc allocations {_people(ad['reached'])}",
-                         ret["reached"] and f"retired frameworks {_people(ret['reached'])}")
-    # the labels updateTiles() writes for the current year (framework layer only: no ad hoc
-    # allocation is counted, so 'framework activations')
-    no_env = [f"{cd['name']} {f['hz_label'].lower()}" for cd in countries.values() for f in cd["fws"]
-              if "framework" in f["layers"] and not f["pre_now"]]
-    l_pre = ("pre-arranged now (CERF and Country and Regional Funds), all current frameworks incl. in development"
-             + (f" · {len(no_env)} without an envelope recorded yet: {', '.join(no_env)}" if no_env else ""))
-    pooled = t["released"] - t["released_cerf"]
-    funds = ("CERF" if pooled < 5e4 else "Country and Regional Funds" if t["released_cerf"] < 5e4
-             else f"CERF {_money(t['released_cerf'])} · Country and Regional Funds {_money(pooled)}")
-    l_act = (f"framework activations in {Y}" if t["n_act"]
-             else f"no activation in {Y} on the layers shown") + ns_act
-    l_rel = (f"released in {Y} on framework activations — {funds}" if t["n_act"]
-             else f"nothing released in {Y} on the layers shown") + ns_rel
-    l_reach = (f"people reached: no CERF allocation in {Y} on the layers shown" if not t["n_cerf"]
-               else f"people reached with the {Y} releases: no report yet for the CERF allocation"
-               if not t["n_rep"] and t["n_cerf"] == 1
-               else f"people reached with the {Y} releases: no report yet for the {t['n_cerf']} CERF allocations"
-               if not t["n_rep"]
-               else f"people reached with the {Y} releases — CERF allocations, as reported so far "
-                    f"({t['n_rep']} of {t['n_cerf']} have a figure)") + ns_reach
+    ns_reach = not_shown((ad["n_rep"] or ad["n_tgt"]) and f"ad hoc allocations {est(ad)}",
+                         (ret["n_rep"] or ret["n_tgt"]) and f"retired frameworks {est(ret)}")
+
+    def funds(cerf, pooled, other=0):   # fundBullets() in LANDING_JS
+        return [x for x in (cerf >= 5e4 and f"CERF {_money(cerf)}",
+                            pooled >= 5e4 and f"Country and Regional Funds {_money(pooled)}",
+                            other >= 5e4 and f"not split by fund {_money(other)}") if x]
+    n_cerf, n_rep, n_tgt = t["n_cerf"], t["n_rep"], t["n_tgt"]
+    n_none = n_cerf - n_rep - n_tgt
+    reach_note = " ".join(x for x in (
+        (f"Estimate = {_people(t['reached'])} reported by CERF ({n_rep} of {n_cerf} allocations) + "
+         f"{_people(t['targeted'])} targeted where there is no report yet ({n_tgt} of {n_cerf}).") if n_tgt
+        else f"{n_rep} of the {n_cerf} CERF allocations have a figure." if n_rep else "",
+        (f"{n_none} CERF allocation has neither a reported nor a targeted figure: left out." if n_none == 1
+         else f"{n_none} CERF allocations have neither a reported nor a targeted figure: left out." if n_none else ""),
+        "Summed over CERF allocations: CERF's own de-duplicated figure for each one, from its final report"
+        + (f", or the sum over its projects where the allocation has none yet ({t['n_interim']} interim)" if t["n_interim"] else "")
+        + ". A person reached under two allocations counts twice. Reports come about nine months after an allocation, so recent years are incomplete."
+        + " Country and Regional Funds report no figure here. Not people covered: that is what the plans cover now.",
+        ns_reach) if x)
     # each tile opens with an icon and its name in large type (2026-10-27 review comments)
     def tile_key(icon, name):
         return (f"<div class='k'><svg viewBox='0 0 24 24' aria-hidden='true'>{TILE_ICONS[icon]}</svg>"
                 f"<span>{T(name)}</span></div>")
+
+    # a tile: its figure, a short lead line, bullet lines, and its notes in a popover shown on
+    # hover, focus or tap (owner's review, 2026-10-27: captions short, caveats on hover) — the
+    # same markup updateTiles() writes (its set()); the script rewrites it in the reader's language
+    def tile(id_, icon, name, value, lead, bul=(), note=""):
+        ul = f"<ul class='tb'>{''.join(f'<li>{html_escape(x)}</li>' for x in bul)}</ul>" if bul else ""
+        attrs = f" tabindex='0' aria-describedby='{id_}-n'" if note else ""
+        return (f"<div class='tile{' hasnote' if note else ''}' id='{id_}'{attrs}>{tile_key(icon, name)}"
+                f"<div class='v'>{value}</div><div class='l'>{html_escape(lead)}{ul}</div>"
+                f"<div class='tnote' id='{id_}-n' role='tooltip'>{html_escape(note)}</div></div>")
+    tiles = "".join((
+        tile("t-fw", "doc", "Frameworks", t["n_fw"], "frameworks on the map today",
+             [f"{t['n_active']} active", f"{t['n_upd']} being updated", f"{t['n_dev']} in development"]),
+        tile("t-pre", "money", "Pre-arranged", f"${_jsround(t['pre'] / 1e6)}M", "pre-arranged now",
+             funds(t["pre_cerf"], t["pre_pooled"], t["pre_all"]),
+             "All current frameworks shown, including those in development."),
+        tile("t-cov", "people", "People covered", _tofixed(t["covered"] / 1e6, 1) + "M" if t["n_fw"] else "—",
+             "people covered now by the frameworks shown" if t["n_fw"] else "people covered now: no framework shown",
+             note=f"{t['n_cov']} of the {t['n_fw']} frameworks shown have a figure." if t["n_fw"] else ""),
+        tile("t-act", "bolt", "Activations", t["n_act"],
+             f"framework activations in {Y}" if t["n_act"] else f"no activation in {Y} on the layers shown",
+             note=ns_act),
+        tile("t-rel", "money", "Released", _money(t["released"]) if t["n_act"] else "—",
+             f"released in {Y} on framework activations" if t["n_act"] else f"nothing released in {Y} on the layers shown",
+             funds(t["released_cerf"], t["released"] - t["released_cerf"]) if t["n_act"] else [],
+             " ".join(x for x in ("Money released when a framework activated, from the activation record: the Financing "
+                                  "page gives the same figure for the same layers. Early action allocations are not counted.",
+                                  t["n_nousd"] and f"{t['n_nousd']} of the {t['n_act']} have no amount recorded.", ns_rel) if x)),
+        tile("t-reach", "people", "Reached", est(t) if n_rep or n_tgt else "—",
+             f"people reached: no CERF allocation in {Y} on the layers shown" if not n_cerf
+             else f"people reached with the {Y} releases — CERF allocations, estimate" if n_tgt
+             else f"people reached with the {Y} releases — CERF allocations" if n_rep
+             else f"people reached with the {Y} releases: no report yet for the CERF allocation" if n_cerf == 1
+             else f"people reached with the {Y} releases: no report yet for the {n_cerf} CERF allocations",
+             note=reach_note)))
 
     body = f"""
 <div class='hero'>
@@ -1553,21 +1675,18 @@ def build_landing(page, d, e):
       for y in range(TODAY.year, YEAR_FIRST - 1, -1))}
  </div>
  <p class='yearnote' id='yearnote' hidden>{TB("Past years are reconstructed from the framework records (version dates and status history): a framework counts for a year if a version was valid at any time during it. They will be replaced by the official year-end figures once those are loaded.")}</p>
- <div class='herorow'>
  <div class='tiles gtiles' id='gtiles'>
   <div class='gcap' id='gcap'>Global portfolio — all layers currently shown on the map · {Y}, as of today</div>
-  <div class='tile' id='t-fw'>{tile_key('doc', 'Frameworks')}<div class='v'>{t["n_fw"]}</div><div class='l'>frameworks on the map today · {t["n_active"]} active · {t["n_upd"]} being updated · {t["n_dev"]} in development</div></div>
-  <div class='tile' id='t-pre'>{tile_key('money', 'Pre-arranged')}<div class='v'>${_jsround(t["pre"]/1e6)}M</div><div class='l'>{l_pre}</div></div>
-  <div class='tile' id='t-cov'>{tile_key('people', 'People covered')}<div class='v'>{_tofixed(t["covered"]/1e6, 1) + "M" if t["n_fw"] else "—"}</div><div class='l'>people covered now by the frameworks shown ({t["n_cov"]} of {t["n_fw"]} have a figure)</div></div>
-  <div class='tile' id='t-act'>{tile_key('bolt', 'Activations')}<div class='v'>{t["n_act"]}</div><div class='l'>{l_act}</div></div>
-  <div class='tile' id='t-rel'>{tile_key('money', 'Released')}<div class='v'>{_money(t["released"]) if t["n_act"] else "—"}</div><div class='l'>{l_rel}</div></div>
-  <div class='tile' id='t-reach'>{tile_key('people', 'Reached')}<div class='v'>{_people(t["reached"]) if t["n_rep"] else "—"}</div><div class='l'>{l_reach}</div></div>
+  {tiles}
  </div>
- <aside class='news' id='news' {ATTR("aria-label", "What's new in the last 30 days")}>
-  <div class='news-h'><b>{T("What's new")}</b> · {T("last 30 days")}</div>
-  <ul class='news-l' id='newsl'></ul>
- </aside>
- </div>
+ <section class='news' id='news' {ATTR("aria-label", "What's new in the last 90 days")}>
+  <div class='news-h'><b>{T("What's new")}</b> · {T("last 90 days")}</div>
+  <div class='news-cols'>
+   <div class='news-col'><div class='news-ch'>{T("Last 30 days")}</div><ul class='news-l' id='news0'></ul></div>
+   <div class='news-col'><div class='news-ch'>{T("30–60 days ago")}</div><ul class='news-l' id='news1'></ul></div>
+   <div class='news-col'><div class='news-ch'>{T("60–90 days ago")}</div><ul class='news-l' id='news2'></ul></div>
+  </div>
+ </section>
 </div>
 <div class='maprow' id='maprow'>
  <div class='mapbox' id='mapbox'>
@@ -1583,43 +1702,6 @@ def build_landing(page, d, e):
  </div>
 </div>
 <p class='maphelp'>{TB("<b>Reading the map.</b> Published triggers, windows, pre-arranged financing and activations across the AA portfolio — CERF, country-based and regional pooled funds. Pin colour = framework status, inferred from the most recent version; each red dot = one past activation; a red ring = activated in the last 30 days; an amber ring = in its monitoring season this month. <b>Click a country or a pin</b> to zoom in and see the areas each framework covers; the <b>layer toggles</b> in the map legend choose what is drawn, and the figures above follow them.")}</p>
-<details id='statushelp' class='statushelp'><summary>{T("How statuses work — version lifecycle and the framework status inferred from it")}</summary>
- <div class='sh-grid'>
-  <svg viewBox='0 0 780 362' class='sh-svg' role='img' {ATTR("aria-label", "Status diagram")}>
-   <defs><linearGradient id='shsplit' x1='0' y1='0' x2='1' y2='1'><stop offset='50%' stop-color='#dbeafe'/><stop offset='50%' stop-color='#e8f1f8'/></linearGradient><marker id='arr' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' markerHeight='7' orient='auto-start-reverse'><path d='M0,0 L10,5 L0,10 z' fill='#64748b'/></marker></defs>
-   <text x='10' y='22' class='sh-h'>Framework VERSION status (stored: one of three, recorded by the team)</text>
-   <g class='sh-box'><rect x='10' y='40' width='120' height='40' rx='8'/><text x='70' y='65'>pre-development</text></g>
-   <g class='sh-box'><rect x='170' y='40' width='120' height='40' rx='8'/><text x='230' y='65'>in development</text></g>
-   <g class='sh-box sh-on'><rect x='330' y='40' width='120' height='40' rx='8'/><text x='390' y='65'>endorsed</text></g>
-   <g class='sh-box sh-ev'><rect x='500' y='20' width='130' height='34' rx='8'/><text x='565' y='42'>windows triggered</text></g>
-   <g class='sh-box sh-ev'><rect x='500' y='66' width='130' height='34' rx='8'/><text x='565' y='88'>validity ended</text></g>
-   <g class='sh-box sh-off'><rect x='670' y='40' width='100' height='40' rx='8'/><text x='720' y='65'>superseded</text></g>
-   <line x1='130' y1='60' x2='168' y2='60' class='sh-arr'/><line x1='290' y1='60' x2='328' y2='60' class='sh-arr'/>
-   <line x1='450' y1='55' x2='498' y2='40' class='sh-arr'/><line x1='450' y1='65' x2='498' y2='80' class='sh-arr'/>
-   <line x1='630' y1='45' x2='668' y2='56' class='sh-arr'/><line x1='630' y1='78' x2='668' y2='66' class='sh-arr'/>
-   <text x='500' y='118' class='sh-note'>inferred, not stored: each window is marked triggered / not triggered; the version is</text>
-   <text x='500' y='132' class='sh-note'>fully triggered when every window activated (any window if all-in). Superseded = a newer</text>
-   <text x='500' y='146' class='sh-note'>endorsed version exists. The next version starts in development.</text>
-   <text x='10' y='176' class='sh-h'>FRAMEWORK status (inferred from the most recent version — aa.v_framework_lifecycle)</text>
-   <g class='sh-box sh-on'><rect x='10' y='192' width='220' height='34' rx='8'/><text x='120' y='214'>Active</text></g>
-   <text x='240' y='206' class='sh-note'>most recent version is endorsed, in validity and has not fully triggered</text>
-   <text x='240' y='220' class='sh-note'>(partial triggers of independent windows keep it active) · amber ring = in its monitoring season this month</text>
-   <g class='sh-box sh-upd'><rect x='10' y='234' width='220' height='34' rx='8'/><text x='120' y='256'>Being updated</text></g>
-   <text x='240' y='248' class='sh-note'>an endorsed framework whose most recent version fully triggered or reached the end of its</text>
-   <text x='240' y='262' class='sh-note'>validity, or whose next version is already in development — the framework stands, a new version is coming</text>
-   <g class='sh-box sh-dev'><rect x='10' y='276' width='220' height='34' rx='8'/><text x='120' y='298'>In development</text></g>
-   <text x='240' y='290' class='sh-note'>no endorsed version yet — the framework is being built for the first time</text>
-   <g class='sh-box sh-off'><rect x='10' y='318' width='220' height='34' rx='8'/><text x='120' y='340'>Retired (layer off by default)</text></g>
-   <text x='240' y='332' class='sh-note'>a manual flag on the framework (country × hazard) — overrides everything above</text>
-  </svg>
-  <div class='sh-layers'>
-   {TB("<b>Map layers.</b>")} <span class='dot' style='background:{KB_COLOR["active"]}'></span>{TB("<b>Current frameworks</b> — every framework whose status is active, being updated or in development (the default view; the headline figures follow whatever is shown).")}
-   <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span>{TB("<b>Ad hoc allocations</b> — countries and hazards that received ad hoc anticipatory-action money without a framework version (light green; a framework that also received ad hoc money stays drawn as a framework).")}
-   <span class='dot' style='background:{LAYER_COLOR["retired"]}'></span>{TB("<b>Retired</b> — frameworks flagged retired, drawn in grey so past coverage can be compared with today's.")}
-   <span class='dot dot-hollow' style='border-color:{LAYER_COLOR["tech"]}'></span>{TB("<b>Technical support</b> — countries where OCHA supported the framework technically without a funding commitment, whatever their status (including pipeline ones like Palau and Tonga), drawn as a hollow teal pin.")}
-  </div>
- </div>
-</details>
 <section class='fwt' id='fwt'>
  <div class='fwt-head'><h2>{T("Frameworks on the map")}</h2>
   <button type='button' class='dl' onclick='fwCSV()'>{T("Download CSV")}</button></div>
@@ -1643,9 +1725,6 @@ window.YEARS = {json.dumps({"first": YEAR_FIRST, "now": TODAY.year, "today": TOD
 <script src="sankey.js"></script>
 <script>{LANDING_JS}</script>
 <style>{LANDING_CSS}</style>"""
-    a = body.index("<svg viewBox='0 0 780 362'")
-    b = body.index("</svg>", a) + len("</svg>")
-    body = body[:a] + _svg_tr(body[a:b]) + body[b:]
     # the countries' names in every language (an ad hoc-only country has the map's name)
     i18n.register_countries((iso, cd.get("name")) for iso, cd in countries.items())
     i18n.register_countries((iso, w.get("n")) for iso, w in wdata.items())
@@ -1655,15 +1734,6 @@ window.YEARS = {json.dumps({"first": YEAR_FIRST, "now": TODAY.year, "today": TOD
 LANDING_CSS = r"""
 :root { --ocha:#1a6bb5; --ink:#222; --muted:#777; --line:#e3e6ea; }
 .hero { text-align:left; padding:6px 0 2px; }
-.statushelp { margin-top:14px; background:#fff; border:1px solid #e6eaef; border-radius:12px; padding:8px 16px; }
-.statushelp summary { cursor:pointer; color:var(--ocha); font-size:13px; }
-.sh-grid { overflow-x:auto; padding:8px 0 4px; } .sh-svg { width:100%; max-width:820px; height:auto; display:block; font-family:-apple-system,'Segoe UI',Roboto,sans-serif; }
-.sh-h { font-size:12px; font-weight:700; fill:#0f2540; } .sh-note { font-size:10.5px; fill:#475569; }
-.sh-box rect { fill:#f1f5f9; stroke:#cbd5e1; } .sh-box text { font-size:11px; fill:#1e293b; text-anchor:middle; font-weight:600; }
-.sh-box.sh-on rect { fill:#dbeafe; stroke:#2171b5; } .sh-box.sh-dev rect { fill:#e8f1f8; stroke:#9ecae1; }
-.sh-box.sh-ev rect { fill:#fef3c7; stroke:#f59e0b; } .sh-box.sh-off rect { fill:#f1f5f9; stroke:#94a3b8; }
-.sh-box.sh-upd rect { fill:url(#shsplit); stroke:#2171b5; }
-.sh-arr { stroke:#64748b; stroke-width:1.4; marker-end:url(#arr); }
 .hero p { color:#556; max-width:860px; font-size:13.5px; }
 .tiles { display:flex; gap:14px; flex-wrap:wrap; margin:12px 0; }
 .tile { background:#fff; border:1px solid #e6eaef; border-radius:12px; padding:12px 18px; min-width:150px; box-shadow:0 1px 2px rgba(16,24,40,.05); }
@@ -1845,25 +1915,43 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
 @media (max-width:1199px){ .gtiles { grid-template-columns:repeat(3, minmax(0, 1fr)); } }
 @media (max-width:759px){ .gtiles { grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; }
   .gtiles .tile .k { font-size:13.5px; gap:5px; } .gtiles .tile .k svg { width:18px; height:18px; } .gtiles .tile .v { font-size:19px; } }
-/* the headline tiles and the what's-new box (9 Oct 2026 meeting): side by side on a wide screen,
-   the box below the tiles otherwise, its lines in columns — the tile grid keeps its own rules.
-   Its caption is built like the tiles' (.gcap), so the box lines up with the tiles */
-.herorow { display:flex; flex-direction:column; gap:10px; margin:12px 0; }
-.herorow .gtiles { margin:0; }
-.news { display:flex; flex-direction:column; gap:10px; min-width:0; }
-.news-h { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#64748b; margin:-2px 0 -6px 2px; }
+/* tile captions (owner's review, 2026-10-27): a short lead line, bullet lines, and the notes in a
+   popover on hover, focus or tap; an 'i' in the tile's name says there is one */
+.gtiles .tile { position:relative; }
+.gtiles .tile .l ul.tb { margin:2px 0 0; padding:0 0 0 15px; } .gtiles .tile .l ul.tb li { margin:0; }
+.tmark { color:#b45309; font-weight:700; margin-left:2px; }
+.gtiles .tile.hasnote { cursor:help; }
+.gtiles .tile.hasnote .k::after { content:'i'; display:inline-grid; place-items:center; width:13px; height:13px; border-radius:50%; margin-left:auto;
+  font:700 9.5px/1 Georgia,serif; color:#fff; background:#94a3b8; flex:0 0 auto; }
+.gtiles .tile:focus { outline:none; } .gtiles .tile:focus-visible { outline:2px solid var(--ocha); outline-offset:2px; }
+.tnote { display:none; position:absolute; left:0; right:0; top:calc(100% + 4px); z-index:8; background:rgba(15,37,64,.95); color:#fff;
+  font-size:11.5px; font-weight:400; line-height:1.4; padding:7px 10px; border-radius:6px; box-shadow:0 4px 12px -4px rgba(0,0,0,.35); }
+.gtiles .tile.hasnote:hover .tnote, .gtiles .tile.hasnote:focus .tnote { display:block; }
+/* what's new (9 Oct 2026 meeting; owner's review 2026-10-27): a full-width strip between the tiles
+   and the map — the last 90 days in three columns of 30, each scrolling past about six lines */
+.news { margin:2px 0 14px; }
+.news-h { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#64748b; margin:0 0 4px 2px; }
 .news-h b { color:#b3261e; }
-.news-l { list-style:none; margin:0; padding:8px 14px; background:#fff; border:1px solid #e6eaef; border-radius:12px; box-shadow:0 1px 2px rgba(16,24,40,.05);
-  columns:250px; column-gap:22px; font-size:12px; line-height:1.35; }
-.news-l li { break-inside:avoid; padding:2px 0; }
+.news-cols { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); background:#fff; border:1px solid #e6eaef; border-radius:12px; box-shadow:0 1px 2px rgba(16,24,40,.05); }
+.news-col { padding:8px 14px 10px; min-width:0; } .news-col + .news-col { border-left:1px solid #e6eaef; }
+.news-ch { font-size:11.5px; font-weight:700; color:#0f2540; margin-bottom:3px; }
+.news-l { list-style:none; margin:0; padding:0; font-size:12px; line-height:1.35; max-height:122px; overflow-y:auto; }
+.news-l li { padding:2px 0; }
 .news-l button { background:none; border:0; padding:0; font:inherit; color:#334155; text-align:left; cursor:pointer; }
 .news-l button:hover, .news-l button:focus-visible { color:var(--ocha); text-decoration:underline; }
-.news-l .nd { color:#b3261e; font-weight:650; margin-right:2px; }
+.news-l .nd { color:#475569; font-weight:650; margin-right:2px; } .news-col:first-child .nd { color:#b3261e; }
 .news-0 { color:#64748b; }
-@media (min-width:1400px){
-  .herorow { flex-direction:row; align-items:stretch; } .herorow .gtiles { flex:1 1 auto; min-width:0; }
-  /* the box takes the tiles' height; a long list scrolls (height:0 keeps it from growing the row) */
-  .news { flex:0 0 260px; } .news-l { columns:auto; flex:1 1 auto; height:0; overflow-y:auto; } }
+@media (max-width:759px){ .news-cols { grid-template-columns:1fr; } .news-col + .news-col { border-left:0; border-top:1px solid #e6eaef; } }
+/* the legend's definitions (they replace the status diagram, 2026-10-27) */
+.layerctl .lrow { display:flex; align-items:center; gap:2px; }
+.maplegend .info::after { left:0; transform:none; }
+.hasdef { position:relative; cursor:help; }
+.hasdef:focus { outline:none; } .hasdef:focus-visible { outline:2px solid var(--ocha); outline-offset:1px; border-radius:3px; }
+.hasdef::after { content:attr(data-tip); position:absolute; left:0; bottom:calc(100% + 6px); width:max-content; max-width:240px; background:rgba(15,37,64,.95);
+  color:#fff; font-size:11.5px; font-weight:400; line-height:1.35; padding:6px 9px; border-radius:6px; white-space:normal; text-align:left;
+  box-shadow:0 4px 12px -4px rgba(0,0,0,.35); display:none; z-index:6; }
+.hasdef:hover::after, .hasdef:focus::after { display:block; }
+.sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; }
 .gtiles.global { opacity:.72; } .gtiles.global .tile { background:#f6f8fa; border-style:dashed; box-shadow:none; }
 .gtiles.global .tile .v { font-size:18px; color:#475569; } .gtiles.global .tile .k { color:#475569; } .gtiles.global .tile .k svg { stroke:#64748b; } .gtiles.global .gcap { color:#b45309; font-weight:700; }
 .ctiles { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin:8px 0 4px; }
@@ -1882,10 +1970,8 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
 .layerctl label { display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap; }
 .layerctl input { margin:0; accent-color:#2171b5; }
 .layerctl .cnt { color:#64748b; }
-.maplegend .dot-hollow, .sh-layers .dot-hollow { background:#fff !important; border:2.5px solid #2a9d8f; box-sizing:border-box; }
+.maplegend .dot-hollow { background:#fff !important; border:2.5px solid #2a9d8f; box-sizing:border-box; }
 .maphelp { font-size:13px; color:#334155; line-height:1.55; margin:10px 2px 6px; max-width:980px; }
-.sh-layers { font-size:12px; color:#334155; line-height:1.6; margin:6px 0 4px; }
-.sh-layers .dot { display:inline-block; width:11px; height:11px; border-radius:50%; margin:0 4px 0 6px; vertical-align:-1px; }
 /* technical support: a hollow teal pin (the glyph takes the teal too) */
 .iconbox.tech { background:#fff !important; border:2px solid #2a9d8f; }
 .iconbox.tech svg.hz [fill='#fff'] { fill:#2a9d8f; } .iconbox.tech svg.hz [stroke='#fff'] { stroke:#2a9d8f; }
@@ -2014,11 +2100,14 @@ function flowFigures(fs, LY){
   const sum = (xs, k) => xs.reduce((t, x) => t + (x[k] || 0), 0);
   // people reached: CERF allocations only (the mirror has no figure for the pooled funds); an
   // allocation drawn by two activations is counted once, on the first (the others: shared)
-  const cerf = rows.filter(x => x.fund === 'cerf' && !x.shared), rep = cerf.filter(x => x.reached != null);
+  // where CERF has no figure yet, the allocation's planned people stand in (the estimate)
+  const cerf = rows.filter(x => x.fund === 'cerf' && !x.shared), rep = cerf.filter(x => x.reached != null),
+        tgt = cerf.filter(x => x.reached == null && x.planned);
   return { n: acts.length, nAd: acts.filter(a => a.type === 'adhoc_aa').length,
            usd: sum(rows, 'usd'), usdCerf: sum(rows.filter(x => x.fund === 'cerf'), 'usd'),
            noUsd: acts.filter(a => !(a.funding || []).some(x => x.usd || x.shared)).length,
-           reached: sum(rep, 'reached'), nRep: rep.length, nCerf: cerf.length, nInterim: rep.filter(x => x.interim).length };
+           reached: sum(rep, 'reached'), nRep: rep.length, nCerf: cerf.length, nInterim: rep.filter(x => x.interim).length,
+           targeted: sum(tgt, 'planned'), nTgt: tgt.length };
 }
 // what the flow figures count under the layers shown, in words
 function flowWhat(F){ return F.nAd === 0 ? 'framework activations' : F.nAd === F.n ? 'ad hoc allocations' : 'framework activations and ad hoc allocations'; }
@@ -2041,10 +2130,11 @@ function dayOf(s){ s = String(s || ''); if(!/^\d{4}-\d{2}/.test(s)) return null;
   return [Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, full ? +s.slice(8, 10) : 1), !full]; }
 function actDate(a){ const d = String(a.date || ''), k = String(a.kb_date || '');
   return d.length === 7 && k.length === 10 && k.startsWith(d) ? k : d; }   // only a month-only date is sharpened
-// within the last RECENT_DAYS days of the reader's today (a date still to come is not)
-function inWindow(s){ const d = dayOf(s); if(!d) return false;
-  const n = new Date(), age = (Date.UTC(n.getFullYear(), n.getMonth(), n.getDate()) - d[0]) / 864e5;
-  return age >= 0 && age <= RECENT_DAYS; }
+// a partial ISO date's age in days, by the reader's calendar; null when too coarse
+function ageOf(s){ const d = dayOf(s); if(!d) return null;
+  const n = new Date(); return (Date.UTC(n.getFullYear(), n.getMonth(), n.getDate()) - d[0]) / 864e5; }
+// within the last `days` days of the reader's today (a date still to come is not)
+function inWindow(s, days = RECENT_DAYS){ const a = ageOf(s); return a != null && a >= 0 && a <= days; }
 const isRecent = a => inWindow(actDate(a));
 // '15 Oct' in the page's language; a month-only date shows the month alone ('Oct')
 function shortDate(s){ const d = dayOf(s); if(!d) return String(s || '');
@@ -2119,7 +2209,7 @@ function pinStyle(f){ const l = visLayer(f) || f.layer;
   return {bg: LAYER_COLOR[l], cls: l}; }
 function badge(st, label){ st = st || 'development';
   const cls = st==='active' ? 'endorsed' : st==='updating' ? 'updating' : st==='retired' ? 'retired' : st==='adhoc' ? 'adhoc' : st==='pipeline' ? 'pipeline' : 'development';
-  return `<span class='badge b-${cls}'>${esc(tr8(label || KBLABEL[st] || st.replace(/_/g,' ')))}</span>`; }
+  return `<span class='badge b-${cls}'>${esc(tr8(label || KBLABEL[st] || 'not recorded'))}</span>`; }   // never the code
 function verBadge(st){ st=st||''; const m = {endorsed:'endorsed', superseded:'superseded', development:'development', 'pre-development':'pre-development', retired:'retired'};
   const lbl = {development:'in development', 'pre-development':'pre-development'}[st] || st || '?';
   return `<span class='badge b-${m[st]||'retired'}'>${esc(tr8(lbl))}</span>`; }
@@ -2357,7 +2447,19 @@ function drawAdmin(iso, fade){
       `<span class='sq' style='background:${t.color}'></span>${esc(t.hzl)}${t.label?` — ${esc(t.label)}`:''}${t.rest?' ' + esc(tr8('(whole country)')):''}<br>`).join('');
 }
 
-// ---------- world legend (KB style)
+// ---------- world legend (KB style). Each status and layer carries a one-sentence definition (owner,
+// 2026-10-27: they replace the status diagram), shown on hover, focus or tap like the tiles' notes
+// and read out by screen readers (a hidden copy in the entry; the layer rows' 'i' is a role=note)
+const LDEF = {
+  active: () => tr8('The most recent version is endorsed, still valid and has not fully triggered (a partial trigger of independent windows keeps it active).'),
+  updating: () => tr8('An endorsed framework whose most recent version fully triggered or reached the end of its validity, or whose next version is already in development: the framework stands, a new version is coming.'),
+  development: () => tr8('No endorsed version yet: the framework is being built for the first time.'),
+  framework: () => tr8('Every framework whose status is active, being updated or in development.'),
+  adhoc: () => tr8('Countries and hazards that received ad hoc anticipatory-action money without a framework version.'),
+  retired: () => tr8("Frameworks flagged retired, drawn in grey so past coverage can be compared with today's."),
+  tech: () => tr8('Countries where OCHA supported the framework technically, without a funding commitment, whatever its status.')};
+const defSpan = (k, inner) => `<span class='hasdef' tabindex='0' data-tip='${esc(LDEF[k]())}'>${inner}<span class='sr'>: ${esc(LDEF[k]())}</span></span>`;
+const defInfo = k => `<span class='info' tabindex='0' role='note' aria-label='${esc(LDEF[k]())}' data-tip='${esc(LDEF[k]())}'>i</span>`;
 function worldLegend(){
   const all = Object.values(L).flatMap(c=>c.fws), shown = all.filter(f=>visLayer(f));
   const onLayer = k => all.filter(f=>f.layers.includes(k));
@@ -2367,11 +2469,12 @@ function worldLegend(){
   const swatch = { framework: `<span class='dot' style='background:${COLOR.active}'></span>`, adhoc: `<span class='dot' style='background:${LAYER_COLOR.adhoc}'></span>`,
                    retired: `<span class='dot' style='background:${LAYER_COLOR.retired}'></span>`, tech: `<span class='dot dot-hollow'></span>` };
   const lab = k => k === 'framework' && pastY() ? tr8('Frameworks at the end of {0}', YEAR) : k === 'adhoc' && YEAR != null ? tr8('Ad hoc allocations in {0}', YEAR) : tr8(LAYER_LABEL[k]);
-  const row = k => `<label><input type='checkbox' ${LAYERS[k]?'checked':''} onchange='setLayer("${k}", this.checked)'>${swatch[k]}${lab(k)} <span class='cnt'>${onLayer(k).length}</span></label>`;
+  // the definition's 'i' sits outside the <label>: a tap on it must not switch the layer
+  const row = k => `<div class='lrow'><label><input type='checkbox' ${LAYERS[k]?'checked':''} onchange='setLayer("${k}", this.checked)'>${swatch[k]}${lab(k)} <span class='cnt'>${onLayer(k).length}</span></label>${defInfo(k)}</div>`;
   const st = `<div class='lsub${LAYERS.framework?'':' off'}'>`
-    + `<span><span class='dot' style='background:${COLOR.active}'></span>${esc(tr8('Active'))} <span class='cnt'>${n('active')}</span></span>`
-    + `<span><span class='dot' style='background:${SPLIT}'></span>${esc(tr8('Being updated'))} <span class='cnt'>${n('updating')}</span></span>`
-    + `<span><span class='dot' style='background:${COLOR.development}'></span>${esc(tr8('In development'))} <span class='cnt'>${n('development')}</span></span></div>`;
+    + defSpan('active', `<span class='dot' style='background:${COLOR.active}'></span>${esc(tr8('Active'))} <span class='cnt'>${n('active')}</span>`)
+    + defSpan('updating', `<span class='dot' style='background:${SPLIT}'></span>${esc(tr8('Being updated'))} <span class='cnt'>${n('updating')}</span>`)
+    + defSpan('development', `<span class='dot' style='background:${COLOR.development}'></span>${esc(tr8('In development'))} <span class='cnt'>${n('development')}</span>`) + `</div>`;
   legend.innerHTML = `<div class='layerctl' role='group' aria-label='${esc(tr8('Map layers'))}'>` + row('framework') + st + row('adhoc') + row('retired') + row('tech') + `</div>`
     + `<div class='lsub'><span><span class='dot' style='background:#e3322d'></span>${esc(YEAR != null ? tr8('Activations in {0}', YEAR) : tr8('Activations'))} <span class='cnt'>${nAct}</span></span>`
     + (pastY() ? '' : `<span><span class='dot' style='background:#fff;border:3px solid #e3322d;box-sizing:border-box'></span>${esc(tr8('Activated in the last {0} days', RECENT_DAYS))} <span class='cnt'>${nRec}</span></span>`
@@ -2395,108 +2498,134 @@ function applyLayers(){
   if(state.iso){ renderSide(); if(GEO[state.iso]) drawAdmin(state.iso, false); }
   else { buildCallouts(); runLayout(); if(isMobile()) renderWorldList(); buildOverview(); }
 }
-// ---------- what's new (team meeting, 9 Oct 2026): what changed in the last RECENT_DAYS days by
-// the reader's clock, newest first — framework activations, versions endorsed (the version's
-// valid_from: the records carry no separate endorsement date) and versions that went into
-// development (development_since; its nightly stamp's first run, 5 Oct 2026, dated every version
-// then in development, so a version listed as such must still be in development). It is about
+// ---------- what's new (team meeting, 9 Oct 2026; a 90-day feed in three columns of 30 days since the
+// owner's review, 2026-10-27): what changed by the reader's clock, newest first — framework
+// activations, versions endorsed (the version's valid_from: the records carry no separate
+// endorsement date) and versions that went into development (development_since; its nightly
+// stamp's first run, 5 Oct 2026, dated every version then in development, so a version listed as
+// such must still be in development). Dates follow the ring's rule (dayOf / actDate). It is about
 // today, so it reads the live records whatever year the map shows; it follows the layer toggles
 // as the tiles do: a framework's own items while the current-frameworks layer is on, ad hoc
 // allocations while the ad hoc layer is on (a replaced framework's activations are never news).
+const NEWS_DAYS = 90;
 function newsItems(){
   const out = [];
   Object.entries(L).forEach(([iso, c]) => c.fws.forEach(f => {
     const cur = LAYERS.framework && (LIVE.get(f) || f).layers.includes('framework');
     const who = `${tr8(c.name)} ${tr8(f.hz_label).toLowerCase()}`, add = (d, what) => out.push({d, iso, hz: f.hazard, who, what});
-    f.activations.forEach(a => { if(a.old || !isRecent(a)) return;
+    f.activations.forEach(a => { if(a.old || !inWindow(actDate(a), NEWS_DAYS)) return;
       if(a.type === 'framework_aa' && cur) add(actDate(a), '{0} activated');
       else if(a.type === 'adhoc_aa' && LAYERS.adhoc) add(actDate(a), '{0}: ad hoc allocation'); });
     if(!cur) return;
     f.versions.forEach((v, i) => { const again = f.versions.slice(0, i).some(x => x.status === 'endorsed');
-      if(v.status === 'endorsed' && inWindow(v.valid_from)) add(v.valid_from, again ? '{0}: new version endorsed' : '{0} endorsed');
-      if(['development', 'pre-development'].includes(v.status) && inWindow(v.dev_since))
+      if(v.status === 'endorsed' && inWindow(v.valid_from, NEWS_DAYS)) add(v.valid_from, again ? '{0}: new version endorsed' : '{0} endorsed');
+      if(['development', 'pre-development'].includes(v.status) && inWindow(v.dev_since, NEWS_DAYS))
         add(v.dev_since, again ? '{0}: new version in development' : '{0} entered development'); });
   }));
   return out.sort((a, b) => dayOf(b.d)[0] - dayOf(a.d)[0] || a.who.localeCompare(b.who));
 }
+// three columns: the last 30 days (the red ring's window), 30–60 and 60–90 days ago
 function buildNews(){
-  const ul = document.getElementById('newsl'); if(!ul) return;
-  const xs = newsItems();
-  ul.innerHTML = xs.length ? xs.map(x => `<li><button type='button' data-iso='${x.iso}' data-hz='${esc(x.hz)}'>`
+  const cols = [0, 1, 2].map(i => document.getElementById('news' + i)); if(!cols[0]) return;
+  const B = [[], [], []];
+  newsItems().forEach(x => { const a = ageOf(x.d); B[a <= RECENT_DAYS ? 0 : a <= 2 * RECENT_DAYS ? 1 : 2].push(x); });
+  cols.forEach((ul, i) => { ul.innerHTML = B[i].length ? B[i].map(x => `<li><button type='button' data-iso='${x.iso}' data-hz='${esc(x.hz)}'>`
       + `<span class='nd'>${esc(shortDate(x.d))}</span> ${esc(tr8(x.what, x.who))}</button></li>`).join('')
-    : `<li class='news-0'>${esc(tr8('Nothing new in the last {0} days on the layers shown.', RECENT_DAYS))}</li>`;
+    : `<li class='news-0'>${esc(tr8('Nothing new on the layers shown.'))}</li>`; });
 }
-(function(){ const ul = document.getElementById('newsl'); if(!ul) return;
-  ul.addEventListener('click', e => { const b = e.target.closest('button[data-iso]'); if(!b) return;
+(function(){ const box = document.getElementById('news'); if(!box) return;
+  box.addEventListener('click', e => { const b = e.target.closest('button[data-iso]'); if(!b) return;
     if(pastY()) setYear(YEARS.now);   // the news is today's: a past year may not have the framework
     // an ad hoc allocation of last December read in January: only all years still shows that pair
     if(!c_has(b.dataset.iso, b.dataset.hz)) setYear('');
     selectCountry(b.dataset.iso, b.dataset.hz); }); })();
+// a split by fund as bullet lines (Pre-arranged, Released): a fund under $50k is not named — funds() in Python
+function fundBullets(cerf, pooled, other = 0){
+  return [cerf >= 5e4 && `CERF ${money(cerf)}`, pooled >= 5e4 && `${tr8('Country and Regional Funds')} ${money(pooled)}`,
+          other >= 5e4 && `${tr8('not split by fund')} ${money(other)}`].filter(Boolean); }
 // headline tiles: recomputed from the pairs the map currently shows (see tile_figures in Python)
 function updateTiles(){
   const shown = Object.values(L).flatMap(c=>c.fws).filter(f=>visLayer(f));
   const fw = shown.filter(f=>LAYERS.framework && f.layers.includes('framework'));
   const n = k => fw.filter(f=>f.disp===k).length;
-  // the label is text; `drv` appends the 'derived' marker (past years: reconstructed figures)
-  const set = (id, v, l, drv) => { const el = document.getElementById(id); if(!el) return; el.querySelector('.v').textContent = v;
-    el.querySelector('.l').innerHTML = esc(l) + (drv ? DRV(drv === true ? null : drv) : ''); };
+  // a tile: its figure, a short lead line (+ the 'derived' marker; '*' when a past year's total
+  // leaves out frameworks with no figure), bullet lines, and its notes in a popover shown on hover,
+  // focus or tap (owner's review, 2026-10-27: captions short, caveats in the note). The static
+  // HTML is the same markup (tile() in build_landing).
+  const set = (id, v, lead, o = {}) => { const el = document.getElementById(id); if(!el) return;
+    el.querySelector('.v').textContent = v;
+    el.querySelector('.l').innerHTML = esc(lead) + (o.mark ? "<span class='tmark'>*</span>" : '') + (o.drv ? DRV(o.drv === true ? null : o.drv) : '')
+      + (o.bul && o.bul.length ? `<ul class='tb'>${o.bul.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '');
+    const note = (o.note || []).filter(Boolean).join(' '), nb = el.querySelector('.tnote');
+    if(nb) nb.textContent = note;
+    el.classList.toggle('hasnote', !!note);
+    if(note){ el.tabIndex = 0; el.setAttribute('aria-describedby', id + '-n'); }
+    else { el.removeAttribute('tabindex'); el.removeAttribute('aria-describedby'); } };
   const past = pastY();
-  set('t-fw', fw.length, tr8(past ? 'frameworks on the map at the end of {3} · {0} active · {1} being updated · {2} in development'
-                              : YEAR != null ? 'frameworks on the map today · {0} active · {1} being updated · {2} in development'
-                              : 'frameworks on the map · {0} active · {1} being updated · {2} in development',
-                              n('active'), n('updating'), n('development'), YEAR),
-      past && tr8('Which frameworks existed at 31 December, and their status, are reconstructed from the version dates and status history; a framework whose validity ended during the year still counts as active for that year'));
+  set('t-fw', fw.length, past ? tr8('frameworks on the map at the end of {0}', YEAR) : YEAR != null ? tr8('frameworks on the map today') : tr8('frameworks on the map'),
+      {bul: [tr8('{0} active', n('active')), tr8('{0} being updated', n('updating')), tr8('{0} in development', n('development'))],
+       drv: past && tr8('Which frameworks existed at 31 December, and their status, are reconstructed from the version dates and status history; a framework whose validity ended during the year still counts as active for that year')});
   const noEnv = []; Object.values(L).forEach(c => c.fws.forEach(f => { if(fw.includes(f) && !f.pre_now) noEnv.push(`${tr8(c.name)} ${tr8(f.hz_label).toLowerCase()}`); }));
   let pre = fw.reduce((s,f)=>s+(f.pre_now||0),0), preX = 0;
   if(past){   // pooled-fund rows of no single framework count with the country's frameworks shown
     Object.entries(L).forEach(([iso, c]) => { const x = (c.pre_x || {})[String(YEAR)]; if(x && c.fws.some(f => fw.includes(f))) preX += x[0]; }); pre += preX; }
-  const ser = (YEARS.series || {})[String(YEAR)];
-  set('t-pre', '$' + Math.round(pre/1e6) + 'M', past
-      ? tr8('pre-arranged in {0}, frameworks shown', YEAR)
-        + (noEnv.length ? ' · ' + tr8('{0} with no figure for {1}', noEnv.length, YEAR) : '')
-      : tr8('pre-arranged now (CERF and Country and Regional Funds), all current frameworks incl. in development')
-        + (noEnv.length ? ' · ' + tr8('{0} without an envelope recorded yet: {1}', noEnv.length, noEnv.join(', ')) : ''),
-      past && fw.some(f => f.pre_drv) && tr8("Part of this year's figure is inferred from the envelope of the version valid during the year (no reported figure for that framework-year)"));
-  const tp = document.getElementById('t-pre'); if(tp) tp.title = !past ? '' : [
-    tr8('A stock for {0}: each framework valid at any time in the year, counted once; never summed over years.', YEAR),
-    preX ? tr8('Includes {0} of pooled-fund allocations not tied to one hazard.', money(preX)) : '',
-    ser != null && Math.abs(ser - pre) >= 5e5 ? tr8("The funding page's {0} figure ({1}) also counts AA-tagged pooled-fund allocations in countries without a framework shown here.", YEAR, money(ser)) : '',
-    noEnv.length ? tr8('No figure for {0}: {1}.', YEAR, noEnv.join(', ')) : ''].filter(Boolean).join(' ');
-  const cov = fw.reduce((s,f)=>s+(f.covered||0),0);
+  const ser = (YEARS.series || {})[String(YEAR)], part = k => fw.reduce((s, f) => s + ((f.pre_parts || {})[k] || 0), 0);
+  // a past year's total leaves out the frameworks with no figure for it: marked '*'; today a
+  // framework without an envelope simply has none yet (owner: no note)
+  set('t-pre', '$' + Math.round(pre/1e6) + 'M', past ? tr8('pre-arranged in {0}', YEAR) : tr8('pre-arranged now'),
+      {bul: past ? [] : fundBullets(part('cerf'), part('pooled'), part('all')),   // a past year has no split by fund
+       mark: past && noEnv.length > 0,
+       drv: past && fw.some(f => f.pre_drv) && tr8("Part of this year's figure is inferred from the envelope of the version valid during the year (no reported figure for that framework-year)"),
+       note: !past ? [tr8('All current frameworks shown, including those in development.')] : [
+         noEnv.length ? '* ' + tr8('No figure for {0}: {1}.', YEAR, noEnv.join(', ')) : '',
+         tr8('A stock for {0}: each framework valid at any time in the year, counted once; never summed over years.', YEAR),
+         preX ? tr8('Includes {0} of pooled-fund allocations not tied to one hazard.', money(preX)) : '',
+         ser != null && Math.abs(ser - pre) >= 5e5 ? tr8("The funding page's {0} figure ({1}) also counts AA-tagged pooled-fund allocations in countries without a framework shown here.", YEAR, money(ser)) : '']});
+  const cov = fw.reduce((s,f)=>s+(f.covered||0),0), nCov = fw.filter(f=>f.covered).length;
+  const hasFig = tr8('{0} of the {1} frameworks shown have a figure.', nCov, fw.length);
   set('t-cov', (past && !cov) || !fw.length ? '—' : (cov/1e6).toFixed(1) + 'M', past
-      ? (cov ? tr8('people covered at the end of {0}, frameworks shown (latest figure reported by then)', YEAR) : tr8('people covered: no figure recorded by the end of {0}', YEAR))
-      : fw.length ? tr8('people covered now by the frameworks shown ({0} of {1} have a figure)', fw.filter(f=>f.covered).length, fw.length) : tr8('people covered now: no framework shown'));
+      ? (cov ? tr8('people covered at the end of {0}', YEAR) : tr8('people covered: no figure recorded by the end of {0}', YEAR))
+      : fw.length ? tr8('people covered now by the frameworks shown') : tr8('people covered now: no framework shown'),
+      {mark: past && cov > 0 && nCov < fw.length,
+       note: !fw.length ? [] : !past ? [hasFig] : !cov ? [] : [(nCov < fw.length ? '* ' : '') + hasFig,
+             tr8('Each framework counts with the latest figure it reported by the end of {0}.', YEAR)]});
   // the flows: every activation to date (or of the year shown) on the layers shown
   const F = flowFigures(shown), what = flowWhat(F);
-  // what the layers switched off would add: named in each label, so no figure is taken for the whole
+  // what the layers switched off would add: named in each tile's note, so no figure is taken for the whole
   const all = Object.values(L).flatMap(c=>c.fws);
   const offs = [['adhoc','ad hoc allocations'],['retired','retired frameworks'],['framework','current frameworks']]
     .filter(([k]) => !LAYERS[k]).map(([k, lab]) => [lab, flowFigures(all, {[k]: true})]);
-  const notShown = fn => { const xs = offs.map(([lab, G]) => fn(lab, G)).filter(Boolean); return xs.length ? ' · ' + tr8('not shown: {0}', xs.join(', ')) : ''; };
-  set('t-act', F.n, (!F.n ? yr('no activation to date on the layers shown', 'no activation in {0} on the layers shown')
+  const notShown = fn => { const xs = offs.map(([lab, G]) => fn(lab, G)).filter(Boolean); return xs.length ? tr8('Not shown: {0}.', xs.join(', ')) : ''; };
+  set('t-act', F.n, !F.n ? yr('no activation to date on the layers shown', 'no activation in {0} on the layers shown')
       : F.nAd && F.nAd < F.n ? tr8(YEAR != null ? 'activations in {2}: {0} framework activations, {1} ad hoc allocations' : 'activations to date: {0} framework activations, {1} ad hoc allocations', F.n - F.nAd, F.nAd, YEAR)
-      : yr(...WHAT_WHEN[what]))
-      + notShown((lab, G) => G.n ? (G.nAd ? tr8(G.n === 1 ? '{0} ad hoc allocation' : '{0} ad hoc allocations', G.n)
-                                          : tr8(lab === 'retired frameworks' ? '{0} on retired frameworks' : '{0} on current frameworks', G.n)) : null));
-  const pooled = F.usd - F.usdCerf, funds = pooled < 5e4 ? 'CERF' : F.usdCerf < 5e4 ? tr8('Country and Regional Funds')
-      : `CERF ${money(F.usdCerf)} · ${tr8('Country and Regional Funds')} ${money(pooled)}`;
-  set('t-rel', F.n ? money(F.usd) : '—', (!F.n ? yr('nothing released to date on the layers shown', 'nothing released in {0} on the layers shown')
-      : tr8(YEAR != null ? 'released in {2} on {0} — {1}' : 'released to date on {0} — {1}', tr8(what), funds, YEAR))
-      + notShown((lab, G) => G.usd >= 5e4 ? `${tr8(lab)} ${money(G.usd)}` : null));
-  const tr = document.getElementById('t-rel'); if(tr) tr.title = tr8(F.nAd
-      ? 'Money released when a framework activated or allocated ad hoc for anticipatory action, from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.'
-      : 'Money released when a framework activated, from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.')
-    + (F.noUsd ? ' ' + tr8('{0} of the {1} have no amount recorded.', F.noUsd, F.n) : '');
-  set('t-reach', F.nRep ? people(F.reached) : '—',
-      (!F.nCerf ? yr('people reached: no CERF allocation on the layers shown', 'people reached: no CERF allocation in {0} on the layers shown')
-      : !F.nRep ? (F.nCerf === 1 ? yr('people reached to date: no report yet for the CERF allocation', 'people reached with the {0} releases: no report yet for the CERF allocation')
-                                 : tr8(YEAR != null ? 'people reached with the {1} releases: no report yet for the {0} CERF allocations' : 'people reached to date: no report yet for the {0} CERF allocations', F.nCerf, YEAR))
-      : tr8(YEAR != null ? 'people reached with the {2} releases — CERF allocations, as reported so far ({0} of {1} have a figure)' : 'people reached to date — CERF allocations, as reported so far ({0} of {1} have a figure)', F.nRep, F.nCerf, YEAR))
-      + notShown((lab, G) => G.reached ? `${tr8(lab)} ${people(G.reached)}` : null));
-  const tp2 = document.getElementById('t-reach'); if(tp2) tp2.title = tr8("Summed over CERF allocations: CERF's own de-duplicated figure for each one, from its final report")
-    + (F.nInterim ? tr8(', or the sum over its projects where the allocation has none yet ({0} interim)', F.nInterim) : '')
-    + tr8('. A person reached under two allocations counts twice. Reports come about nine months after an allocation, so recent years are incomplete.')
-    + ' ' + tr8('Country and Regional Funds report no figure here. Not people covered: that is what the plans cover now.');
+      : yr(...WHAT_WHEN[what]),
+      {note: [notShown((lab, G) => G.n ? (G.nAd ? tr8(G.n === 1 ? '{0} ad hoc allocation' : '{0} ad hoc allocations', G.n)
+                                               : tr8(lab === 'retired frameworks' ? '{0} on retired frameworks' : '{0} on current frameworks', G.n)) : null)]});
+  set('t-rel', F.n ? money(F.usd) : '—', !F.n ? yr('nothing released to date on the layers shown', 'nothing released in {0} on the layers shown')
+      : tr8(YEAR != null ? 'released in {1} on {0}' : 'released to date on {0}', tr8(what), YEAR),
+      {bul: F.n ? fundBullets(F.usdCerf, F.usd - F.usdCerf) : [],
+       note: [tr8(F.nAd
+         ? 'Money released when a framework activated or allocated ad hoc for anticipatory action, from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.'
+         : 'Money released when a framework activated, from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.'),
+         F.noUsd ? tr8('{0} of the {1} have no amount recorded.', F.noUsd, F.n) : '',
+         notShown((lab, G) => G.usd >= 5e4 ? `${tr8(lab)} ${money(G.usd)}` : null)]});
+  // people reached: CERF's figures, and where it has none yet the allocation's planned people —
+  // an estimate, marked '~' (owner's request, 2026-10-27)
+  const est = G => (G.nTgt ? '~' : '') + people(G.reached + G.targeted), nNone = F.nCerf - F.nRep - F.nTgt;
+  set('t-reach', F.nRep || F.nTgt ? est(F) : '—',
+      !F.nCerf ? yr('people reached: no CERF allocation on the layers shown', 'people reached: no CERF allocation in {0} on the layers shown')
+      : F.nTgt ? yr('people reached to date — CERF allocations, estimate', 'people reached with the {0} releases — CERF allocations, estimate')
+      : F.nRep ? yr('people reached to date — CERF allocations', 'people reached with the {0} releases — CERF allocations')
+      : F.nCerf === 1 ? yr('people reached to date: no report yet for the CERF allocation', 'people reached with the {0} releases: no report yet for the CERF allocation')
+      : tr8(YEAR != null ? 'people reached with the {1} releases: no report yet for the {0} CERF allocations' : 'people reached to date: no report yet for the {0} CERF allocations', F.nCerf, YEAR),
+      {note: [F.nTgt ? tr8('Estimate = {0} reported by CERF ({1} of {2} allocations) + {3} targeted where there is no report yet ({4} of {2}).', people(F.reached), F.nRep, F.nCerf, people(F.targeted), F.nTgt)
+                     : F.nRep ? tr8('{0} of the {1} CERF allocations have a figure.', F.nRep, F.nCerf) : '',
+              nNone ? tr8(nNone === 1 ? '{0} CERF allocation has neither a reported nor a targeted figure: left out.' : '{0} CERF allocations have neither a reported nor a targeted figure: left out.', nNone) : '',
+              tr8("Summed over CERF allocations: CERF's own de-duplicated figure for each one, from its final report")
+                + (F.nInterim ? tr8(', or the sum over its projects where the allocation has none yet ({0} interim)', F.nInterim) : '')
+                + tr8('. A person reached under two allocations counts twice. Reports come about nine months after an allocation, so recent years are incomplete.')
+                + ' ' + tr8('Country and Regional Funds report no figure here. Not people covered: that is what the plans cover now.'),
+              notShown((lab, G) => G.nRep || G.nTgt ? `${tr8(lab)} ${est(G)}` : null)]});
   const g = document.getElementById('gtiles'); if(g) g.classList.toggle('global', !!state.iso);
   const cap = document.getElementById('gcap'); if(cap) cap.textContent = (state.iso ? tr8('Global portfolio — not {0}: its own figures are in the panel', tr8(L[state.iso].name)) : tr8('Global portfolio — all layers currently shown on the map'))
     + (past ? ' · ' + tr8('as at 31 December {0}', YEAR) : YEAR != null ? ' · ' + tr8('{0}, as of today', YEAR) : '');
@@ -2762,10 +2891,10 @@ function renderSide(){
   }
   const f = c.fws.find(x=>x.hazard===state.hz); if(!f){ state.hz=null; return renderSide(); }
   if(!f.versions.length){
-    const st = esc((f.status||'').replace(/_/g,' '));
+    const st = f.status_label ? tr8(f.status_label) : '';   // the sheet's status in words, never its code
     const why = f.layer==='adhoc' ? esc(tr8('Ad hoc anticipatory-action allocations for this hazard — no framework behind them.'))
-              : f.layer==='tech' ? (f.status ? esc(tr8('OCHA technical support — no framework version in the registry yet (tracking sheets: {0}).', st)) : esc(tr8('OCHA technical support — no framework version in the registry yet.')))
-              : esc(tr8('No framework version in the registry yet — status comes from the tracking sheets ({0}).', st));
+              : f.layer==='tech' ? (st ? esc(tr8('OCHA technical support — no framework version in the registry yet (tracking sheets: {0}).', st)) : esc(tr8('OCHA technical support — no framework version in the registry yet.')))
+              : st ? esc(tr8('No framework version in the registry yet — status comes from the tracking sheets ({0}).', st)) : esc(tr8('No framework version in the registry yet.'));
     side.innerHTML = crumb + fwHeader(c, f) + countryTiles(c) + `<p class='muted'>${why}</p>` + adhocBlock(f) +
       learningBlock(f, null) + partnersBlock(c, f, null) + (f.page ? `<p><a href='${f.page}'>${esc(tr8('framework page →'))}</a></p>` : '');
     annotate(side, side);
@@ -2903,7 +3032,7 @@ function groupBy(rows, kf, vf){ const m = {}; rows.forEach(r=>{ const k = kf(r);
 function fwHeader(c, f){
   return `<h3 style='display:flex;align-items:center;gap:8px'>${iconHTML(f)}<span>${esc(tr8(c.name))} — ${esc(tr8(f.hz_label))}</span></h3>
    <div>${pastY() && !f.layers.length ? `<span class='badge b-retired'>${esc(tr8('no framework at the end of {0}', YEAR))}</span>` : badge(f.disp) + (pastY() ? DRV(statusNote(f).slice(3)) : '')}${f.tech?` <span class='badge b-tech'>${esc(tr8('OCHA technical support'))}</span>`:''}${actChip(f)} ${f.ring ? `<span class='small' style='color:#c8860a'>&bull; ${esc(tr8('in its monitoring season'))}</span>` : ''}
-   ${f.kb?` <span class='muted'>· KB <code>${f.kb}</code></span>`:''}${f.in_force && f.in_force!==f.current ? ` <span class='muted'>· ${esc(tr8('tracking view in force: {0}', f.in_force))}</span>` : ''}</div>`;
+   ${f.in_force && f.in_force!==f.current ? ` <span class='muted'>· ${esc(tr8('tracking view in force: {0}', f.in_force))}</span>` : ''}</div>`;
 }
 function versionBar(f, v, isCur){
   const opts = [...f.versions].reverse().map(x=>`<option value='${x.v}' ${x.v===v.v?'selected':''}>${x.v}${x.v===f.current?' ' + esc(pastY() ? tr8('(at the end of {0})', YEAR) : tr8('(latest)')):''} — ${esc(tr8(x.superseded?'superseded':(x.status||'?')))}</option>`).join('');
@@ -3038,7 +3167,7 @@ function actualBlock(f, v){
   return html + `<table class='mini acttbl'><colgroup><col style='width:22%'><col style='width:30%'><col style='width:22%'><col style='width:26%'></colgroup>
     <tr>${['date','window','funding','links'].map(h=>`<th>${esc(tr8(h))}</th>`).join('')}</tr>` + A.map(a => {
       const old = !!(v && a.version && a.version !== v.v && !String(a.version).startsWith(v.v) && !String(v.v).startsWith(a.version));
-      const tags = (a.type!=='framework_aa'?` <span class='badge b-retired'>${esc(tr8(a.type.replace(/_/g,' ')))}</span>`:'')
+      const tags = (a.type==='adhoc_aa'?` <span class='badge b-retired'>${esc(tr8('ad hoc allocation'))}</span>`:'')   // a type's label, never its code
         + (a.full===false?` <span class='badge b-development'>${esc(tr8('partial'))}</span>`:'')
         + (old?` <span class='vtag other' title='${esc(tr8('Fired under version {0}, an earlier version than the one shown ({1}); its triggers and budget may differ.', a.version, v.v))}'>v ${esc(a.version)}</span>`:'');
       return `<tr${old?" class='oldv'":''}><td>${esc(a.date)}${tags}</td><td>${a.window?esc(a.window):`<span class="muted">${esc(tr8('not recorded'))}</span>`}${a.people?`<div class='muted'>${esc(tr8('{0} people', num(a.people)))}</div>`:''}</td><td>${actMoney(a)||'<span class="muted">—</span>'}</td><td>${actLinks(a).join('<br>')||'<span class="muted">—</span>'}</td></tr>`;
@@ -3202,6 +3331,11 @@ function fwCSV(){
   a.download = `aa-frameworks-${YEAR == null ? YEARS.today : YEAR}.csv`; a.click(); URL.revokeObjectURL(a.href);
 }
 
+// tiles' notes and the legend's definitions: shown on hover or focus (CSS); a tap focuses the element
+// (touch screens have no hover; a tap elsewhere blurs it) and Escape closes it
+document.addEventListener('click', e => { const t = e.target.closest && e.target.closest('.tile.hasnote, .hasdef'); if(t && document.activeElement !== t) t.focus(); });
+document.addEventListener('keydown', e => { const a = document.activeElement;
+  if(e.key === 'Escape' && a && a.matches && a.matches('.tile.hasnote, .hasdef, .maplegend .info')) a.blur(); });
 // ---------- boot
 // deep links: #ISO/hazard/version, with the year as a '|2024' suffix, or a bare #2024; 'all'
 // for all years. No year (or one out of range): the current year, the page's default.
