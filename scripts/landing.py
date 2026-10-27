@@ -1518,6 +1518,7 @@ TILE_ICONS = {
     "people": "<circle cx='9' cy='8' r='3.2'/><path d='M3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5'/>"
               "<path d='M16 5.2a3 3 0 0 1 0 5.6M18 14.8c1.9.6 3 2.4 3 5.2'/>",
     "bolt": "<path d='M13 2 4.5 13.5H11L10 22l8.5-11.5H12z'/>",
+    "news": "<circle cx='12' cy='12' r='9'/><path d='M12 7v5l3.2 2'/>",
 }
 
 
@@ -1611,10 +1612,10 @@ def build_landing(page, d, e):
 
     def est(g):   # people reached, with the targeted stand-ins: '~' marks an estimate
         return ("~" if g["n_tgt"] else "") + _people(g["reached"] + g["targeted"])
-    ns_act = not_shown(ad["n_act"] and f"{ad['n_act']} ad hoc allocation{'s' if ad['n_act'] > 1 else ''}",
-                       ret["n_act"] and f"{ret['n_act']} on retired frameworks")
-    ns_rel = not_shown(ad["released"] >= 5e4 and f"ad hoc allocations {_money(ad['released'])}",
-                       ret["released"] >= 5e4 and f"retired frameworks {_money(ret['released'])}")
+    def usd(g):   # ' ($17M)' after a count of activations the layers switched off would add
+        return f" ({_money(g['released'])})" if g["released"] >= 5e4 else ""
+    ns_act = not_shown(ad["n_act"] and f"{ad['n_act']} ad hoc allocation{'s' if ad['n_act'] > 1 else ''}{usd(ad)}",
+                       ret["n_act"] and f"{ret['n_act']} on retired frameworks{usd(ret)}")
     ns_reach = not_shown((ad["n_rep"] or ad["n_tgt"]) and f"ad hoc allocations {est(ad)}",
                          (ret["n_rep"] or ret["n_tgt"]) and f"retired frameworks {est(ret)}")
 
@@ -1643,11 +1644,12 @@ def build_landing(page, d, e):
     # a tile: its figure, a short lead line, bullet lines, and its notes in a popover shown on
     # hover, focus or tap (owner's review, 2026-10-27: captions short, caveats on hover) — the
     # same markup updateTiles() writes (its set()); the script rewrites it in the reader's language
-    def tile(id_, icon, name, value, lead, bul=(), note=""):
+    def tile(id_, icon, name, value, lead, bul=(), note="", sub=""):
         ul = f"<ul class='tb'>{''.join(f'<li>{html_escape(x)}</li>' for x in bul)}</ul>" if bul else ""
+        sub = f"<div class='tsub'>{html_escape(sub)}</div>" if sub else ""
         attrs = f" tabindex='0' aria-describedby='{id_}-n'" if note else ""
         return (f"<div class='tile{' hasnote' if note else ''}' id='{id_}'{attrs}>{tile_key(icon, name)}"
-                f"<div class='v'>{value}</div><div class='l'>{html_escape(lead)}{ul}</div>"
+                f"<div class='v'>{value}</div><div class='l'>{html_escape(lead)}{sub}{ul}</div>"
                 f"<div class='tnote' id='{id_}-n' role='tooltip'>{html_escape(note)}</div></div>")
     tiles = "".join((
         tile("t-fw", "doc", "Frameworks", t["n_fw"], "frameworks on the map today",
@@ -1658,15 +1660,14 @@ def build_landing(page, d, e):
         tile("t-cov", "people", "People covered", _tofixed(t["covered"] / 1e6, 1) + "M" if t["n_fw"] else "—",
              "people covered now by the frameworks shown" if t["n_fw"] else "people covered now: no framework shown",
              note=f"{t['n_cov']} of the {t['n_fw']} frameworks shown have a figure." if t["n_fw"] else ""),
+        # activations and the money they released, in one tile (owner, 2026-10-27)
         tile("t-act", "bolt", "Activations", t["n_act"],
              f"framework activations in {Y}" if t["n_act"] else f"no activation in {Y} on the layers shown",
-             note=ns_act),
-        tile("t-rel", "money", "Released", _money(t["released"]) if t["n_act"] else "—",
-             f"released in {Y} on framework activations" if t["n_act"] else f"nothing released in {Y} on the layers shown",
              funds(t["released_cerf"], t["released"] - t["released_cerf"]) if t["n_act"] else [],
              " ".join(x for x in ("Money released when a framework activated, from the activation record: the Financing "
                                   "page gives the same figure for the same layers. Early action allocations are not counted.",
-                                  t["n_nousd"] and f"{t['n_nousd']} of the {t['n_act']} have no amount recorded.", ns_rel) if x)),
+                                  t["n_nousd"] and f"{t['n_nousd']} of the {t['n_act']} have no amount recorded.", ns_act) if x),
+             sub=f"{_money(t['released'])} released" if t["n_act"] else ""),
         tile("t-reach", "people", "Reached", est(t) if n_rep or n_tgt else "—",
              f"people reached: no CERF allocation in {Y} on the layers shown" if not n_cerf
              else f"people reached with the {Y} releases — CERF allocations, estimate" if n_tgt
@@ -1683,15 +1684,13 @@ def build_landing(page, d, e):
       for y in range(TODAY.year, YEAR_FIRST - 1, -1))}
  </div>
  <p class='yearnote' id='yearnote' hidden>{TB("Past years are reconstructed from the framework records (version dates and status history): a framework counts for a year if a version was valid at any time during it. They will be replaced by the official year-end figures once those are loaded.")}</p>
- <div class='herorow'>
  <div class='tiles gtiles' id='gtiles'>
   <div class='gcap' id='gcap'>Global portfolio — all layers currently shown on the map · {Y}, as of today</div>
   {tiles}
- </div>
- <section class='news' id='news' {ATTR("aria-label", "What's new in the last 30 days")}>
-  <div class='news-h'><b>{T("What's new")}</b> · {T("last 30 days")}</div>
-  <ul class='news-l' id='newsl'></ul>
- </section>
+  <section class='tile news' id='news' {ATTR("aria-label", "What's new in the last 30 days")}>
+   <div class='k'><svg viewBox='0 0 24 24' aria-hidden='true'>{TILE_ICONS["news"]}</svg><span>{T("What's new")}</span><span class='news-w'>· {T("last 30 days")}</span></div>
+   <ul class='news-l' id='newsl'></ul>
+  </section>
  </div>
 </div>
 <div class='maprow' id='maprow'>
@@ -1933,25 +1932,20 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
 .tnote { display:none; position:absolute; left:0; right:0; top:calc(100% + 4px); z-index:8; background:rgba(15,37,64,.95); color:#fff;
   font-size:11.5px; font-weight:400; line-height:1.4; padding:7px 10px; border-radius:6px; box-shadow:0 4px 12px -4px rgba(0,0,0,.35); }
 .gtiles .tile.hasnote:hover .tnote, .gtiles .tile.hasnote:focus .tnote { display:block; }
-/* what's new (9 Oct 2026 meeting; owner, 2026-10-27: the last 30 days, beside the tiles): side by
-   side on a wide screen, below the tiles otherwise with its lines in columns — the tile grid keeps
-   its own rules. Its caption is built like the tiles' (.gcap), so the box lines up with them */
-.herorow { display:flex; flex-direction:column; gap:10px; margin:12px 0; }
-.herorow .gtiles { margin:0; }
-.news { display:flex; flex-direction:column; gap:10px; min-width:0; }
-.news-h { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#64748b; margin:-2px 0 -6px 2px; }
-.news-h b { color:#b3261e; }
-.news-l { list-style:none; margin:0; padding:8px 14px; background:#fff; border:1px solid #e6eaef; border-radius:12px; box-shadow:0 1px 2px rgba(16,24,40,.05);
-  columns:250px; column-gap:22px; font-size:12px; line-height:1.35; max-height:150px; overflow-y:auto; }
-.news-l li { break-inside:avoid; padding:2px 0; }
+/* what's new (9 Oct 2026 meeting; owner, 2026-10-27): the last 30 days, the sixth box of the tiles'
+   row — so the 6 / 3 / 2-column grid holds it like a tile. It takes the row's height and scrolls
+   inside (height:0 keeps it from growing the row); on a phone it spans the row, as does the tile
+   before it (five tiles in two columns would leave a hole) */
+.gtiles .news { display:flex; flex-direction:column; }
+.gtiles .news .k { flex-wrap:wrap; row-gap:0; } .gtiles .news .news-w { font-size:11.5px; font-weight:400; color:#64748b; }
+.news-l { list-style:none; margin:2px 0 0; padding:0; font-size:12px; line-height:1.35; flex:1 1 auto; height:0; overflow-y:auto; }
+.news-l li { padding:2px 0; }
 .news-l button { background:none; border:0; padding:0; font:inherit; color:#334155; text-align:left; cursor:pointer; }
 .news-l button:hover, .news-l button:focus-visible { color:var(--ocha); text-decoration:underline; }
 .news-l .nd { color:#b3261e; font-weight:650; margin-right:2px; }
 .news-0 { color:#64748b; }
-@media (min-width:1400px){
-  .herorow { flex-direction:row; align-items:stretch; } .herorow .gtiles { flex:1 1 auto; min-width:0; }
-  /* the box takes the tiles' height; a long list scrolls (height:0 keeps it from growing the row) */
-  .news { flex:0 0 260px; } .news-l { columns:auto; flex:1 1 auto; height:0; max-height:none; } }
+.gtiles .tile .l .tsub { color:#334155; font-weight:600; margin-top:2px; }
+@media (max-width:759px){ .gtiles .news, .gtiles #t-reach { grid-column:1 / -1; } .news-l { height:auto; max-height:150px; } }
 /* the legend's definitions (they replace the status diagram, 2026-10-27) */
 .layerctl .lrow { display:flex; align-items:center; gap:2px; }
 .maplegend .info::after { left:0; transform:none; }
@@ -2563,6 +2557,7 @@ function updateTiles(){
   const set = (id, v, lead, o = {}) => { const el = document.getElementById(id); if(!el) return;
     el.querySelector('.v').textContent = v;
     el.querySelector('.l').innerHTML = esc(lead) + (o.mark ? "<span class='tmark'>*</span>" : '') + (o.drv ? DRV(o.drv === true ? null : o.drv) : '')
+      + (o.sub ? `<div class='tsub'>${esc(o.sub)}</div>` : '')
       + (o.bul && o.bul.length ? `<ul class='tb'>${o.bul.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '');
     const note = (o.note || []).filter(Boolean).join(' '), nb = el.querySelector('.tnote');
     if(nb) nb.textContent = note;
@@ -2604,19 +2599,20 @@ function updateTiles(){
   const offs = [['adhoc','ad hoc allocations'],['retired','retired frameworks'],['framework','current frameworks']]
     .filter(([k]) => !LAYERS[k]).map(([k, lab]) => [lab, flowFigures(all, {[k]: true})]);
   const notShown = fn => { const xs = offs.map(([lab, G]) => fn(lab, G)).filter(Boolean); return xs.length ? tr8('Not shown: {0}.', xs.join(', ')) : ''; };
+  // activations and the money they released, in one tile (owner, 2026-10-27): the count, then the
+  // amount and its split by fund; the note names what the layers switched off would add
   set('t-act', F.n, !F.n ? yr('no activation to date on the layers shown', 'no activation in {0} on the layers shown')
       : F.nAd && F.nAd < F.n ? tr8(YEAR != null ? 'activations in {2}: {0} framework activations, {1} ad hoc allocations' : 'activations to date: {0} framework activations, {1} ad hoc allocations', F.n - F.nAd, F.nAd, YEAR)
       : yr(...WHAT_WHEN[what]),
-      {note: [notShown((lab, G) => G.n ? (G.nAd ? tr8(G.n === 1 ? '{0} ad hoc allocation' : '{0} ad hoc allocations', G.n)
-                                               : tr8(lab === 'retired frameworks' ? '{0} on retired frameworks' : '{0} on current frameworks', G.n)) : null)]});
-  set('t-rel', F.n ? money(F.usd) : '—', !F.n ? yr('nothing released to date on the layers shown', 'nothing released in {0} on the layers shown')
-      : tr8(YEAR != null ? 'released in {1} on {0}' : 'released to date on {0}', tr8(what), YEAR),
-      {bul: F.n ? fundBullets(F.usdCerf, F.usd - F.usdCerf) : [],
+      {sub: F.n ? tr8('{0} released', money(F.usd)) : '',
+       bul: F.n ? fundBullets(F.usdCerf, F.usd - F.usdCerf) : [],
        note: [tr8(F.nAd
          ? 'Money released when a framework activated or allocated ad hoc for anticipatory action, from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.'
          : 'Money released when a framework activated, from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.'),
          F.noUsd ? tr8('{0} of the {1} have no amount recorded.', F.noUsd, F.n) : '',
-         notShown((lab, G) => G.usd >= 5e4 ? `${tr8(lab)} ${money(G.usd)}` : null)]});
+         notShown((lab, G) => G.n ? (G.nAd ? tr8(G.n === 1 ? '{0} ad hoc allocation' : '{0} ad hoc allocations', G.n)
+                                          : tr8(lab === 'retired frameworks' ? '{0} on retired frameworks' : '{0} on current frameworks', G.n))
+                                    + (G.usd >= 5e4 ? ` (${money(G.usd)})` : '') : null)]});
   // people reached: CERF's figures, and where it has none yet the allocation's planned people —
   // an estimate, marked '~' (owner's request, 2026-10-27)
   const est = G => (G.nTgt ? '~' : '') + people(G.reached + G.targeted), nNone = F.nCerf - F.nRep - F.nTgt;
