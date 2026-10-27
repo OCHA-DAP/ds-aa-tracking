@@ -1406,6 +1406,18 @@ def _flow_acts(f, layers):
             if ("adhoc" in layers if a["type"] == "adhoc_aa" else fw_on)]
 
 
+# headline tile icons (24x24 strokes; coloured by CSS)
+TILE_ICONS = {
+    "doc": "<path d='M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z'/><path d='M14 3v5h5'/>"
+           "<path d='M9 13h6M9 17h6'/>",
+    "money": "<rect x='2.5' y='6' width='19' height='12' rx='2'/><circle cx='12' cy='12' r='2.6'/>"
+             "<path d='M6 9.5h.01M18 14.5h.01'/>",
+    "people": "<circle cx='9' cy='8' r='3.2'/><path d='M3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5'/>"
+              "<path d='M16 5.2a3 3 0 0 1 0 5.6M18 14.8c1.9.6 3 2.4 3 5.2'/>",
+    "bolt": "<path d='M13 2 4.5 13.5H11L10 22l8.5-11.5H12z'/>",
+}
+
+
 def tile_figures(countries, layers):
     """Headline figures for a set of enabled layers — mirrors updateTiles() in LANDING_JS.
     A pair is shown when any of its layers is enabled; the stock figures (count, pre-arranged
@@ -1466,6 +1478,10 @@ def build_landing(page, d, e):
                        ret["released"] >= 5e4 and f"retired frameworks ${ret['released']/1e6:,.0f}M")
     ns_reach = not_shown(ad["reached"] and f"ad hoc allocations {ad['reached']/1e6:,.1f}M",
                          ret["reached"] and f"retired frameworks {ret['reached']/1e6:,.1f}M")
+    # each tile opens with an icon and its name in large type (2026-10-27 review comments)
+    def tile_key(icon, name):
+        return (f"<div class='k'><svg viewBox='0 0 24 24' aria-hidden='true'>{TILE_ICONS[icon]}</svg>"
+                f"<span>{T(name)}</span></div>")
 
     body = f"""
 <div class='hero'>
@@ -1477,12 +1493,12 @@ def build_landing(page, d, e):
  <p class='yearnote' id='yearnote' hidden>{TB("Past years are reconstructed from the framework records (version dates and status history): a framework counts for a year if a version was valid at any time during it. They will be replaced by the official year-end figures once those are loaded.")}</p>
  <div class='tiles gtiles' id='gtiles'>
   <div class='gcap' id='gcap'>Global portfolio — all layers currently shown on the map</div>
-  <div class='tile' id='t-fw'><div class='v'>{t["n_fw"]}</div><div class='l'>frameworks on the map · {t["n_active"]} active · {t["n_upd"]} being updated · {t["n_dev"]} in development</div></div>
-  <div class='tile' id='t-pre'><div class='v'>${t["pre"]/1e6:,.0f}M</div><div class='l'>pre-arranged now (CERF and Country and Regional Funds), frameworks shown</div></div>
-  <div class='tile' id='t-cov'><div class='v'>{t["covered"]/1e6:,.1f}M</div><div class='l'>people covered now by the frameworks shown ({t["n_cov"]} of {t["n_fw"]} have a figure)</div></div>
-  <div class='tile' id='t-act'><div class='v'>{t["n_act"]}</div><div class='l'>framework activations to date{ns_act}</div></div>
-  <div class='tile' id='t-rel'><div class='v'>${t["released"]/1e6:,.0f}M</div><div class='l'>released to date on framework activations — CERF ${t["released_cerf"]/1e6:,.0f}M · Country and Regional Funds ${(t["released"] - t["released_cerf"])/1e6:,.0f}M{ns_rel}</div></div>
-  <div class='tile' id='t-reach'><div class='v'>{t["reached"]/1e6:,.1f}M</div><div class='l'>people reached to date — CERF allocations, as reported so far ({t["n_rep"]} of {t["n_cerf"]} have a figure){ns_reach}</div></div>
+  <div class='tile' id='t-fw'>{tile_key('doc', 'Frameworks')}<div class='v'>{t["n_fw"]}</div><div class='l'>frameworks on the map · {t["n_active"]} active · {t["n_upd"]} being updated · {t["n_dev"]} in development</div></div>
+  <div class='tile' id='t-pre'>{tile_key('money', 'Pre-arranged')}<div class='v'>${t["pre"]/1e6:,.0f}M</div><div class='l'>pre-arranged now (CERF and Country and Regional Funds), frameworks shown</div></div>
+  <div class='tile' id='t-cov'>{tile_key('people', 'People covered')}<div class='v'>{t["covered"]/1e6:,.1f}M</div><div class='l'>people covered now by the frameworks shown ({t["n_cov"]} of {t["n_fw"]} have a figure)</div></div>
+  <div class='tile' id='t-act'>{tile_key('bolt', 'Activations')}<div class='v'>{t["n_act"]}</div><div class='l'>framework activations to date{ns_act}</div></div>
+  <div class='tile' id='t-rel'>{tile_key('money', 'Released')}<div class='v'>${t["released"]/1e6:,.0f}M</div><div class='l'>released to date on framework activations — CERF ${t["released_cerf"]/1e6:,.0f}M · Country and Regional Funds ${(t["released"] - t["released_cerf"])/1e6:,.0f}M{ns_rel}</div></div>
+  <div class='tile' id='t-reach'>{tile_key('people', 'Reached')}<div class='v'>{t["reached"]/1e6:,.1f}M</div><div class='l'>people reached to date — CERF allocations, as reported so far ({t["n_rep"]} of {t["n_cerf"]} have a figure){ns_reach}</div></div>
  </div>
 </div>
 <div class='maprow' id='maprow'>
@@ -1755,11 +1771,15 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
    to date (activations, released, people reached); the labels wrap inside equal columns */
 .gtiles { position:relative; transition: opacity .3s; display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); gap:10px; }
 .gtiles .tile { min-width:0; padding:10px 14px; }
+.gtiles .tile .k { display:flex; align-items:center; gap:7px; font-size:15px; font-weight:700; color:#0f2540; line-height:1.2; margin-bottom:3px; }
+.gtiles .tile .k svg { width:22px; height:22px; flex:0 0 auto; fill:none; stroke:var(--ocha); stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+.gtiles .tile .v { font-size:24px; line-height:1.15; }
 .gtiles .gcap { grid-column:1 / -1; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#64748b; margin:-2px 0 -6px 2px; }
 @media (max-width:1199px){ .gtiles { grid-template-columns:repeat(3, minmax(0, 1fr)); } }
-@media (max-width:759px){ .gtiles { grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; } }
+@media (max-width:759px){ .gtiles { grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; }
+  .gtiles .tile .k { font-size:13.5px; gap:5px; } .gtiles .tile .k svg { width:18px; height:18px; } .gtiles .tile .v { font-size:19px; } }
 .gtiles.global { opacity:.72; } .gtiles.global .tile { background:#f6f8fa; border-style:dashed; box-shadow:none; }
-.gtiles.global .tile .v { font-size:18px; color:#475569; } .gtiles.global .gcap { color:#b45309; font-weight:700; }
+.gtiles.global .tile .v { font-size:18px; color:#475569; } .gtiles.global .tile .k { color:#475569; } .gtiles.global .tile .k svg { stroke:#64748b; } .gtiles.global .gcap { color:#b45309; font-weight:700; }
 .ctiles { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin:8px 0 4px; }
 .ctiles .ctile { background:#eef5fc; border:1px solid #cfe1f3; border-radius:8px; padding:6px 8px; }
 .ctiles .ctile .v { font-size:15px; font-weight:700; color:#0f2540; line-height:1.2; } .ctiles .ctile .l { font-size:10.5px; color:#475569; }

@@ -1372,7 +1372,8 @@ def build_funding(page, d):
                  "<p class='note' style='margin:-4px 0 6px;font-size:12px;color:#555'>"
                  + (TBF("Not in pre-arranged now — <b>{n} current frameworks with no envelope recorded</b>:", n=len(gaps))
                     if len(gaps) > 1 else TB("Not in pre-arranged now — <b>1 current framework with no envelope recorded</b>:"))
-                 + " " + ", ".join(f"{T(str(n))} {T(str(h))} ({T(str(lc))})" for n, h, lc in gaps) + ".</p>")
+                 + " " + ", ".join(f"{T(str(n))} {T(str(h))} ({T(LIFE_LABEL.get(str(lc), str(lc)))})"
+                                   for n, h, lc in gaps) + ".</p>")
     stale = vf[vf["version"].astype(str) != vf["latest_version"].astype(str)][["country_iso3", "hazard", "version"]].drop_duplicates()
     stale_html = ("" if not len(stale) else
                   " " + (TF("{n} frameworks count the envelope of an earlier version because the latest one has none yet:", n=len(stale))
