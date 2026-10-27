@@ -281,6 +281,8 @@ def _partners(d, ex):
                                                         case=False, regex=True)
            | sg["partner_name"].isna())
     sg["tbd"] = tbd
+    # an old version's allocation maps to no hazard (None, not the emergency-type fallback), so
+    # no live framework claims its sub-grants
     af = {(r.allocation_code, r.country_iso3): (None if (r.country_iso3, r.hazard, str(r.version)) in old
                                                 else r.hazard)
           for r in ex["alloc_fw"].itertuples()}

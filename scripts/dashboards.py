@@ -330,7 +330,7 @@ def _backfill_years(pre, e, first_year=2020):
             for fc, usd in amounts:
                 rows.append({"country_iso3": c, "hazard": h, "year": y, "kind": "prearranged",
                              "fund_code": fc, "financier": None, "amount_usd": usd,
-                             "source": "version-inferred"})
+                             "source": "version-inferred", "version": str(v["version"])})
     if not rows:
         return pre
     return pd.concat([pre, pd.DataFrame(rows)[pre.columns]], ignore_index=True)
@@ -440,7 +440,7 @@ def _fetch(e):
     d["current"] = d["current"].loc[:, ~d["current"].columns.duplicated()]
     pre = pd.read_sql(
         """SELECT country_iso3, hazard, year, kind, fund_code, financier,
-                  amount_usd, source FROM aa.prearranged_funding
+                  amount_usd, source, version FROM aa.prearranged_funding
            WHERE amount_usd IS NOT NULL AND year IS NOT NULL""", e)   # annual series: dated rows only
     pre = canonical(pre, ["country_iso3", "hazard", "year", "kind", "fund_code",
                           "financier"])
@@ -878,6 +878,7 @@ def funding_series(d, released="framework"):
         cb["fund_type"].map({"regional_fund": "rhpf"}).fillna("cbpf"))
     cb["financier"] = cb["fund_name"]
     cb["source"] = "onegms-mirror"
+    cb["version"] = None            # a country-level allocation: no framework version
     cb["in_gho"] = [(c, y) in gho_set for c, y in zip(cb["country_iso3"], cb["year"])]
     mirror_cy = set(zip(cb["country_iso3"], cb["year"]))
     pre = pre[~(pre["fund_code"].str.startswith(("cbpf", "rhpf"))
@@ -939,7 +940,7 @@ def _layer_of(d):
     """(country, hazard[, version]) -> the map layer its money belongs to: 'r' a retired
     framework, 'c' any other (current frameworks, and the odd AA-tagged CBPF allocation in a
     country whose only framework is still in the pipeline, e.g. Sudan). A row that carries its
-    version (activations, envelopes) is 'r' when that version is outside the pair's current
+    version (activations, pre-arranged rows) is 'r' when that version is outside the pair's current
     line (old_versions: Somalia drought 2019 / 2020-06-23), whatever the pair's status. CBPF
     mirror rows are country-level (hazard 'multi' or '?'): 'r' only when the country has
     retired frameworks and no live one. Ad hoc allocations are their own layer ('a'), set by
@@ -1106,7 +1107,7 @@ def _money_flows(d, pre, act):
 
     # ---------------- pre-arranged, as at the end of each year (never summed over years)
     P = pre[(pre["kind"] == "prearranged") & (pre["fund_code"] != "all") & (pre["year"] <= today.year)]
-    P = P.assign(g=[layer(c, h) for c, h in zip(P["country_iso3"], P["hazard"])],
+    P = P.assign(g=[layer(c, h, v) for c, h, v in zip(P["country_iso3"], P["hazard"], P["version"])],
                  rg=P["country_iso3"].map(rg_of).fillna("?"))
     for y, py in P.groupby("year"):
         y = int(y)
@@ -1392,7 +1393,7 @@ def build_funding(page, d):
     cur = d["current"]
     layer = _layer_of(d)
     region_of = dict(zip(zip(cur["country_iso3"], cur["hazard"]), cur["region"]))
-    pre["g"] = [layer(c, h) for c, h in zip(pre["country_iso3"], pre["hazard"])]
+    pre["g"] = [layer(c, h, v) for c, h, v in zip(pre["country_iso3"], pre["hazard"], pre["version"])]
     # an activation of an earlier framework's version (Somalia drought 2020, 2021) is a retired
     # framework's, whatever the pair's status today (old_versions)
     act["g"] = ["a" if et == "adhoc_aa" else layer(c, h, v)

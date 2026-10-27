@@ -1407,15 +1407,16 @@ def geo_pass(countries, bboxes):
 
 def _flow_acts(f, layers):
     """The activation records a pair contributes to the flow tiles (activations, money released,
-    people reached) — mirrors flowActs() in LANDING_JS: its framework activations while it is
-    shown as a framework (current or retired layer on), its ad hoc allocations while the ad hoc
-    layer is on, and the activations of an earlier framework it replaced (`old`) while the
-    retired layer is on — never under the current-frameworks layer. The Financing page's layer
-    rule: same layers, same total on both pages."""
-    fw_on = any(k in layers and k in f["layers"] for k in ("framework", "retired"))
+    people reached) — mirrors flowActs() in LANDING_JS: its framework activations while its own
+    framework layer is on (current frameworks; retired for a retired framework), its ad hoc
+    allocations while the ad hoc layer is on, and the activations of an earlier framework it
+    replaced (`old`) while the retired layer is on — never under the current-frameworks layer.
+    A current pair that hosts a replaced framework is on both layers: its own activations stay
+    current. The Financing page's layer rule: same layers, same total on both pages."""
+    own = next((k for k in ("framework", "retired") if k in f["layers"]), None)
     return [a for a in f["activations"]
             if ("adhoc" in layers if a["type"] == "adhoc_aa"
-                else "retired" in layers if a["old"] else fw_on)]
+                else "retired" in layers if a["old"] else own in layers)]
 
 
 # headline tile icons (24x24 strokes; coloured by CSS)
@@ -1922,14 +1923,15 @@ const isOld = a => !!a.old && !pastY();
 function dotActs(f){ return f.activations.filter(a => a.type === 'framework_aa' && (!isOld(a) || LAYERS.retired)
   && (YEAR == null || String(a.date).slice(0, 4) === String(YEAR))); }
 // ---------- flow figures: activations, money released, people reached (all 'to date', or in the year shown)
-// What a pair contributes: its framework activations while it is shown as a framework (current
-// or retired layer on), its ad hoc allocations while the ad hoc layer is on, and a replaced
-// framework's activations (isOld) while the retired layer is on — the Financing page's layer
-// rule, so both pages give the same total for the same layers. Mirrored by _flow_acts() /
-// tile_figures() in Python. LY: a layer set other than the one shown.
+// What a pair contributes: its framework activations while its own framework layer is on
+// (current frameworks; retired for a retired framework), its ad hoc allocations while the ad hoc
+// layer is on, and a replaced framework's activations (isOld) while the retired layer is on — a
+// current pair that hosts a replaced framework is on both layers, its own activations stay
+// current. The Financing page's layer rule, so both pages give the same total for the same
+// layers. Mirrored by _flow_acts() / tile_figures() in Python. LY: a layer set other than the one shown.
 function flowActs(f, LY){
   LY = LY || LAYERS;
-  const fwOn = (LY.framework && f.layers.includes('framework')) || (LY.retired && f.layers.includes('retired'));
+  const own = ['framework', 'retired'].find(k => f.layers.includes(k)), fwOn = !!(own && LY[own]);
   return f.activations.filter(a => (YEAR == null || String(a.date).slice(0, 4) === String(YEAR))
     && (a.type === 'adhoc_aa' ? !!LY.adhoc : isOld(a) ? !!LY.retired : fwOn));
 }
