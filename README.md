@@ -111,7 +111,8 @@ are kept forever (the year-end official state, for the map's time view).
   "(08) External communication"; a Google Drive folder until that was deleted in Oct 2026) as
   it was gathered (photos by country, the social posts of the folder's catalogue), read from
   `site_src/media.json`. A photo is shown from two renditions published under `media/` on
-  gh-pages (public files, as the Drive renditions were); the original opens in SharePoint.
+  gh-pages (public files, as the Drive renditions were); the page links to neither the
+  folder nor the originals.
   `scripts/sync_media.py --from DIR` (DIR = the folder downloaded from SharePoint and
   unzipped) archives every file on the dev blob (`projects/ds-aa-tracking/raw/media/`), makes
   the renditions once (`…/processed/media/web/`) and rewrites the manifest; it is run by hand
