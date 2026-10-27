@@ -287,6 +287,7 @@ def _raw_codes():
               dashboards.FUND_TYPE_LABEL, dashboards.DOC_TYPE_LABEL, dict(dashboards.PREMISES),
               landing.SHEET_STATUS_LABEL)
     codes = {k for v in vocabs for k in v if "_" in k}
+    codes |= {k for k in dashboards._NOTE_FIELDS if "_" in k}   # the version record's columns
     codes |= {"non_aa_mobilised", "cerf_secretariat", "rcrc_nat", "adhoc aa", "framework aa",
               "kb-frontmatter", "sheet-revision", "pa-monorepo", "window-unattributed"}
     return sorted(codes, key=len, reverse=True)
@@ -301,7 +302,7 @@ def _shown_identifiers(doc):
     if _GUARD_RX is None:
         # aa.<table>, v_<view>, a fund code (cbpf-afg), a code — not inside a file name or a path
         # ('…-aa.pdf', '/case_study/')
-        _GUARD_RX = re.compile(r"(?<![\w/.-])(?:aa\.[a-z_]+|v_[a-z]+_[a-z_]+|(?:cbpf|rhpf)(?:-[a-z]+)+|"
+        _GUARD_RX = re.compile(r"(?<![\w/.=?&-])(?:aa\.[a-z_]+|v_[a-z]+(?:_[a-z]+)*|(?:cbpf|rhpf)(?:-[a-z]+)+|"
                                + "|".join(map(re.escape, _raw_codes())) + r")(?![\w/-])")
     scripts = "\n".join(re.findall(r"<script\b[^>]*>(.*?)</script>", doc, re.S | re.I))
     shown = re.sub(r"<script\b.*?</script>|<style\b.*?</style>|<!--.*?-->", " ", doc, flags=re.S | re.I)

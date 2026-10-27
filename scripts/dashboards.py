@@ -2636,8 +2636,12 @@ def _version_diff(fo, fn, to, tn, w=lambda x: x):
 # the version record's own fields, as a curator's note names them, in words (a note is shown as
 # written otherwise; the fix at the source is to reword the note)
 _NOTE_FIELDS = {"valid_from": "the start date", "valid_until": "the end date",
+                "valid_until_source": "the end date's source",
                 "development_since": "the development start date", "kb_status": "the version status",
-                "doc_url": "the document link", "analysis_ref": "the analysis link"}
+                "kb_framework": "the framework's page", "endorsed_by": "the endorser",
+                "prearranged_usd_doc": "the pre-arranged amount in the document",
+                "doc_title": "the document title", "doc_url": "the document link",
+                "analysis_ref": "the analysis link", "window_rollup": "how the windows' money adds up"}
 _NOTE_FIELD_RX = re.compile(r"\b(" + "|".join(map(re.escape, _NOTE_FIELDS)) + r")\b")
 
 
@@ -3223,8 +3227,9 @@ def build_framework_pages(page, tbl, d, e=None):
         derived_note = (
             " <span class='muted' style='font-size:11px'>"
             + TC(lambda w: w("(derived from the endorsed {v} version — sheets last said “{s}”)").format(
-                 v=fw["current_version"], s=w(_status_words(obs)))) + "</span>"
-            if pd.notna(obs) and obs != fw["status"] and not no_fw and _status_words(obs) else "")
+                 v=cur_v, s=w(_status_words(obs)))) + "</span>"
+            if (pd.notna(obs) and obs != fw["status"] and not no_fw and _status_words(obs)
+                and _has(fw.get("current_version"))) else "")
         fw_name = T(i18n.add(f"{fw['country_name']} — {hazard_word(h)}", "{country} — {hazard}",
                              country=i18n.country(c, fw["country_name"]), hazard=hazard_word(h)))
         st_raw = fw['status'] if _has(fw.get('status')) and not no_fw else status

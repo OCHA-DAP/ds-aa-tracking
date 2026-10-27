@@ -144,7 +144,7 @@ def _frameworks(d, lifecycles=LIVE):
         version = (r.latest_version if pd.notna(r.latest_version)          # latest version, as the map and Model page
                    else r.current_version if pd.notna(r.current_version) else None)
         kb_fw = r.kb_framework if pd.notna(r.kb_framework) else None
-        out.append(dict(c=r.country_iso3, h=r.hazard, name=_fwname(r.country_iso3, r.country_name, r.hazard),
+        out.append(dict(c=r.country_iso3, h=r.hazard, name=_fwname(r.country_iso3, r.country_name, hazard_word(r.hazard)),
                         life=r.lifecycle, version=None if version is None else str(version),
                         kb_fw=kb_fw, slug=f"fw-{r.country_iso3.lower()}-{r.hazard}.html"))
     return out
