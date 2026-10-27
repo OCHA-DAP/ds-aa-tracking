@@ -32,6 +32,7 @@ CACHE = ROOT / "data" / "fieldmaps"
 
 import datetime as _dt
 import math
+from decimal import ROUND_HALF_UP, Decimal
 
 # ---- projections. World view: Equal Earth (endorsed by UN GA resolution A/80/L.104,
 # 4 Sep 2026), centred on 30°E so the portfolio (Americas → Pacific) sits in frame.
@@ -1462,7 +1463,7 @@ def tile_figures(countries, layers, year=None):
 
 def _money(v):
     """money() in LANDING_JS: $12M, $4.5M, $800k."""
-    return (f"${v / 1e6:.{0 if v >= 1e7 else 1}f}M" if v >= 1e6
+    return (f"${_tofixed(v / 1e6, 0 if v >= 1e7 else 1)}M" if v >= 1e6
             else f"${_jsround(v / 1e3)}k" if v >= 1e3 else f"${_jsround(v)}")
 
 
@@ -1471,9 +1472,15 @@ def _jsround(x):
     return math.floor(x + 0.5)
 
 
+def _tofixed(x, nd):
+    """Number.prototype.toFixed(): half up on the double's exact value ($12.5M -> $13M, as
+    the page repaints it; Python's format rounds that tie to the even neighbour)."""
+    return f"{Decimal(x).quantize(Decimal(1).scaleb(-nd), ROUND_HALF_UP):.{nd}f}"
+
+
 def _people(v):
     """people() in LANDING_JS: 1.2M, 450k."""
-    return f"{v / 1e6:.1f}M" if v >= 1e6 else f"{_jsround(v / 1e3)}k" if v >= 1e3 else str(_jsround(v))
+    return f"{_tofixed(v / 1e6, 1)}M" if v >= 1e6 else f"{_jsround(v / 1e3)}k" if v >= 1e3 else str(_jsround(v))
 
 
 # ---------------------------------------------------------------- page
@@ -1551,7 +1558,7 @@ def build_landing(page, d, e):
   <div class='gcap' id='gcap'>Global portfolio — all layers currently shown on the map · {Y}, as of today</div>
   <div class='tile' id='t-fw'>{tile_key('doc', 'Frameworks')}<div class='v'>{t["n_fw"]}</div><div class='l'>frameworks on the map today · {t["n_active"]} active · {t["n_upd"]} being updated · {t["n_dev"]} in development</div></div>
   <div class='tile' id='t-pre'>{tile_key('money', 'Pre-arranged')}<div class='v'>${_jsround(t["pre"]/1e6)}M</div><div class='l'>{l_pre}</div></div>
-  <div class='tile' id='t-cov'>{tile_key('people', 'People covered')}<div class='v'>{t["covered"]/1e6:.1f}M</div><div class='l'>people covered now by the frameworks shown ({t["n_cov"]} of {t["n_fw"]} have a figure)</div></div>
+  <div class='tile' id='t-cov'>{tile_key('people', 'People covered')}<div class='v'>{_tofixed(t["covered"]/1e6, 1) + "M" if t["n_fw"] else "—"}</div><div class='l'>people covered now by the frameworks shown ({t["n_cov"]} of {t["n_fw"]} have a figure)</div></div>
   <div class='tile' id='t-act'>{tile_key('bolt', 'Activations')}<div class='v'>{t["n_act"]}</div><div class='l'>{l_act}</div></div>
   <div class='tile' id='t-rel'>{tile_key('money', 'Released')}<div class='v'>{_money(t["released"]) if t["n_act"] else "—"}</div><div class='l'>{l_rel}</div></div>
   <div class='tile' id='t-reach'>{tile_key('people', 'Reached')}<div class='v'>{_people(t["reached"]) if t["n_rep"] else "—"}</div><div class='l'>{l_reach}</div></div>
@@ -2033,7 +2040,7 @@ function dayOf(s){ s = String(s || ''); if(!/^\d{4}-\d{2}/.test(s)) return null;
   const full = /^\d{4}-\d{2}-\d{2}/.test(s);
   return [Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, full ? +s.slice(8, 10) : 1), !full]; }
 function actDate(a){ const d = String(a.date || ''), k = String(a.kb_date || '');
-  return k.length === 10 && k.startsWith(d) ? k : d; }
+  return d.length === 7 && k.length === 10 && k.startsWith(d) ? k : d; }   // only a month-only date is sharpened
 // within the last RECENT_DAYS days of the reader's today (a date still to come is not)
 function inWindow(s){ const d = dayOf(s); if(!d) return false;
   const n = new Date(), age = (Date.UTC(n.getFullYear(), n.getMonth(), n.getDate()) - d[0]) / 864e5;
@@ -2422,6 +2429,8 @@ function buildNews(){
 (function(){ const ul = document.getElementById('newsl'); if(!ul) return;
   ul.addEventListener('click', e => { const b = e.target.closest('button[data-iso]'); if(!b) return;
     if(pastY()) setYear(YEARS.now);   // the news is today's: a past year may not have the framework
+    // an ad hoc allocation of last December read in January: only all years still shows that pair
+    if(!c_has(b.dataset.iso, b.dataset.hz)) setYear('');
     selectCountry(b.dataset.iso, b.dataset.hz); }); })();
 // headline tiles: recomputed from the pairs the map currently shows (see tile_figures in Python)
 function updateTiles(){
@@ -2688,7 +2697,7 @@ async function selectCountry(iso, hz, ver){
   document.querySelectorAll('.cty.sel').forEach(x=>x.classList.remove('sel'));
   svg.querySelectorAll(`.cty[data-iso='${iso}']`).forEach(el => el.classList.add('sel'));
   back.hidden = false; lpane.classList.add('hide'); tip.hidden = true; maprow.classList.add('open');
-  renderSide(); updateTiles(); if(want && !changed) worldLegend();
+  renderSide(); updateTiles(); buildNews(); if(want && !changed) worldLegend();
   if(isMobile()){ fixHeight(); setTimeout(() => window.scrollTo({top: side.getBoundingClientRect().top + window.scrollY - 8, behavior:'smooth'}), 1150); }
   location.hash = hashFor([iso, state.hz, state.ver]);
   if(changed){
