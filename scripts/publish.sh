@@ -16,6 +16,8 @@
 #   renditions (<key>-w<width>.jpg, scripts/sync_media.py): any other nested path aborts
 #   before committing, and any other directory in the pushed tree is fatal
 # - every page published is a staticrypt page: one that is not aborts before committing
+# The mock-up of the site on unocha.org (scripts/mock_unocha.py: mock-unocha*.html, unlisted) is
+# made from the built public pages and published with them, under the public password.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PW="${SITE_PASSWORD:-anticipation2026}"
@@ -26,6 +28,10 @@ ADMIN=admin
 
 if [ -z "${SKIP_BUILD:-}" ]; then
   uv run python scripts/build_site.py
+  # the mock-up never stops the site: if it fails, none of its pages goes out (a half-written
+  # set would link to twins that are not there)
+  uv run python scripts/mock_unocha.py \
+    || { rm -f site_build/mock-*.html; echo "::warning::mock-up (scripts/mock_unocha.py) failed: not published"; }
   rm -rf site_encrypted          # nothing from an earlier build may be published by accident
   npx -y staticrypt site_build/*.html -d site_encrypted -p "$PW" --short --remember 30 \
     --template-title "AA tracking review" \
@@ -65,7 +71,7 @@ cp site_encrypted/*.html "$WT"/
 cp site_encrypted/$ADMIN/*.html "$WT/$ADMIN"/
 # committed copies of the vendored assets (main locally; the checked-out ref in CI)
 REF=main; git rev-parse -q --verify main >/dev/null 2>&1 || REF=HEAD
-for a in chart.umd.js sankey.js; do
+for a in chart.umd.js sankey.js unocha.css; do
   git show "$REF:site_src/$a" > "$WT/$a"
 done
 for a in pdf.min.js pdf.worker.min.js; do          # the data-entry page only: admin site
@@ -77,7 +83,7 @@ touch "$WT/.nojekyll"
 (
   cd "$WT"
   git add -u .                   # tracked files only: what changed and what went away
-  for f in *.html adm-*.json chart.umd.js sankey.js .nojekyll; do git add -f "./$f"; done
+  for f in *.html adm-*.json chart.umd.js sankey.js unocha.css .nojekyll; do git add -f "./$f"; done
   for f in $ADMIN/*.html $ADMIN/pdf.min.js $ADMIN/pdf.worker.min.js; do git add -f "./$f"; done
   if [ -n "$(ls -A media)" ]; then git add -f ./media; fi
   # the tree about to be committed (not just what changed)
