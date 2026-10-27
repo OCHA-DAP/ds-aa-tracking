@@ -97,6 +97,9 @@ table.data.acts { min-width:560px; } table.data.acts td:first-child { white-spac
            border:1px solid #cbd5e1; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.18); z-index:20; }
 .fwhead { display:flex; gap:8px; align-items:center; padding:10px 12px; border-bottom:1px solid #e6e9ee; }
 .fwhead input { flex:1; min-width:0; padding:5px 8px; border:1px solid #bbb; border-radius:4px; font-size:12.5px; }
+.fbar .freset { margin-left:auto; padding:4px 10px; border:1px solid #1f69b3; border-radius:4px; background:#fff;
+                 color:#1f69b3; font-size:12.5px; font-weight:600; cursor:pointer; white-space:nowrap; }
+.fbar .freset:hover { background:#1f69b3; color:#fff; }
 .fwhead button, .fwnote button { padding:4px 9px; border:1px solid #bbb; border-radius:4px; background:#f7f8fa;
                                  font-size:12px; cursor:pointer; white-space:nowrap; }
 .fwlist { overflow-y:auto; padding:4px 12px 8px; }
@@ -1329,11 +1332,13 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
   const total = L.filter(l=>l.lv==='f').reduce((s,l)=>s+l.v,0);
   return {columns:cols, links:L.map(l=>({s:l.s,t:l.t,v:l.v})), total, cats:CAT_ORDER.filter(c=>seen.has(c))};
 }
-// wire the panel _flow_panel() wrote; cfg.keep(row) filters the rows (the page's toggles).
-// Returns the redraw function, for the page to call when its own filters change.
+// wire the panel _flow_panel() wrote; cfg.keep(row) filters the rows (the page's toggles);
+// cfg.yLab(year) labels a year (Financing: the current year as '2026*', indicative), cfg.cy the
+// current year (the build's; else the viewer's clock). Returns the redraw function, for the page
+// to call when its own filters change.
 function mountFlow(cfg){
   if(!window.sankeySVG) return ()=>{};
-  const keep = cfg.keep || (()=>true);
+  const keep = cfg.keep || (()=>true), yLab = cfg.yLab || (y=>String(y)), cy = cfg.cy || new Date().getFullYear();
   const modeOf = () => document.querySelector("input[name='flM']:checked").value;
   function drawFlow(){
     const mode = modeOf();
@@ -1348,14 +1353,14 @@ function mountFlow(cfg){
       nodeColor: nd => { const r = flowNode(nd.id); return r ? CAT_COLOR[r.cat] : null; }});
     el.insertAdjacentHTML('beforeend', "<div class='note'>" + tr8('Hover a band or a box to follow the money; click a box to keep it in focus, click again to clear. Funds in their own colour (CERF blue, pooled funds orange, regional funds green); every agency, grantee and recipient in the colour of its category; a band takes the colour of the box it leaves.') + "</div>");
     if(leg) leg.innerHTML = '<b>' + tr8('Recipients') + '</b>' + F.cats.map(c=>`<span style='display:inline-flex;align-items:center;gap:5px'><span style='width:11px;height:11px;border-radius:2px;background:${CAT_COLOR[c]};display:inline-block${c==='nr' ? ';box-shadow:inset 0 0 0 1px #aab2bd' : ''}'></span>${tr8(CAT_LABEL[c])}</span>`).join('');
-    flTot.textContent = mode==='p' ? (+flY.value===new Date().getFullYear() ? tr8('Pre-arranged, in place in {0}: {1} (today)', flY.value, money(F.total)) : tr8('Pre-arranged, in place in {0}: {1}', flY.value, money(F.total)))
-                                    : flY.value==='all' ? tr8('Released in all years: {0}', money(F.total)) : tr8('Released in {0}: {1}', flY.value, money(F.total));
+    flTot.textContent = mode==='p' ? (+flY.value===cy ? tr8('Pre-arranged, in place in {0}: {1} (today)', yLab(flY.value), money(F.total)) : tr8('Pre-arranged, in place in {0}: {1}', yLab(flY.value), money(F.total)))
+                                    : flY.value==='all' ? tr8('Released in all years: {0}', money(F.total)) : tr8('Released in {0}: {1}', yLab(flY.value), money(F.total));
   }
   // the year list depends on the view: pre-arranged is one year's stock (no 'all years')
   function fillYears(){
     const mode = modeOf(), keepY = flY.value;
     flY.innerHTML = '';
-    D.flowYears[mode].slice().reverse().forEach(y=>flY.add(new Option(y, y)));
+    D.flowYears[mode].slice().reverse().forEach(y=>flY.add(new Option(yLab(y), y)));
     if(mode==='r') flY.add(new Option(tr8('all years'), 'all'));
     flY.value = [...flY.options].some(o=>o.value===keepY) && keepY!=='' ? keepY : String(D.flowDefault[mode]);
     document.getElementById('flYl').textContent = mode==='p' ? tr8('In place in') : tr8('Released in');
@@ -1388,7 +1393,13 @@ def build_funding(page, d):
     Every tile and chart follows the map's layer toggles (current frameworks, retired, ad hoc
     allocations) and a fund switch; the defaults show everything released (current + retired
     + ad hoc, both funds; since 2026-10-02 — before, framework activations only)."""
+    import datetime as _dt
     import html as _html
+    # the current year, as of the build: its figures move daily until it closes, so wherever the
+    # page labels it (the annual charts, the year selectors, the released tile's years) it reads
+    # '2026*', with one footnote under the tiles (2026-10-09 meeting: "asterisk on 2026, marked
+    # indicative and updated daily")
+    cy = _dt.date.today().year
     pre, act = funding_series(d, released="all")   # ad hoc rows ride along, toggled client-side
     cur = d["current"]
     layer = _layer_of(d)
@@ -1436,15 +1447,18 @@ def build_funding(page, d):
 
     # which funds each framework has money on (any year, pre-arranged or released on a
     # framework activation): the fund switch keeps the frameworks with money on that fund
-    # in the counts, people covered and versions
-    pair_funds = {}
-    money_rows = [pre.loc[(pre["kind"] == "prearranged") & (pre["fund_code"] != "all"),
-                          ["country_iso3", "hazard", "fund_code"]],
-                  act.loc[act["g"] != "a", ["country_iso3", "hazard", "fund_code"]],
-                  vf.loc[vf["fund_code"] != "all", ["country_iso3", "hazard", "fund_code"]]]
+    # in the counts, people covered and versions. The money of an earlier framework that a
+    # distinct new one replaced (old_versions) is that framework's, not the pair's current one's
+    # (Somalia drought 2026 does not count "with CERF money" for the 2020 and 2021 activations)
+    old = d.get("old") or set()
+    pair_funds, old_funds = {}, {}
+    cols = ["country_iso3", "hazard", "fund_code", "version"]
+    money_rows = [pre.loc[(pre["kind"] == "prearranged") & (pre["fund_code"] != "all"), cols],
+                  act.loc[act["g"] != "a", cols],
+                  vf.loc[vf["fund_code"] != "all", cols]]
     for r in pd.concat(money_rows).itertuples():
-        pair_funds.setdefault((r.country_iso3, r.hazard), set()).add(
-            "c" if r.fund_code == "cerf" else "p")
+        to = old_funds if (r.country_iso3, r.hazard, str(r.version)) in old else pair_funds
+        to.setdefault((r.country_iso3, r.hazard), set()).add("c" if r.fund_code == "cerf" else "p")
 
     def frame_rows(df):
         df = df.copy()
@@ -1459,6 +1473,19 @@ def build_funding(page, d):
 
     fw = frame_rows(cur[["country_iso3", "hazard", "lifecycle", "technical_support"]])
     fw["technical_support"] = fw["technical_support"].fillna(False).astype(bool)
+    # an earlier framework that a distinct new one replaced (old_versions: Somalia drought's
+    # 2019 / 2020-06-23 food security framework, replaced by the 2026 one) is a retired framework
+    # of its own, as on the map (landing: a pair hosting one is on the retired layer too): one
+    # more retired row, on the pair's line in the picker, with the funds of its own money. A pair
+    # that is itself retired already counts once, as on the map.
+    old_pairs = {(c, h) for c, h, _ in old}
+    replaced = fw[[(c, h) in old_pairs and lc != "retired"
+              for c, h, lc in zip(fw["country_iso3"], fw["hazard"], fw["lifecycle"])]]
+    if len(replaced):
+        fw = pd.concat([fw, replaced.assign(
+            lifecycle="retired", g="r", technical_support=False,
+            funds=["".join(sorted(old_funds.get((c, h), ())))
+                   for c, h in zip(replaced["country_iso3"], replaced["hazard"])])], ignore_index=True)
     # people covered is a NOW figure, like pre-arranged now: the current frameworks' latest
     # figures only (a retired framework covers no one) — the map's figure (2026-10-02 meeting:
     # Financing showed 10.5M with the retired ones, the map 5.4M). k: the pair, so the tile can
@@ -1472,11 +1499,15 @@ def build_funding(page, d):
     n_active = int((cur["lifecycle"] == "active").sum())
     n_upd = int((cur["lifecycle"] == "updating").sum())
     n_dev = int((cur["lifecycle"] == "development").sum())
-    n_ret = int((cur["lifecycle"] == "retired").sum())
+    n_ret = int((fw["lifecycle"] == "retired").sum())   # with the replaced frameworks, as the map
     n_tech = int(fw["technical_support"].sum())
     fw_act = act[act["g"] != "a"]
     total_rel = fw_act["amount_usd"].sum()
-    rel_years = f"{int(fw_act['year'].min())}–{int(fw_act['year'].max())}" if len(fw_act) else ""
+
+    def ylab(y):
+        """A year as the page labels it: the current year marked indicative ('2026*')."""
+        return f"{int(y)}*" if int(y) == cy else str(int(y))
+    rel_years = f"{ylab(fw_act['year'].min())}–{ylab(fw_act['year'].max())}" if len(fw_act) else ""
     covered = cov["people_covered"].sum()
     n_live = int(fw["lifecycle"].isin(live_lc).sum())
     n_cov = int(cov["k"].nunique())
@@ -1596,6 +1627,7 @@ def build_funding(page, d):
  <label>{T("Region")} <select id='fReg'>{OPT("", "all")}</select></label>
  <label>{T("GHO")} <select id='fGho'>{OPT("", "all")}{OPT("1", "GHO contexts only")}</select></label>
  <label {ATTR("title", "released money only: pre-arranged money is a stock, in place on a date, so it never accumulates")}><input type='checkbox' id='fCum'> {T("cumulative (released)")}</label>
+ <button type='button' id='fReset' class='freset' {ATTR("title", "put every filter in this bar back to how the page opens: current frameworks and ad hoc allocations, both funds, every hazard, region and framework")}>{T("Reset all filters")}</button>
 </div>
 <div class='tiles'>
  <div class='tile'><div class='v' id='tFw'>{n_active + n_upd + n_dev}</div><div class='l' id='tFwl'>{TF("frameworks — {a} active · {u} being updated · {d} in development", a=n_active, u=n_upd, d=n_dev)}</div></div>
@@ -1604,6 +1636,7 @@ def build_funding(page, d):
  <div class='tile'><div class='v' id='tCov'>{covered/1e6:,.1f}M</div><div class='l' id='tCovl'>{TF("people covered now — current frameworks, latest figure each ({n} of {m} have one) · not people reached", n=n_cov, m=n_live)}</div></div>
 </div>
 <p class='fwnote' id='fwNote' style='display:none'></p>
+<p class='note' style='margin:-4px 0 6px;font-size:12px;color:#555'>{TF("* {y} is indicative: the figures update daily until the year closes.", y=cy)}</p>
 {gaps_html}
 <details class='note' style='margin:0 0 14px;font-size:12px;color:#555'><summary style='cursor:pointer;font-size:12.5px'>{T("How these figures are counted")}</summary>
 <p>{TB(FUND_NOTE_0)} {TB(FUND_NOTE_REPLACED)}</p>
@@ -1671,10 +1704,13 @@ def build_funding(page, d):
         "fwList": fw_list,
         "un": un_rows, "local": local_rows, "unPartners": un_partners,
         "flow": flow_rows, "flowYears": flow_years, "flowDefault": flow_default,
-        "fundNames": fund_names,
+        "fundNames": fund_names, "cy": cy,
     }
     js = FLOW_JS + """
 const FT = ['cerf','cbpf','regional_fund'];
+// the current year as of the build: its figures update daily until it closes, so it is labelled
+// '2026*' (indicative; the footnote under the tiles) on every chart axis, selector and tile
+const CY = D.cy, yLab = y => +y===CY ? y+'*' : String(y);
 // whole millions, with one decimal under $100M so a regional total isn't rounded away
 // (LAC released $22.5M, shown as $23M before 2026-10-16)
 const M0 = v => { const m = v/1e6, r = Math.abs(m) < 100 ? Math.round(m*10)/10 : Math.round(m);
@@ -1791,7 +1827,7 @@ function tiles(s, geo, A, N){
   const ys = uniqSorted(A, r=>r.year);
   const what = [(s.cur||s.ret) ? tr8('framework activations') : null, s.adh ? tr8('ad hoc allocations') : null].filter(Boolean).join(' + ');
   tRel.textContent = M0(sumOf(A, r=>r.amount_usd));
-  tRell.textContent = tr8('AA released {0} — {1}, ', ys.length ? ys[0]+(ys.length>1 ? '–'+ys[ys.length-1] : '') : tr8('(none in this selection)'), what || tr8('no layer selected'))
+  tRell.textContent = tr8('AA released {0} — {1}, ', ys.length ? yLab(ys[0])+(ys.length>1 ? '–'+yLab(ys[ys.length-1]) : '') : tr8('(none in this selection)'), what || tr8('no layer selected'))
     + (s.fund==='cerf' ? 'CERF' : s.fund==='pooled' ? tr8('Country and Regional Funds') : tr8('CERF and Country and Regional Funds')) + (s.gho ? tr8(', GHO contexts') : '')
     + (s.fws ? (s.adh ? tr8(' · ticked frameworks, and the ad hoc allocations of their countries') : selTxt) : '');
   // people covered: a now figure, current frameworks only (as pre-arranged now and the map)
@@ -1813,7 +1849,7 @@ function draw(){
       let vals = years.map(y=>sumOf(rows.filter(r=>fundType(r.fund_code)===ft&&r.year===y), r=>r.amount_usd));
       if(s.cum && id==='c2') vals = cumulate(vals);   // pre-arranged is a stock: never cumulated
       return {label:ft, data:vals, backgroundColor:FUND_COLORS[ft]};}).filter(d=>d.data.some(v=>v));
-    mkChart(id,'bar',years,ds,{stacked:true, totals:true});
+    mkChart(id,'bar',years.map(yLab),ds,{stacked:true, totals:true});
   }
   const N = D.now.filter(r=>geo(r) && layerOK(r.g,s) && ftOK(r.ft,s));
   stackedBy('c3', N, r=>r.hz, r=>r.total_usd); stackedBy('c4', N, r=>r.region, r=>r.total_usd);
@@ -1830,9 +1866,9 @@ function draw(){
       const g = groupSum(C, r=>r.who, r=>r.amount_usd);
       const keys = Object.keys(g).filter(k=>k!=='not recorded').sort((a,b)=>g[b]-g[a]);
       if(g['not recorded']) keys.push('not recorded');
-      const cy = uniqSorted(C, r=>r.year), yr = new Date().getFullYear();
+      const cy = uniqSorted(C, r=>r.year);
       mkChart('c6','bar',keys, cy.map((y,i)=>({
-        label: +y===yr ? tr8('in place today ({0})', y) : tr8('in place at end of {0}', y),
+        label: +y===CY ? tr8('in place today ({0})', yLab(y)) : tr8('in place at end of {0}', y),
         backgroundColor: i===cy.length-1 ? PAL[3] : '#b9c3cf',
         data: keys.map(k=>sumOf(C.filter(r=>r.who===k && r.year===y), r=>r.amount_usd))})),
         {allLabels:true, extra:{indexAxis:'y'}});
@@ -1856,7 +1892,7 @@ const UG = ['direct UN spend','INGO','NNGO / local','Red Cross / Red Crescent','
 function drawUN(s){
   const U = D.un.filter(r=>!s.rg || r.rg===s.rg);
   const uy = uniqSorted(U, r=>r.year);
-  mkChart('c9','bar',uy,UG.map((g,i)=>({label:g, backgroundColor:PAL[i],
+  mkChart('c9','bar',uy.map(yLab),UG.map((g,i)=>({label:g, backgroundColor:PAL[i],
     data:uy.map(y=>sumOf(U.filter(r=>r.grp===g&&r.year===y), r=>r.usd))})).filter(d=>d.data.some(v=>v)),
     {stacked:true, totals:true});
   const all = sumOf(U, r=>r.usd), sub = sumOf(U.filter(r=>r.grp!=='direct UN spend'), r=>r.usd);
@@ -1872,7 +1908,7 @@ function drawUN(s){
   uTl.textContent = tr8('sub-granted in total · {0} partners', D.unPartners[s.rg||''] || 0) + (s.rg ? ` · ${tr8(s.rg)}` : '');
   const tot = r => r.local + r.intl + r.untyped, pc = (r, k) => tot(r) ? 100*r[k]/tot(r) : 0;
   const parts = [['local','local and national actors','#1baf7a'], ['intl','international NGOs','#9aa3c7'], ['untyped','partner not yet typed','#d9d9d6']];
-  const ch = mkChart('c10','bar',yl, parts.map(([k,lab,col])=>({label:lab, backgroundColor:col, data:L.map(r=>pc(r,k))})), {stacked:true});
+  const ch = mkChart('c10','bar',yl.map(yLab), parts.map(([k,lab,col])=>({label:lab, backgroundColor:col, data:L.map(r=>pc(r,k))})), {stacked:true});
   const localLabel = { id:'localLabel', afterDatasetsDraw(c){ const {ctx, scales:{x, y}} = c;
     if(!c.isDatasetVisible(0)) return;
     ctx.save(); ctx.font = '600 11px ' + Chart.defaults.font.family; ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
@@ -1892,7 +1928,7 @@ document.addEventListener('aalang', ()=>{
   [fHaz, fReg].forEach(el=>[...el.options].forEach(o=>{ if(o.value) o.text = tr8(o.value); }));
   fwBuild(); fwToDom(); draw(); });
 // the flow chart: the layers and the fund switch filter its rows (donors off: it starts at the funds)
-window._flowDraw = mountFlow({label:'AA money through funds and agencies to partners',
+window._flowDraw = mountFlow({label:'AA money through funds and agencies to partners', yLab, cy:CY,
   keep: r=>{ const s = sel(); return layerOK(r.g, s) && (!s.fund || (s.fund==='cerf') === (r.fu==='c'))
                                 && (!s.rg || r.rg===s.rg); }});
 // the framework picker: a group line ticks its lines; with a search typed, the buttons and the
@@ -1908,6 +1944,16 @@ fwQ.addEventListener('input', ()=>{ const q = fwQ.value.toLowerCase().split(' ')
   fwRows.querySelectorAll('label.grp').forEach(gl=>{ gl.style.display = fwLines().some(l=>l.dataset.g===gl.dataset.g && fwShown(l)) ? '' : 'none'; });
   fwAll.textContent = q.length ? tr8('tick shown') : tr8('tick all'); fwNone.textContent = q.length ? tr8('untick shown') : tr8('untick all'); });
 fwNote.addEventListener('click', ev=>{ if(ev.target.tagName==='BUTTON'){ fwSel = null; fwToDom(); fwCommit(); } });
+// 'Reset all filters' (2026-10-09 meeting): every control of the bar back to how the page opens —
+// the layers and cumulative as the page writes them (defaultChecked: current frameworks and ad hoc
+// on, retired and cumulative off), the fund, hazard, region and GHO selects on their first
+// option ('' = all), every framework ticked with the list's search cleared, and no #fw= in the
+// address (fwCommit). The money-flow chart's own controls are views of that chart, not filters.
+fReset.addEventListener('click', ()=>{
+  [fCur, fRet, fAdh, fCum].forEach(el=>{ el.checked = el.defaultChecked; });
+  [fFund, fHaz, fReg, fGho].forEach(el=>{ el.value = ([...el.options].find(o=>o.defaultSelected) || el.options[0]).value; });
+  if(fwQ.value){ fwQ.value = ''; fwQ.dispatchEvent(new Event('input')); }
+  fwPick.open = false; fwSel = null; fwToDom(); fwCommit(); });
 // the list never runs below the window, so its total stays in view wherever the bar sits
 function fwFit(){ if(!fwPick.open) return; const p = fwPick.querySelector('.fwpanel');
   p.style.maxHeight = Math.max(220, innerHeight - p.getBoundingClientRect().top - 12) + 'px';
