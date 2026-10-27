@@ -63,7 +63,6 @@ button.mmore:hover { border-color:var(--accent); background:#eef4fc; }
 .mvcap { flex:1; min-width:180px; overflow-wrap:anywhere; }
 .mvcap b { color:#fff; margin-right:8px; }
 .mvcap .wh { color:#a9b6c9; }
-.mvbar a { color:#9ec5f0; white-space:nowrap; }
 .mvbar button { background:#24324d; color:#fff; border:1px solid #3a4b6b; border-radius:4px; cursor:pointer;
   font-size:15px; line-height:1; padding:5px 10px; }
 .mvbar button:hover:not(:disabled) { background:#31436a; }
