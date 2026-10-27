@@ -137,7 +137,7 @@ NAV = f"""
   <nav class="pub">
    <a href="index.html">{T("Map")}</a>
    <a href="pillar-model.html">{T("Model")}</a><a class="sub" href="pillar-history.html" {ATTR("title", "simulated and real activations of the current triggers")}>{T("historical activations")}</a>
-   <a href="pillar-plan.html">{T("Plan")}</a>
+   <a href="pillar-plan.html">{T("Activities")}</a>
    <a href="dash-funding.html">{T("Financing")}</a>
    <a href="pillar-learning.html">{T("Learning")}</a>
    <a href="media.html">{T("Media")}</a>
@@ -304,8 +304,9 @@ def write_site():
                 for n in set(to_admin.findall(body)):
                     cut.setdefault(name, set()).add(n)
                 body = to_admin.sub("#", body)
-            data = (TF("data snapshot {at} UTC", at=SNAPSHOT_AT) if SNAPSHOT_AT else T("live dev DB"))
-            doc = _render(name, title, body, NAV, TF("Generated {stamp}", stamp=stamp) + " · " + data,
+            # no database wording on a public page (owner, 2026-10-27): the data date, when a snapshot
+            data = " · " + TF("data snapshot {at} UTC", at=SNAPSHOT_AT) if SNAPSHOT_AT else ""
+            doc = _render(name, title, body, NAV, TF("Generated {stamp}", stamp=stamp) + data,
                           public=True)
             if (token and token in doc) or "x-site-token" in doc:
                 raise SystemExit(f"FATAL: public page {name} carries the data service's token")
