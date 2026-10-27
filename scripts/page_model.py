@@ -356,11 +356,16 @@ def build_model(page, d):
     no_trig = [f for f in fws if not f["trig"]]
     n_life = {lc: sum(f["lifecycle"] == lc for f in fws) for lc in LIVE}
 
-    # ------------------------------------------------ activation record per framework (all versions)
+    # ------------------------------------------------ activation record per framework (all versions
+    # of its current line: an earlier framework a distinct new one replaced — dashboards.old_versions,
+    # Somalia drought 2019 / 2020-06-23 — activated as a retired framework, not as this one)
+    old = d.get("old") or set()
     for f in fws:
-        a = wa[(wa["country_iso3"] == f["country_iso3"]) & (wa["hazard"] == f["hazard"])]
-        s = ws[(ws["country_iso3"] == f["country_iso3"]) & (ws["hazard"] == f["hazard"])
-               & ws["triggered"].fillna(False).astype(bool)]
+        c, h = f["country_iso3"], f["hazard"]
+        a = wa[(wa["country_iso3"] == c) & (wa["hazard"] == h)]
+        a = a.loc[[(c, h, str(v)) not in old for v in a["version"]]]
+        s = ws[(ws["country_iso3"] == c) & (ws["hazard"] == h) & ws["triggered"].fillna(False).astype(bool)]
+        s = s.loc[[(c, h, str(v)) not in old for v in s["version"]]]
         s = s[~s["version"].isin(a["version"])]      # status-only activations (none expected)
         f["acts"] = [(str(r.event_date)[:7], r.window_name, r.full_activation, r.version)
                      for r in a.sort_values("event_date").itertuples()]

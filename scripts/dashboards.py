@@ -336,6 +336,37 @@ def _backfill_years(pre, e, first_year=2020):
     return pd.concat([pre, pd.DataFrame(rows)[pre.columns]], ignore_index=True)
 
 
+def old_versions(ver):
+    """{(country, hazard, version)} of the versions OUTSIDE their pair's current line — the
+    rule of aa.v_framework_lifecycle (schema.py), kept here in step with it so the pages need
+    nothing a snapshot taken before the view changed may lack. The current line: the latest
+    version (valid_from DESC NULLS LAST, version DESC, as the view's `latest`) and every
+    version reached back through `supersedes`. A version outside it belongs to an earlier
+    framework that a distinct new one replaced (Somalia drought: the 2019 / 2020-06-23
+    food-security framework vs the 2026 one, which supersedes nothing — 2026-10-27 ruling:
+    the 2020 activation is the old framework's, not the one in development): its activations
+    and money are a RETIRED framework's, never the current framework's. A supersedes naming
+    no version of the pair breaks the chain (Mozambique storm 2026-01-09 -> '2025-05-23'):
+    the line can't be traced, so nothing on that pair is old."""
+    old = set()
+    if ver is None or not len(ver) or "supersedes" not in ver:
+        return old
+    v = ver.assign(version=ver["version"].astype(str),
+                   vf=pd.to_datetime(ver["valid_from"].astype(str), errors="coerce"))
+    for (c, h), g in v.groupby(["country_iso3", "hazard"]):
+        sup = {r.version: (str(r.supersedes) if pd.notna(r.supersedes) else None) for r in g.itertuples()}
+        latest = max(g.itertuples(), key=lambda r: (pd.notna(r.vf), r.vf if pd.notna(r.vf) else pd.Timestamp.min,
+                                                    r.version)).version
+        line, x = set(), latest
+        while x is not None and x not in line:
+            line.add(x)
+            x = sup.get(x)
+        if not line <= set(sup):          # a dangling supersedes: the whole pair is one line
+            continue
+        old |= {(c, h, s) for s in sup if s not in line}
+    return old
+
+
 def prearranged_now(e):
     """THE definition of pre-arranged money now, from the framework records (2026-09-29):
     for every live framework (active, being updated, in development — in-development ones
@@ -345,8 +376,9 @@ def prearranged_now(e):
     that shows pre-arranged money now uses this: the Funding tile, the map tiles, and the
     current year of the annual series (so the donor page and the flow chart agree).
     Live frameworks with no envelope in any version are NOT filled from the sheets: they
-    are listed as gaps (see envelope_gaps)."""
-    now = pd.read_sql(
+    are listed as gaps (see envelope_gaps). Only versions of the framework's current line
+    count (old_versions): a new framework never inherits the envelope of the one it replaced."""
+    env = pd.read_sql(
         """WITH env AS (
                SELECT vf.country_iso3, vf.hazard, vf.version, vf.fund_code, vf.total_usd,
                       fv.valid_from
@@ -357,17 +389,25 @@ def prearranged_now(e):
                SELECT * FROM env x
                WHERE NOT (x.fund_code = 'all' AND EXISTS (
                    SELECT 1 FROM env y WHERE y.country_iso3 = x.country_iso3
-                     AND y.hazard = x.hazard AND y.version = x.version AND y.fund_code <> 'all'))),
-           pick AS (
-               SELECT DISTINCT ON (country_iso3, hazard) country_iso3, hazard, version
-               FROM env2 ORDER BY country_iso3, hazard, valid_from DESC NULLS LAST, version DESC)
-           SELECT x.country_iso3, x.hazard, x.version, x.fund_code, x.total_usd,
+                     AND y.hazard = x.hazard AND y.version = x.version AND y.fund_code <> 'all')))
+           SELECT x.country_iso3, x.hazard, x.version, x.fund_code, x.total_usd, x.valid_from,
                   l.lifecycle, l.latest_version
            FROM env2 x
-           JOIN pick USING (country_iso3, hazard, version)
            JOIN aa.v_framework_lifecycle l USING (country_iso3, hazard)
-           WHERE l.lifecycle IN ('active', 'updating', 'development')
-           ORDER BY 1, 2, 4""", e)
+           WHERE l.lifecycle IN ('active', 'updating', 'development')""", e)
+    old = old_versions(pd.read_sql(
+        "SELECT country_iso3, hazard, version, valid_from, supersedes FROM aa.framework_version", e))
+    env = env.loc[[(c, h, str(v)) not in old
+               for c, h, v in zip(env["country_iso3"], env["hazard"], env["version"])]]
+    # per framework, the most recent version with an envelope (valid_from DESC NULLS LAST,
+    # version DESC — the lifecycle view's order)
+    pick = (env.assign(vf=pd.to_datetime(env["valid_from"].astype(str), errors="coerce"))
+            .sort_values(["country_iso3", "hazard", "vf", "version"],
+                         ascending=[True, True, False, False], na_position="last")
+            .drop_duplicates(["country_iso3", "hazard"])[["country_iso3", "hazard", "version"]])
+    now = (env.merge(pick, on=["country_iso3", "hazard", "version"])
+           .drop(columns="valid_from").sort_values(["country_iso3", "hazard", "fund_code"])
+           .reset_index(drop=True))
     # an envelope recorded as "CBPF, fund not named" belongs to the country's own pooled fund,
     # or its regional fund where it has no country fund (Burkina Faso -> RhPF-WCA)
     reg = pd.read_sql("SELECT fund_code, fund_type, country_iso3 FROM aa.fund WHERE country_iso3 IS NOT NULL", e)
@@ -429,8 +469,11 @@ def _fetch(e):
            WHERE a.event_type NOT IN (""" + _EXCL_SQL + ")", e)
     d["versions"] = pd.read_sql(
         """SELECT country_iso3, hazard, version, kb_status, valid_from, source,
-                  doc_url, analysis_ref, prearranged_usd_doc
+                  doc_url, analysis_ref, prearranged_usd_doc, supersedes
            FROM aa.framework_version ORDER BY country_iso3, hazard, valid_from""", e)
+    # versions of an earlier framework a distinct new one replaced: their activations and
+    # money are a retired framework's (old_versions; _layer_of)
+    d["old"] = old_versions(d["versions"])
     d["alloc"] = pd.read_sql(
         """SELECT v.fund_type, v.fund_name, v.allocation_code,
                   COALESCE(v.country_iso3, fu.country_iso3) AS country_iso3,
@@ -893,17 +936,23 @@ def _agency_node(name):
 
 
 def _layer_of(d):
-    """(country, hazard) -> the map layer its money belongs to: 'r' a retired framework, 'c' any
-    other (current frameworks, and the odd AA-tagged CBPF allocation in a country whose only
-    framework is still in the pipeline, e.g. Sudan). CBPF mirror rows are country-level (hazard
-    'multi' or '?'): 'r' only when the country has retired frameworks and no live one. Ad hoc
-    allocations are their own layer ('a'), set by the caller from event_type."""
+    """(country, hazard[, version]) -> the map layer its money belongs to: 'r' a retired
+    framework, 'c' any other (current frameworks, and the odd AA-tagged CBPF allocation in a
+    country whose only framework is still in the pipeline, e.g. Sudan). A row that carries its
+    version (activations, envelopes) is 'r' when that version is outside the pair's current
+    line (old_versions: Somalia drought 2019 / 2020-06-23), whatever the pair's status. CBPF
+    mirror rows are country-level (hazard 'multi' or '?'): 'r' only when the country has
+    retired frameworks and no live one. Ad hoc allocations are their own layer ('a'), set by
+    the caller from event_type."""
     cur = d["current"]
     pair = dict(zip(zip(cur["country_iso3"], cur["hazard"]), cur["lifecycle"]))
     ret_c = set(cur.loc[cur["lifecycle"] == "retired", "country_iso3"])
     live_c = set(cur.loc[cur["lifecycle"].isin(["active", "updating", "development"]), "country_iso3"])
+    old = d.get("old") or set()
 
-    def layer(c, h):
+    def layer(c, h, version=None):
+        if version is not None and (c, h, str(version)) in old:
+            return "r"      # an earlier framework, replaced by a distinct new one
         lc = pair.get((c, h))
         if lc is not None:
             return "r" if lc == "retired" else "c"
@@ -1097,8 +1146,8 @@ def _money_flows(d, pre, act):
 
     # ---------------- released, in the year it went out (years add up); one pass per layer
     R = act[act["amount_usd"].fillna(0) > 0]
-    R = R.assign(g=["a" if et == "adhoc_aa" else layer(c, h)
-                    for et, c, h in zip(R["event_type"], R["country_iso3"], R["hazard"])],
+    R = R.assign(g=["a" if et == "adhoc_aa" else layer(c, h, v)     # v: an old version -> retired
+                    for et, c, h, v in zip(R["event_type"], R["country_iso3"], R["hazard"], R["version"])],
                  rg=R["country_iso3"].map(rg_of).fillna("?"))
     for (fc, y, g, rg), amount in R.groupby(["fund_code", "year", "g", "rg"])["amount_usd"].sum().items():
         y = int(y)
@@ -1324,6 +1373,8 @@ function mountFlow(cfg){
 # ---------------------------------------------------------------- financing
 # the Financing page's method note, one translatable paragraph each (site_i18n TB)
 FUND_NOTE_0 = "<b>Layers</b>, as on the map: <b>current frameworks</b> (active, being updated, in development) and <b>retired</b> frameworks bring their pre-arranged and released money in every year — a framework's layer is its status today, so the past years need the retired ones to be complete (an AA-tagged country or regional fund allocation in a country with no retired framework counts as current). <b>Ad hoc allocations</b> add the AA money allocated without a framework: released money only, nothing is pre-arranged for it. The <b>fund</b> switch applies to every figure but co-financing; framework counts, people covered and versions then keep the frameworks with money recorded on that fund. There is no technical-support layer here: technical support carries no money. The tiles and the charts follow the layers, the fund, the framework selection and the hazard and region filters (the GHO filter: the annual series and co-financing); the money-flow chart and the sections further down say what they follow."
+# a replaced framework (dashboards.old_versions) is on the retired layer: said under the layers note
+FUND_NOTE_REPLACED = "A framework that a distinct new one replaced, rather than revised, counts as <b>retired</b>, its activations and money with it, even though the new one has the same country and hazard (Somalia drought: the 2019–2021 food security framework, replaced by the 2026 one)."
 FUND_NOTE_1 = '<b>Frameworks</b> (in the filter bar) lists every current and retired framework with its pre-arranged money now: tick the ones to count — a sub-region, a few countries, any subset — and the tiles and the charts count only those, within the other filters. Money that belongs to no framework (an ad hoc allocation, a country-level allocation of a country or regional fund) follows its country: it counts while at least one line of that country is ticked, and the countries whose only AA money is of that kind have a line of their own at the end of the list. A subset changes which frameworks are counted, not how: its pre-arranged money is still a stock, in place today or in a given year, never added over years. The selection is kept in the page address, so a subset can be bookmarked or shared. The money-flow chart and the UN agencies and partners section do not follow it.'
 FUND_NOTE_PRE_A = '<b>Pre-arranged now</b> comes from the framework records: for every active, being-updated or in-development framework, the envelope of its most recent version that has one. The same figure is the current year in the annual chart and on the map.'
 FUND_NOTE_PRE_B = "Pre-arranged money stays pre-arranged until a framework is <b>retired</b>: a framework being updated keeps its most recent version's envelope. Country and Regional Fund allocations are made up front, so an AA-tagged allocation counts as pre-arranged until an activation draws on it (then it counts as released as well). Pre-arranged money is a stock (in place on a date) and released money a flow (per year): the two are never added together."
@@ -1342,8 +1393,10 @@ def build_funding(page, d):
     layer = _layer_of(d)
     region_of = dict(zip(zip(cur["country_iso3"], cur["hazard"]), cur["region"]))
     pre["g"] = [layer(c, h) for c, h in zip(pre["country_iso3"], pre["hazard"])]
-    act["g"] = ["a" if et == "adhoc_aa" else layer(c, h)
-                for et, c, h in zip(act["event_type"], act["country_iso3"], act["hazard"])]
+    # an activation of an earlier framework's version (Somalia drought 2020, 2021) is a retired
+    # framework's, whatever the pair's status today (old_versions)
+    act["g"] = ["a" if et == "adhoc_aa" else layer(c, h, v)
+                for et, c, h, v in zip(act["event_type"], act["country_iso3"], act["hazard"], act["version"])]
 
     def pair_key(df):
         """k: 'ISO3|hazard', the framework a row belongs to — what the framework picker ticks."""
@@ -1362,7 +1415,7 @@ def build_funding(page, d):
     vf = vf.merge(cur[["country_iso3", "hazard", "region"]], on=["country_iso3", "hazard"],
                   how="left")
     vf["hz"] = vf["hazard"].map(haz)
-    vf["g"] = [layer(c, h) for c, h in zip(vf["country_iso3"], vf["hazard"])]
+    vf["g"] = [layer(c, h, v) for c, h, v in zip(vf["country_iso3"], vf["hazard"], vf["version"])]
     vf["k"] = pair_key(vf)
     now_cerf = vf.loc[vf["ft"] == "cerf", "total_usd"].sum()
     now_cbpf = vf.loc[vf["ft"] != "cerf", "total_usd"].sum()
@@ -1396,7 +1449,8 @@ def build_funding(page, d):
         df = df.copy()
         df["hz"] = df["hazard"].map(haz)
         df["region"] = [region_of.get((c, h)) or "?" for c, h in zip(df["country_iso3"], df["hazard"])]
-        df["g"] = [layer(c, h) for c, h in zip(df["country_iso3"], df["hazard"])]
+        vs = df["version"] if "version" in df else [None] * len(df)   # versions: an old one is retired
+        df["g"] = [layer(c, h, v) for c, h, v in zip(df["country_iso3"], df["hazard"], vs)]
         df["funds"] = ["".join(sorted(pair_funds.get((c, h), ()))) for c, h in
                        zip(df["country_iso3"], df["hazard"])]
         df["k"] = pair_key(df)
@@ -1551,7 +1605,7 @@ def build_funding(page, d):
 <p class='fwnote' id='fwNote' style='display:none'></p>
 {gaps_html}
 <details class='note' style='margin:0 0 14px;font-size:12px;color:#555'><summary style='cursor:pointer;font-size:12.5px'>{T("How these figures are counted")}</summary>
-<p>{TB(FUND_NOTE_0)}</p>
+<p>{TB(FUND_NOTE_0)} {TB(FUND_NOTE_REPLACED)}</p>
 <p>{TB(FUND_NOTE_1)}</p>
 <p>{TB(FUND_NOTE_PRE_A)}{stale_html} {TB(FUND_NOTE_PRE_B)}</p>
 <p>{TB(FUND_NOTE_3)}</p>

@@ -898,6 +898,7 @@ def _year_history(d, e, excl, _try):
 def assemble(d, e):
     cur = d["current"].sort_values("country_name")
     ver = pd.read_sql("SELECT * FROM aa.framework_version", e)
+    old_v = d.get("old") or set()   # (country, hazard, version) of replaced frameworks (old_versions)
     win = pd.read_sql(
         """WITH w AS (
              SELECT country_iso3, hazard, version, window_name, all_in, basis, allocation_usd
@@ -1183,9 +1184,13 @@ def assemble(d, e):
                                                    & (partners["version"] == v.version)]),
                 "partners_from": None,
             })
-        # partners: a version without its own list borrows the latest version that has one
-        with_p = [x for x in versions if x["partners"]]
+        # partners: a version without its own list borrows the latest version that has one — of
+        # the same framework: never across a replaced framework (old_versions: Somalia drought
+        # 2026 does not take the 2019 list)
+        own_p = [(x, (c, h, str(x["v"])) in old_v) for x in versions if x["partners"]]
         for x in versions:
+            x_old = (c, h, str(x["v"])) in old_v
+            with_p = [y for y, y_old in own_p if y_old == x_old]
             if not x["partners"] and with_p:
                 src = with_p[-1]
                 x["partners"], x["partners_from"] = src["partners"], src["v"]
@@ -1208,6 +1213,10 @@ def assemble(d, e):
             activations.append({
                 "date": a.event_date, "kb_date": _s(a.kb_event_date),
                 "type": a.event_type, "window": _s(a.window_name), "version": _s(a.version),
+                # an activation of an earlier framework that a distinct new one replaced
+                # (dashboards.old_versions: Somalia drought 2020, 2021): a RETIRED framework's,
+                # counted on the retired layer, never as the current framework's
+                "old": (c, h, _s(a.version)) in old_v,
                 "people": _num(a.people_targeted),
                 "url": _s(u["url"]) if u is not None else None,
                 "released": _num(u["released_usd"]) if u is not None else None,
@@ -1241,8 +1250,8 @@ def assemble(d, e):
         layers = []
         if disp in KB_LABEL:
             layers.append("framework")                # active · updating · development
-        if disp == "retired":
-            layers.append("retired")
+        if disp == "retired" or any(k[:2] == (c, h) for k in old_v):
+            layers.append("retired")                  # retired, or hosts a replaced framework
         if n_adhoc.get((c, h)):
             layers.append("adhoc")                    # ad hoc AA allocations on the pair
         if tech:
@@ -1253,7 +1262,7 @@ def assemble(d, e):
             disp = "adhoc" if "adhoc" in layers else "pipeline"
         months_now = (versions[-1]["months"] if versions else [])
         ring = "now" if disp == "active" and TODAY.month in months_now else None   # currently monitored
-        n_fw_act = sum(1 for a in activations if a["type"] == "framework_aa")
+        n_fw_act = sum(1 for a in activations if a["type"] == "framework_aa" and not a["old"])
         docs = learn[learn["country_iso3"].map(lambda xs: c in _list(xs))
                      & (learn["hazard"].isna() | (learn["hazard"] == h))] if len(learn) else learn
         countries[c]["fws"].append({
@@ -1400,10 +1409,13 @@ def _flow_acts(f, layers):
     """The activation records a pair contributes to the flow tiles (activations, money released,
     people reached) — mirrors flowActs() in LANDING_JS: its framework activations while it is
     shown as a framework (current or retired layer on), its ad hoc allocations while the ad hoc
-    layer is on. The Financing page's layer rule: same layers, same total on both pages."""
+    layer is on, and the activations of an earlier framework it replaced (`old`) while the
+    retired layer is on — never under the current-frameworks layer. The Financing page's layer
+    rule: same layers, same total on both pages."""
     fw_on = any(k in layers and k in f["layers"] for k in ("framework", "retired"))
     return [a for a in f["activations"]
-            if ("adhoc" in layers if a["type"] == "adhoc_aa" else fw_on)]
+            if ("adhoc" in layers if a["type"] == "adhoc_aa"
+                else "retired" in layers if a["old"] else fw_on)]
 
 
 # headline tile icons (24x24 strokes; coloured by CSS)
@@ -1900,18 +1912,26 @@ function statusAt(f, D){
   if(!sc || sc === 'pipeline' || sc === 'retired') return [null, null];
   return [f.versions.length ? 'development' : sc, null];   // its first version came later: being built
 }
-// the framework activations a pin's dots stand for: the year view's filter, as applyYear() counts them
-function dotActs(f){ return f.activations.filter(a => a.type === 'framework_aa' && (YEAR == null || String(a.date).slice(0, 4) === String(YEAR))); }
+// an activation of an earlier framework that a distinct new one replaced (a.old: Somalia drought
+// 2020, 2021 — dashboards.old_versions): a RETIRED framework's, counted on the retired layer only,
+// never as the current framework's. A past year shows each pair as it stood then (statusAt: the
+// old framework WAS the pair's framework in 2020), so there no activation is old.
+const isOld = a => !!a.old && !pastY();
+// the framework activations a pin's dots stand for: the year view's filter, as applyYear() counts
+// them; a replaced framework's ones while the retired layer is on
+function dotActs(f){ return f.activations.filter(a => a.type === 'framework_aa' && (!isOld(a) || LAYERS.retired)
+  && (YEAR == null || String(a.date).slice(0, 4) === String(YEAR))); }
 // ---------- flow figures: activations, money released, people reached (all 'to date', or in the year shown)
 // What a pair contributes: its framework activations while it is shown as a framework (current
-// or retired layer on), its ad hoc allocations while the ad hoc layer is on — the Financing
-// page's layer rule, so both pages give the same total for the same layers. Mirrored by
-// _flow_acts() / tile_figures() in Python. LY: a layer set other than the one shown.
+// or retired layer on), its ad hoc allocations while the ad hoc layer is on, and a replaced
+// framework's activations (isOld) while the retired layer is on — the Financing page's layer
+// rule, so both pages give the same total for the same layers. Mirrored by _flow_acts() /
+// tile_figures() in Python. LY: a layer set other than the one shown.
 function flowActs(f, LY){
   LY = LY || LAYERS;
   const fwOn = (LY.framework && f.layers.includes('framework')) || (LY.retired && f.layers.includes('retired'));
   return f.activations.filter(a => (YEAR == null || String(a.date).slice(0, 4) === String(YEAR))
-    && (a.type === 'adhoc_aa' ? !!LY.adhoc : fwOn));
+    && (a.type === 'adhoc_aa' ? !!LY.adhoc : isOld(a) ? !!LY.retired : fwOn));
 }
 function flowFigures(fs, LY){
   const acts = fs.flatMap(f => flowActs(f, LY)), rows = acts.flatMap(a => a.funding || []);
@@ -1956,7 +1976,7 @@ function applyYear(){
     const B = LIVE.get(f); Object.assign(f, B); f.pre_drv = false;
     if(YEAR == null) return;
     const acts = f.activations.filter(a => String(a.date).slice(0, 4) === Y), H = f.hist || {};
-    f.n_act = acts.filter(a => a.type === 'framework_aa').length; f.n_act_all = acts.length;
+    f.n_act = acts.filter(a => a.type === 'framework_aa' && !isOld(a)).length; f.n_act_all = acts.length;
     f.n_adhoc = (H.adhoc || []).filter(y => String(y) === Y).length;
     let layers;
     if(!pastY()){ layers = B.layers.filter(l => l !== 'adhoc' || f.n_adhoc); }
@@ -2962,7 +2982,8 @@ function fwRows(){
   const R = [];
   Object.entries(L).forEach(([iso, c]) => c.fws.forEach(f => {
     if(!(LAYERS.framework && f.layers.includes('framework'))) return;
-    const v = f.versions.find(x => x.v === f.current), acts = dotActs(f), P = f.pre_parts || {};
+    // the current framework's activations: a replaced framework's (isOld) are not listed here
+    const v = f.versions.find(x => x.v === f.current), acts = dotActs(f).filter(a => !isOld(a)), P = f.pre_parts || {};
     const rows = acts.flatMap(a => a.funding || []);
     R.push({iso, c, f, v, country: tr8(c.name), hazard: tr8(f.hz_label), status: ST_ORDER[f.disp] ?? 9,
             version: f.current || '', pre: f.pre_now, cerf: P.cerf, pooled: P.pooled, all: P.all, pre_v: P.version,
