@@ -107,12 +107,16 @@ are kept forever (the year-end official state, for the map's time view).
 - `scripts/dashboards.py` — dashboards, per-framework pages, explorer, entry forms
 - `scripts/donors.py` — the donor-shares page, admin only (reads `dashboards.funding_series`, so its
   released / pre-arranged totals are the Funding page's)
-- `scripts/page_media.py` — the Media page: the shared Drive folder "AA Visuals" as it was
-  gathered (photos by country, the social posts of the folder's catalogue), read from
-  `site_src/media.json`. Nothing is stored on the site: a photo is Drive's own rendition of
-  the shared file, asked for by its id. `scripts/sync_media.py` rewrites the manifest from the
-  folder: it only lists, it is run by hand and its diff is read before it is committed (not
-  part of the nightly build). Not curated yet: no selection, captions or credits
+- `scripts/page_media.py` — the Media page: the folder "AA visuals" (OCHA-HFSA SharePoint,
+  "(08) External communication"; a Google Drive folder until that was deleted in Oct 2026) as
+  it was gathered (photos by country, the social posts of the folder's catalogue), read from
+  `site_src/media.json`. A photo is shown from two renditions published under `media/` on
+  gh-pages (public files, as the Drive renditions were); the original opens in SharePoint.
+  `scripts/sync_media.py --from DIR` (DIR = the folder downloaded from SharePoint and
+  unzipped) archives every file on the dev blob (`projects/ds-aa-tracking/raw/media/`), makes
+  the renditions once (`…/processed/media/web/`) and rewrites the manifest; it is run by hand
+  and its diff is read before it is committed (not part of the nightly build). `publish.sh`
+  fetches the renditions with `--fetch`. Not curated yet: no selection, captions or credits
 - `scripts/page_climate.py` — two unlisted pages that link only to each other.
   `climate-adaptation.html`: CERF projects coded by hand against climate-adaptation indicators
   (a gate question on climate risk, and activity indicators in seven areas), filterable by

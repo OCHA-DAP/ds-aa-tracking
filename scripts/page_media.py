@@ -4,11 +4,11 @@ Two things, both read from site_src/media.json (written by scripts/sync_media.py
 never during the build): the photos, folder by folder under their country, and the social
 posts of the catalogue kept with the folder.
 
-Nothing is stored on the site. A photo is Drive's own rendition of the file, asked for by
-the file's id (a small one in the grid, a large one in the viewer); the original is one
-link away, in Drive. So the page weighs what its list weighs, and it shows a photo only as
-long as the folder stays shared by link: a file that goes from the folder leaves a grey
-tile until the next sync drops it.
+A photo is shown from two renditions published with the site under media/ (a small one in
+the grid, a large one in the viewer), named by the photo's content; scripts/publish.sh
+fetches them from the dev blob, where sync_media.py keeps them with the originals. The
+original is one link away, in the OCHA-HFSA SharePoint, for those who can open it (a
+private group). A rendition that does not come leaves a grey tile with the file's name.
 
 The collection is not curated yet: no selection, no captions, no credits. A photo carries
 its file name and its folder, which is all the folder says about it.
@@ -19,6 +19,7 @@ page)."""
 
 import html
 import json
+import urllib.parse
 from datetime import date
 from pathlib import Path
 
@@ -27,10 +28,8 @@ from site_i18n import ATTR, TB, TBC, TBF, TC, TD, TF, T
 
 MANIFEST = Path(__file__).parents[1] / "site_src" / "media.json"
 PREVIEW = 12        # photos of a folder, and posts, shown before "show all"
-RENDITION = "https://lh3.googleusercontent.com/d/{id}=w{w}"     # Drive's rendition of a shared file
+RENDITION = "media/{key}-w{w}.jpg"      # sync_media.WIDTHS, published by scripts/publish.sh
 THUMB_W = 400       # the viewer's width (1600) is in MEDIA_JS
-FILE_URL = "https://drive.google.com/file/d/{id}/view"
-FOLDER_URL = "https://drive.google.com/drive/folders/{id}"
 
 MEDIA_CSS = """
 .mjump { display:flex; flex-wrap:wrap; gap:8px; margin:6px 0 4px; }
@@ -51,9 +50,7 @@ h3.mcountry .n { color:var(--muted); font-weight:400; font-size:13px; margin-lef
 .mt img { display:block; width:100%; height:100%; object-fit:cover; }
 .mt:hover img { filter:brightness(1.07); }
 .mt:focus-visible, .mt.on { outline:3px solid var(--accent); outline-offset:1px; }
-.mt.video::after { content:'▶'; position:absolute; inset:0; display:grid; place-items:center; color:#fff;
-  font-size:26px; text-shadow:0 1px 6px rgba(0,0,0,.6); pointer-events:none; }
-/* a file Drive no longer serves: the name, on grey */
+/* a photo whose rendition does not come: the name, on grey */
 .mt.gone img { display:none; }
 .mt.gone::before { content:attr(data-n); position:absolute; inset:0; display:grid; place-items:center;
   padding:8px; font-size:11px; line-height:1.3; text-align:center; overflow-wrap:anywhere; }
@@ -75,7 +72,6 @@ button.mmore:hover { border-color:var(--accent); background:#eef4fc; }
 .mvbar button:disabled { opacity:.35; cursor:default; }
 .mvbar .pos { font-variant-numeric:tabular-nums; color:#a9b6c9; margin:0 6px; }
 .mvstage img { display:block; max-width:100%; max-height:640px; margin:0 auto; border-radius:3px; }
-.mvstage iframe { display:block; width:100%; height:520px; border:0; border-radius:3px; background:#000; }
 .mpbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:10px 0 12px; }
 .mpbar button { background:#fff; border:1px solid #cbd5e1; border-radius:14px; padding:4px 12px; font-size:13px;
   cursor:pointer; }
@@ -101,13 +97,13 @@ button.mmore:hover { border-color:var(--accent); background:#eef4fc; }
 
 MEDIA_JS = """
 (function () {
-  const big = id => 'https://lh3.googleusercontent.com/d/' + id + '=w1600';
+  const big = key => 'media/' + key + '-w1600.jpg';
   const view = document.getElementById('mview');               // absent when there is no photo
-  const img = view && view.querySelector('img'), frame = view && view.querySelector('iframe');
+  const img = view && view.querySelector('img');
   let cur = null;
 
-  // tiles past the preview carry their address in data-src: nothing is asked of Drive for
-  // a photo that is not shown
+  // tiles past the preview carry their address in data-src: nothing is fetched for a photo
+  // that is not shown
   function hydrate(box) {
     box.querySelectorAll('img[data-src]').forEach(i => { i.src = i.dataset.src; i.removeAttribute('data-src'); });
   }
@@ -124,7 +120,7 @@ MEDIA_JS = """
     if (cur) cur.classList.remove('on');
     cur = null;
     view.hidden = true;
-    img.removeAttribute('src'); frame.removeAttribute('src');
+    img.removeAttribute('src');
   }
   function open(t) {
     const grid = t.parentNode, list = [...grid.querySelectorAll('.mt')], i = list.indexOf(t);
@@ -136,27 +132,19 @@ MEDIA_JS = """
     for (let n = t.nextElementSibling; n && n.classList.contains('mt') && n.offsetParent !== null
          && n.offsetTop === t.offsetTop; n = n.nextElementSibling) end = n;
     end.after(view);
-    const id = t.dataset.id, video = t.classList.contains('video');
+    const key = t.dataset.key;
     view.querySelector('.nm').textContent = t.dataset.n;
     view.querySelector('.wh').textContent = [grid.parentNode.dataset.g, t.dataset.s].filter(Boolean).join(' · ');
     view.querySelector('.pos').textContent = (i + 1) + ' / ' + list.length;
     view.querySelector('.pv').disabled = i === 0;
     view.querySelector('.nx').disabled = i === list.length - 1;
-    view.querySelector('.og').href = 'https://drive.google.com/file/d/' + id + '/view';
-    img.hidden = video; frame.hidden = !video;
-    if (video) {
-      img.removeAttribute('src');
-      frame.src = 'https://drive.google.com/file/d/' + id + '/preview';
-    } else {
-      frame.removeAttribute('src');
-      const small = t.querySelector('img');
-      img.alt = t.dataset.n;
-      img.src = small.currentSrc || small.src || big(id);   // at once, then the large one
-      const large = new Image();
-      large.referrerPolicy = 'no-referrer';
-      large.onload = () => { if (cur === t) img.src = large.src; };
-      large.src = big(id);
-    }
+    view.querySelector('.og').href = t.dataset.u;
+    const small = t.querySelector('img');
+    img.alt = t.dataset.n;
+    img.src = small.currentSrc || small.src || big(key);    // at once, then the large one
+    const large = new Image();
+    large.onload = () => { if (cur === t) img.src = large.src; };
+    large.src = big(key);
     view.hidden = false;
     const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
     view.scrollIntoView({block: 'nearest', behavior: calm ? 'auto' : 'smooth'});
@@ -261,21 +249,31 @@ def _count(n, one, many):
     return TF(one if n == 1 else many, n=f"{n:,}")
 
 
-def _tile(item, k):
-    """One photo (or video) of a folder's grid. Past the preview its picture waits in
-    data-src until the folder is opened."""
-    src = RENDITION.format(id=item["id"], w=THUMB_W)
+def _sharepoint(f, path, name=None):
+    """The OCHA-HFSA library's view of a folder of the manifest (path: the folder names below
+    the root), or of one of its files (name): the file opens in SharePoint's viewer."""
+    folder = "/".join([f["path"], *path])
+    view = f'{f["site"]}{urllib.parse.quote(f["library"])}/Forms/AllItems.aspx?id='
+    if name is None:
+        return view + urllib.parse.quote(folder, safe="")
+    return (view + urllib.parse.quote(f"{folder}/{name}", safe="")
+            + "&parent=" + urllib.parse.quote(folder, safe=""))
+
+
+def _tile(item, k, url):
+    """One photo of a folder's grid (url: the original's). Past the preview its picture waits
+    in data-src until the folder is opened."""
+    src = RENDITION.format(key=item["key"], w=THUMB_W)
     attr = "src" if k < PREVIEW else "data-src"
-    cls = "mt video" if item["kind"] == "video" else "mt"
-    return (f'<button type="button" class="{cls}" data-id="{_e(item["id"])}" data-n="{_e(item["name"])}" '
-            f'data-s="{_e(_size(item.get("bytes")))}" title="{_e(item["name"])}">'
-            f'<img loading="lazy" referrerpolicy="no-referrer" {attr}="{_e(src)}" alt="{_e(item["name"])}"></button>')
+    return (f'<button type="button" class="mt" data-key="{_e(item["key"])}" data-u="{_e(url)}" '
+            f'data-n="{_e(item["name"])}" data-s="{_e(_size(item.get("bytes")))}" title="{_e(item["name"])}">'
+            f'<img loading="lazy" {attr}="{_e(src)}" alt="{_e(item["name"])}"></button>')
 
 
-def _group(g):
-    """One folder: its photos as a grid, its documents as links."""
-    shown = [i for i in g["items"] if i["kind"] in ("image", "video")]
-    docs = [i for i in g["items"] if i["kind"] == "document"]
+def _group(g, folder):
+    """One folder: its photos as a grid, its other files (documents, videos) as links."""
+    shown = [i for i in g["items"] if i["kind"] == "image"]
+    docs = [i for i in g["items"] if i["kind"] != "image"]
     label = " › ".join(g["path"][1:])
     weight = _size(sum(i.get("bytes", 0) for i in shown))
     counts = " · ".join(x for x in (
@@ -285,16 +283,17 @@ def _group(g):
     out = [f'<section class="mgroup" data-g="{_e(" › ".join(g["path"]))}"><div class="mh">'
            + (f"<b>{_e(label)}</b>" if label else "")
            + f'<span class="n">{counts}</span>'
-           f'<a href="{_e(FOLDER_URL.format(id=g["id"]))}" target="_blank" rel="noopener">{T("Open the folder in Drive ↗")}</a></div>']
+           f'<a href="{_e(_sharepoint(folder, g["path"]))}" target="_blank" rel="noopener">{T("Open the folder in SharePoint ↗")}</a></div>']
     if shown:
         clip = " clip" if len(shown) > PREVIEW else ""
-        out.append(f'<div class="mgrid{clip}">' + "".join(_tile(i, k) for k, i in enumerate(shown)) + "</div>")
+        out.append(f'<div class="mgrid{clip}">' + "".join(
+            _tile(i, k, _sharepoint(folder, g["path"], i["name"])) for k, i in enumerate(shown)) + "</div>")
         if clip:
             all_ = _count(len(shown), "Show all {n} photo", "Show all {n} photos")
             out.append(f'<button type="button" class="mmore" data-k="photo" data-c="{len(shown)}">{all_}</button>')
     if docs:
         out.append(f'<div class="mdocs">{T("Documents in this folder:")} ' + " · ".join(
-            f'<a href="{_e(FILE_URL.format(id=i["id"]))}" target="_blank" rel="noopener">{_e(i["name"])}</a>'
+            f'<a href="{_e(_sharepoint(folder, g["path"], i["name"]))}" target="_blank" rel="noopener">{_e(i["name"])}</a>'
             + (f' ({_size(i["bytes"])})' if i.get("bytes", 0) >= 5e6 else "") for i in docs) + "</div>")
     return "".join(out) + "</section>"
 
@@ -336,9 +335,9 @@ def build_media(page):
         countries.setdefault(g["path"][0] if g["path"] else m["folder"]["title"], []).append(g)
 
     def photos(gs):
-        return sum(1 for g in gs for i in g["items"] if i["kind"] in ("image", "video"))
+        return sum(1 for g in gs for i in g["items"] if i["kind"] == "image")
 
-    n_photos, n_docs = photos(groups), sum(1 for g in groups for i in g["items"] if i["kind"] == "document")
+    n_photos, n_docs = photos(groups), sum(1 for g in groups for i in g["items"] if i["kind"] != "image")
     synced = m.get("synced")
     tiles = "".join(f"<div class='tile'><div class='v'>{v:,}</div><div class='l'>{T(label)}</div></div>"
                     for v, label in ((n_photos, "photos"), (len(countries), "countries"),
@@ -349,7 +348,7 @@ def build_media(page):
         jump += f'<a href="#posts">{T("Social posts")}<span class="n">{len(posts):,}</span></a>'
 
     body = [f"""
-<div class='card'>{TBF("<b>A first collection, shown as it was gathered.</b> Photos of anticipatory action shared by agencies and OCHA teams, and posts about it on social media, from the shared folder <i>{folder}</i>. Nothing has been selected, captioned or credited yet: a photo carries its file name and the folder it came in, and the full-size original opens in Drive.", folder=_e(m["folder"]["title"]))}
+<div class='card'>{TBF("<b>A first collection, shown as it was gathered.</b> Photos of anticipatory action shared by agencies and OCHA teams, and posts about it on social media, from the folder <i>{folder}</i> of the OCHA-HFSA SharePoint. Nothing has been selected, captioned or credited yet: a photo carries its file name and the folder it came in, and the full-size original opens in SharePoint, for members of the OCHA-HFSA group.", folder=_e(m["folder"]["title"]))}
 {TBC(lambda w: w("Listed on {d}.").format(d=_day_txt(synced, w))) if _day_txt(synced) else ""}
 <div class='tiles'>{tiles}</div>
 <div class='mjump'>{jump}</div></div>"""]
@@ -358,14 +357,14 @@ def build_media(page):
         body.append(f"<h2 id='photos'>{T('Photos, by country')}</h2>")
         for k, (c, gs) in enumerate(countries.items()):
             body.append(f'<h3 class="mcountry" id="m-{k}">{TD(c)}<span class="n">{_count(photos(gs), "{n} photo", "{n} photos")}</span></h3>')
-            body += [_group(g) for g in gs]
+            body += [_group(g, m["folder"]) for g in gs]
         body.append(f"""
 <div id="mview" class="mview" hidden>
  <div class="mvbar"><span class="mvcap"><b class="nm"></b><span class="wh"></span></span>
   <span><button type="button" class="pv" {ATTR("aria-label", "Previous photo")}>‹</button><span class="pos"></span><button type="button" class="nx" {ATTR("aria-label", "Next photo")}>›</button></span>
-  <a class="og" target="_blank" rel="noopener">{T("Open the original in Drive ↗")}</a>
+  <a class="og" target="_blank" rel="noopener">{T("Open the original in SharePoint ↗")}</a>
   <button type="button" class="cl" {ATTR("aria-label", "Close")}>✕</button></div>
- <div class="mvstage"><img alt="" referrerpolicy="no-referrer"><iframe hidden {ATTR("title", "Video")} allow="autoplay; fullscreen" allowfullscreen></iframe></div>
+ <div class="mvstage"><img alt=""></div>
 </div>""")
 
     if posts:

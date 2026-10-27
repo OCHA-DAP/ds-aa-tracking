@@ -1,21 +1,42 @@
-"""Sync the media manifest (site_src/media.json) from the shared Drive folder "AA Visuals".
+"""Sync the media manifest (site_src/media.json) from the folder "AA visuals", and keep the
+folder on the dev blob.
 
 The Media page (scripts/page_media.py) shows what the manifest lists, and nothing else.
-No file is copied: the folder is shared "anyone with the link", the page shows Drive's own
-renditions of each file by its id, and the originals (6 GB of photos on 2026-10-09) stay
-where they are. So this script only LISTS. It walks the folder tree through Drive's public
-folder view (no sign-in, no API key, no file is fetched) and reads the catalogue workbook
-kept at the folder's root: its inventory sheet for sizes and dates, its posts sheet for
-the social posts.
 
-    uv run python scripts/sync_media.py             # rewrite site_src/media.json
-    uv run python scripts/sync_media.py --dry-run   # say what would change, write nothing
+The folder lives in the OCHA-HFSA SharePoint, "(08) External communication/AA visuals" (a
+private group: nothing there can be read without signing in). It was a shared Google Drive
+folder until that was deleted in October 2026; the SharePoint copy is the same files, name
+for name and byte for byte. Since nothing can list SharePoint without a sign-in, a sync
+starts from a copy of the folder on disk: open the folder in SharePoint, "Download" (one
+zip of the whole folder), unzip it, and point this script at the unzipped "AA visuals".
+
+    uv run python scripts/sync_media.py --from "DIR/AA visuals" --dry-run   # what would change
+    uv run python scripts/sync_media.py --from "DIR/AA visuals"             # do it
+    uv run python scripts/sync_media.py --fetch site_media                  # the publish step
+
+A sync does three things:
+- archives every file of the folder on the dev blob, path for path, under ORIGINALS, with
+  an index (path, size, sha256): the originals (6 GB on 2026-10-27) are kept there so that
+  losing the folder once more loses nothing. A file already there with the same size is not
+  sent again;
+- makes two renditions of each photo (WIDTHS: the grid's and the viewer's), turned upright
+  from the camera's orientation, and keeps them on the dev blob under WEB, named by the
+  photo's content (the first 16 hex digits of its sha256): renditions are made once, here,
+  never during the build, so a photo's rendition never changes under the same name;
+- rewrites the manifest: each photo and document with its key, name and size, and the
+  social posts of the catalogue kept at the folder's root (its posts sheet).
+
+--fetch is the other half, for scripts/publish.sh: it fetches the renditions the manifest
+lists (and only those) from the blob into a folder the publish copies to gh-pages under
+media/. A rendition the blob does not have stops the publish.
 
 Run by hand, and read the diff before committing it: what is in the manifest is published
 (the publish workflow runs on a push that touches site_src/). It is not part of the nightly
-build on purpose, so nothing reaches the page that nobody looked at.
+build on purpose, so nothing reaches the page that nobody looked at. The renditions on
+gh-pages are public files (gh-pages is a public branch; the page's encryption covers its
+HTML only), as the Drive folder's own renditions were when it was shared by link.
 
-What is left out, and said so on every run:
+What is left out of the manifest, and said so on every run (all of it is still archived):
 - the catalogue itself and any other spreadsheet at the folder's root (working files, with
   research notes), and hidden sidecar files (.BridgeSort, …);
 - catalogue rows that are not a post on a public platform: rows with no exact post link
@@ -29,26 +50,33 @@ item, a caption, a credit) will need its own file or table; none exists yet.
 """
 
 import argparse
-import html
+import hashlib
 import io
 import json
+import mimetypes
 import re
 import sys
-import time
 import urllib.parse
-import urllib.request
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-ROOT_FOLDER = "1yYua6QS7AU6HuZX9Eadysad_TyZfnRIU"      # "AA Visuals", shared by the AA team
+SHAREPOINT = {"site": "https://unitednations.sharepoint.com",
+              "library": "/sites/OCHAHFSA/Shared Documents",
+              "path": "/sites/OCHAHFSA/Shared Documents/(08) External communication/AA visuals"}
 CATALOGUE_PREFIX = "AA Social Media & Visual Asset Catalogue"
-POSTS_SHEET, INVENTORY_SHEET = "Verified posts", "Drive asset inventory"
+POSTS_SHEET = "Verified posts"
 MANIFEST = Path(__file__).parents[1] / "site_src" / "media.json"
 
-UA = {"User-Agent": "Mozilla/5.0 (ds-aa-tracking media sync)"}
-ENTRY = re.compile(r'<div class="flip-entry" id="entry-([^"]+)"(.*?)'
-                   r'<div class="flip-entry-last-modified">', re.S)
-SHEET_MIME = "application/vnd.google-apps.spreadsheet"
+CONTAINER = "projects"                                    # the dev blob
+ORIGINALS = "ds-aa-tracking/raw/media/aa_visuals"         # the folder, path for path
+INDEX = "ds-aa-tracking/raw/media/aa_visuals_index.json"  # path, bytes, sha256 of each file
+WEB = "ds-aa-tracking/processed/media/web"                # <key>-w<width>.jpg
+WIDTHS = (400, 1600)                                      # the grid's, the viewer's
+QUALITY = 80
+
+IMAGE = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".tif", ".tiff"}
+VIDEO = {".mp4", ".mov", ".m4v", ".avi", ".webm"}
+DOCUMENT = {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}
 
 # a post counts when its link is on one of these: host suffix -> the platform's name
 PLATFORMS = {"x.com": "X", "twitter.com": "X", "linkedin.com": "LinkedIn", "bsky.app": "Bluesky",
@@ -58,70 +86,36 @@ PLATFORMS = {"x.com": "X", "twitter.com": "X", "linkedin.com": "LinkedIn", "bsky
 POST_IMAGE_HOST = "pbs.twimg.com"
 
 
-def _get(url, tries=4):
-    for i in range(tries):
-        try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=90) as r:
-                return r.read()
-        except Exception as e:  # noqa: BLE001 — retried, then raised as is
-            err = e
-            time.sleep(2 * (i + 1))
-    raise err
-
-
-def list_folder(folder_id):
-    """(title, entries) of one public folder, from Drive's embedded folder view. An entry is
-    {id, name, mime, folder}. The view is not paged; the count is checked against the page."""
-    body = _get(f"https://drive.google.com/embeddedfolderview?id={folder_id}").decode("utf-8", "replace")
-    title = re.search(r"<title>(.*?)</title>", body, re.S)
-    rows = []
-    for eid, rest in ENTRY.findall(body):
-        name = re.search(r'class="flip-entry-title">(.*?)</div>', rest, re.S)
-        icon = re.search(r'drive-thirdparty\.googleusercontent\.com/16/type/([^"]+)"', rest)
-        href = re.search(r'href="([^"]+)"', rest)
-        mime = icon.group(1) if icon else ""
-        rows.append({"id": eid, "name": html.unescape(name.group(1)).strip() if name else "",
-                     "mime": mime,
-                     "folder": "folder" in mime or "/folders/" in (html.unescape(href.group(1)) if href else "")})
-    seen = len(re.findall(r'class="flip-entry"', body))
-    if seen != len(rows) or "flip-entries" not in body:
-        raise SystemExit(f"FATAL: folder {folder_id}: {seen} entries in Drive's page, {len(rows)} read "
-                         "— the folder view changed, or the folder is no longer shared by link")
-    return (html.unescape(title.group(1)).strip() if title else ""), rows
-
-
-def walk(root):
-    """Every folder under root, depth first: [(path, folder_id, entries)], path = folder names
-    below the root ([] for the root itself)."""
-    out, title = [], None
-
-    def visit(fid, path):
-        nonlocal title
-        t, rows = list_folder(fid)
-        title = title or t
-        out.append((path, fid, rows))
-        time.sleep(0.4)                      # one small page per folder: no need to hurry
-        for r in sorted((r for r in rows if r["folder"]), key=lambda r: _natural(r["name"])):
-            visit(r["id"], path + [r["name"]])
-
-    visit(root, [])
-    return title, out
+def rendition_names(key):
+    return [f"{key}-w{w}.jpg" for w in WIDTHS]
 
 
 def _natural(s):
     return [int(p) if p.isdigit() else p.lower() for p in re.split(r"(\d+)", s)]
 
 
-def _kind(mime):
-    if mime.startswith("image/"):
-        return "image"
-    if mime.startswith("video/"):
-        return "video"
-    if mime == "application/pdf" or "officedocument" in mime or mime in (
-            "application/msword", "application/vnd.google-apps.document",
-            "application/vnd.google-apps.presentation") or "spreadsheet" in mime:
-        return "document"
-    return None                              # sidecars and anything a browser cannot show
+def _kind(name):
+    ext = Path(name).suffix.lower()
+    return "image" if ext in IMAGE else "video" if ext in VIDEO else "document" if ext in DOCUMENT else None
+
+
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def read_folder(root):
+    """Every file under root: [{rel, path, bytes, sha256}], folders in natural order."""
+    root = Path(root)
+    if not root.is_dir():
+        raise SystemExit(f"FATAL: {root} is not a folder (the unzipped 'AA visuals')")
+    files = [p for p in root.rglob("*") if p.is_file()]
+    files.sort(key=lambda p: [_natural(x) for x in p.relative_to(root).parts])
+    return [{"rel": p.relative_to(root).as_posix(), "path": p, "bytes": p.stat().st_size,
+             "sha256": _sha256(p)} for p in files]
 
 
 def _sheet(wb, name):
@@ -202,49 +196,126 @@ def read_posts(rows):
     return posts, {k: n for k, n in left.items() if n}
 
 
-def build():
+def build(root, files):
+    """(manifest, notes) from the files of the folder."""
     import openpyxl
 
-    title, tree = walk(ROOT_FOLDER)
-    root_rows = tree[0][2]
-    sheets = sorted((r for r in root_rows if r["mime"] == SHEET_MIME and r["name"].startswith(CATALOGUE_PREFIX)),
-                    key=lambda r: _natural(r["name"]))
+    at_root = [f for f in files if "/" not in f["rel"]]
+    sheets = sorted((f for f in at_root if f["rel"].startswith(CATALOGUE_PREFIX) and f["rel"].endswith(".xlsx")),
+                    key=lambda f: _natural(f["rel"]))
     if not sheets:
-        raise SystemExit(f"FATAL: no Google Sheet named {CATALOGUE_PREFIX!r}… at the root of the folder: "
-                         "the posts and the file sizes come from it")
+        raise SystemExit(f"FATAL: no workbook named {CATALOGUE_PREFIX!r}….xlsx at the root of the folder: "
+                         "the posts come from it")
     cat = sheets[-1]                         # the highest version, when several are kept
-    wb = openpyxl.load_workbook(io.BytesIO(_get(
-        f"https://docs.google.com/spreadsheets/d/{cat['id']}/export?format=xlsx")), read_only=True, data_only=True)
-    inv = {_s(r.get("Drive file ID")): r for r in _sheet(wb, INVENTORY_SHEET)}
+    wb = openpyxl.load_workbook(cat["path"], read_only=True, data_only=True)
     posts, posts_left = read_posts(_sheet(wb, POSTS_SHEET))
 
-    groups, skipped, empty = [], [], []
-    for path, fid, rows in tree:
-        items = []
-        for r in sorted((r for r in rows if not r["folder"]), key=lambda r: _natural(r["name"])):
-            kind = _kind(r["mime"])
-            if r["name"].startswith(".") or kind is None or (not path and "spreadsheet" in r["mime"]):
-                skipped.append("/".join(path + [r["name"]]))
-                continue
-            item = {"id": r["id"], "name": r["name"], "kind": kind}
-            known = inv.get(r["id"])
-            if known:
-                size = _s(known.get("Size (bytes)"))
-                if re.fullmatch(r"\d+(\.0+)?", size):
-                    item["bytes"] = int(float(size))
-                modified = re.match(r"\d{4}-\d{2}-\d{2}", _s(known.get("Modified (UTC)")))
-                if modified:
-                    item["modified"] = modified.group(0)
-            items.append(item)
-        if items:
-            groups.append({"path": path, "id": fid, "items": items})
-        elif path and not rows:
-            empty.append("/".join(path))
+    groups, skipped = {}, []
+    for f in files:
+        *path, name = f["rel"].split("/")
+        kind = _kind(name)
+        if name.startswith(".") or kind is None or (not path and Path(name).suffix.lower() in (".xls", ".xlsx")):
+            skipped.append(f["rel"])
+            continue
+        groups.setdefault(tuple(path), []).append(
+            {"key": f["sha256"][:16], "name": name, "kind": kind, "bytes": f["bytes"]})
+    empty = sorted(p.relative_to(root).as_posix() for p in Path(root).rglob("*")
+                   if p.is_dir() and not any(p.iterdir()))
     manifest = {"synced": date.today().isoformat(),
-                "folder": {"id": ROOT_FOLDER, "title": title}, "catalogue": cat["name"],
-                "groups": groups, "posts": posts}
-    return manifest, {"skipped": skipped, "empty": empty, "posts_left": posts_left,
-                      "unsized": sum(1 for g in groups for i in g["items"] if "bytes" not in i)}
+                "folder": {"title": Path(root).name, **SHAREPOINT}, "catalogue": Path(cat["rel"]).stem,
+                "groups": [{"path": list(p), "items": items} for p, items in groups.items()],
+                "posts": posts}
+    return manifest, {"skipped": skipped, "empty": empty, "posts_left": posts_left}
+
+
+def renditions(path):
+    """The photo at path as {width: JPEG bytes}, upright, never wider than the original."""
+    from PIL import Image, ImageOps
+
+    with Image.open(path) as im:
+        im.draft("RGB", (max(WIDTHS), max(WIDTHS)))   # a JPEG decodes at the scale needed, not full size
+        icc = im.info.get("icc_profile") if im.mode == "RGB" else None
+        im = ImageOps.exif_transpose(im)
+        if im.mode != "RGB":
+            im = im.convert("RGB")
+        out = {}
+        for w in WIDTHS:
+            r = im.copy()
+            r.thumbnail((w, 1 << 16), Image.LANCZOS)
+            buf = io.BytesIO()
+            r.save(buf, "JPEG", quality=QUALITY, optimize=True, progressive=True, icc_profile=icc)
+            out[w] = buf.getvalue()
+        return out
+
+
+def _blobs(cc, prefix):
+    """{name: size} of the blobs under prefix."""
+    return {b.name: b.size for b in cc.list_blobs(name_starts_with=prefix + "/")}
+
+
+def archive(files, manifest, dry_run):
+    """Send what the blob lacks: the originals, the index, the renditions. Says what it sent."""
+    import ocha_stratus as stratus
+    from azure.storage.blob import ContentSettings
+
+    cc = stratus.get_container_client(container_name=CONTAINER, stage="dev", write=not dry_run)
+    have, web = _blobs(cc, ORIGINALS), _blobs(cc, WEB)
+    send = [f for f in files if have.get(f"{ORIGINALS}/{f['rel']}") != f["bytes"]]
+    photos = {i["key"]: i for g in manifest["groups"] for i in g["items"] if i["kind"] == "image"}
+    by_key = {f["sha256"][:16]: f for f in files}
+    make = [k for k in photos if any(f"{WEB}/{n}" not in web for n in rendition_names(k))]
+    print(f"blob ({CONTAINER}, dev): {len(send)} original(s) to send "
+          f"({sum(f['bytes'] for f in send) / 1e9:.2f} GB), {len(files) - len(send)} already there · "
+          f"{len(make)} photo(s) to render, {len(photos) - len(make)} already rendered")
+    if dry_run:
+        return
+    for k, f in enumerate(send, 1):
+        ctype = mimetypes.guess_type(f["rel"])[0] or "application/octet-stream"
+        with open(f["path"], "rb") as fh:
+            cc.upload_blob(f"{ORIGINALS}/{f['rel']}", fh, overwrite=True, max_concurrency=4,
+                           content_settings=ContentSettings(content_type=ctype))
+        print(f"  original {k}/{len(send)}: {f['rel']}", flush=True)
+    index = [{"path": f["rel"], "bytes": f["bytes"], "sha256": f["sha256"]} for f in files]
+    stratus.upload_blob_data(json.dumps({"synced": manifest["synced"], "sharepoint": SHAREPOINT,
+                                         "files": index}, ensure_ascii=False, indent=1).encode(),
+                             INDEX, stage="dev", container_name=CONTAINER, content_type="application/json")
+    total = 0
+    for k, key in enumerate(make, 1):
+        for w, data in renditions(by_key[key]["path"]).items():
+            cc.upload_blob(f"{WEB}/{key}-w{w}.jpg", data, overwrite=True,
+                           content_settings=ContentSettings(content_type="image/jpeg",
+                                                            cache_control="public, max-age=31536000"))
+            total += len(data)
+        if k % 25 == 0 or k == len(make):
+            print(f"  rendered {k}/{len(make)} ({total / 1e6:.0f} MB so far)", flush=True)
+
+
+def fetch(out):
+    """The renditions the manifest lists, from the blob into out (and nothing else there)."""
+    import ocha_stratus as stratus
+    from azure.core.exceptions import ResourceNotFoundError
+
+    m = json.loads(MANIFEST.read_text()) if MANIFEST.exists() else {}
+    want = sorted({n for g in m.get("groups", []) for i in g["items"] if i["kind"] == "image"
+                   for n in rendition_names(i["key"])})  # a photo kept in two folders: one pair
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    for p in out.iterdir():                  # a cached folder: what the manifest dropped goes
+        if p.name not in want:
+            p.unlink()
+    cc = stratus.get_container_client(container_name=CONTAINER, stage="dev")
+    got = 0
+    for n in want:
+        p = out / n
+        if p.exists() and p.stat().st_size:  # the name is the photo's content: never stale
+            continue
+        try:
+            p.write_bytes(cc.download_blob(f"{WEB}/{n}").readall())
+        except ResourceNotFoundError as e:
+            raise SystemExit(f"FATAL: rendition {WEB}/{n} is not on the blob: "
+                             "run sync_media.py --from on the folder") from e
+        got += 1
+    print(f"media: {len(want)} rendition(s) in {out} ({got} fetched, {len(want) - got} cached)")
 
 
 def dumps(m):
@@ -254,7 +325,7 @@ def dumps(m):
     out = ["{", f' "synced": {j(m["synced"])},', f' "folder": {j(m["folder"])},',
            f' "catalogue": {j(m["catalogue"])},', ' "groups": [']
     for gi, g in enumerate(m["groups"]):
-        out.append(f'  {{"path": {j(g["path"])}, "id": {j(g["id"])}, "items": [')
+        out.append(f'  {{"path": {j(g["path"])}, "items": [')
         out += [f"   {j(it)}{',' if k < len(g['items']) - 1 else ''}" for k, it in enumerate(g["items"])]
         out.append("  ]}" + ("," if gi < len(m["groups"]) - 1 else ""))
     out += [" ],", ' "posts": [']
@@ -264,13 +335,14 @@ def dumps(m):
 
 
 def _changes(old, new):
-    """What a sync changes, in words: files and posts that came and went."""
+    """What a sync changes, in words: files (by folder and name) and posts that came and went."""
     def files(m):
-        return {i["id"]: "/".join(g["path"] + [i["name"]]) for g in m.get("groups", []) for i in g["items"]}
+        return {"/".join(g["path"] + [i["name"]]) for g in m.get("groups", []) for i in g["items"]}
     def posts(m):
         return {p["url"]: f'{p["platform"]} {p.get("date", "")} {p.get("account", "")}' for p in m.get("posts", [])}
     lines = []
-    for what, a, b in (("file", files(old), files(new)), ("post", posts(old), posts(new))):
+    for what, a, b in (("file", {f: f for f in files(old)}, {f: f for f in files(new)}),
+                       ("post", posts(old), posts(new))):
         for sign, ids, src in (("+", b.keys() - a.keys(), b), ("-", a.keys() - b.keys(), a)):
             names = sorted(src[i] for i in ids)
             if names:
@@ -281,28 +353,37 @@ def _changes(old, new):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--dry-run", action="store_true", help="say what would change, write nothing")
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--from", dest="root", metavar="DIR", help="the unzipped 'AA visuals' folder")
+    src.add_argument("--fetch", metavar="DIR", help="fetch the manifest's renditions into DIR (publish)")
+    ap.add_argument("--dry-run", action="store_true", help="say what would change, write and send nothing")
     a = ap.parse_args()
-    manifest, notes = build()
+    if a.fetch:
+        return fetch(a.fetch)
+
+    files = read_folder(a.root)
+    manifest, notes = build(a.root, files)
     n = {k: sum(1 for g in manifest["groups"] for i in g["items"] if i["kind"] == k)
          for k in ("image", "video", "document")}
-    size = sum(i.get("bytes", 0) for g in manifest["groups"] for i in g["items"])
-    print(f'{manifest["folder"]["title"]}: {n["image"]} photos, {n["video"]} videos, {n["document"]} documents '
-          f'in {len(manifest["groups"])} folders ({size / 1e9:.1f} GB of originals, none fetched) · '
+    size = sum(f["bytes"] for f in files)
+    print(f'{manifest["folder"]["title"]}: {len(files)} files ({size / 1e9:.2f} GB) · listed: {n["image"]} photos, '
+          f'{n["video"]} videos, {n["document"]} documents in {len(manifest["groups"])} folders · '
           f'{len(manifest["posts"])} posts from {manifest["catalogue"]!r}')
     for k, v in notes["posts_left"].items():
         print(f"  left out: {v} catalogue row(s) — {k}")
     if notes["skipped"]:
-        print(f'  left out: {len(notes["skipped"])} file(s) — ' + "; ".join(notes["skipped"]))
+        print(f'  not listed (archived only): {len(notes["skipped"])} file(s) — ' + "; ".join(notes["skipped"]))
     if notes["empty"]:
         print("  empty folder(s): " + "; ".join(notes["empty"]))
-    if notes["unsized"]:
-        print(f'  {notes["unsized"]} file(s) are not in the catalogue\'s inventory yet: listed without a size')
+    dupes = len(files) - len({f["sha256"][:16] for f in files})
+    if dupes:
+        print(f"  {dupes} file(s) are copies of another file of the folder (same content, same key)")
     old = json.loads(MANIFEST.read_text()) if MANIFEST.exists() else {}
     changes = _changes(old, manifest)
     print("\n".join(changes) if changes else "  no file or post added or removed")
+    archive(files, manifest, a.dry_run)
     if a.dry_run:
-        print("dry run: nothing written")
+        print("dry run: nothing written, nothing sent")
         return
     MANIFEST.write_text(dumps(manifest))
     print(f"wrote {MANIFEST.relative_to(Path(__file__).parents[1])} — read the diff before committing it")

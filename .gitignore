@@ -8,4 +8,5 @@ __pycache__/
 .DS_Store
 .env
 site_encrypted/
+site_media/
 .extract_token

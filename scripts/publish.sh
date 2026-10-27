@@ -11,9 +11,10 @@
 #   UNENCRYPTED site_build/, scripts/, .venv/…)
 # - git pathspecs like '*.html' match RECURSIVELY — stage via a loop over
 #   named files with a literal ./ prefix
-# - the only directory on gh-pages is admin/, and it holds only encrypted pages and the two
-#   pdf.js files of the data-entry page: any other nested path aborts before committing, and
-#   any other directory in the pushed tree is fatal
+# - the only directories on gh-pages are admin/, which holds only encrypted pages and the two
+#   pdf.js files of the data-entry page, and media/, which holds only the Media page's photo
+#   renditions (<key>-w<width>.jpg, scripts/sync_media.py): any other nested path aborts
+#   before committing, and any other directory in the pushed tree is fatal
 # - every page published is a staticrypt page: one that is not aborts before committing
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -42,6 +43,10 @@ if [ -z "${SKIP_BUILD:-}" ]; then
     site_encrypted/$ADMIN/*.html
 fi
 
+# the Media page's photos: the renditions its manifest lists, from the dev blob (needs
+# DSCI_AZ_BLOB_DEV_SAS); a cached folder only fetches what it lacks
+uv run python scripts/sync_media.py --fetch site_media
+
 # gh-pages lives in its own worktree so publishing never switches branches in the
 # main tree (uncommitted work there — possibly another session's — stays untouched)
 git fetch -q origin gh-pages
@@ -53,8 +58,9 @@ trap 'git worktree remove --force "$WT" 2>/dev/null || true' EXIT
 # the published tree is exactly this build: a page dropped from the build, or moved to the
 # admin site, must not linger at its old address
 rm -f "$WT"/*.html "$WT"/adm-*.json "$WT"/pdf.min.js "$WT"/pdf.worker.min.js
-rm -rf "${WT:?}/$ADMIN"
-mkdir "$WT/$ADMIN"
+rm -rf "${WT:?}/$ADMIN" "${WT:?}/media"
+mkdir "$WT/$ADMIN" "$WT/media"
+if compgen -G 'site_media/*.jpg' >/dev/null; then cp site_media/*.jpg "$WT/media/"; fi
 cp site_encrypted/*.html "$WT"/
 cp site_encrypted/$ADMIN/*.html "$WT/$ADMIN"/
 # committed copies of the vendored assets (main locally; the checked-out ref in CI)
@@ -73,10 +79,12 @@ touch "$WT/.nojekyll"
   git add -u .                   # tracked files only: what changed and what went away
   for f in *.html adm-*.json chart.umd.js sankey.js .nojekyll; do git add -f "./$f"; done
   for f in $ADMIN/*.html $ADMIN/pdf.min.js $ADMIN/pdf.worker.min.js; do git add -f "./$f"; done
+  if [ -n "$(ls -A media)" ]; then git add -f ./media; fi
   # the tree about to be committed (not just what changed)
-  BAD=$(git ls-files | grep "/" | grep -v -E "^$ADMIN/([A-Za-z0-9_.-]+\.html|pdf\.min\.js|pdf\.worker\.min\.js)$" || true)
+  BAD=$(git ls-files | grep "/" | grep -v -E "^$ADMIN/([A-Za-z0-9_.-]+\.html|pdf\.min\.js|pdf\.worker\.min\.js)$" \
+        | grep -v -E "^media/[0-9a-f]{16}-w[0-9]+\.jpg$" || true)
   if [ -n "$BAD" ]; then
-    echo "FATAL: nested path outside $ADMIN/*.html — aborting" >&2
+    echo "FATAL: nested path outside $ADMIN/*.html and media/*.jpg — aborting" >&2
     echo "$BAD" | head >&2; exit 1
   fi
   git ls-files | grep -E '\.html$' | while read -r f; do
@@ -88,7 +96,7 @@ touch "$WT/.nojekyll"
   if git diff --cached --quiet; then
     echo "nothing changed — not publishing"
   elif [ -n "${DRY_RUN:-}" ]; then
-    echo "DRY_RUN: would publish $(git ls-files | grep -c -v "/") top-level files and $(git ls-files "$ADMIN" | wc -l | tr -d ' ') under $ADMIN/"
+    echo "DRY_RUN: would publish $(git ls-files | grep -c -v "/") top-level files, $(git ls-files "$ADMIN" | wc -l | tr -d ' ') under $ADMIN/ and $(git ls-files media | wc -l | tr -d ' ') under media/"
     git diff --cached --stat | tail -1
   else
     git commit -q -m "Publish review site $(date +%F)"
@@ -97,6 +105,7 @@ touch "$WT/.nojekyll"
 )
 if [ -z "${DRY_RUN:-}" ]; then
   DIRS=$(git ls-tree -d -r origin/gh-pages --name-only | tr '\n' ' ')
-  [ "$DIRS" = "$ADMIN " ] || { echo "FATAL: gh-pages tree contains directories other than $ADMIN/: $DIRS" >&2; exit 1; }
+  [ "$DIRS" = "$ADMIN " ] || [ "$DIRS" = "$ADMIN media " ] \
+    || { echo "FATAL: gh-pages tree contains directories other than $ADMIN/ and media/: $DIRS" >&2; exit 1; }
   echo "published ✓ (tree clean)"
 fi
