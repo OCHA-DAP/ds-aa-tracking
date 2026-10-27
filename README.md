@@ -129,6 +129,12 @@ are kept forever (the year-end official state, for the map's time view).
   FILE.json` (it checks every header before reading), then `apply_entries.py --upload` —
   only once the nightly's one-off `--ensure-schema` run has created the table.
   The workbooks and the proposals they were coded from never go in git
+- `scripts/mock_unocha.py` — the mock-up of the public site embedded in
+  https://www.unocha.org/anticipatory-action (unlisted, public password): `mock-unocha.html`
+  and a `mock-unocha-<page>` twin of every page reachable from the map, OCHA's page with ours
+  under its photo in place of their section tabs, our CSS scoped to `.aa-embed`. Run by
+  `publish.sh` after the build. OCHA's page is a committed snapshot (`site_src/unocha-shell.html`,
+  `site_src/unocha.css`), refreshed by hand with `scripts/snapshot_unocha.py`
 - `scripts/landing.py` — landing map (base: Natural Earth 1:50m simplified as one topology so
   borders stay shared; zoom: FieldMaps edge-matched COD-AB for every country in view): zoom
   to a country, subnational scope per framework
