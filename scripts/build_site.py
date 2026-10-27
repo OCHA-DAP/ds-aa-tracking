@@ -137,7 +137,7 @@ NAV = f"""
   <nav class="pub">
    <a href="index.html">{T("Map")}</a>
    <a href="pillar-model.html">{T("Model")}</a><a class="sub" href="pillar-history.html" {ATTR("title", "simulated and real activations of the current triggers")}>{T("historical activations")}</a>
-   <a href="pillar-plan.html">{T("Plan")}</a>
+   <a href="pillar-plan.html">{T("Activities")}</a>
    <a href="dash-funding.html">{T("Financing")}</a>
    <a href="pillar-learning.html">{T("Learning")}</a>
    <a href="media.html">{T("Media")}</a>

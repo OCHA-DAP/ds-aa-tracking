@@ -1683,18 +1683,16 @@ def build_landing(page, d, e):
       for y in range(TODAY.year, YEAR_FIRST - 1, -1))}
  </div>
  <p class='yearnote' id='yearnote' hidden>{TB("Past years are reconstructed from the framework records (version dates and status history): a framework counts for a year if a version was valid at any time during it. They will be replaced by the official year-end figures once those are loaded.")}</p>
+ <div class='herorow'>
  <div class='tiles gtiles' id='gtiles'>
   <div class='gcap' id='gcap'>Global portfolio — all layers currently shown on the map · {Y}, as of today</div>
   {tiles}
  </div>
- <section class='news' id='news' {ATTR("aria-label", "What's new in the last 90 days")}>
-  <div class='news-h'><b>{T("What's new")}</b> · {T("last 90 days")}</div>
-  <div class='news-cols'>
-   <div class='news-col'><div class='news-ch'>{T("Last 30 days")}</div><ul class='news-l' id='news0'></ul></div>
-   <div class='news-col'><div class='news-ch'>{T("30–60 days ago")}</div><ul class='news-l' id='news1'></ul></div>
-   <div class='news-col'><div class='news-ch'>{T("60–90 days ago")}</div><ul class='news-l' id='news2'></ul></div>
-  </div>
+ <section class='news' id='news' {ATTR("aria-label", "What's new in the last 30 days")}>
+  <div class='news-h'><b>{T("What's new")}</b> · {T("last 30 days")}</div>
+  <ul class='news-l' id='newsl'></ul>
  </section>
+ </div>
 </div>
 <div class='maprow' id='maprow'>
  <div class='mapbox' id='mapbox'>
@@ -1935,21 +1933,25 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
 .tnote { display:none; position:absolute; left:0; right:0; top:calc(100% + 4px); z-index:8; background:rgba(15,37,64,.95); color:#fff;
   font-size:11.5px; font-weight:400; line-height:1.4; padding:7px 10px; border-radius:6px; box-shadow:0 4px 12px -4px rgba(0,0,0,.35); }
 .gtiles .tile.hasnote:hover .tnote, .gtiles .tile.hasnote:focus .tnote { display:block; }
-/* what's new (9 Oct 2026 meeting; owner's review 2026-10-27): a full-width strip between the tiles
-   and the map — the last 90 days in three columns of 30, each scrolling past about six lines */
-.news { margin:2px 0 14px; }
-.news-h { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#64748b; margin:0 0 4px 2px; }
+/* what's new (9 Oct 2026 meeting; owner, 2026-10-27: the last 30 days, beside the tiles): side by
+   side on a wide screen, below the tiles otherwise with its lines in columns — the tile grid keeps
+   its own rules. Its caption is built like the tiles' (.gcap), so the box lines up with them */
+.herorow { display:flex; flex-direction:column; gap:10px; margin:12px 0; }
+.herorow .gtiles { margin:0; }
+.news { display:flex; flex-direction:column; gap:10px; min-width:0; }
+.news-h { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#64748b; margin:-2px 0 -6px 2px; }
 .news-h b { color:#b3261e; }
-.news-cols { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); background:#fff; border:1px solid #e6eaef; border-radius:12px; box-shadow:0 1px 2px rgba(16,24,40,.05); }
-.news-col { padding:8px 14px 10px; min-width:0; } .news-col + .news-col { border-left:1px solid #e6eaef; }
-.news-ch { font-size:11.5px; font-weight:700; color:#0f2540; margin-bottom:3px; }
-.news-l { list-style:none; margin:0; padding:0; font-size:12px; line-height:1.35; max-height:122px; overflow-y:auto; }
-.news-l li { padding:2px 0; }
+.news-l { list-style:none; margin:0; padding:8px 14px; background:#fff; border:1px solid #e6eaef; border-radius:12px; box-shadow:0 1px 2px rgba(16,24,40,.05);
+  columns:250px; column-gap:22px; font-size:12px; line-height:1.35; max-height:150px; overflow-y:auto; }
+.news-l li { break-inside:avoid; padding:2px 0; }
 .news-l button { background:none; border:0; padding:0; font:inherit; color:#334155; text-align:left; cursor:pointer; }
 .news-l button:hover, .news-l button:focus-visible { color:var(--ocha); text-decoration:underline; }
-.news-l .nd { color:#475569; font-weight:650; margin-right:2px; } .news-col:first-child .nd { color:#b3261e; }
+.news-l .nd { color:#b3261e; font-weight:650; margin-right:2px; }
 .news-0 { color:#64748b; }
-@media (max-width:759px){ .news-cols { grid-template-columns:1fr; } .news-col + .news-col { border-left:0; border-top:1px solid #e6eaef; } }
+@media (min-width:1400px){
+  .herorow { flex-direction:row; align-items:stretch; } .herorow .gtiles { flex:1 1 auto; min-width:0; }
+  /* the box takes the tiles' height; a long list scrolls (height:0 keeps it from growing the row) */
+  .news { flex:0 0 260px; } .news-l { columns:auto; flex:1 1 auto; height:0; max-height:none; } }
 /* the legend's definitions (they replace the status diagram, 2026-10-27) */
 .layerctl .lrow { display:flex; align-items:center; gap:2px; }
 .maplegend .info::after { left:0; transform:none; }
@@ -2506,8 +2508,8 @@ function applyLayers(){
   if(state.iso){ renderSide(); if(GEO[state.iso]) drawAdmin(state.iso, false); }
   else { buildCallouts(); runLayout(); if(isMobile()) renderWorldList(); buildOverview(); }
 }
-// ---------- what's new (team meeting, 9 Oct 2026; a 90-day feed in three columns of 30 days since the
-// owner's review, 2026-10-27): what changed by the reader's clock, newest first — framework
+// ---------- what's new (team meeting, 9 Oct 2026; owner, 2026-10-27: the last 30 days — the red
+// ring's window — in a box beside the tiles): what changed by the reader's clock, newest first — framework
 // activations, versions endorsed (the version's valid_from: the records carry no separate
 // endorsement date) and versions that went into development (development_since; its nightly
 // stamp's first run, 5 Oct 2026, dated every version then in development, so a version listed as
@@ -2515,7 +2517,7 @@ function applyLayers(){
 // today, so it reads the live records whatever year the map shows; it follows the layer toggles
 // as the tiles do: a framework's own items while the current-frameworks layer is on, ad hoc
 // allocations while the ad hoc layer is on (a replaced framework's activations are never news).
-const NEWS_DAYS = 90;
+const NEWS_DAYS = RECENT_DAYS;
 function newsItems(){
   const out = [];
   Object.entries(L).forEach(([iso, c]) => c.fws.forEach(f => {
@@ -2532,14 +2534,12 @@ function newsItems(){
   }));
   return out.sort((a, b) => dayOf(b.d)[0] - dayOf(a.d)[0] || a.who.localeCompare(b.who));
 }
-// three columns: the last 30 days (the red ring's window), 30–60 and 60–90 days ago
 function buildNews(){
-  const cols = [0, 1, 2].map(i => document.getElementById('news' + i)); if(!cols[0]) return;
-  const B = [[], [], []];
-  newsItems().forEach(x => { const a = ageOf(x.d); B[a <= RECENT_DAYS ? 0 : a <= 2 * RECENT_DAYS ? 1 : 2].push(x); });
-  cols.forEach((ul, i) => { ul.innerHTML = B[i].length ? B[i].map(x => `<li><button type='button' data-iso='${x.iso}' data-hz='${esc(x.hz)}'>`
+  const ul = document.getElementById('newsl'); if(!ul) return;
+  const xs = newsItems();
+  ul.innerHTML = xs.length ? xs.map(x => `<li><button type='button' data-iso='${x.iso}' data-hz='${esc(x.hz)}'>`
       + `<span class='nd'>${esc(shortDate(x.d))}</span> ${esc(tr8(x.what, x.who))}</button></li>`).join('')
-    : `<li class='news-0'>${esc(tr8('Nothing new on the layers shown.'))}</li>`; });
+    : `<li class='news-0'>${esc(tr8('Nothing new on the layers shown.'))}</li>`;
 }
 (function(){ const box = document.getElementById('news'); if(!box) return;
   box.addEventListener('click', e => { const b = e.target.closest('button[data-iso]'); if(!b) return;
@@ -2934,7 +2934,7 @@ function pillarsBar(f, v){
   const boxes = [
     ['model', tr8('Model'), nTrig ? esc(tr8(nTrig > 1 ? '{0} trigger windows' : '{0} trigger window', nTrig)) : (v.basis ? esc(tr8(v.basis)) : '—'),
      esc([v.basis && tr8(v.basis), v.months.length ? tr8('{0} months monitored', v.months.length) : null, nA ? tr8(nA > 1 ? '{0} activations' : '{0} activation', nA) : tr8('never activated')].filter(Boolean).join(' · '))],
-    ['plan', tr8('Plan'), nUN ? esc(tr8(nUN > 1 ? '{0} UN agencies funded' : '{0} UN agency funded', nUN)) : '—',
+    ['plan', tr8('Activities'), nUN ? esc(tr8(nUN > 1 ? '{0} UN agencies funded' : '{0} UN agency funded', nUN)) : '—',
      [v.target_people ? esc(tr8('{0} people targeted', num(v.target_people))) : (f.covered ? esc(tr8('{0} people covered', num(f.covered))) : null), nPart ? esc(tr8(nPart > 1 ? '{0} partners in total' : '{0} partner in total', nPart)) : null].filter(Boolean).join('<br>')],
     ['funding', tr8('Funding'), money(v.prearranged_doc ?? v.envelope), esc((v.prearranged_doc ?? v.envelope) ? tr8('pre-arranged') + (funds.length?' · '+funds.map(x=>x.toUpperCase().replace('CBPF-','CBPF ')).join(', '):'') : tr8(f.tech ? 'technical support only' : 'no figure yet'))],
     ['learning', tr8('Learning'), esc(nDocs ? tr8(nDocs > 1 ? '{0} documents' : '{0} document', nDocs) : tr8('no documents yet')), esc(tr8('evaluations, reviews, reports'))],
