@@ -60,6 +60,7 @@ French (KB glossary unless marked *suggestion*):
 - **backtest** stays *backtest* (as the KB's French pages have it); *analyse historique* is the attested alternative.
 - **framework record** (the tracking database's entry for a framework) → *fiche du cadre* (*suggestion*).
 - **rainfall** (what a trigger watches) → *précipitations* (KB glossary: the indicator, not *pluie*).
+- **non-framework** (AA money allocated without a framework; the site said *ad hoc* until the team's 9 October 2026 meeting) → *hors cadre*: *allocations hors cadre*, *allocation hors cadre* (*suggestion*).
 
 Spanish (GLOSSARY.md; only two independent Spanish documents exist — the Dry Corridor
 template and Cuba — so several terms are suggestions):
@@ -76,6 +77,7 @@ template and Cuba — so several terms are suggestions):
 - **return period 1-in-N** → *1 en N años* (the documents' form).
 - **backtest** → *análisis histórico* (*suggestion*; the documents have *desempeño histórico* for the historical performance).
 - **framework record** → *ficha del marco* (*suggestion*); **rainfall** → *precipitación*.
+- **non-framework** → *fuera de marco*: *asignaciones fuera de marco*, *asignación fuera de marco* (*suggestion*).
 
 UN agency acronyms (WFP, WHO…) stay in English for now, like the other organisation names;
 the reviewers may prefer the UN French / Spanish acronyms (PAM, OMS…).

@@ -43,7 +43,7 @@ from datetime import date
 import pandas as pd
 import site_i18n as i18n
 from dashboards import (HAZARDS, backtest_span, LIFE_LABEL, PAL, _dash_page, _event_href,
-                        _event_links, _fmt_usd, _loose, haz, sim_before_start, sim_when, version_start)
+                        _event_links, _fmt_usd, _loose, fund_label, haz, hazard_word, sim_before_start, sim_when, version_start)
 from site_i18n import ATTR, ATTRC, OPT, TB, TBC, TBF, TC, TF, T
 
 LIVE = ["active", "updating", "development"]
@@ -189,7 +189,7 @@ def _in_use(f, groups, closed, old=False):
 def _events(d, c, h, ref, kb_fw=None, umap=None, slug=None, adhoc=False):
     """Real framework activations of one framework, with the money released and the page
     each one links to (as the activation tables: announcement, else CERF allocation, else
-    another recorded page — else the framework page `slug`). adhoc=True: its ad hoc
+    another recorded page — else the framework page `slug`). adhoc=True: its non-framework
     allocations instead (money released without a pre-agreed trigger)."""
     act = d["act_all"]
     act = act[(act["country_iso3"] == c) & (act["hazard"] == h)
@@ -210,7 +210,7 @@ def _events(d, c, h, ref, kb_fw=None, umap=None, slug=None, adhoc=False):
         vv = "" if vv in ("nan", "None", "NaT", "<NA>") else vv
         evs.append(dict(date=ed, year=int(ed[:4]), win=wn, label=_str(r.event_label), version=vv,
                         amount=float(amt.sum()) if amt.notna().any() else None,
-                        funds="; ".join(f"{x.fund_code} {_fmt_usd(x.amount_usd)}".strip()
+                        funds="; ".join(f"{fund_label(x.fund_code)} {_fmt_usd(x.amount_usd)}".strip()
                                         for x in f.itertuples() if isinstance(x.fund_code, str)),
                         funds_csv="; ".join(f"{x.fund_code}: {x.amount_usd:.0f}" if pd.notna(x.amount_usd)
                                             else f"{x.fund_code}: not recorded"
@@ -410,10 +410,10 @@ function tlTicks(a, b, W){   // [t, label, major] at a step that leaves room for
   return out;
 }
 
-function tlEvMark(e, r, inFw){   // a real activation (circle) or an ad hoc allocation (diamond)
+function tlEvMark(e, r, inFw){   // a real activation (circle) or a non-framework allocation (diamond)
   const p = tlParse(e.d); if(!p) return null;
   const lines = [tr8(r.name),
-    (e.ah ? tr8('ad hoc allocation (no pre-agreed trigger; not a framework activation): {0}', tlFmt(e.d))
+    (e.ah ? tr8('non-framework allocation (no pre-agreed trigger; not a framework activation): {0}', tlFmt(e.d))
           : tr8('activated {0}', tlFmt(e.d))) + (e.w ? ' · ' + e.w : ''),
     (e.a ? tr8('{0} released', money(e.a)) : tr8('amount not recorded')) + (e.fu ? ' (' + e.fu + ')' : '')];
   if(e.v) lines.push(tr8('version {0}', e.v));
@@ -577,7 +577,7 @@ function tlPRows(){   // the portfolio rows the filters let through
       const lab = (TL.fw[fk]
           ? `<button type='button' class='tlb' data-k='${fk}' title='${tlEsc(tr8('{0}: see it version by version', tr8(r.name)))}'>${nm}</button>`
           : `<span class='tln' title='${nm}'>${nm}</span>`)
-        + (r.life ? `<span class='lf lf-${r.life}'>${tlEsc(tr8(TL.life[r.life] || r.life))}</span>` : `<span class='lf lf-ah'>${tlEsc(tr8('ad hoc only'))}</span>`);
+        + (r.life ? `<span class='lf lf-${r.life}'>${tlEsc(tr8(TL.life[r.life] || r.life))}</span>` : `<span class='lf lf-ah'>${tlEsc(tr8('non-framework only'))}</span>`);
       // a framework's reference period: plain over the years its backtest analysed, hatched
       // outside them, cream from the year the version simulated took effect (the grid's rule;
       // ad hoc-only rows have no framework, so none)
@@ -599,7 +599,7 @@ function tlDraw(){
   const n = v.rows.length;
   tlq('tl-p-n').textContent = tr8(n === 1 ? '{0} row' : '{0} rows', n) + ' · '
     + tr8(nr === 1 ? '{0} real activation' : '{0} real activations', nr)
-    + (na ? ' · ' + tr8(na === 1 ? '{0} ad hoc allocation' : '{0} ad hoc allocations', na) : '');
+    + (na ? ' · ' + tr8(na === 1 ? '{0} non-framework allocation' : '{0} non-framework allocations', na) : '');
 }
 
 function tlFRows(k){   // the framework view: per version a band row, then one lane per window
@@ -813,7 +813,7 @@ def build_history(page, d):
         cn = next((x for x in list(g["country_name"]) + list(cur.loc[cur["country_iso3"] == c, "country_name"])
                    if isinstance(x, str) and x), c)
         ah = _events(d, c, h, None, kb, umap, slug, adhoc=True)
-        ah_rows.append(dict(k=f"{c}-{h}", name=_fwname(c, cn, h.replace("_", " ")), h=h, life="", slug=slug or "",
+        ah_rows.append(dict(k=f"{c}-{h}", name=_fwname(c, cn, hazard_word(h)), h=h, life="", slug=slug or "",
                           ev=[_tl_ev(ev, True) for ev in ah]))
     tl_rows += sorted(ah_rows, key=lambda r: r["name"])
     tl = dict(rows=tl_rows, fw=tl_fw, by=tl_by, today=date.today().isoformat(), start=TL_START,
@@ -974,11 +974,11 @@ def build_history(page, d):
 <div class='tlbar'>
  <label><input type='checkbox' id='tlret' onchange='tlDraw()'> {TF("retired frameworks ({n})", n=n_ret)}</label>
  <label {ATTR("title", "money released without a pre-agreed trigger")}><input type='checkbox' id='tladh' onchange='tlDraw()'>
-  {TF("ad hoc allocations ({n}), which are not framework activations", n=n_ah)}</label>
+  {TF("non-framework allocations ({n}), which are not framework activations", n=n_ah)}</label>
  <span class='tlr' id='tl-p-r'></span><span class='cnt' id='tl-p-n'></span></div>
 <div class='tl' id='tl-p'><div class='tll'></div><div class='tlsc'><svg role='group'
  {ATTR("aria-label", "Real activations by date, one row per framework")}></svg></div></div>
-<p class='legend'>{hz_key} · {TB("size: money released (<span class='tlk ring'></span> amount not recorded) · <span class='tlk dia' style='background:#8a93a0'></span> ad hoc allocation · faint bar behind a mark: the month, or the whole year, its date is known to · <span class='tlk sq na'></span> outside the years the framework's backtest analysed, or no backtest recorded (hover a row for its years) · <span class='tlk sq use'></span> the version in use, from the year it took effect: real activations only, as in the grid below · dashed red line: today. Drag along the dates (top or bottom) to zoom.")}</p>
+<p class='legend'>{hz_key} · {TB("size: money released (<span class='tlk ring'></span> amount not recorded) · <span class='tlk dia' style='background:#8a93a0'></span> non-framework allocation · faint bar behind a mark: the month, or the whole year, its date is known to · <span class='tlk sq na'></span> outside the years the framework's backtest analysed, or no backtest recorded (hover a row for its years) · <span class='tlk sq use'></span> the version in use, from the year it took effect: real activations only, as in the grid below · dashed red line: today. Drag along the dates (top or bottom) to zoom.")}</p>
 <h2 id='tl-f-sec'>{T("One framework, version by version")}</h2>
 <p class='meta'>{TBF("Each version is a band from the day it took effect, with one lane per window under it: <span class='tlk sq' style='background:{sim}'></span> the years its trigger would have activated in its backtest, which is fixed before the version is endorsed and so drawn only before the version's start (dotted line), and <span class='tlk' style='background:{red}'></span> its real activations, which can only come after; the backtests give years today, and the day (for storms the hour) appears as the trigger analyses provide it.", sim=SIM_COL, red=ACT_RED)}</p>
 <div class='tlbar'><label>{T("framework")} <select id='tlfw'></select></label><span class='tlr' id='tl-f-r'></span></div>
@@ -1003,7 +1003,7 @@ def build_history(page, d):
         "row of their own in the timeline above, with the retired frameworks ({list}).").format(
             list=_esc(", ".join(w(f["name"]) for f in repl)))) if repl else "")
     no_bt_note = TBC(lambda w: w(
-        "Real activations are framework activations only: the {n} ad hoc allocations on record (money released "
+        "Real activations are framework activations only: the {n} non-framework allocations on record (money released "
         "without a pre-agreed trigger) are left out, as there is no trigger to simulate them against. No "
         "backtest recorded yet for {m} of the {t} frameworks: {list}.").format(
             n=n_adhoc, m=len(no_bt), t=len(fws),

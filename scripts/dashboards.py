@@ -13,6 +13,7 @@ on the reconciliation pages.
 """
 
 import json
+import re
 
 import site_i18n as i18n  # noqa: E402  (EN / FR / ES, the team mechanism: scripts/site_i18n.py)
 from site_i18n import ATTR, ATTRC, OPT, T, TB, TBC, TBF, TC, TD, TF  # noqa: E402
@@ -22,7 +23,72 @@ import pandas as pd
 # validated reference palette (light mode), fixed assignment order
 PAL = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]
 FUND_COLORS = {"cerf": "#2a78d6", "cbpf": "#eb6834", "regional_fund": "#1baf7a"}
+# a fund type in words (chart legends): the type is a code, never shown
+FUND_TYPE_LABEL = {"cerf": "CERF", "cbpf": "Country funds", "regional_fund": "Regional funds"}
 HAZARDS = ["drought", "flood", "storm", "cholera"]  # fixed order; rest -> Other
+
+# ---------------------------------------------------------------- codes as words
+# No code is shown on the public site (owner, 2026-10-27: no table or column names, no raw
+# status / hazard / event codes): each vocabulary has its words here. code_words() gives the
+# words of a code, or None for a code with none — left out of the page (never shown as it is)
+# and named in the build log so words get added. build_site's identifier guard stops a build
+# whose public pages show one anyway.
+EVENT_TYPE_LABEL = {"framework_aa": "framework activation", "adhoc_aa": "non-framework allocation",
+                    "early_action": "early-action allocation"}
+# the external reports a framework counts toward (aa.report_channel_inclusion.channel)
+REPORT_CHANNEL_LABEL = {
+    "anticipation_hub": "Anticipation Hub", "cerf_annual_report": "CERF annual report",
+    "ocha_annual_report": "OCHA annual report", "ocha_sf_kpi": "OCHA SF KPI",
+    "sg_natural_disasters": "SG report on natural disasters", "sg_report": "SG report",
+    "uk_baseline": "UK baseline", "uk_joint_humanitarian_bc": "UK joint humanitarian business case",
+    "uk_cerf_bc": "UK CERF business case", "cpc": "CPC"}
+# where a version record came from (aa.framework_version.source); 'aa-team-<date>' = the team's
+# own records of that day
+VERSION_SOURCE_LABEL = {"kb-frontmatter": "knowledge base page", "entered": "data entry",
+                        "ocha-web": "OCHA AA web page", "pa-monorepo": "team analysis repository",
+                        "sheet-revision": "tracking sheet", "aa-team": "AA team records"}
+# a partner's role in a framework document, when it is a code (the documents' own words are
+# shown as written)
+PARTNER_ROLE_LABEL = {"implementing": "implementing", "technical": "technical",
+                      "coordination": "coordination", "funding": "funding",
+                      "government_counterpart": "government counterpart", "sub_grantee": "sub-grantee"}
+# a hazard as a word inside a sentence or a name ('Niger — drought')
+HAZARD_WORD = {"drought": "drought", "flood": "flood", "storm": "storm", "cholera": "cholera",
+               "plague": "plague", "locusts": "locusts", "food_insecurity": "food insecurity",
+               "other": "other hazard"}
+_UNLABELLED = set()
+
+
+def code_words(vocab, code, what="code"):
+    """The words of a code from one of the vocabularies above; None (and a build-log line,
+    once) for a code with none."""
+    if code is None or (not isinstance(code, str) and pd.isna(code)):
+        return None
+    if code in vocab:
+        return vocab[code]
+    if (what, code) not in _UNLABELLED:
+        _UNLABELLED.add((what, code))
+        print(f"  ! {what} without words (left out of the page): {code}")
+    return None
+
+
+def fund_label(fc):
+    """A fund as the pages name it ('CERF', 'CBPF AFG', 'RHPF ESA UGA'; the map's form), never its
+    code; a financier recorded in words (an agency's co-financing) is shown as written."""
+    if not isinstance(fc, str) or not fc:
+        return ""
+    if fc == "cerf":
+        return "CERF"
+    if fc == "cbpf-unspecified":
+        return "CBPF"
+    if re.fullmatch(r"(cbpf|rhpf)(-[a-z]+)+", fc):
+        return fc.upper().replace("-", " ")
+    return fc
+
+
+def hazard_word(h):
+    """A hazard as a word ('food insecurity'); an unlabelled one is 'other hazard', never its code."""
+    return code_words(HAZARD_WORD, h, "hazard") or "other hazard"
 
 SOURCE_PRIORITY = [
     "yakubu-prearranged-jun2026", "yakubu-cofinancing-jun2026", "julia-planning-2026",
@@ -160,11 +226,14 @@ table.acts td { white-space:normal; overflow-wrap:anywhere; vertical-align:top; 
 """
 
 DASH_JS = """
-const PAL = %s, FUND_COLORS = %s;
+const PAL = %s, FUND_COLORS = %s, FUND_TYPE_LABEL = %s;
 // a fund's type from the registry (window.REGIONAL_FUNDS, written by the page from aa.fund):
 // the Asia-Pacific and ESA regional funds' country windows carry cbpf-* codes
 function fundType(fc){ return fc==='cerf' ? 'cerf'
   : ((fc||'').startsWith('rhpf') || (window.REGIONAL_FUNDS||[]).includes(fc)) ? 'regional_fund' : 'cbpf'; }
+// a fund as the pages name it ('CERF', 'CBPF AFG'; fund_label in dashboards.py), never its code
+function fundName(x){ return x === 'cerf' ? 'CERF' : x === 'cbpf-unspecified' ? 'CBPF'
+  : /^(cbpf|rhpf)(-[a-z]+)+$/.test(x || '') ? x.toUpperCase().replace(/-/g, ' ') : x; }
 Chart.defaults.font.family = "-apple-system,'Segoe UI',Roboto,sans-serif";
 Chart.defaults.color = '#52514e';
 Chart.defaults.borderColor = '#ececec';
@@ -218,7 +287,7 @@ function groupSum(rows, keyFn, valFn){ const m={};
   rows.forEach(r=>{ const k=keyFn(r); m[k]=(m[k]||0)+(valFn(r)||0); }); return m; }
 function uniqSorted(rows, f){ return [...new Set(rows.map(f).filter(x=>x!=null))].sort(); }
 function cumulate(arr){ let s=0; return arr.map(v=>s+=(v||0)); }
-""" % (json.dumps(PAL), json.dumps(FUND_COLORS))
+""" % (json.dumps(PAL), json.dumps(FUND_COLORS), json.dumps(FUND_TYPE_LABEL))
 
 
 def haz(h):
@@ -460,7 +529,7 @@ def _fetch(e):
                   f.fund_code, f.allocation_code, f.amount_usd,
                   r.region
            FROM aa.activation_funding f
-           -- null-safe: ad hoc rows have no window, and a plain USING join silently
+           -- null-safe: non-framework rows have no window, and a plain USING join silently
            -- dropped them (until 2026-09-30 only framework activations came through)
            JOIN aa.activation a
              ON a.country_iso3 = f.country_iso3 AND a.hazard = f.hazard
@@ -788,7 +857,7 @@ def _merge_labels(d):
 def _resolve_pooled_fund(d):
     """'cbpf-unspecified' (a sheet row that named no pooled fund) -> the country's own pooled
     fund, where the registry knows exactly one for that country (a CBPF, or a regional fund's
-    country window). 2026-10-02 meeting: the 2023 ad hoc allocations of Somalia, South Sudan
+    country window). 2026-10-02 meeting: the 2023 non-framework allocations of Somalia, South Sudan
     and Yemen sat in one 'CBPF (fund not recorded)' node with no donors, so Yemen looked
     missing. A country with no registered fund, or several, keeps 'cbpf-unspecified'."""
     reg = d["fund_names"]
@@ -946,7 +1015,7 @@ def _layer_of(d):
     version (activations, pre-arranged rows) is 'r' when that version is outside the pair's current
     line (old_versions: Somalia drought 2019 / 2020-06-23), whatever the pair's status. CBPF
     mirror rows are country-level (hazard 'multi' or '?'): 'r' only when the country has
-    retired frameworks and no live one. Ad hoc allocations are their own layer ('a'), set by
+    retired frameworks and no live one. Non-framework allocations are their own layer ('a'), set by
     the caller from event_type."""
     cur = d["current"]
     pair = dict(zip(zip(cur["country_iso3"], cur["hazard"]), cur["lifecycle"]))
@@ -1007,7 +1076,7 @@ def _money_flows(d, pre, act):
     (a partner / grantee: FLOW_JS names the top ones of the view and groups the rest per
     category). One spelling and one category per organisation across CERF and the CBPFs.
     g: the map layer of the money, for the page toggles — 'c' current frameworks, 'r' retired
-       frameworks, 'a' ad hoc allocations (released only; pass act from
+       frameworks, 'a' non-framework allocations (released only; pass act from
        funding_series(d, released="all") to have them). fu: fund type, 'c' CERF, 'p' CBPF,
        'r' regional fund. Every split is linear in the amount, so the per-layer rows add up
        to the same totals as one pass over all the money."""
@@ -1378,21 +1447,21 @@ function mountFlow(cfg){
 
 # ---------------------------------------------------------------- financing
 # the Financing page's method note, one translatable paragraph each (site_i18n TB)
-FUND_NOTE_0 = "<b>Layers</b>, as on the map: <b>current frameworks</b> (active, being updated, in development) and <b>retired</b> frameworks bring their pre-arranged and released money in every year — a framework's layer is its status today, so the past years need the retired ones to be complete (an AA-tagged country or regional fund allocation in a country with no retired framework counts as current). <b>Ad hoc allocations</b> add the AA money allocated without a framework: released money only, nothing is pre-arranged for it. The <b>fund</b> switch applies to every figure but co-financing; framework counts, people covered and versions then keep the frameworks with money recorded on that fund. There is no technical-support layer here: technical support carries no money. The tiles and the charts follow the layers, the fund, the framework selection and the hazard and region filters (the GHO filter: the annual series and co-financing); the money-flow chart and the sections further down say what they follow."
+FUND_NOTE_0 = "<b>Layers</b>, as on the map: <b>current frameworks</b> (active, being updated, in development) and <b>retired</b> frameworks bring their pre-arranged and released money in every year — a framework's layer is its status today, so the past years need the retired ones to be complete (an AA-tagged country or regional fund allocation in a country with no retired framework counts as current). <b>Non-framework allocations</b> add the AA money allocated without a framework: released money only, nothing is pre-arranged for it. The <b>fund</b> switch applies to every figure but co-financing; framework counts, people covered and versions then keep the frameworks with money recorded on that fund. There is no technical-support layer here: technical support carries no money. The tiles and the charts follow the layers, the fund, the framework selection and the hazard and region filters (the GHO filter: the annual series and co-financing); the money-flow chart and the sections further down say what they follow."
 # a replaced framework (dashboards.old_versions) is on the retired layer: said under the layers note
 FUND_NOTE_REPLACED = "A framework that a distinct new one replaced, rather than revised, counts as <b>retired</b>, its activations and money with it, even though the new one has the same country and hazard (Somalia drought: the 2019–2021 food security framework, replaced by the 2026 one)."
-FUND_NOTE_1 = '<b>Frameworks</b> (in the filter bar) lists every current and retired framework with its pre-arranged money now: tick the ones to count — a sub-region, a few countries, any subset — and the tiles and the charts count only those, within the other filters. Money that belongs to no framework (an ad hoc allocation, a country-level allocation of a country or regional fund) follows its country: it counts while at least one line of that country is ticked, and the countries whose only AA money is of that kind have a line of their own at the end of the list. A subset changes which frameworks are counted, not how: its pre-arranged money is still a stock, in place today or in a given year, never added over years. The selection is kept in the page address, so a subset can be bookmarked or shared. The money-flow chart and the UN agencies and partners section do not follow it.'
+FUND_NOTE_1 = '<b>Frameworks</b> (in the filter bar) lists every current and retired framework with its pre-arranged money now: tick the ones to count — a sub-region, a few countries, any subset — and the tiles and the charts count only those, within the other filters. Money that belongs to no framework (a non-framework allocation, a country-level allocation of a country or regional fund) follows its country: it counts while at least one line of that country is ticked, and the countries whose only AA money is of that kind have a line of their own at the end of the list. A subset changes which frameworks are counted, not how: its pre-arranged money is still a stock, in place today or in a given year, never added over years. The selection is kept in the page address, so a subset can be bookmarked or shared. The money-flow chart and the UN agencies and partners section do not follow it.'
 FUND_NOTE_PRE_A = '<b>Pre-arranged now</b> comes from the framework records: for every active, being-updated or in-development framework, the envelope of its most recent version that has one. The same figure is the current year in the annual chart and on the map.'
 FUND_NOTE_PRE_B = "Pre-arranged money stays pre-arranged until a framework is <b>retired</b>: a framework being updated keeps its most recent version's envelope. Country and Regional Fund allocations are made up front, so an AA-tagged allocation counts as pre-arranged until an activation draws on it (then it counts as released as well). Pre-arranged money is a stock (in place on a date) and released money a flow (per year): the two are never added together."
-FUND_NOTE_3 = '<b>People covered now</b> is the latest figure recorded for each current framework — the people its pre-arranged plan covers, not the people reached once it activated (those come from the final reports, on the Plan page). Retired frameworks cover no one now and are left out, as on the map. A framework still in development usually has no figure until its projects are planned; an early estimate can be recorded until then.'
+FUND_NOTE_3 = '<b>People covered now</b> is the latest figure recorded for each current framework — the people its pre-arranged plan covers, not the people reached once it activated (those come from the final reports, on the Activities page). Retired frameworks cover no one now and are left out, as on the map. A framework still in development usually has no figure until its projects are planned; an early estimate can be recorded until then.'
 FUND_NOTE_4 = "<b>Donors</b> (the <i>donors</i> tick on the money-flow chart): each donor's share of a fund's income that year, applied to the fund's AA money that year — donors give to the pooled funds as a whole, not to anticipatory action. Donors report their AA funding annually under the <a href='https://interagencystandingcommittee.org/grand-bargain' target='_blank' rel='noopener'>Grand Bargain</a>."
 
 
 def build_funding(page, d):
     """The Financing page (dash-funding.html: the file name predates the rename, links keep it).
-    Every tile and chart follows the map's layer toggles (current frameworks, retired, ad hoc
+    Every tile and chart follows the map's layer toggles (current frameworks, retired, non-framework
     allocations) and a fund switch; the defaults show everything released (current + retired
-    + ad hoc, both funds; since 2026-10-02 — before, framework activations only)."""
+    + non-framework, both funds; since 2026-10-02 — before, framework activations only)."""
     import datetime as _dt
     import html as _html
     # the current year, as of the build: its figures move daily until it closes, so wherever the
@@ -1400,7 +1469,7 @@ def build_funding(page, d):
     # '2026*', with one footnote under the tiles (2026-10-09 meeting: "asterisk on 2026, marked
     # indicative and updated daily")
     cy = _dt.date.today().year
-    pre, act = funding_series(d, released="all")   # ad hoc rows ride along, toggled client-side
+    pre, act = funding_series(d, released="all")   # non-framework rows ride along, toggled client-side
     cur = d["current"]
     layer = _layer_of(d)
     region_of = dict(zip(zip(cur["country_iso3"], cur["hazard"]), cur["region"]))
@@ -1595,7 +1664,7 @@ def build_funding(page, d):
     listed = cur[cur["lifecycle"].isin(live_lc + ("retired",))]
     # g2: the retired layer too, for a pair hosting a replaced framework (its line ticks both)
     fw_list = [{"k": f"{r.country_iso3}|{r.hazard}", "name": country_name(r.country_iso3),
-                "hazard": str(r.hazard).replace("_", " "), "hz": haz(r.hazard),
+                "hazard": hazard_word(r.hazard), "hz": haz(r.hazard),
                 "region": r.region if isinstance(r.region, str) else "?", "lc": r.lifecycle,
                 "g": layer(r.country_iso3, r.hazard),
                 "g2": "r" if (r.country_iso3, r.hazard) in old_pairs and r.lifecycle != "retired" else None}
@@ -1617,7 +1686,7 @@ def build_funding(page, d):
  <span style='display:inline-flex;gap:10px;align-items:center;padding-right:10px;border-right:1px solid #9db2c9'>
   <label {ATTR("title", "frameworks active, being updated or in development: their money in every year")}><input type='checkbox' id='fCur' checked> {T("Current frameworks")}</label>
   <label {ATTR("title", "frameworks since retired: their money in the years they were live")}><input type='checkbox' id='fRet'> {T("Retired")}</label>
-  <label {ATTR("title", "AA money allocated without a framework: released money only")}><input type='checkbox' id='fAdh' checked> {T("Ad hoc allocations")}</label></span>
+  <label {ATTR("title", "AA money allocated without a framework: released money only")}><input type='checkbox' id='fAdh' checked> {T("Non-framework allocations")}</label></span>
  <details class='fwpick' id='fwPick'><summary id='fwLab' {ATTR("title", "the full list of frameworks: tick the ones to count")}>{T("Frameworks: all ▾")}</summary>
   <div class='fwpanel'>
    <div class='fwhead'><input type='search' id='fwQ' {ATTR("placeholder", "find a country, hazard, region or status…")} {ATTR("aria-label", "find frameworks in the list")}>
@@ -1630,7 +1699,7 @@ def build_funding(page, d):
  <label>{T("Region")} <select id='fReg'>{OPT("", "all")}</select></label>
  <label>{T("GHO")} <select id='fGho'>{OPT("", "all")}{OPT("1", "GHO contexts only")}</select></label>
  <label {ATTR("title", "released money only: pre-arranged money is a stock, in place on a date, so it never accumulates")}><input type='checkbox' id='fCum'> {T("cumulative (released)")}</label>
- <button type='button' id='fReset' class='freset' {ATTR("title", "put every filter in this bar back to how the page opens: current frameworks and ad hoc allocations, both funds, every hazard, region and framework")}>{T("Reset all filters")}</button>
+ <button type='button' id='fReset' class='freset' {ATTR("title", "put every filter in this bar back to how the page opens: current frameworks and non-framework allocations, both funds, every hazard, region and framework")}>{T("Reset all filters")}</button>
 </div>
 <div class='tiles'>
  <div class='tile'><div class='v' id='tFw'>{n_active + n_upd + n_dev}</div><div class='l' id='tFwl'>{TF("frameworks — {a} active · {u} being updated · {d} in development", a=n_active, u=n_upd, d=n_dev)}</div></div>
@@ -1656,14 +1725,14 @@ def build_funding(page, d):
  <div class='panel'><h3>{T("Pre-arranged funding in place each year, by fund")}</h3><canvas id='c1' height='260'></canvas>
    {how("A stock: what was committed in each year (a framework counts for a year if it was valid at any time in it), so the bars are not added up (the cumulative switch applies to released money only). CERF: the framework envelopes per year (sheets, framework pages, entries; 'all'-totals excluded where the fund split exists); the current year is pre-arranged now. Country and Regional Funds: AA-tagged allocations in the OneGMS mirror, in the year allocated. Co-financing is shown separately.")}</div>
  <div class='panel'><h3>{T("AA released by year, by fund")}</h3><canvas id='c2' height='260'></canvas>
-   {how("Allocations drawn by a framework activation, all pooled funds — plus the ad hoc AA allocations when that layer is on. A country or regional fund allocation moves here only once an activation is recorded against it.")}</div>
+   {how("Allocations drawn by a framework activation, all pooled funds — plus the non-framework AA allocations when that layer is on. A country or regional fund allocation moves here only once an activation is recorded against it.")}</div>
  <div class='panel'><h3>{T("Pre-arranged now, by hazard")}</h3><canvas id='c3' height='260'></canvas>
    {how("Latest envelope of every framework that is active, being updated or in development.")}</div>
  <div class='panel'><h3>{T("Pre-arranged now, by region")}</h3><canvas id='c4' height='260'></canvas>
    {how("The same envelopes as by hazard, by the framework's region.")}</div>
  <div class='panel'><h3>{T("Co-financing pre-arranged, by agency")}</h3><canvas id='c6' height='260'></canvas><p class='empty' id='c6x' style='display:none'></p>
    {f"<div class='note'>{nonaa_html}</div>" if nonaa_html else ""}
-   {how("Pre-arranged co-financing only: money from outside CERF and the Country and Regional Funds recorded against a framework (window funding of kind co-financing); how much of it was disbursed is not recorded. A stock, as at the end of each year (the current year: today) — the years sit side by side and are never added up. Grouped by the financier as recorded (most co-financing rows do not record one yet); rows with neither are the <i>not recorded</i> bar. Follows the framework layers and the hazard, region and GHO filters. Does not apply: the fund switch (the money is outside the pooled funds), the ad hoc layer (ad hoc allocations carry no co-financing) and cumulative (a stock).")}</div>
+   {how("Pre-arranged co-financing only: money from outside CERF and the Country and Regional Funds recorded against a framework (window funding of kind co-financing); how much of it was disbursed is not recorded. A stock, as at the end of each year (the current year: today) — the years sit side by side and are never added up. Grouped by the financier as recorded (most co-financing rows do not record one yet); rows with neither are the <i>not recorded</i> bar. Follows the framework layers and the hazard, region and GHO filters. Does not apply: the fund switch (the money is outside the pooled funds), the non-framework layer (non-framework allocations carry no co-financing) and cumulative (a stock).")}</div>
 </div>
 <h2>{T("Where the pre-arranged money goes")}</h2>
 <p class='meta'>{T("The latest version of every current framework, split by agency and sector as the framework documents state it, stacked by fund.")}</p>
@@ -1684,7 +1753,7 @@ def build_funding(page, d):
 </div>
 <div class='grid'>
  <div class='panel'><h3>{T("CERF AA allocations by year — direct UN spend vs sub-granted to partners")}</h3><canvas id='c9' height='280'></canvas>
-   {how("Direct UN spend = CERF AA project budgets (OneGMS mirror; the allocations the activation record draws on, framework and ad hoc) minus the sub-grants reported for the same year (aa.cerf_subgrant, curated AA set). Partner groups from the sub-grant partner type; 'other' includes partners not yet typed. CERF's sub-grant reports cover framework and ad hoc allocations together and carry no hazard: this section follows the fund switch and the region filter only. 2023 looks low because the only framework activations that year were DRC cholera ($1.5M): the CERF early-action allocations reported to the Anticipation Hub for 2023 are not counted as anticipatory action here, following the definition the Grand Bargain adopted at the end of 2024.")}</div>
+   {how("Direct UN spend = CERF AA project budgets (OneGMS mirror; the allocations the activation record draws on, framework and non-framework) minus the sub-grants reported for the same year (CERF's sub-grant records, curated AA set). Partner groups from the sub-grant partner type; 'other' includes partners not yet typed. CERF's sub-grant reports cover framework and non-framework allocations together and carry no hazard: this section follows the fund switch and the region filter only. 2023 looks low because the only framework activations that year were DRC cholera ($1.5M): the CERF early-action allocations reported to the Anticipation Hub for 2023 are not counted as anticipatory action here, following the definition the Grand Bargain adopted at the end of 2024.")}</div>
  <div class='panel'><h3>{T("Share of CERF AA sub-grants to local and national actors, by year")}</h3><canvas id='c10' height='280'></canvas>
    {how("Each bar is one year's CERF AA sub-grants (100%): to local and national actors (national / local NGOs, government, national Red Cross / Red Crescent societies), to international NGOs, and to partners not yet typed in the reports. The label is the local and national share; the recent years fill in as partners are typed. Follows the fund switch and the region filter only.")}</div>
 </div>
@@ -1745,15 +1814,15 @@ const fwOn = l => l.querySelector('input').checked, fwShown = l => l.style.displ
 function fwBuild(){
   const groups = [...new Set(FWL.filter(f=>f.lc).map(f=>f.region))].map(g=>[g, FWL.filter(f=>f.lc && f.region===g)]);
   const rest = FWL.filter(f=>!f.lc);
-  if(rest.length) groups.push(['Ad hoc allocations in countries with no framework in place', rest]);
+  if(rest.length) groups.push(['Non-framework allocations in countries with no framework in place', rest]);
   // the search reads the English and the shown language alike (data-t)
-  const words = f => [f.name, tr8(f.name), f.hazard||'ad hoc', tr8(f.hazard||'ad hoc'), f.region||'', tr8(f.region||''),
+  const words = f => [f.name, tr8(f.name), f.hazard||'non-framework', tr8(f.hazard||'non-framework'), f.region||'', tr8(f.region||''),
                       LCL0[f.lc]||'no framework', LCL[f.lc]||tr8('no framework')].join(' ').toLowerCase();
   fwRows.innerHTML = `<div class='cap'>${tr8('pre-arranged now (in place today)')}</div>` + groups.map(([g, rows], i)=>
     `<label class='grp' data-g='${i}'><input type='checkbox' checked><span class='nm'>${escH(tr8(g))}</span><span class='amt'></span></label>`
     + rows.map(f=>`<label class='fw' data-g='${i}' data-k="${escH(f.k)}" data-t="${escH(words(f))}">`
       + `<input type='checkbox' checked><span class='nm'>${escH(tr8(f.name))}${f.hazard ? ' — '+escH(tr8(f.hazard)) : ''}</span>`
-      + `<span class='st'>${f.lc ? LCL[f.lc] : tr8('ad hoc allocations only')}</span><span class='amt'></span></label>`).join('')).join('');
+      + `<span class='st'>${f.lc ? LCL[f.lc] : tr8('non-framework allocations only')}</span><span class='amt'></span></label>`).join('')).join('');
 }
 function fwToDom(){ fwLines().forEach(l=>{ l.querySelector('input').checked = !fwSel || fwSel.has(l.dataset.k); }); }
 function fwCommit(){ const on = fwLines().filter(fwOn).map(l=>l.dataset.k);
@@ -1780,7 +1849,7 @@ function fwPaint(s, N){
     b.checked = n===rows.length; b.indeterminate = n>0 && n<rows.length;
     gl.querySelector('.amt').textContent = gsum[gl.dataset.g] ? M2(gsum[gl.dataset.g]) : ''; });
   const fws = FWL.filter(f=>f.lc), rest = FWL.filter(f=>!f.lc), nOn = fws.filter(ticked).length, xOn = rest.filter(ticked).length;
-  const count = tr8('{0} of {1} frameworks ticked', nOn, N_FW) + (xOn<rest.length ? ' · ' + tr8('{0} of {1} countries with ad hoc allocations only', xOn, rest.length) : '');
+  const count = tr8('{0} of {1} frameworks ticked', nOn, N_FW) + (xOn<rest.length ? ' · ' + tr8('{0} of {1} countries with non-framework allocations only', xOn, rest.length) : '');
   const tot = sumOf(N, r=>r.total_usd), nc = sumOf(N.filter(r=>r.ft==='cerf'), r=>r.total_usd);
   fwSum.innerHTML = `<b>${count}</b> · ` + (!s.cur ? tr8('pre-arranged now: tick <i>Current frameworks</i> in the bar')
     : tr8('pre-arranged now <b>{0}</b>', M2(tot)) + (s.fund==='cerf' ? tr8(', CERF only') : s.fund==='pooled' ? tr8(', Country and Regional Funds only')
@@ -1788,7 +1857,7 @@ function fwPaint(s, N){
   fwLab.textContent = s.fws ? tr8('Frameworks: {0} of {1} ▾', nOn, N_FW) : tr8('Frameworks: all ▾');
   fwPick.classList.toggle('on', !!s.fws);
   fwNote.style.display = fwFlowNote.style.display = s.fws ? '' : 'none';
-  if(s.fws){ const nm = f => tr8(f.name) + (f.hazard ? ' '+tr8(f.hazard) : ' ' + tr8('(ad hoc)'));
+  if(s.fws){ const nm = f => tr8(f.name) + (f.hazard ? ' '+tr8(f.hazard) : ' ' + tr8('(non-framework)'));
     const inn = FWL.filter(ticked).map(nm), out = FWL.filter(f=>!ticked(f)).map(nm);
     const list = a => escH(a.slice(0,14).join(', ')) + (a.length>14 ? ' ' + tr8('and {0} more', a.length-14) : '');
     fwNote.innerHTML = `<b>${count}</b> — ` + (!inn.length ? tr8('nothing is counted')
@@ -1801,7 +1870,7 @@ const pairFundOK = (funds, s) => !s.fund || (funds||'').includes(s.fund==='cerf'
 const sumOf = (rows, f) => rows.reduce((t,r)=>t+(f(r)||0), 0);
 function stackedBy(id, rows, keyFn, valFn, opts){
   const keys = opts && opts.keys ? opts.keys : uniqSorted(rows, keyFn);
-  mkChart(id,'bar',keys,FT.map(ft=>({label:ft, backgroundColor:FUND_COLORS[ft],
+  mkChart(id,'bar',keys,FT.map(ft=>({label:FUND_TYPE_LABEL[ft], backgroundColor:FUND_COLORS[ft],
     data:keys.map(k=>groupSum(rows.filter(r=>r.ft===ft&&keyFn(r)===k),()=>0,valFn)[0]||0)})).filter(d=>d.data.some(v=>v)),
     {stacked:true, totals:true, ...(opts||{})});
 }
@@ -1824,15 +1893,15 @@ function tiles(s, geo, A, N){
   else if(s.ret){ tFw.textContent = n('retired'); tFwl.textContent = tr8('retired frameworks{0}', fundTxt) + selTxt; }
   else { tFw.textContent = '–'; tFwl.textContent = tr8('frameworks: no framework layer selected'); }
   const nc = sumOf(N.filter(r=>r.ft==='cerf'), r=>r.total_usd), np = sumOf(N.filter(r=>r.ft!=='cerf'), r=>r.total_usd);
-  if(!s.cur){ tPre.textContent = '–'; tPrel.textContent = tr8('pre-arranged now: select current frameworks (retired frameworks and ad hoc allocations have none)'); }
+  if(!s.cur){ tPre.textContent = '–'; tPrel.textContent = tr8('pre-arranged now: select current frameworks (retired frameworks and non-framework allocations have none)'); }
   else { tPre.textContent = M0(nc+np);
     tPrel.textContent = tr8('pre-arranged now — {0}', s.fund==='cerf' ? 'CERF' : s.fund==='pooled' ? tr8('Country and Regional Funds') : tr8('CERF {0} · Country and Regional Funds {1}', M0(nc), M0(np))) + selTxt; }
   const ys = uniqSorted(A, r=>r.year);
-  const what = [(s.cur||s.ret) ? tr8('framework activations') : null, s.adh ? tr8('ad hoc allocations') : null].filter(Boolean).join(' + ');
+  const what = [(s.cur||s.ret) ? tr8('framework activations') : null, s.adh ? tr8('non-framework allocations') : null].filter(Boolean).join(' + ');
   tRel.textContent = M0(sumOf(A, r=>r.amount_usd));
   tRell.textContent = tr8('AA released {0} — {1}, ', ys.length ? yLab(ys[0])+(ys.length>1 ? '–'+yLab(ys[ys.length-1]) : '') : tr8('(none in this selection)'), what || tr8('no layer selected'))
     + (s.fund==='cerf' ? 'CERF' : s.fund==='pooled' ? tr8('Country and Regional Funds') : tr8('CERF and Country and Regional Funds')) + (s.gho ? tr8(', GHO contexts') : '')
-    + (s.fws ? (s.adh ? tr8(' · ticked frameworks, and the ad hoc allocations of their countries') : selTxt) : '');
+    + (s.fws ? (s.adh ? tr8(' · ticked frameworks, and the non-framework allocations of their countries') : selTxt) : '');
   // people covered: a now figure, current frameworks only (as pre-arranged now and the map)
   if(!s.cur){ tCov.textContent = '–'; tCovl.textContent = tr8('people covered now: select current frameworks (a retired framework covers no one now)'); }
   else { const C = D.cov.filter(r=>geo(r) && pairFundOK(r.funds,s));
@@ -1851,7 +1920,7 @@ function draw(){
     const ds = FT.map(ft=>{
       let vals = years.map(y=>sumOf(rows.filter(r=>fundType(r.fund_code)===ft&&r.year===y), r=>r.amount_usd));
       if(s.cum && id==='c2') vals = cumulate(vals);   // pre-arranged is a stock: never cumulated
-      return {label:ft, data:vals, backgroundColor:FUND_COLORS[ft]};}).filter(d=>d.data.some(v=>v));
+      return {label:FUND_TYPE_LABEL[ft], data:vals, backgroundColor:FUND_COLORS[ft]};}).filter(d=>d.data.some(v=>v));
     mkChart(id,'bar',years.map(yLab),ds,{stacked:true, totals:true});
   }
   const N = D.now.filter(r=>geo(r) && layerOK(r.g,s) && ftOK(r.ft,s));
@@ -1862,7 +1931,7 @@ function draw(){
   {
     const C = D.cof.filter(r=>geo(r) && (!gho||r.in_gho) && layerOK(r.g,s));
     const why = s.fund ? tr8('Co-financing is money from outside CERF and the Country and Regional Funds: the fund switch does not apply to it — select both funds to see it.')
-      : !(s.cur||s.ret) ? tr8('Co-financing belongs to frameworks: select current or retired frameworks (ad hoc allocations carry none).')
+      : !(s.cur||s.ret) ? tr8('Co-financing belongs to frameworks: select current or retired frameworks (non-framework allocations carry none).')
       : !C.length ? tr8('No pre-arranged co-financing recorded in this selection.') : '';
     c6.style.display = why ? 'none' : ''; c6x.style.display = why ? '' : 'none'; c6x.textContent = why;
     if(!why){
@@ -2024,7 +2093,7 @@ def _doc_li(r):
          if isinstance(r.url, str) and r.url else title)
     who = " · ".join(str(x) for x in [r.publisher if isinstance(r.publisher, str) else None,
                                       int(r.year) if pd.notna(r.year) else None] if x)
-    tag = f"<span class='doctag'>{T(DOC_TYPE_LABEL.get(r.doc_type, str(r.doc_type)))}</span>"
+    tag = f"<span class='doctag'>{T(code_words(DOC_TYPE_LABEL, r.doc_type, 'document type') or 'document')}</span>"
     ks = (f"<span class='ks'>{_h.escape(str(r.key_stat))}</span>"
           if isinstance(r.key_stat, str) and r.key_stat else "")
     return f"<li>{t}{(' <span class=' + chr(39) + 'who' + chr(39) + '>· ' + who + '</span>') if who else ''}{tag}{ks}</li>"
@@ -2102,7 +2171,7 @@ function draw(){ const R = rows();
   tN.textContent = R.length.toLocaleString();
   tUsd.textContent = money(R.reduce((s,r)=>s+(r.amount_usd||0),0));
   const ys = uniqSorted(R, r=>r.year);
-  mkChart('a1','bar',ys,['cerf','cbpf','regional_fund'].map(ft=>({label:ft,
+  mkChart('a1','bar',ys,['cerf','cbpf','regional_fund'].map(ft=>({label:FUND_TYPE_LABEL[ft],
     data:ys.map(y=>R.filter(r=>r.fund_type===ft&&r.year===y).reduce((s,r)=>s+(r.amount_usd||0),0)),
     backgroundColor:FUND_COLORS[ft]})),{stacked:true});
   const byC = Object.entries(groupSum(R,r=>r.country_iso3||r.fund_name,r=>r.amount_usd))
@@ -2119,7 +2188,7 @@ function draw(){ const R = rows();
      {label:'Country and Regional Funds',data:both.map(x=>x[1].pooled),backgroundColor:FUND_COLORS.cbpf}]);
   const adhoc = D.act.filter(r=>r.event_type!=='framework_aa');
   const byA = Object.entries(groupSum(adhoc,r=>r.country_iso3,r=>r.amount_usd)).sort((a,b)=>b[1]-a[1]);
-  mkChart('a4','bar',byA.map(x=>x[0]),[{label:'ad hoc AA USD',data:byA.map(x=>x[1]),backgroundColor:PAL[3]}]);
+  mkChart('a4','bar',byA.map(x=>x[0]),[{label:'non-framework AA USD',data:byA.map(x=>x[1]),backgroundColor:PAL[3]}]);
   const ty = uniqSorted(D.tim,r=>r.year);
   mkChart('a5','line',ty,[{label:'median days',data:ty.map(y=>{
     const v=D.tim.filter(r=>r.year===y).map(r=>r.days).sort((a,b)=>a-b);
@@ -2182,7 +2251,7 @@ def build_delivery(page, d):
  <div class='panel'><h3>Country and Regional Fund AA projects: direct funding by org type</h3><canvas id='d2' height='250'></canvas>
    <div class='note'>Country and Regional Funds pay partners directly — this is the localization view CERF can't show. AA-keyword allocations only.</div></div>
  <div class='panel'><h3>Released by agency (CERF AA projects)</h3><canvas id='d3' height='250'></canvas>
-   <div class='note'>CERF AA project budgets, all years: the allocations the activation record draws on (framework and ad hoc), as on the Financing page.</div></div>
+   <div class='note'>CERF AA project budgets, all years: the allocations the activation record draws on (framework and non-framework), as on the Financing page.</div></div>
  <div class='panel'><h3>Released by sector (CERF AA projects)</h3><canvas id='d4' height='250'></canvas>
    <div class='note'>The sector split of the same projects (CERF sector names).</div></div>
  <div class='panel'><h3>Pre-arranged by agency (framework budgets)</h3><canvas id='d5' height='250'></canvas>
@@ -2258,7 +2327,7 @@ COVERAGE = [
     ("Calendar of monitoring windows", "covered", "dashboards.html#calendar", "trigger-window months per framework (from planning-sheet colors)"),
     ("Filter by hazard", "covered", "dash-funding.html", "all dashboards filter by hazard"),
     ("Frameworks started/revised/endorsed per year", "covered", "dash-funding.html", "endorsed-document versions per year"),
-    ("Non-framework AA allocations", "covered", "dash-allocations.html", "explicit ad hoc AA category (ad hoc layer on the Financing page)"),
+    ("Non-framework AA allocations", "covered", "dash-allocations.html", "explicit non-framework AA category (non-framework layer on the Financing page)"),
     ("CERF + Country/Regional Funds complementarity", "covered", "dash-allocations.html", "multi-fund activations from activation_funding"),
     ("AA funding to GHO contexts", "covered", "dash-funding.html", "GHO filter (plan_inclusion)"),
     ("CERF AA growth (released, people, countries…)", "covered", "dash-funding.html", "cumulative toggles + tiles"),
@@ -2327,7 +2396,7 @@ def _partners_block(pt, sg, c, h, version):
             f"<li>{_h.escape(str(r.name))}"
             f"{(' (' + _h.escape(str(r.acronym)) + ')') if isinstance(r.acronym, str) and r.acronym else ''}"
             # a role is a code (translated) or the document's own words (as written)
-            f"{(' <span class=' + chr(39) + 'muted' + chr(39) + '>' + ', '.join(TD(str(x).replace('_', ' ')) for x in _aslist(r.roles)) + '</span>') if _aslist(r.roles) else ''}"
+            f"{(' <span class=' + chr(39) + 'muted' + chr(39) + '>' + ', '.join(TD(_role_words(x)) for x in _aslist(r.roles) if _role_words(x)) + '</span>') if any(map(_role_words, _aslist(r.roles))) else ''}"
             f"{(' <span class=' + chr(39) + 'muted' + chr(39) + '>' + TF('under {p}', p=str(r.agency_parent)) + '</span>') if isinstance(r.agency_parent, str) and r.agency_parent else ''}"
             f"{(' · ' + _fmt_usd(r.amount_usd)) if pd.notna(r.amount_usd) else ''}</li>"
             for r in g.itertuples())
@@ -2564,6 +2633,19 @@ def _version_diff(fo, fn, to, tn, w=lambda x: x):
     return out
 
 
+# the version record's own fields, as a curator's note names them, in words (a note is shown as
+# written otherwise; the fix at the source is to reword the note)
+_NOTE_FIELDS = {"valid_from": "the start date", "valid_until": "the end date",
+                "development_since": "the development start date", "kb_status": "the version status",
+                "doc_url": "the document link", "analysis_ref": "the analysis link"}
+_NOTE_FIELD_RX = re.compile(r"\b(" + "|".join(map(re.escape, _NOTE_FIELDS)) + r")\b")
+
+
+def _plain_note(note):
+    """A version note for a public page: the record's field names in words."""
+    return _NOTE_FIELD_RX.sub(lambda m: _NOTE_FIELDS[m.group(1)], str(note))
+
+
 def _changes_block(fvm, vpage, c, h):
     """'What changed between versions': newest pair first."""
     import html as _h
@@ -2585,7 +2667,7 @@ def _changes_block(fvm, vpage, c, h):
         body = ("<ul>" + "".join("<li>" + "".join(f'<span class="lv lv-{l}">{diff[l][i]}</span>' for l in diff)
                                  + "</li>" for i in range(len(diff["en"]))) + "</ul>" if diff and diff["en"]
                 else f"<p class='empty' style='padding:2px 0'>{T('no structured change recorded')}</p>")
-        note = (f"<p class='vnote'><b>{T('Note:')}</b> {_h.escape(str(new.note))}</p>"
+        note = (f"<p class='vnote'><b>{T('Note:')}</b> {_h.escape(_plain_note(new.note))}</p>"
                 if isinstance(new.note, str) and new.note.strip() else "")
         items += (f"<div class='vchg'><h4>{_h.escape(str(old.version))} → {_h.escape(str(new.version))}"
                   f"</h4>{body}{note}</div>")
@@ -2840,7 +2922,7 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
                            ann=lk["ann"], other=lk["other"], cerf=lk["cerf"],
                            partial=full.get((ed, wn)) is False))
     for ev in events:
-        amt = "; ".join(f"{x.fund_code} {_m(x.amount_usd)}" for x in ev["fund"].itertuples()
+        amt = "; ".join(f"{fund_label(x.fund_code)} {_m(x.amount_usd)}" for x in ev["fund"].itertuples()
                         if pd.notna(x.amount_usd))
         href, goes = _event_href(ev)
         vv = "" if ev["version"] is None or str(ev["version"]) in ("nan", "None", "NaT", "<NA>") else str(ev["version"])
@@ -2848,8 +2930,8 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
         ref = shown if shown is not None else (str(version) if version is not None else None)
         same = (not vv) or (ref is not None and _vm(vv, ref))   # no backtest: compare with the current version
         def tip(w, ev=ev, amt=amt, vv=vv, same=same, href=href, goes=goes):
-            return (f"{ev['date']} · {ev['win'] or w(ev['typ'].replace('_', ' '))} · {amt or w('amount not recorded')}"
-                    + (" · " + w("ad hoc allocation (no framework version)") if not vv else ""
+            return (f"{ev['date']} · {ev['win'] or w(code_words(EVENT_TYPE_LABEL, ev['typ'], 'event type') or 'activation')} · {amt or w('amount not recorded')}"
+                    + (" · " + w("non-framework allocation (no framework version)") if not vv else ""
                        if same else " · " + w("under version {0}").replace("{0}", vv))
                     + (" · " + w("partial activation") if ev["partial"] else "")
                     + (" · " + w("opens {0}").replace("{0}", w(goes)) if href else ""))
@@ -2922,7 +3004,7 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
         tr = ""
         for ev in events:
             fl = "<br>".join(
-                f"{esc(x.fund_code)}: {'' if pd.isna(x.amount_usd) else '$' + format(x.amount_usd, ',.0f')}"
+                f"{esc(fund_label(x.fund_code))}: {'' if pd.isna(x.amount_usd) else '$' + format(x.amount_usd, ',.0f')}"
                 for x in ev["fund"].itertuples()) or f"<span class='muted'>{T('not recorded')}</span>"
             links = [f"<a href='{esc(u)}' target='_blank' rel='noopener'>CERF {esc(code)} ↗</a>"
                      for code, u in ev["cerf"] if u]
@@ -2934,7 +3016,7 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
                     else f" <span class='doctag' {ATTR('title', 'This activation happened under version {v}, an earlier version of the framework than the current one ({c}); its triggers and budget may differ.', v=ev['version'], c=version)}>{T('earlier version')}</span>")
             tr += (f"<tr><td>{esc(ev['date'])}</td><td>{esc(ev['version'])}{vtag}</td>"
                    f"<td>{esc(ev['win'])}{(' · ' + esc(ev['label'])) if ev['label'] else ''}"
-                   f"{'' if ev['typ'] == 'framework_aa' else ' <span class=' + chr(39) + 'muted' + chr(39) + '>(' + T(ev['typ'].replace('_', ' ')) + ')</span>'}"
+                   f"{'' if ev['typ'] == 'framework_aa' or not code_words(EVENT_TYPE_LABEL, ev['typ'], 'event type') else ' <span class=' + chr(39) + 'muted' + chr(39) + '>(' + T(code_words(EVENT_TYPE_LABEL, ev['typ'], 'event type')) + ')</span>'}"
                    f"{' <span class=' + chr(39) + 'warn-tag' + chr(39) + '>' + T('partial') + '</span>' if ev['partial'] else ''}</td>"
                    f"<td>{fl}</td><td>{' · '.join(links)}</td></tr>")
         actual = ("<div class='xscroll'><table class='data acts'><colgroup><col style='width:10%'><col style='width:17%'>"
@@ -2989,6 +3071,41 @@ def _validation_block(fvm, c, h, version):
             else f"<p class='empty'>{T('Technical documentation not yet linked.')}</p>")
     return (f"<h3 class='sub'>{T('Trigger validation & technical work')}</h3>" + body
             + f"<p class='meta'>{T('The full trigger validation will be published on this page in future.')}</p>")
+
+
+def _status_words(st):
+    """A framework's status (the tracking sheets' code, or the lifecycle when there is none) in
+    words; None for one with no words (the badge is then left out, never the code)."""
+    from landing import SHEET_STATUS_LABEL
+    words = {**LIFE_LABEL, "retired": "retired", "pipeline": "no framework version yet",
+             "no framework": "no framework", "no status": "no status", **SHEET_STATUS_LABEL}
+    return code_words(words, st, "framework status")
+
+
+def _role_words(x):
+    """A partner role: a code in words, the document's own words as written."""
+    x = str(x)
+    is_code = x in PARTNER_ROLE_LABEL or re.fullmatch(r"[a-z]+(_[a-z]+)+", x)
+    return code_words(PARTNER_ROLE_LABEL, x, "partner role") if is_code else x
+
+
+def _source_words(src):
+    """Where a version record came from, in words ('' for a source with none)."""
+    if isinstance(src, str) and re.fullmatch(r"aa-team-\d{4}-\d{2}-\d{2}", src):
+        src = "aa-team"
+    w = code_words(VERSION_SOURCE_LABEL, src, "version source")
+    return T(w) if w else ""
+
+
+def _report_list(r):
+    """'Anticipation Hub (2024, 2025), CPC (2025)': the reports a framework counts toward, in
+    words (a report with none is left out)."""
+    yrs = {}
+    for x in r.itertuples():
+        w = code_words(REPORT_CHANNEL_LABEL, x.channel, "report channel")
+        if w:
+            yrs.setdefault(w, set()).add(str(x.report_year))
+    return ", ".join(f"{T(w)} ({', '.join(sorted(ys))})" for w, ys in sorted(yrs.items()))
 
 
 def build_framework_pages(page, tbl, d, e=None):
@@ -3072,7 +3189,7 @@ def build_framework_pages(page, tbl, d, e=None):
         agencies = sorted(set(sv.loc[sv["agency"].notna(), "agency"]))
         srows = "".join(
             f"<tr><td>{x.window_name or ''}</td><td>{x.agency if pd.notna(x.agency) else ''}</td>"
-            f"<td>{x.sector if pd.notna(x.sector) else ''}</td><td>{x.fund_code if pd.notna(x.fund_code) else ''}</td>"
+            f"<td>{x.sector if pd.notna(x.sector) else ''}</td><td>{fund_label(x.fund_code)}</td>"
             f"<td class='num'>${x.amount_usd:,.0f}</td></tr>" for x in sv.itertuples())
         split_foot = (
             f"<tr><th colspan=4>{T('split total')}</th><th class='num'>${split_total:,.0f}</th></tr>"
@@ -3091,12 +3208,11 @@ def build_framework_pages(page, tbl, d, e=None):
                        "the same money across alternative windows is summed as recorded — compare the split total with "
                        "the envelope.", v=split_version or "—") + "</div></div></div>") if split_js else ""
         vrows = "".join(
-            f"<tr><td>{x.version}</td><td>{TD(x.kb_status) if pd.notna(x.kb_status) else ''}</td><td>{x.source}</td>"
+            f"<tr><td>{x.version}</td><td>{TD(x.kb_status) if pd.notna(x.kb_status) else ''}</td><td>{_source_words(x.source)}</td>"
             f"<td>{f'<a href={x.doc_url!r}>' + T('doc') + '</a>' if pd.notna(x.doc_url) else ''}</td>"
             f"<td style='max-width:340px'>{x.analysis_ref if pd.notna(x.analysis_ref) else ''}</td></tr>"
             for x in v.itertuples())
-        rrows = ", ".join(sorted({f"{x.channel} ({x.report_year})"
-                                  for x in r.itertuples()}))
+        rrows = _report_list(r)
         covered_txt = (f"{int(pc['people_covered'].iloc[0]):,}"
                        if not pc.empty else "—")
         # ---- Learning: the framework's documents
@@ -3106,15 +3222,15 @@ def build_framework_pages(page, tbl, d, e=None):
         obs = fw.get("observed_status")
         derived_note = (
             " <span class='muted' style='font-size:11px'>"
-            + TF("(derived from the endorsed {v} version — sheets last said “{s}”)",
-                 v=fw["current_version"], s=str(obs).replace("_", " ")) + "</span>"
-            if pd.notna(obs) and obs != fw["status"] and not no_fw else "")
-        fw_name = T(i18n.add(f"{fw['country_name']} — {h}", "{country} — {hazard}",
-                             country=i18n.country(c, fw["country_name"]), hazard=h))
+            + TC(lambda w: w("(derived from the endorsed {v} version — sheets last said “{s}”)").format(
+                 v=fw["current_version"], s=w(_status_words(obs)))) + "</span>"
+            if pd.notna(obs) and obs != fw["status"] and not no_fw and _status_words(obs) else "")
+        fw_name = T(i18n.add(f"{fw['country_name']} — {hazard_word(h)}", "{country} — {hazard}",
+                             country=i18n.country(c, fw["country_name"]), hazard=hazard_word(h)))
         st_raw = fw['status'] if _has(fw.get('status')) and not no_fw else status
         body = f"""
 <div class='card'><b>{fw_name}</b> ·
-<span class='badge b-new'>{T(st_raw)}</span>{derived_note}
+{f"<span class='badge b-new'>{T(_status_words(st_raw))}</span>" if _status_words(st_raw) else ''}{derived_note}
 {T('current version:')} <code>{cur_v}</code>
 {('· KB: <code>' + fw['kb_framework'] + '</code>') if pd.notna(fw['kb_framework']) else '· ' + T('not in KB')}
 · {T('people covered:')} <b>{covered_txt}</b><br>
@@ -3131,7 +3247,7 @@ def build_framework_pages(page, tbl, d, e=None):
 <h3 class='sub'>{T('Historical activations')}</h3>
 <section>{hist_html}</section>
 {valid_html}</div>
-<div class='blk'><h2>{T('Plan')}</h2>
+<div class='blk'><h2>{T('Activities')}</h2>
 <div class='tiles'>
  <div class='tile'><div class='v'>{covered_txt}</div><div class='l'>{T('people covered (latest figure)')}</div></div>
  <div class='tile'><div class='v'>{len(agencies) or '—'}</div><div class='l'>{TF('agencies with a budget line: {list}', list=', '.join(agencies)) if agencies else T('agencies with a budget line')}</div></div>
@@ -3143,7 +3259,7 @@ def build_framework_pages(page, tbl, d, e=None):
 <tfoot>{split_foot}</tfoot></table></div></section>
 {plan_charts}
 {_partners_block(pt, sg, c, h, version)}</div>
-<div class='blk'><h2>{T('Funding')}</h2>
+<div class='blk'><h2>{T('Financing')}</h2>
 <div class='grid'>
 <div class='panel'><h3>{T('Pre-arranged funding in place, by year × fund')}</h3><div class='note'>{T('The envelope in place each year — a stock, so the bars are not added up.')}</div><canvas id='pf' height='230'></canvas></div>
 <div class='panel'><h3>{T('Versions (endorsed documents)')}</h3>
@@ -3158,7 +3274,7 @@ def build_framework_pages(page, tbl, d, e=None):
 <script src="sankey.js"></script>
 <script>window.FD = {json.dumps(chart_data)}; window.SPLIT = {json.dumps(split_js)}; window.REGIONAL_FUNDS = {json.dumps(sorted(REGIONAL_FUNDS))};</script>
 <script>{DASH_JS}
-const ds = Object.entries(FD.series).map(([fc,vals],i)=>({{label:fc,data:vals,
+const ds = Object.entries(FD.series).map(([fc,vals],i)=>({{label:fundName(fc),data:vals,
   backgroundColor:FUND_COLORS[fundType(fc)]||PAL[i]}}));
 if(FD.years.length) mkChart('pf','bar',FD.years,ds,{{stacked:true, totals:true}});
 else document.getElementById('pf').outerHTML='<p class="meta">' + {json.dumps(T("no funding rows"))} + '</p>';
@@ -3182,9 +3298,9 @@ drawSplit();
 document.addEventListener('aalang', drawSplit);
 </script>
 <style>{DASH_CSS}</style>"""
-        tmpl = "{country} {hazard} — " + ("ad hoc allocations, no framework" if no_fw else "framework")
-        title = i18n.add(tmpl.format(country=fw["country_name"], hazard=h), tmpl,
-                         country=i18n.country(fw["country_iso3"], fw["country_name"]), hazard=h)
+        tmpl = "{country} {hazard} — " + ("non-framework allocations" if no_fw else "framework")
+        title = i18n.add(tmpl.format(country=fw["country_name"], hazard=hazard_word(h)), tmpl,
+                         country=i18n.country(fw["country_iso3"], fw["country_name"]), hazard=hazard_word(h))
         page(f"{slug}.html", title, body)
     return links
 
@@ -3199,7 +3315,7 @@ def build_hub(page, d, fw_links):
 <div class='card'><b>Dashboards</b> — interactive views over the tracking DB,
 built to the CERF key-data-points list (<a href='questions.html'>coverage map</a>).
 <div class='tiles'>
-<div class='tile'><a href='dash-funding.html'><b>Financing</b></a><div class='l'>pre-arranged & released, by year/hazard/region/fund, GHO, cumulative; any subset of frameworks (tick them in the list); current / retired frameworks and ad hoc allocations as on the map; money flows; localisation</div></div>
+<div class='tile'><a href='dash-funding.html'><b>Financing</b></a><div class='l'>pre-arranged & released, by year/hazard/region/fund, GHO, cumulative; any subset of frameworks (tick them in the list); current / retired frameworks and non-framework allocations as on the map; money flows; localisation</div></div>
 <div class='tile'><a href='dash-donors.html'><b>Donor shares</b></a><div class='l'>each donor's share of AA released / pre-arranged, via their contributions to CERF and the Country and Regional Funds; donor flows; build earmarks</div></div>
 <div class='tile'><a href='dash-allocations.html'><b>Allocation explorer</b></a><div class='l'>query every CERF, Country and Regional Fund allocation 2006→; complementarity; timeliness</div></div>
 <div class='tile'><a href='dash-delivery.html'><b>Delivery & people</b></a><div class='l'>subgrants, localization, agencies, sectors, CVA, people reached</div></div>

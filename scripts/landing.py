@@ -85,10 +85,10 @@ KB_LABEL = {"active": "Active", "updating": "Being updated", "development": "In 
 # drawn as a framework while the framework layer is on).
 LAYER_ORDER = ("framework", "retired", "adhoc", "tech")
 LAYER_COLOR = {"adhoc": "#74c476", "retired": "#9e9e9e", "tech": "#2a9d8f"}
-LAYER_LABEL = {"framework": "Current frameworks", "adhoc": "Ad hoc allocations", "retired": "Retired",
+LAYER_LABEL = {"framework": "Current frameworks", "adhoc": "Non-framework allocations", "retired": "Retired",
                "tech": "Technical support"}
 DISP_LABEL = {**KB_LABEL, "retired": "Retired", "pipeline": "No framework version yet",
-              "adhoc": "Ad hoc allocations only"}
+              "adhoc": "Non-framework allocations only"}
 # year selector: the first year it offers (the annual pre-arranged series starts here —
 # dashboards._backfill_years) and the status-report -> lifecycle mapping, the CASE that
 # aa.v_framework_lifecycle applies to a framework with no version (anything else: not shown)
@@ -738,7 +738,7 @@ def status_help_html():
   </svg>
   <div class='sh-layers'>
    {TB("<b>Map layers.</b>")} <span class='dot' style='background:{KB_COLOR["active"]}'></span>{TB("<b>Current frameworks</b> — every framework whose status is active, being updated or in development (the default view; the headline figures follow whatever is shown).")}
-   <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span>{TB("<b>Ad hoc allocations</b> — countries and hazards that received ad hoc anticipatory-action money without a framework version (light green; a framework that also received ad hoc money stays drawn as a framework).")}
+   <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span>{TB("<b>Non-framework allocations</b> — countries and hazards that received anticipatory-action money without a framework version (light green; a framework that also received non-framework money stays drawn as a framework).")}
    <span class='dot' style='background:{LAYER_COLOR["retired"]}'></span>{TB("<b>Retired</b> — frameworks flagged retired, drawn in grey so past coverage can be compared with today's.")}
    <span class='dot dot-hollow' style='border-color:{LAYER_COLOR["tech"]}'></span>{TB("<b>Technical support</b> — countries where OCHA supported the framework technically without a funding commitment, whatever their status (including pipeline ones like Palau and Tonga), drawn as a hollow teal pin.")}
   </div>
@@ -804,7 +804,7 @@ HZ_EMERGENCY = {"drought": ("drought",), "flood": ("flood",), "storm": ("storm",
 
 
 def _adhoc_cerf(e, acts, actf, _try):
-    """(country, hazard) -> [CERF allocation dicts] behind the pair's ad hoc AA allocations.
+    """(country, hazard) -> [CERF allocation dicts] behind the pair's non-framework AA allocations.
     The allocation code from activation_funding when recorded; otherwise the CERF allocation
     of that country and year whose emergency type matches the hazard (closest amount wins).
     Each carries agencies, sectors and planned / reached people from the CERF mirror."""
@@ -905,7 +905,7 @@ PRE_SERIES = {}   # year -> the whole annual pre-arranged series (assemble fills
 def _year_history(d, e, excl, _try):
     """What the year selector needs to show a past year AS AT 31 DECEMBER, per (country,
     hazard): the status reports (mapped as aa.v_framework_lifecycle maps them, consecutive
-    repeats dropped), the people-covered figures, the years of the ad hoc allocations, the
+    repeats dropped), the people-covered figures, the years of the non-framework allocations, the
     pre-arranged stock of each year (dashboards.funding_series: a stock as at year end, never
     summed over years; flagged when inferred from the version record) and, for a framework
     flagged retired today, a DERIVED retirement date (none is recorded): the day after its last
@@ -1338,7 +1338,7 @@ def assemble(d, e):
         if disp == "retired" or any(k[:2] == (c, h) for k in old_v):
             layers.append("retired")                  # retired, or hosts a replaced framework
         if n_adhoc.get((c, h)):
-            layers.append("adhoc")                    # ad hoc AA allocations on the pair
+            layers.append("adhoc")                    # non-framework AA allocations on the pair
         if tech:
             layers.append("tech")                     # OCHA technical support, whatever the lifecycle
         if not layers:
@@ -1497,8 +1497,8 @@ def _flow_acts(f, layers, year=None):
     """The activation records a pair contributes to the flow tiles (activations, money released,
     people reached) — mirrors flowActs() in LANDING_JS: those of `year` (None: all years, to
     today), its framework activations while its own
-    framework layer is on (current frameworks; retired for a retired framework), its ad hoc
-    allocations while the ad hoc layer is on, and the activations of an earlier framework it
+    framework layer is on (current frameworks; retired for a retired framework), its non-framework
+    allocations while the non-framework layer is on, and the activations of an earlier framework it
     replaced (`old`) while the retired layer is on — never under the current-frameworks layer.
     A current pair that hosts a replaced framework is on both layers: its own activations stay
     current. The Financing page's layer rule: same layers, same total on both pages."""
@@ -1585,7 +1585,7 @@ def build_landing(page, d, e):
     countries = assemble(d, e)
     svg, bboxes, wdata = world_data(set(countries), names)
     for iso, cd in countries.items():
-        if not cd.get("name"):                        # ad hoc-only country: Natural Earth name
+        if not cd.get("name"):                        # non-framework-only country: Natural Earth name
             cd["name"] = (wdata.get(iso) or {}).get("n") or iso
         cd["lbbox"] = bboxes.get(iso)                 # layout box (world file, largest polygon)
         cd["centroid"] = CENTROID.get(iso) or (
@@ -1614,9 +1614,9 @@ def build_landing(page, d, e):
         return ("~" if g["n_tgt"] else "") + _people(g["reached"] + g["targeted"])
     def usd(g):   # ' ($17M)' after a count of activations the layers switched off would add
         return f" ({_money(g['released'])})" if g["released"] >= 5e4 else ""
-    ns_act = not_shown(ad["n_act"] and f"{ad['n_act']} ad hoc allocation{'s' if ad['n_act'] > 1 else ''}{usd(ad)}",
+    ns_act = not_shown(ad["n_act"] and f"{ad['n_act']} non-framework allocation{'s' if ad['n_act'] > 1 else ''}{usd(ad)}",
                        ret["n_act"] and f"{ret['n_act']} on retired frameworks{usd(ret)}")
-    ns_reach = not_shown((ad["n_rep"] or ad["n_tgt"]) and f"ad hoc allocations {est(ad)}",
+    ns_reach = not_shown((ad["n_rep"] or ad["n_tgt"]) and f"non-framework allocations {est(ad)}",
                          (ret["n_rep"] or ret["n_tgt"]) and f"retired frameworks {est(ret)}")
 
     def funds(cerf, pooled, other=0):   # fundBullets() in LANDING_JS
@@ -1712,7 +1712,7 @@ def build_landing(page, d, e):
   <button type='button' class='dl' onclick='fwCSV()'>{T("Download CSV")}</button></div>
  <p class='fwt-cap' id='fwtcap'></p>
  <div class='fwt-scroll'><table class='fwtab' id='fwtab'></table></div>
- <p class='fwt-note'>{TB("<b>Pre-arranged now</b>: for each framework, the envelope of its most recent version that has one, from CERF and the Country and Regional Funds; a framework being updated keeps its last envelope, and one in development shows the envelope recorded for it so far. <b>Activations</b> and <b>released</b> count the framework activations of the frameworks listed; ad hoc allocations and retired frameworks are not listed. Click a column heading to sort.")}</p>
+ <p class='fwt-note'>{TB("<b>Pre-arranged now</b>: for each framework, the envelope of its most recent version that has one, from CERF and the Country and Regional Funds; a framework being updated keeps its last envelope, and one in development shows the envelope recorded for it so far. <b>Activations</b> and <b>released</b> count the framework activations of the frameworks listed; non-framework allocations and retired frameworks are not listed. Click a column heading to sort.")}</p>
 </section>
 <!-- 2026-10-02 meeting: the internal links that sat here (dashboards, explorer, data entry,
      data & schema review) were easy to miss below the map; they all live in the Internal menu -->
@@ -2114,12 +2114,12 @@ function flowFigures(fs, LY){
            targeted: sum(tgt, 'planned'), nTgt: tgt.length };
 }
 // what the flow figures count under the layers shown, in words
-function flowWhat(F){ return F.nAd === 0 ? 'framework activations' : F.nAd === F.n ? 'ad hoc allocations' : 'framework activations and ad hoc allocations'; }
+function flowWhat(F){ return F.nAd === 0 ? 'framework activations' : F.nAd === F.n ? 'non-framework allocations' : 'framework activations and non-framework allocations'; }
 // the tile's label for each of them, to date and in a year (spelled out: the page's translations
 // are found by their literal text)
 const WHAT_WHEN = {'framework activations': ['framework activations to date', 'framework activations in {0}'],
-  'ad hoc allocations': ['ad hoc allocations to date', 'ad hoc allocations in {0}'],
-  'framework activations and ad hoc allocations': ['framework activations and ad hoc allocations to date', 'framework activations and ad hoc allocations in {0}']};
+  'non-framework allocations': ['non-framework allocations to date', 'non-framework allocations in {0}'],
+  'framework activations and non-framework allocations': ['framework activations and non-framework allocations to date', 'framework activations and non-framework allocations in {0}']};
 const people = v => v >= 1e6 ? (v/1e6).toFixed(1) + 'M' : v >= 1e3 ? Math.round(v/1e3) + 'k' : String(Math.round(v));
 // 'recent' = in the last RECENT_DAYS days, by the browser's clock (the page is static: one
 // published weeks ago must not keep showing it on the build date). ONE rule for the pin's red
@@ -2459,7 +2459,7 @@ const LDEF = {
   updating: () => tr8('An endorsed framework whose most recent version fully triggered or reached the end of its validity, or whose next version is already in development: the framework stands, a new version is coming.'),
   development: () => tr8('No endorsed version yet: the framework is being built for the first time.'),
   framework: () => tr8('Every framework whose status is active, being updated or in development.'),
-  adhoc: () => tr8('Countries and hazards that received ad hoc anticipatory-action money without a framework version.'),
+  adhoc: () => tr8('Countries and hazards that received anticipatory-action money without a framework version.'),
   retired: () => tr8("Frameworks flagged retired, drawn in grey so past coverage can be compared with today's."),
   tech: () => tr8('Countries where OCHA supported the framework technically, without a funding commitment, whatever its status.')};
 const defSpan = (k, inner) => `<span class='hasdef' tabindex='0' data-tip='${esc(LDEF[k]())}'>${inner}<span class='sr'>: ${esc(LDEF[k]())}</span></span>`;
@@ -2472,7 +2472,7 @@ function worldLegend(){
   const nRec = shown.filter(f => recentAct(f)).length;   // frameworks with the red ring
   const swatch = { framework: `<span class='dot' style='background:${COLOR.active}'></span>`, adhoc: `<span class='dot' style='background:${LAYER_COLOR.adhoc}'></span>`,
                    retired: `<span class='dot' style='background:${LAYER_COLOR.retired}'></span>`, tech: `<span class='dot dot-hollow'></span>` };
-  const lab = k => k === 'framework' && pastY() ? tr8('Frameworks at the end of {0}', YEAR) : k === 'adhoc' && YEAR != null ? tr8('Ad hoc allocations in {0}', YEAR) : tr8(LAYER_LABEL[k]);
+  const lab = k => k === 'framework' && pastY() ? tr8('Frameworks at the end of {0}', YEAR) : k === 'adhoc' && YEAR != null ? tr8('Non-framework allocations in {0}', YEAR) : tr8(LAYER_LABEL[k]);
   // the definition's 'i' sits outside the <label>: a tap on it must not switch the layer
   const row = k => `<div class='lrow'><label><input type='checkbox' ${LAYERS[k]?'checked':''} onchange='setLayer("${k}", this.checked)'>${swatch[k]}${lab(k)} <span class='cnt'>${onLayer(k).length}</span></label>${defInfo(k)}</div>`;
   const st = `<div class='lsub${LAYERS.framework?'':' off'}'>`
@@ -2491,7 +2491,7 @@ function nounCount(fs){
   const out = [];
   if(k.framework) out.push(tr8(k.framework > 1 ? '{0} frameworks' : '{0} framework', k.framework));
   if(k.retired) out.push(tr8(k.retired > 1 ? '{0} retired frameworks' : '{0} retired framework', k.retired));
-  if(k.adhoc) out.push(tr8('{0} with ad hoc allocations', k.adhoc));
+  if(k.adhoc) out.push(tr8('{0} with non-framework allocations', k.adhoc));
   if(k.tech) out.push(tr8('{0} with technical support', k.tech));
   return out.join(' · ') || tr8('nothing shown');
 }
@@ -2519,7 +2519,7 @@ function newsItems(){
     const who = `${tr8(c.name)} ${tr8(f.hz_label).toLowerCase()}`, add = (d, what) => out.push({d, iso, hz: f.hazard, who, what});
     f.activations.forEach(a => { if(a.old || !inWindow(actDate(a), NEWS_DAYS)) return;
       if(a.type === 'framework_aa' && cur) add(actDate(a), '{0} activated');
-      else if(a.type === 'adhoc_aa' && LAYERS.adhoc) add(actDate(a), '{0}: ad hoc allocation'); });
+      else if(a.type === 'adhoc_aa' && LAYERS.adhoc) add(actDate(a), '{0}: non-framework allocation'); });
     if(!cur) return;
     f.versions.forEach((v, i) => { const again = f.versions.slice(0, i).some(x => x.status === 'endorsed');
       if(v.status === 'endorsed' && inWindow(v.valid_from, NEWS_DAYS)) add(v.valid_from, again ? '{0}: new version endorsed' : '{0} endorsed');
@@ -2596,21 +2596,21 @@ function updateTiles(){
   const F = flowFigures(shown), what = flowWhat(F);
   // what the layers switched off would add: named in each tile's note, so no figure is taken for the whole
   const all = Object.values(L).flatMap(c=>c.fws);
-  const offs = [['adhoc','ad hoc allocations'],['retired','retired frameworks'],['framework','current frameworks']]
+  const offs = [['adhoc','non-framework allocations'],['retired','retired frameworks'],['framework','current frameworks']]
     .filter(([k]) => !LAYERS[k]).map(([k, lab]) => [lab, flowFigures(all, {[k]: true})]);
   const notShown = fn => { const xs = offs.map(([lab, G]) => fn(lab, G)).filter(Boolean); return xs.length ? tr8('Not shown: {0}.', xs.join(', ')) : ''; };
   // activations and the money they released, in one tile (owner, 2026-10-27): the count, then the
   // amount and its split by fund; the note names what the layers switched off would add
   set('t-act', F.n, !F.n ? yr('no activation to date on the layers shown', 'no activation in {0} on the layers shown')
-      : F.nAd && F.nAd < F.n ? tr8(YEAR != null ? 'activations in {2}: {0} framework activations, {1} ad hoc allocations' : 'activations to date: {0} framework activations, {1} ad hoc allocations', F.n - F.nAd, F.nAd, YEAR)
+      : F.nAd && F.nAd < F.n ? tr8(YEAR != null ? 'activations in {2}: {0} framework activations, {1} non-framework allocations' : 'activations to date: {0} framework activations, {1} non-framework allocations', F.n - F.nAd, F.nAd, YEAR)
       : yr(...WHAT_WHEN[what]),
       {sub: F.n ? tr8('{0} released', money(F.usd)) : '',
        bul: F.n ? fundBullets(F.usdCerf, F.usd - F.usdCerf) : [],
        note: [tr8(F.nAd
-         ? 'Money released when a framework activated or allocated ad hoc for anticipatory action, from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.'
+         ? 'Money released when a framework activated, or allocated for anticipatory action outside a framework, from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.'
          : 'Money released when a framework activated, from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.'),
          F.noUsd ? tr8('{0} of the {1} have no amount recorded.', F.noUsd, F.n) : '',
-         notShown((lab, G) => G.n ? (G.nAd ? tr8(G.n === 1 ? '{0} ad hoc allocation' : '{0} ad hoc allocations', G.n)
+         notShown((lab, G) => G.n ? (G.nAd ? tr8(G.n === 1 ? '{0} non-framework allocation' : '{0} non-framework allocations', G.n)
                                           : tr8(lab === 'retired frameworks' ? '{0} on retired frameworks' : '{0} on current frameworks', G.n))
                                     + (G.usd >= 5e4 ? ` (${money(G.usd)})` : '') : null)]});
   // people reached: CERF's figures, and where it has none yet the allocation's planned people —
@@ -2858,11 +2858,11 @@ function countryTiles(c){
   const fws = vis(c), fw = fws.filter(f=>visLayer(f)==='framework');
   const pre = fw.reduce((s,f)=>s+(f.pre_now||0),0), cov = fw.reduce((s,f)=>s+(f.covered||0),0);
   const F = flowFigures(fws);   // the global tiles' rule, this country
-  const kind = F.nAd && F.nAd === F.n ? 'ad hoc allocation' : F.nAd ? 'activation' : 'framework activation', one = F.n === 1;
-  const ACT = {'ad hoc allocation': one ? ['ad hoc allocation to date', 'ad hoc allocation in {0}'] : ['ad hoc allocations to date', 'ad hoc allocations in {0}'],
+  const kind = F.nAd && F.nAd === F.n ? 'non-framework allocation' : F.nAd ? 'activation' : 'framework activation', one = F.n === 1;
+  const ACT = {'non-framework allocation': one ? ['non-framework allocation to date', 'non-framework allocation in {0}'] : ['non-framework allocations to date', 'non-framework allocations in {0}'],
                'activation': one ? ['activation to date', 'activation in {0}'] : ['activations to date', 'activations in {0}'],
                'framework activation': one ? ['framework activation to date', 'framework activation in {0}'] : ['framework activations to date', 'framework activations in {0}']};
-  const actL = yr(...ACT[kind]) + (F.nAd && F.nAd < F.n ? ', ' + tr8('{0} of them ad hoc', F.nAd) : '');
+  const actL = yr(...ACT[kind]) + (F.nAd && F.nAd < F.n ? ', ' + tr8('{0} of them non-framework', F.nAd) : '');
   return `<div class='ctiles'><div class='ccap'>${esc(tr8('{0} only', tr8(c.name)))}</div>
     <div class='ctile'><div class='v'>${fw.length}</div><div class='l'>${esc(tr8(fw.length === 1 ? 'framework' : 'frameworks'))}${fws.length>fw.length?' · ' + esc(tr8('{0} other', fws.length-fw.length)):''}</div></div>
     <div class='ctile'><div class='v'>${pre?money(pre):'—'}</div><div class='l'>${esc(pastY() ? tr8('pre-arranged in {0}', YEAR) : tr8('pre-arranged now'))}</div></div>
@@ -2890,7 +2890,7 @@ function renderSide(){
            <tr><td class='lbl'>${esc(pastY() ? tr8('Version, end of {0}', YEAR) : tr8('Latest version'))}</td><td>${f.current ? `<code>${f.current}</code> <span class='muted'>${esc(tr8('({0} total)', f.versions.length))}</span>` : `<span class="muted">${esc(tr8('no framework version'))}</span>`}</td></tr>
            <tr><td class='lbl'>${esc(tr8('Pre-arranged'))}</td><td>${money(f.pre_now ?? f.prearranged)}${f.pre_now==null && f.prearranged_year?` <span class='muted'>(${f.prearranged_year})</span>`:''}</td></tr>
            <tr><td class='lbl'>${esc(tr8('People covered'))}</td><td>${num(f.covered)}</td></tr>
-           <tr><td class='lbl'>${esc(tr8('Activations'))}${YEAR!=null?` ${YEAR}`:''}</td><td>${f.n_act_all||'—'}${f.n_adhoc?` <span class='muted'>${esc(tr8('({0} ad hoc)', f.n_adhoc))}</span>`:''}</td></tr>
+           <tr><td class='lbl'>${esc(tr8('Activations'))}${YEAR!=null?` ${YEAR}`:''}</td><td>${f.n_act_all||'—'}${f.n_adhoc?` <span class='muted'>${esc(tr8('({0} non-framework)', f.n_adhoc))}</span>`:''}</td></tr>
            <tr><td class='lbl'>${esc(tr8('Monitoring'))}</td><td>${monthStrip(v ? v.months : [])}</td></tr>
           </table></div>`; }).join('') + `</div>`;
     annotate(side, side);
@@ -2899,7 +2899,7 @@ function renderSide(){
   const f = c.fws.find(x=>x.hazard===state.hz); if(!f){ state.hz=null; return renderSide(); }
   if(!f.versions.length){
     const st = f.status_label ? tr8(f.status_label) : '';   // the sheet's status in words, never its code
-    const why = f.layer==='adhoc' ? esc(tr8('Ad hoc anticipatory-action allocations for this hazard — no framework behind them.'))
+    const why = f.layer==='adhoc' ? esc(tr8('Non-framework anticipatory-action allocations for this hazard — no framework behind them.'))
               : f.layer==='tech' ? (st ? esc(tr8('OCHA technical support — no framework version in the registry yet (tracking sheets: {0}).', st)) : esc(tr8('OCHA technical support — no framework version in the registry yet.')))
               : st ? esc(tr8('No framework version in the registry yet — status comes from the tracking sheets ({0}).', st)) : esc(tr8('No framework version in the registry yet.'));
     side.innerHTML = crumb + fwHeader(c, f) + countryTiles(c) + `<p class='muted'>${why}</p>` + adhocBlock(f) +
@@ -2932,7 +2932,7 @@ function pillarsBar(f, v){
      esc([v.basis && tr8(v.basis), v.months.length ? tr8('{0} months monitored', v.months.length) : null, nA ? tr8(nA > 1 ? '{0} activations' : '{0} activation', nA) : tr8('never activated')].filter(Boolean).join(' · '))],
     ['plan', tr8('Activities'), nUN ? esc(tr8(nUN > 1 ? '{0} UN agencies funded' : '{0} UN agency funded', nUN)) : '—',
      [v.target_people ? esc(tr8('{0} people targeted', num(v.target_people))) : (f.covered ? esc(tr8('{0} people covered', num(f.covered))) : null), nPart ? esc(tr8(nPart > 1 ? '{0} partners in total' : '{0} partner in total', nPart)) : null].filter(Boolean).join('<br>')],
-    ['funding', tr8('Funding'), money(v.prearranged_doc ?? v.envelope), esc((v.prearranged_doc ?? v.envelope) ? tr8('pre-arranged') + (funds.length?' · '+funds.map(x=>x.toUpperCase().replace('CBPF-','CBPF ')).join(', '):'') : tr8(f.tech ? 'technical support only' : 'no figure yet'))],
+    ['funding', tr8('Financing'), money(v.prearranged_doc ?? v.envelope), esc((v.prearranged_doc ?? v.envelope) ? tr8('pre-arranged') + (funds.length?' · '+funds.map(fundName).join(', '):'') : tr8(f.tech ? 'technical support only' : 'no figure yet'))],
     ['learning', tr8('Learning'), esc(nDocs ? tr8(nDocs > 1 ? '{0} documents' : '{0} document', nDocs) : tr8('no documents yet')), esc(tr8('evaluations, reviews, reports'))],
   ];
   if(!PILLARS.includes(state.pillar)) state.pillar = 'model';
@@ -3026,13 +3026,13 @@ function adhocBlock(f){
   const A = f.adhoc_cerf || [];
   if(!A.length) return f.n_adhoc ? `<div class='muted small'>${esc(tr8('No CERF allocation found for these allocations in the CERF data.'))}</div>` : '';
   const CW = Math.max(280, Math.min(560, (side.clientWidth || 420) - 36));
-  return `<h4>${esc(tr8('Ad hoc allocations ({0})', A.length))}</h4>` + A.map(a => `<div class='trig'>
+  return `<h4>${esc(tr8('Non-framework allocations ({0})', A.length))}</h4>` + A.map(a => `<div class='trig'>
       <div class='tn'><a href='${esc(a.url)}' target='_blank' rel='noopener'>CERF ${esc(a.code)} ↗</a> <span class='muted'>· ${esc(a.emergency||'')} · ${a.year}</span></div>
       <div class='tt'><b>${money(a.usd)}</b>${a.planned?' · ' + esc(tr8('{0} people planned', num(a.planned))):''}${a.reached?' · ' + esc(tr8('{0} reached', num(a.reached))):''}</div>
       ${a.title?`<div class='tm'>${esc(a.title)}</div>`:''}
       ${a.agencies.length?`<div class='small' style='margin-top:4px'><b>${esc(tr8('Agencies'))}</b></div>` + hbarsSVG(a.agencies.map(x=>({label:x.agency, v:x.usd})), {width:CW, fmt:money, colorBy:'a', label:tr8('CERF allocation by agency')}):''}
       ${a.sectors.length?`<div class='small' style='margin-top:4px'><b>${esc(tr8('Sectors'))}</b></div>` + hbarsSVG(a.sectors.map(x=>({label:x.sector, v:x.usd})), {width:CW, fmt:money, color:'#64748b', label:tr8('CERF allocation by sector')}):''}
-      <div class='tm'>${esc(tr8(a.how==='recorded allocation code' ? 'Allocation code recorded with the ad hoc allocation.' : 'Matched to the CERF allocation of the same country, year and emergency type (no code recorded).'))}</div>
+      <div class='tm'>${esc(tr8(a.how==='recorded allocation code' ? 'Allocation code recorded with the non-framework allocation.' : 'Matched to the CERF allocation of the same country, year and emergency type (no code recorded).'))}</div>
     </div>`).join('');
 }
 function groupBy(rows, kf, vf){ const m = {}; rows.forEach(r=>{ const k = kf(r); m[k] = (m[k]||0) + (vf(r)||0); }); return m; }
@@ -3084,6 +3084,10 @@ function triggersBlock(v){
   if(!html) html = `<h4>${esc(tr8('Triggers'))}</h4><div class='muted'>${esc(tr8('No structured trigger information for this version yet — see the framework document.'))}</div>`;
   return html;
 }
+// a fund as the pages name it ('CERF', 'CBPF AFG'; dashboards.fund_label), never its code; a
+// financier recorded in words is shown as written
+function fundName(x){ return x === 'cerf' ? 'CERF' : x === 'cbpf-unspecified' ? 'CBPF'
+  : /^(cbpf|rhpf)(-[a-z]+)+$/.test(x || '') ? x.toUpperCase().replace(/-/g, ' ') : x; }
 function fundingBlock(v){
   const F = v.funding; if(!F.agency.length && !F.sector.length && !F.fund.length) return '';
   // budget sanity: the split rows (one source per version, v_window_funding_split) must not
@@ -3091,7 +3095,7 @@ function fundingBlock(v){
   const splitTot = F.fund.reduce((s,x)=>s+x.usd,0), env = v.envelope ?? v.prearranged_doc;
   const over = env != null && splitTot > env * 1.01;
   let html = `<div class='small' style='margin:8px 0 4px'>${esc(tr8('Split total'))} <b>${money(splitTot)}</b>${env!=null?' ' + esc(tr8('of a {0} envelope', money(env))):' — ' + esc(tr8('no envelope recorded'))}${F.src==='sheet'?` <span class="muted">${esc(tr8('(tracking sheet)'))}</span>`:''}${over?`<span class='warntag' title='${esc(tr8('the agency × sector split adds up to more than the version envelope'))}'>${esc(tr8('split exceeds envelope'))}</span>`:''}</div>`;
-  if(F.fund.length > 1) html += `<div class='small muted'>${esc(tr8('By fund:'))} ${F.fund.map(x=>`${esc(x.fund)} ${money(x.usd)}`).join(' · ')}</div>`;
+  if(F.fund.length > 1) html += `<div class='small muted'>${esc(tr8('By fund:'))} ${F.fund.map(x=>`${esc(fundName(x.fund))} ${money(x.usd)}`).join(' · ')}</div>`;
   const CW = Math.max(280, Math.min(560, (side.clientWidth || 420) - 36));
   const bars = (rows, label) => { const m = groupBy(rows, x=>x[label], x=>x.usd);
     return hbarsSVG(Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([k,u])=>({label:k, v:u})), {width:CW, fmt:money, label:tr8(label === 'agency' ? 'budget by agency' : 'budget by sector'), colorBy: label==='agency' ? 'a' : null, color:'#64748b'}); };
@@ -3127,7 +3131,7 @@ function actLinks(a){
   (a.funding||[]).forEach(x => { if(x.cerf_url) out.push(`<a href='${esc(x.cerf_url)}' target='_blank' rel='noopener'>${esc(tr8('CERF allocation↗'))}</a>`); });
   return [...new Set(out)];
 }
-function actMoney(a){ return (a.funding||[]).filter(x=>x.usd!=null).map(x=>`${String(x.fund).toUpperCase()} ${money(x.usd)}`).join(' + ') || (a.released ? money(a.released) : ''); }
+function actMoney(a){ return (a.funding||[]).filter(x=>x.usd!=null).map(x=>`${fundName(String(x.fund))} ${money(x.usd)}`).join(' + ') || (a.released ? money(a.released) : ''); }
 function realMark(a, v){
   const old = !!(v && a.version && a.version !== v.v && !String(a.version).startsWith(v.v) && !String(v.v).startsWith(a.version));
   const title = `${a.date} · ${a.window||tr8('window not recorded')}${actMoney(a)?' · '+actMoney(a):''}${old?' · ' + tr8('under version {0}', a.version):''}${a.full===false?' · ' + tr8('partial'):''}`;
@@ -3174,7 +3178,7 @@ function actualBlock(f, v){
   return html + `<table class='mini acttbl'><colgroup><col style='width:22%'><col style='width:30%'><col style='width:22%'><col style='width:26%'></colgroup>
     <tr>${['date','window','funding','links'].map(h=>`<th>${esc(tr8(h))}</th>`).join('')}</tr>` + A.map(a => {
       const old = !!(v && a.version && a.version !== v.v && !String(a.version).startsWith(v.v) && !String(v.v).startsWith(a.version));
-      const tags = (a.type==='adhoc_aa'?` <span class='badge b-retired'>${esc(tr8('ad hoc allocation'))}</span>`:'')   // a type's label, never its code
+      const tags = (a.type==='adhoc_aa'?` <span class='badge b-retired'>${esc(tr8('non-framework allocation'))}</span>`:'')   // a type's label, never its code
         + (a.full===false?` <span class='badge b-development'>${esc(tr8('partial'))}</span>`:'')
         + (old?` <span class='vtag other' title='${esc(tr8('Fired under version {0}, an earlier version than the one shown ({1}); its triggers and budget may differ.', a.version, v.v))}'>v ${esc(a.version)}</span>`:'');
       return `<tr${old?" class='oldv'":''}><td>${esc(a.date)}${tags}</td><td>${a.window?esc(a.window):`<span class="muted">${esc(tr8('not recorded'))}</span>`}${a.people?`<div class='muted'>${esc(tr8('{0} people', num(a.people)))}</div>`:''}</td><td>${actMoney(a)||'<span class="muted">—</span>'}</td><td>${actLinks(a).join('<br>')||'<span class="muted">—</span>'}</td></tr>`;

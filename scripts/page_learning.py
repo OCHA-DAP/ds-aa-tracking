@@ -24,7 +24,7 @@ import re
 import landing
 import pandas as pd
 import site_i18n as i18n
-from dashboards import DOC_TYPE_LABEL, PREMISES, _aslist
+from dashboards import DOC_TYPE_LABEL, PREMISES, _aslist, hazard_word
 from import_learning import PLACEHOLDER
 from site_i18n import ATTR, OPT, OPTC, TB, TF, T
 
@@ -332,16 +332,16 @@ def build_learning(page, d):
             "pub": _t(r.publisher), "y": int(r.year) if pd.notna(r.year) else None,
             # the publication month (1-12), when recorded; an older snapshot has no column
             "m": int(r.month) if pd.notna(getattr(r, "month", None)) else None,
-            "ty": DOC_TYPE_LABEL.get(r.doc_type, _t(r.doc_type) or "document").capitalize(),
+            "ty": DOC_TYPE_LABEL.get(r.doc_type, "document").capitalize(),
             "type": r.doc_type, "iso": isos, "hz": hz,
             "pr": [p for p in _aslist(r.premises) if p in premise_label],
             "ks": _t(r.key_stat), "s": _t(r.summary), "ff": [],
             # the framework pages the document belongs to: its hazard's, or (a document
             # with no hazard) every framework of the country
             "fw": [[f"fw-{c.lower()}-{h}.html",
-                    i18n.add(f"{cnames.get(c) or c} · {HAZARD_LABEL.get(h, str(h).replace('_', ' '))}",
+                    i18n.add(f"{cnames.get(c) or c} · {HAZARD_LABEL.get(h, hazard_word(h))}",
                              "{country} · {hazard}", country=i18n.country(c, cnames.get(c) or c),
-                             hazard=HAZARD_LABEL.get(h, str(h).replace("_", " ")))]
+                             hazard=HAZARD_LABEL.get(h, hazard_word(h)))]
                    for c in isos for h in fw_of.get(c, []) if hz in (None, h)],
         })
         if _t(r.url):
@@ -958,7 +958,7 @@ function renderTable(){
     || (state.desc ? pubKey(b) - pubKey(a) : pubKey(a) - pubKey(b)) || a.t.localeCompare(b.t));
   rows.innerHTML = list.map(d => `<tr data-id='${d.id}' tabindex='0'>`
     + `<td class='lt'><span class='lt-t'>${esc(d.t)}</span>${d.pub ? `<span class='lt-p'>${esc(d.pub)}</span>` : ''}</td>`
-    + `<td>${d.cn.length ? esc(d.cn.map(n => tr8(n)).join(', ')) : esc(tr8('Global'))}</td><td>${d.hz ? esc(tr8(LD.hazard[d.hz] || d.hz)) : '—'}</td>`
+    + `<td>${d.cn.length ? esc(d.cn.map(n => tr8(n)).join(', ')) : esc(tr8('Global'))}</td><td>${d.hz ? esc(tr8(LD.hazard[d.hz] || LD.hazard.other)) : '—'}</td>`
     + `<td class='yr'>${d.y == null ? '—' : esc(pubDate(d))}</td>`
     + `<td class='lk'>${d.u ? `<a href='${esc(d.u)}' target='_blank' rel='noopener'>${esc(tr8('open ↗'))}</a>` : `<span class='lnone' title='${esc(tr8('No public link recorded'))}'>${esc(tr8('none'))}</span>`}</td></tr>`).join('')
     || `<tr><td colspan='5' class='lnone'>${esc(tr8('No document matches these filters.'))}</td></tr>`;
@@ -1006,7 +1006,7 @@ function docHTML(d, lead){
   const ff = [...d.ff].sort((a, b) => (b === lead.f) - (a === lead.f)), f = facts(d, lead);
   return `<div class='sd-k'>${esc(tr8(d.ty))}${d.y ? ' · ' + esc(pubDate(d)) : ''}</div><h3>${esc(d.t)}</h3>`
     + (d.pub ? `<div class='sd-pub'>${esc(d.pub)}</div>` : '')
-    + tagsHTML([...(d.cn.length ? d.cn : ['Global']), ...(d.hz ? [LD.hazard[d.hz] || d.hz] : [])].map(x => tr8(x)))
+    + tagsHTML([...(d.cn.length ? d.cn : ['Global']), ...(d.hz ? [LD.hazard[d.hz] || LD.hazard.other] : [])].map(x => tr8(x)))
     + (d.u ? `<a class='sd-open' href='${esc(d.u)}' target='_blank' rel='noopener'>${esc(tr8('Open the document ↗'))}</a>` : `<div class='sd-nolink'>${esc(tr8('No public link is recorded for this document.'))}</div>`)
     + (ff.length ? `<h4>${esc(tr8(ff.length > 1 ? 'Headline findings' : 'Headline finding'))}</h4>${ff.map(i => findingHTML(F[i], ff.length>1 && i === lead.f, false)).join('')}` : '')
     + (f ? `<h4>${esc(tr8('Key facts'))}</h4><ul class='sd-facts'>${f}</ul>` : '')

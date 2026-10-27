@@ -78,7 +78,8 @@ are kept forever (the year-end official state, for the map's time view).
   link to the public site, never the reverse. The builders do not say which site a page is
   on: `page()` collects the pages and `write_site()` in `scripts/build_site.py` sorts them
   (`PUBLIC_TABS`), respells the links and stops the build if a public page carries the
-  proxy token. A public page can be **unlisted** (`UNLISTED_TABS`): same password as the
+  proxy token or shows a database name (`aa.<table>`, `v_<view>`) or a raw code (a status,
+  hazard, event type, report or fund code: words only, `dashboards.code_words`). A public page can be **unlisted** (`UNLISTED_TABS`): same password as the
   tabs, but no header link and no link from any page (the build stops if one appears), so
   only people given its address find it. `scripts/publish.sh` allows exactly one directory on gh-pages (`admin/`,
   encrypted pages and the two pdf.js files only) and refuses any page that is not

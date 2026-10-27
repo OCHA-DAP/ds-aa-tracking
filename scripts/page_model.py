@@ -2,7 +2,7 @@
 so the page can be reworked on its own. Shared helpers still live in dashboards.
 
 What the page covers: the current (= latest recorded) version of every current framework
-(active, being updated, in development); ad hoc allocations have no trigger and are left
+(active, being updated, in development); non-framework allocations have no trigger and are left
 out. Trigger windows come from the framework records (aa.version_page.triggers, one row per window of the framework's "Trigger windows" table),
 enriched with the older backtest windows (aa.window / aa.v_window_performance) where one
 matches. Activations come from aa.window_activation + aa.window_status."""
@@ -24,6 +24,7 @@ from dashboards import (
     _records,
     _words,
     haz,
+    hazard_word,
 )
 from site_i18n import ATTR, TB, TBF, TF, T
 
@@ -83,7 +84,7 @@ def _tri(build, cut=None):
 
 def _fw(f):
     """A framework's name ('Niger — drought') in every language: the country's exonym, the hazard."""
-    hz = f["hazard"].replace("_", " ")
+    hz = hazard_word(f["hazard"])
     return T(i18n.add(f["name"], "{country} — {hazard}",
                       country=i18n.country(f["country_iso3"], f["country_name"]), hazard=hz))
 
@@ -342,7 +343,7 @@ def _frameworks(d):
         ref = ref if len(ref) else refs.tail(1)
         rows.append(dict(
             country_iso3=r.country_iso3, hazard=r.hazard, lifecycle=r.lifecycle, version=r.version,
-            version_status=r.latest_status, name=f"{r.country_name} — {r.hazard.replace('_', ' ')}",
+            version_status=r.latest_status, name=f"{r.country_name} — {hazard_word(r.hazard)}",
             country_name=r.country_name, kb=kb, fm=fm, trig=trig,
             doc_url=(mv["doc_url"].dropna().iloc[0] if mv["doc_url"].notna().any() else None),
             ref=(ref["analysis_ref"].iloc[0] if len(ref) else None),
@@ -516,7 +517,7 @@ def build_model(page, d):
     act = act[act["year"].str.match(r"^\d{4}$")].copy()
     act["year"] = act["year"].astype(int)
     act["kind"] = act["event_type"].map(
-        lambda t: "framework triggers" if t == "framework_aa" else "ad hoc allocations")
+        lambda t: "framework triggers" if t == "framework_aa" else "non-framework allocations")
     data = {
         "cat": by_life(cat_order, lambda f, k: k in f["cats"]),
         # trigger WINDOWS of the current versions (the windows table's rows), not frameworks:
@@ -717,7 +718,7 @@ p.note2 {{ font-size:12px; color:#555; margin:6px 0; }}
 <div class='grid'>
  <div class='panel'><h3>{T("Current frameworks, by activation record")}</h3><canvas id='m7' height='260'></canvas>
    <div class='note'>{TB("Any version of the framework. Partially = only part of the allocation or only the readiness window was released.")}</div></div>
- <div class='panel'><h3>{T("Activations per year — framework triggers vs ad hoc allocations")}</h3><canvas id='m8' height='260'></canvas></div>
+ <div class='panel'><h3>{T("Activations per year — framework triggers vs non-framework allocations")}</h3><canvas id='m8' height='260'></canvas></div>
 </div>
 <section><div class='scroll' style='max-height:420px'><table class='data'><thead><tr><th>{T('framework')}</th><th>{T('status')}</th><th>{T('record')}</th><th>{T('activations (month · window · version)')}</th></tr></thead><tbody>{rec_rows}</tbody></table></div>
 <p class='note2'><i>{T(NOT_RECORDED)}</i> {T("= the activation is on record but which window activated is not — a curation item.")}</p></section>
@@ -739,7 +740,7 @@ const BASIS_COL = {'forecast':PAL[0],'observational':PAL[1],'mixed':PAL[2],'not 
 function lifeSets(o){ return o.sets.map(s=>({label:s.label, data:s.data, backgroundColor:s.color})); }
 const H = {extra:{indexAxis:'y'}};
 const bins = [['≤ 1-in-3',0,3],['1-in-3 to 5',3,5],['1-in-5 to 10',5,10],['> 1-in-10',10,1e9]];
-const yrs = uniqSorted(D.act, r=>r.year), kinds = ['framework triggers','ad hoc allocations'];
+const yrs = uniqSorted(D.act, r=>r.year), kinds = ['framework triggers','non-framework allocations'];
 function drawModel(){   // again on a language switch: mkChart translates the labels
   mkChart('m1','bar',D.cat.labels,lifeSets(D.cat),{stacked:true,count:true,totals:true,allLabels:true,...H});
   mkChart('m2','bar',D.basis.labels,D.basis.sets.map(s=>({label:s.label,data:s.data,backgroundColor:BASIS_COL[s.label]})),{stacked:true,count:true,totals:true});
@@ -762,7 +763,7 @@ function mfilt(){
                TB("<b>The model block of anticipatory action</b> — the triggers: what they measure, "
                   "where and when they are monitored, on what basis, how often they are designed to "
                   "activate, and what has activated. Covers every current framework (active, being "
-                  "updated or in development), as set out in its latest version. <b>Ad hoc allocations "
+                  "updated or in development), as set out in its latest version. <b>Non-framework allocations "
                   "are not included</b>: they have no trigger (they appear only as a comparison in the "
                   "activations-per-year chart)."),
                panels, json.dumps(data, default=str).replace("</", "<\\/"), js)   # free text: never close the script

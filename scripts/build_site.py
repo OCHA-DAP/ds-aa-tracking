@@ -268,6 +268,58 @@ def _admin_home(admin):
             "and has its own password.</div>" + "".join(cards))
 
 
+# ---------------------------------------------------------------- no database words, no codes
+# Owner's rule (2026-10-27): the public site never shows a table, view or column name, nor a raw
+# code (a status, hazard, event type, report…) — always words. write_site() checks every public
+# page as written and stops the build on a hit. What is checked: the visible text (scripts,
+# styles and comments dropped, then the tags), the attributes a reader sees or the language
+# toggle swaps in (title, placeholder, aria-label, alt, data-en / -fr / -es,
+# data-<attr>-<lang>), the strings the page's scripts pass to tr8() / yr(), and the French and
+# Spanish entries the page carries for its scripts (window.I18N values). Not checked: a data
+# value a script prints as it is — the vocabularies' words (dashboards.code_words) cover those.
+def _raw_codes():
+    """The site's coded values that read as codes (an underscore, or a coined hyphenation):
+    every vocabulary the pages map to words, plus the database's other coded columns."""
+    import dashboards
+    import landing
+    vocabs = (dashboards.EVENT_TYPE_LABEL, dashboards.REPORT_CHANNEL_LABEL,
+              dashboards.VERSION_SOURCE_LABEL, dashboards.PARTNER_ROLE_LABEL, dashboards.HAZARD_WORD,
+              dashboards.FUND_TYPE_LABEL, dashboards.DOC_TYPE_LABEL, dict(dashboards.PREMISES),
+              landing.SHEET_STATUS_LABEL)
+    codes = {k for v in vocabs for k in v if "_" in k}
+    codes |= {"non_aa_mobilised", "cerf_secretariat", "rcrc_nat", "adhoc aa", "framework aa",
+              "kb-frontmatter", "sheet-revision", "pa-monorepo", "window-unattributed"}
+    return sorted(codes, key=len, reverse=True)
+
+
+_GUARD_RX = None
+
+
+def _shown_identifiers(doc):
+    """[(match, context)] of the database names and raw codes a public page shows."""
+    global _GUARD_RX
+    if _GUARD_RX is None:
+        # aa.<table>, v_<view>, a fund code (cbpf-afg), a code — not inside a file name or a path
+        # ('…-aa.pdf', '/case_study/')
+        _GUARD_RX = re.compile(r"(?<![\w/.-])(?:aa\.[a-z_]+|v_[a-z]+_[a-z_]+|(?:cbpf|rhpf)(?:-[a-z]+)+|"
+                               + "|".join(map(re.escape, _raw_codes())) + r")(?![\w/-])")
+    scripts = "\n".join(re.findall(r"<script\b[^>]*>(.*?)</script>", doc, re.S | re.I))
+    shown = re.sub(r"<script\b.*?</script>|<style\b.*?</style>|<!--.*?-->", " ", doc, flags=re.S | re.I)
+    attrs = [m.group(2) for m in re.finditer(
+        r"""\s(?:title|placeholder|aria-label|alt|data-(?:en|fr|es)|data-[a-z-]+-(?:en|fr|es))=(["'])(.*?)\1""",
+        shown, re.S)]
+    texts = [re.sub(r"<[^>]+>", " ", shown), *attrs, *i18n._call_literals(scripts)]
+    m = re.search(r"window\.I18N = (\{.*?\});\n", doc)
+    if m:
+        texts += [v for tab in json.loads(m.group(1)).values() for v in tab.values()]
+    out = []
+    for t in texts:
+        t = html.unescape(t)
+        for hit in _GUARD_RX.finditer(t):
+            out.append((hit.group(0), " ".join(t[max(0, hit.start() - 60):hit.end() + 30].split())))
+    return out
+
+
 def write_site():
     """Write every registered page: the public ones at the root, the rest under admin/.
 
@@ -291,7 +343,7 @@ def write_site():
     token = os.environ.get("EXTRACT_TOKEN", "").strip() or (
         (Path(__file__).parents[1] / ".extract_token").read_text().strip()
         if (Path(__file__).parents[1] / ".extract_token").exists() else "")
-    cut = {}
+    cut, leaks = {}, {}
     for name, (title, body) in _PAGES.items():
         if name in public:
             if to_admin:
@@ -310,6 +362,8 @@ def write_site():
                           public=True)
             if (token and token in doc) or "x-site-token" in doc:
                 raise SystemExit(f"FATAL: public page {name} carries the data service's token")
+            if hits := _shown_identifiers(doc):
+                leaks[name] = hits
             (OUT / name).write_text(doc)
         else:
             body = to_root.sub(lambda m: "../" + m.group(1), body)
@@ -319,6 +373,12 @@ def write_site():
     (adm_dir / "index.html").write_text(_render(
         "admin/index.html", "AA tracking — admin site", _admin_home(admin), NAV_ADMIN,
         f"Generated {stamp} from the dev <code>aa</code> schema ({DATA_STAMP}) · admin site"))
+    if leaks:
+        lines = [f"  {n}: {w!r} in “…{c}…”" for n, hits in sorted(leaks.items())
+                 for w, c in dict(hits).items()]
+        raise SystemExit("FATAL: public pages show database names or raw codes (owner's rule: words "
+                         "only — map the code to its words, see dashboards.code_words):\n"
+                         + "\n".join(lines[:60]) + (f"\n  … and {len(lines) - 60} more" if len(lines) > 60 else ""))
     for asset in ROOT_ASSETS:
         shutil.copy(Path(__file__).parents[1] / "site_src" / asset, OUT / asset)
     for asset in ADMIN_ASSETS:
