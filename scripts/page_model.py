@@ -238,8 +238,9 @@ def _timeline_rows():
 
 
 # one panel per hazard, each on its own clock: (hazard, title, unit, axis from, to, step); a bar
-# beyond the axis widens it. Drought marks are months placed against the season, so its axis
-# spans one year whatever the data.
+# beyond the axis widens it. Drought marks are months placed against the season start: a month
+# within the season, or within `to` months of its start, counts after it, any other before it
+# (TL_JS draws them the same way, _season_offset), and a longer season widens the axis.
 TL_PANELS = [("storm", "Tropical cyclones", "h", -168, 72, 24),
              ("flood", "Floods", "d", -30, 5, 5),
              ("drought", "Drought", "mo", -7, 5, 1)]
@@ -259,6 +260,13 @@ def _leg_order(kv):
     return (g["seq"].min(), _int(g["season_start"].min()) or 0, str(leg))
 
 
+def _season_offset(m, start, length, after):
+    """A checked month's offset from the season start: in the season (or within `after` months
+    of its start) it comes after the start, otherwise it leads the season."""
+    o = (m - start) % 12
+    return o if o < max(length or 0, after) else o - 12
+
+
 def _first(g, col):
     return _int(g[col].dropna().iloc[0]) if g[col].notna().any() else None
 
@@ -271,7 +279,7 @@ def timelines(fws, rows=None):
     rows = rows.assign(version=rows["version"].astype(str))
     panels, notes = {}, {}
     for h, title, unit, lo, hi, step in TL_PANELS:
-        out = []
+        out, after = [], hi
         for f in (f for f in fws if haz(f["hazard"]) == h):
             r = rows[(rows["country_iso3"] == f["country_iso3"]) & (rows["hazard"] == f["hazard"])
                      & (rows["version"] == f["version"])]
@@ -285,20 +293,26 @@ def timelines(fws, rows=None):
                 g = g.sort_values("seq")
                 legs.append({"leg": str(leg), "start": _first(g, "season_start"), "len": _first(g, "season_len"),
                              "wins": [{"st": w.stage, "a": _num(w.lead_from), "b": _num(w.lead_to),
-                                       "m": [int(x) for x in w.months] if isinstance(w.months, (list, tuple)) else None,
+                                       "m": sorted({int(x) for x in w.months}) if isinstance(w.months, (list, tuple)) else None,
                                        "lab": _nofire(w.label), "stated": _nofire(w.stated),
                                        "ind": _nofire(w.indicator), "thr": _nofire(w.threshold)}
                                       for w in g.itertuples()]})
-                if unit != "mo":   # month marks wrap into the one year the drought axis spans
+                if unit != "mo":
                     lo = min(lo, step * (float(g["lead_from"].astype(float).min()) // step))
                     hi = max(hi, -step * (-float(g["lead_to"].astype(float).max()) // step))
+                elif legs[-1]["start"]:
+                    lg = legs[-1]
+                    offs = [_season_offset(m, lg["start"], lg["len"], after)
+                            for w in lg["wins"] for m in (w["m"] or [])]
+                    lo, hi = min([lo, *offs]), max([hi, lg["len"] or 0, *(o + 1 for o in offs)])
             for nt in dict.fromkeys(_nofire(x).strip() for x in r.sort_values("seq")["note"] if _nofire(x).strip()):
                 notes.setdefault(h, []).append((f, nt))
             out.append({"name": i18n.country(f["country_iso3"], f["country_name"]), "status": f["lifecycle"],
                         "legs": legs or [{"leg": "", "start": None, "len": None, "wins": []}]})
         out.sort(key=lambda x: (not any(lg["wins"] for lg in x["legs"]), x["name"]["en"]))
         if out:
-            panels[h] = {"key": h, "title": title, "unit": unit, "min": lo, "max": hi, "step": step, "fws": out}
+            panels[h] = {"key": h, "title": title, "unit": unit, "min": lo, "max": hi, "step": step,
+                         "after": after, "fws": out}
     return panels, notes
 
 
@@ -751,7 +765,7 @@ function mfilt(){
                   "updated or in development), as set out in its latest version. <b>Ad hoc allocations "
                   "are not included</b>: they have no trigger (they appear only as a comparison in the "
                   "activations-per-year chart)."),
-               panels, json.dumps(data, default=str), js)
+               panels, json.dumps(data, default=str).replace("</", "<\\/"), js)   # free text: never close the script
 
 
 MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -859,6 +873,8 @@ TL_JS = r"""
   const sgn = t => t > 0 ? '+' + t : t < 0 ? '−' + (-t) : '0';
   const tick = (u, t) => u === 'h' ? tr8('{0} h', sgn(t)) : u === 'd' ? tr8('{0} d', sgn(t)) : sgn(t);
   const nm = n => n[aaLang()] || n.en;
+  // as page_model._season_offset: in the season (or within `after` months of its start) after it, else before
+  const seasonOffset = (m, start, len, after) => { const o = ((m - start) % 12 + 12) % 12; return o < Math.max(len || 0, after) ? o : o - 12; };
   const mon = m => (TL.mon[aaLang()] || TL.mon.en)[m - 1];
   const tip = document.createElement('div'); tip.className = 'tl-tip'; tip.hidden = true; document.body.appendChild(tip);
   function moveTip(ev){ const w = tip.offsetWidth, h = tip.offsetHeight; let x = ev.clientX + 14, y = ev.clientY + 14;
@@ -909,7 +925,7 @@ TL_JS = r"""
           svg.appendChild(g);
           let x0, x1;
           if (w.m) {          // one mark per month checked: at its offset from the season start, or at its own month
-            const offs = w.m.map(m => { let o = cal ? m - 1 : m - (leg.start || 1); if (o < min) o += 12; if (o >= max) o -= 12; return [m, o]; });
+            const offs = w.m.map(m => [m, cal ? m - 1 : seasonOffset(m, leg.start || 1, leg.len, p.after)]);
             x0 = Math.min(...offs.map(([, o]) => x(o))); x1 = Math.max(...offs.map(([, o]) => x(o + 1)));
             g.appendChild(mk('rect', {class: 'hit', x: x0 - 3, y: yy - 4, width: x1 - x0 + 6, height: rowH, fill: 'transparent'}));
             offs.forEach(([m, o]) => {

@@ -670,9 +670,12 @@ DURABLE_TABLES = {
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard, version, leg, seq),
             CHECK ((unit = 'mo') = (months IS NOT NULL)),
-            CHECK ((months IS NULL) = (lead_from IS NOT NULL AND lead_to IS NOT NULL
-                                       AND lead_from <= lead_to)),
-            CHECK (months IS NULL OR season_start IS NOT NULL)
+            -- a bar (from <= to) or month marks, never both
+            CHECK ((months IS NULL AND lead_from IS NOT NULL AND lead_to IS NOT NULL
+                    AND lead_from <= lead_to)
+                   OR (months IS NOT NULL AND lead_from IS NULL AND lead_to IS NULL)),
+            CHECK (months IS NULL OR season_start IS NOT NULL),
+            CHECK (unit = 'mo' OR (season_start IS NULL AND season_len IS NULL))
         )""",
     "entry_audit": """
         CREATE TABLE IF NOT EXISTS aa.entry_audit (
