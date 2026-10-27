@@ -654,7 +654,10 @@ def build_history(page, d):
                 _str(r.window_name) + (f" ({extra})" if extra else ""))
         f["n_sim"] = (f["y1"] - f["y0"] + 1) if f["y0"] is not None else 0
         f["n_hit"] = len(f["hit"])
-    y_min = min([f["y0"] for f in fws if f["y0"] is not None] or [SPLIT_YEAR])
+    # the first year shown: a recorded span's start, else (span not recorded) the first simulated
+    # activation — never a start backtest_span only inferred
+    y_min = min([(_cover(f)[0] or [min(f["hit"])])[0] for f in fws if _cover(f)[0] or f["hit"]]
+                or [SPLIT_YEAR])
     old = y_min < SPLIT_YEAR
     years = list(range(SPLIT_YEAR if old else y_min, this_year + 1))
 
