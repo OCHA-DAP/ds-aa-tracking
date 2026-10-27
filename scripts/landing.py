@@ -114,6 +114,14 @@ SHEET_STATUS_LABEL = {"active": "active", "activated_implementing": "activated, 
                       "early_conversations": "early conversations"}
 
 
+def _sheet_status_label(st):
+    """A tracking-sheet status in words; an unmapped one is left out of the page (never its
+    code) and named in the build log so a label gets added."""
+    if st and st not in SHEET_STATUS_LABEL:
+        print(f"  ! tracking-sheet status without a label (not shown): {st}")
+    return SHEET_STATUS_LABEL.get(st)
+
+
 def _haz_label(h):
     """A hazard's label; a hazard with none is 'Other hazard' on the page (never its code) and
     named in the build log so a label gets added."""
@@ -1343,7 +1351,7 @@ def assemble(d, e):
         docs = learn[learn["country_iso3"].map(lambda xs: c in _list(xs))
                      & (learn["hazard"].isna() | (learn["hazard"] == h))] if len(learn) else learn
         countries[c]["fws"].append({
-            "hazard": h, "status": sheet_status, "status_label": SHEET_STATUS_LABEL.get(sheet_status),
+            "hazard": h, "status": sheet_status, "status_label": _sheet_status_label(sheet_status),
             "kb": kb_fw,
             "disp": disp, "disp_label": DISP_LABEL.get(disp, disp), "ring": ring, "n_act": n_fw_act,
             "n_act_all": len(activations), "n_adhoc": n_adhoc.get((c, h), 0),
@@ -2803,7 +2811,10 @@ svg.addEventListener('click', ev => {
   else if(t.id === 'sea' && state.iso) goWorld();
 });
 back.addEventListener('click', goWorld);
-document.addEventListener('keydown', e => { if(e.key === 'Escape' && state.iso) goWorld(); });
+document.addEventListener('keydown', e => { if(e.key !== 'Escape' || !state.iso) return;
+  const a = document.activeElement;   // an open tile note or legend definition: this Escape closes it
+  if(a && a.matches && a.matches('.tile.hasnote, .hasdef, .maplegend .info')) return;
+  goWorld(); });
 
 function goWorld(){
   state = { iso:null, hz:null, ver:null, pillar: state.pillar };
@@ -2971,7 +2982,7 @@ function learningBlock(f, v){
   let html = `<h4>${esc(tr8('Learning'))} · ${esc(n ? tr8(n > 1 ? '{0} documents' : '{0} document', n) : tr8('no documents yet'))}</h4>`;
   if(!n) return html + `<div class='muted'>${esc(tr8('No learning documents recorded for this framework yet — after-action reviews, evaluations and activation reports will appear here.'))}</div>`;
   html += `<ul class='small' style='margin:2px 0 6px;padding-left:18px'>`;
-  docs.forEach(d => { html += `<li>${d.url?`<a href='${esc(d.url)}' target='_blank' rel='noopener'>${esc(d.title)}</a>`:esc(d.title)}${d.publisher?` · ${esc(d.publisher)}`:''}${d.year?` · ${d.year}`:''}${d.type?` <span class='dtag'>${esc(tr8(DOCTYPE[d.type]||d.type.replace(/_/g,' ')))}</span>`:''}${d.stat?`<div class='muted'>${esc(d.stat)}</div>`:''}</li>`; });
+  docs.forEach(d => { html += `<li>${d.url?`<a href='${esc(d.url)}' target='_blank' rel='noopener'>${esc(d.title)}</a>`:esc(d.title)}${d.publisher?` · ${esc(d.publisher)}`:''}${d.year?` · ${d.year}`:''}${DOCTYPE[d.type]?` <span class='dtag'>${esc(tr8(DOCTYPE[d.type]))}</span>`:''}${d.stat?`<div class='muted'>${esc(d.stat)}</div>`:''}</li>`; });
   links.forEach(d => { html += `<li>${d.url?`<a href='${esc(d.url)}' target='_blank' rel='noopener'>${esc(d.title||d.url)}</a>`:esc(d.title||'')}${d.date?` <span class='muted'>(${esc(d.date)})</span>`:''} <span class='dtag'>${esc(tr8('framework page'))}</span></li>`; });
   return html + `</ul>`;
 }
@@ -2996,7 +3007,7 @@ function partnersBlock(c, f, v){
     html += `<div class='small'>${tr8(P.length > 1 ? '<b>{0} partners</b> named in the framework' : '<b>{0} partner</b> named in the framework', P.length)}${v && v.partners_from ? ` <span class='muted'>${esc(tr8('(from version {0} — none extracted for {1})', v.partners_from, v.v))}</span>` : ''}</div>`;
     PGROUPS.forEach(g => { const rows = P.filter(p=>p.group===g); if(!rows.length) return;
       html += `<div class='pgrp'>${esc(tr8(g))} <span class='muted' style='font-weight:400'>(${rows.length})</span></div>` + rows.map(p =>
-        `<div class='prow'>${esc(p.name)}${p.acronym?` (${esc(p.acronym)})`:''}${p.parent?` <span class='muted'>· ${esc(tr8('under {0}', p.parent))}</span>`:''}${p.roles.map(r=>`<span class='rtag'>${esc(tr8(ROLE[r]||r.replace(/_/g,' ')))}</span>`).join('')}${p.usd?` <span class='muted'>· ${money(p.usd)}</span>`:''}</div>`).join(''); });
+        `<div class='prow'>${esc(p.name)}${p.acronym?` (${esc(p.acronym)})`:''}${p.parent?` <span class='muted'>· ${esc(tr8('under {0}', p.parent))}</span>`:''}${p.roles.filter(r => ROLE[r]).map(r=>`<span class='rtag'>${esc(tr8(ROLE[r]))}</span>`).join('')}${p.usd?` <span class='muted'>· ${money(p.usd)}</span>`:''}</div>`).join(''); });
   } else html += `<div class='muted'>${esc(tr8('No partner list extracted from the framework document yet.'))}</div>`;
   if(S.length){
     const tot = S.reduce((s,a)=>s+a.partners.reduce((t,p)=>t+(p.usd||0),0),0), nP = S.reduce((s,a)=>s+a.partners.length,0);
