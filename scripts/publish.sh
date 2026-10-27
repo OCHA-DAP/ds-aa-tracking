@@ -28,7 +28,10 @@ ADMIN=admin
 
 if [ -z "${SKIP_BUILD:-}" ]; then
   uv run python scripts/build_site.py
-  uv run python scripts/mock_unocha.py
+  # the mock-up never stops the site: if it fails, none of its pages goes out (a half-written
+  # set would link to twins that are not there)
+  uv run python scripts/mock_unocha.py \
+    || { rm -f site_build/mock-*.html; echo "::warning::mock-up (scripts/mock_unocha.py) failed: not published"; }
   rm -rf site_encrypted          # nothing from an earlier build may be published by accident
   npx -y staticrypt site_build/*.html -d site_encrypted -p "$PW" --short --remember 30 \
     --template-title "AA tracking review" \
