@@ -2374,6 +2374,8 @@ document.addEventListener('click', ev=>{ if(fwPick.open && !fwPick.contains(ev.t
 document.addEventListener('keydown', ev=>{ if(ev.key==='Escape') fwPick.open = false; });
 window.addEventListener('hashchange', ()=>{ fwSel = fwFromHash(); fwToDom(); draw(); });
 draw();"""
+    import figure_check
+    figure_check.KEY["financing"] = data     # the cross-page figure check (build_site)
     _dash_page(page, "dash-funding.html", "Financing",
                TB("<b>The money of anticipatory action</b>: pre-arranged and released across CERF, "
                   "Country and Regional Funds, with the map's layers and a fund, hazard, region and "
@@ -3453,6 +3455,7 @@ def build_framework_pages(page, tbl, d, e=None):
     # pre-arranged now (prearranged_now, two activations a year counted twice), past years as
     # reported — the sheets' June figure showed Cuba's 2026 as $4M against the map's $9M (2026-10-28)
     pre, cov = funding_series(d)[0], d["covered"]
+    import figure_check
     rep, cal = d["report"], d["calendar"]
     split, env, win = d["split_all"], d["env_all"], d["windows"]
     docs, pt, sg = d["learning"], d["partners"], d["subgrant_aa"]
@@ -3527,6 +3530,11 @@ def build_framework_pages(page, tbl, d, e=None):
         # by the one envelope rule (envelope_by_fund): Nigeria's 2026 "CBPF" and NHF rows are one $1M
         envelope = float(envelope_by_fund(ev, d["fund_names"])["total_usd"].sum())
         n_apy = (d.get("act_factors") or {}).get((c, h, str(split_version)), 1)
+        cy_ = pd.Timestamp.now().year     # the cross-page figure check (build_site): this page's pre-arranged figures
+        figure_check.KEY.setdefault("fw", {})[f"{c}|{h}"] = dict(
+            chart_cy=(sum(v[chart_data["years"].index(cy_)] for v in chart_data["series"].values())
+                      if cy_ in chart_data["years"] else 0),
+            envelope=envelope, envelope_version=split_version, apy=n_apy)
         split_total = float(sv["amount_usd"].sum())
         over = envelope > 0 and split_total > envelope * 1.01
         agencies = sorted(set(sv.loc[sv["agency"].notna(), "agency"]))

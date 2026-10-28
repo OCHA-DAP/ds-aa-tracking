@@ -896,6 +896,8 @@ cerf_allocation_storm · cerf_supplement
 """
     page("overview.html", "AA tracking — schema & data review", idx)
     write_site()
+    import figure_check
+    figure_check.check()      # the figures shown on more than one page agree
     i18n.report_missing()
 
 

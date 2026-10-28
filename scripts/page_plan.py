@@ -649,6 +649,8 @@ def build_plan(page, d):
     n_due = sum(1 for x in prow if x["status"] == "not due")
     gaps = [x for x in prow if x["status"] == "gap"]
     ppl_total = sum(x["reached"] for x in rep)
+    import figure_check                       # the cross-page figure check (build_site)
+    figure_check.KEY["activities"] = dict(reached=ppl_total, n_rep=len(rep), n_cerf=len(al), n_live=n_live)
     n_over = sum(1 for x in fin if x["planned"] and x["reached"] >= x["planned"])
 
     nd_list = ", ".join(x["code"] for x in prow if x["status"] == "not due")

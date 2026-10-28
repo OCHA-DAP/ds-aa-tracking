@@ -1141,5 +1141,7 @@ document.addEventListener('aalang', hfilt);"""
     intro = TB("A <b>simulated activation</b> means today's trigger would have activated in a past "
                "year, given the historical data for that year. A <b>real activation</b> means the trigger was actually met and the "
                "pre-arranged money was released.")
+    import figure_check
+    figure_check.KEY["history"] = tl         # the cross-page figure check (build_site)
     _dash_page(page, "pillar-history.html", "Historical activations", intro, panels,
                json.dumps({"rows": rows, "tl": tl}, default=str).replace("</", "<\\/"), js)

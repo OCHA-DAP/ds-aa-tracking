@@ -1719,6 +1719,8 @@ def build_landing(page, d, e):
     cur = d["current"]
     names = dict(zip(cur["country_iso3"], cur["country_name"]))
     countries = assemble(d, e)
+    import figure_check
+    figure_check.KEY["map"] = countries      # the cross-page figure check (build_site)
     svg, bboxes, wdata = world_data(set(countries), names)
     for iso, cd in countries.items():
         if not cd.get("name"):                        # non-framework-only country: Natural Earth name
