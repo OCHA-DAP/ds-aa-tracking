@@ -507,10 +507,13 @@ def prearranged_now(e):
            .reset_index(drop=True))
     reg = pd.read_sql("SELECT fund_code, fund_type, country_iso3 FROM aa.fund WHERE country_iso3 IS NOT NULL", e)
     out = envelope_by_fund(now, reg)
-    # two activations a year: the envelope counted twice (activation_factors)
+    # two activations a year: the CERF envelope counted twice (activation_factors). The documents
+    # state CERF's envelope per activation; a Country or Regional Fund envelope is one allocation
+    # (Haiti 2026: the LAC regional fund's $1M next to CERF's $4M per activation; owner, 2026-10-28)
     fac = activation_factors(e)
-    out["activations_per_year"] = [fac.get((c, h, str(v)), 1)
-                                   for c, h, v in zip(out["country_iso3"], out["hazard"], out["version"])]
+    out["activations_per_year"] = [fac.get((c, h, str(v)), 1) if f == "cerf" else 1
+                                   for c, h, v, f in zip(out["country_iso3"], out["hazard"], out["version"],
+                                                         out["fund_code"])]
     out["total_usd"] = out["total_usd"].astype(float) * out["activations_per_year"]
     return out
 
@@ -1054,11 +1057,13 @@ def funding_series(d, released="framework"):
     pre = pd.concat([pre, cb[pre.columns]], ignore_index=True)
     # a version that allows two activations a year (activation_factors): its pre-arranged rows
     # count twice, as prearranged_now does for the current year (whose rows, already multiplied,
-    # replace this year's below — never multiplied twice). Co-financing is left as recorded.
+    # replace this year's below — never multiplied twice): the CERF rows only, as there.
+    # Co-financing is left as recorded.
     fac = d.get("act_factors") or {}
     if fac:
-        n = pd.Series([fac.get((c, h, str(v)), 1) if k == "prearranged" else 1
-                       for c, h, v, k in zip(pre["country_iso3"], pre["hazard"], pre["version"], pre["kind"])],
+        n = pd.Series([fac.get((c, h, str(v)), 1) if k == "prearranged" and f == "cerf" else 1
+                       for c, h, v, k, f in zip(pre["country_iso3"], pre["hazard"], pre["version"], pre["kind"],
+                                                pre["fund_code"])],
                       index=pre.index, dtype=float)
         pre["amount_usd"] = pre["amount_usd"].astype(float) * n
     # the current year is pre-arranged money NOW (prearranged_now: the framework records), not
@@ -1728,9 +1733,9 @@ FUND_NOTE_3 = '<b>People covered now</b> is the latest figure recorded for each 
 # two activations a year (aa.framework_version.activations_per_year; activation_factors): the
 # owner's footnote (2026-10-28) under the tiles, and the sentence the charts' notes add. Both are
 # written on every build and shown by the page's script only when a framework is counted so.
-TWO_ACT_NOTE = "* allows two activations a year; the budget per activation is half this value."
-TWO_ACT_HOW = ("Frameworks marked * allow two activations a year: their pre-arranged money is counted "
-               "twice here, and the budget per activation is half of it.")
+TWO_ACT_NOTE = "* allows two activations a year: its CERF envelope is counted twice; the CERF budget per activation is half of it."
+TWO_ACT_HOW = ("Frameworks marked * allow two activations a year: their CERF envelope is counted twice here, "
+               "and the CERF budget per activation is half of it. Country and Regional Fund envelopes count once.")
 FUND_NOTE_4 = "<b>Donors</b> (the <i>donors</i> tick on the money-flow chart): each donor's share of a fund's income that year, applied to the fund's AA money that year — donors give to the pooled funds as a whole, not to anticipatory action. Donors report their AA funding annually under the <a href='https://interagencystandingcommittee.org/grand-bargain' target='_blank' rel='noopener'>Grand Bargain</a>."
 
 # the two co-financing charts' notes (2026-10-28 owner comment: split the chart by agency into a
@@ -1891,11 +1896,13 @@ def build_funding(page, d):
     pr["ft"] = pr["fund_code"].map(_ft)
     pr["g"] = [layer(c, h) for c, h in zip(pr["country_iso3"], pr["hazard"])]
     pr["k"] = pair_key(pr)
-    # a version that allows two activations a year: its budget lines count twice, as its envelope
+    # a version that allows two activations a year: its CERF budget lines count twice, as its
+    # CERF envelope (prearranged_now)
     fac = d.get("act_factors") or {}
     if fac and len(pr):
         pr["amount_usd"] = pr["amount_usd"].astype(float) * [
-            fac.get((c, h, str(v)), 1) for c, h, v in zip(pr["country_iso3"], pr["hazard"], pr["version"])]
+            fac.get((c, h, str(v)), 1) if f == "cerf" else 1
+            for c, h, v, f in zip(pr["country_iso3"], pr["hazard"], pr["version"], pr["fund_code"])]
 
     # UN agencies vs partners (owner, 2026-10-28: the chart's 2026 $43.7M did not match the map's
     # CERF $38M): CERF's RELEASED money — the CERF rows of 'AA released by year, by fund' (c2), by
@@ -3553,20 +3560,22 @@ def build_framework_pages(page, tbl, d, e=None):
                   & (env["version"].astype(str) == str(split_version))]
               if split_version else env.iloc[0:0])
         # by the one envelope rule (envelope_by_fund): Nigeria's 2026 "CBPF" and NHF rows are one $1M
-        envelope = float(envelope_by_fund(ev, d["fund_names"])["total_usd"].sum())
+        ebf = envelope_by_fund(ev, d["fund_names"])
+        envelope = float(ebf["total_usd"].sum())
+        envelope_cerf = float(ebf.loc[ebf["fund_code"] == "cerf", "total_usd"].sum())   # the part that counts N times
         n_apy = (d.get("act_factors") or {}).get((c, h, str(split_version)), 1)
         # the split is an earlier version's while the current one allows N activations a year: the
         # chart's current-year bar counts the current envelope N times (review of PR #58: Cuba)
         cur_apy = (d.get("act_factors") or {}).get((c, h, str(version)), 1)
         if split_note and cur_apy > 1:
             split_note += (" <span class='muted' style='font-size:11px'>"
-                           + TF("The current version ({v}) allows {n} activations a year: the chart, the map and the Financing page count its envelope {n} times.", v=version, n=cur_apy)
+                           + TF("The current version ({v}) allows {n} activations a year: the chart, the map and the Financing page count its CERF envelope {n} times.", v=version, n=cur_apy)
                            + "</span>")
         cy_ = pd.Timestamp.now().year     # the cross-page figure check (build_site): this page's pre-arranged figures
         figure_check.KEY.setdefault("fw", {})[f"{c}|{h}"] = dict(
             chart_cy=(sum(v[chart_data["years"].index(cy_)] for v in chart_data["series"].values())
                       if cy_ in chart_data["years"] else 0),
-            envelope=envelope, envelope_version=split_version, apy=n_apy)
+            envelope=envelope, envelope_cerf=envelope_cerf, envelope_version=split_version, apy=n_apy)
         split_total = float(sv["amount_usd"].sum())
         over = envelope > 0 and split_total > envelope * 1.01
         agencies = sorted(set(sv.loc[sv["agency"].notna(), "agency"]))
@@ -3580,7 +3589,7 @@ def build_framework_pages(page, tbl, d, e=None):
             f"{f'${envelope:,.0f}' if envelope else '—'}"
             f"{'<span class=' + chr(39) + 'warn-tag' + chr(39) + '>' + TF('split exceeds envelope by {p}%', p=f'{(split_total/envelope - 1)*100:.0f}') + '</span>' if over else ''}"
             # a version that allows two activations a year: the map and the Financing page count it twice
-            f"{' <span class=' + chr(39) + 'muted' + chr(39) + ' style=' + chr(39) + 'font-weight:400;font-size:11px' + chr(39) + '>' + TF('the budget of one activation: this version allows {n} activations a year, so the map and the Financing page count it {n} times', n=n_apy) + '</span>' if envelope and n_apy > 1 else ''}</th></tr>")
+            f"{' <span class=' + chr(39) + 'muted' + chr(39) + ' style=' + chr(39) + 'font-weight:400;font-size:11px' + chr(39) + '>' + TF('the CERF budget of one activation: this version allows {n} activations a year, so the map and the Financing page count its CERF envelope {n} times', n=n_apy) + '</span>' if envelope and n_apy > 1 else ''}</th></tr>")
         # budget by agency / by sector (bars) and agency -> sector (Sankey), same split rows
         split_js = [{"a": x.agency if isinstance(x.agency, str) and x.agency else "(agency not stated)",
                      "s": x.sector if isinstance(x.sector, str) and x.sector else "(sector not stated)",

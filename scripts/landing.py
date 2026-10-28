@@ -1200,7 +1200,12 @@ def assemble(d, e):
         """SELECT country_iso3, hazard, version, fund_code, total_usd
            FROM aa.v_version_funding WHERE kind = 'prearranged' AND total_usd IS NOT NULL""", e)
     from dashboards import envelope_by_fund
-    envelope = _envelopes(envelope_by_fund(vfa, d["fund_names"]))   # the one envelope rule
+    ebf_ = envelope_by_fund(vfa, d["fund_names"])
+    envelope = _envelopes(ebf_)   # the one envelope rule
+    # the CERF part of each version's envelope: the part a version allowing N activations a year
+    # counts N times (prearranged_now; owner, 2026-10-28: a pooled-fund envelope counts once)
+    env_cerf = {(r.country_iso3, r.hazard, r.version): float(r.total_usd)
+                for r in ebf_[ebf_["fund_code"] == "cerf"].itertuples()}
     pre_parts = {}                        # pair -> pre-arranged now by fund, and the version it comes from
     for (c_, h_, v_), parts in _envelope_parts(d["vfund"]).items():
         p = pre_parts.setdefault((c_, h_), {"version": v_})
@@ -1384,6 +1389,7 @@ def assemble(d, e):
                 # budget sanity: the version's pre-arranged envelope (v_version_funding, all
                 # funds) — the sidebar compares the agency x sector split total against it
                 "envelope": envelope.get((c, h, v.version)),
+                "env_cerf": env_cerf.get((c, h, v.version)),
                 "analysis_ref": _s(v.analysis_ref), "analysis_url": _analysis_url(_s(v.analysis_ref)),
                 "partners": _partner_rows(partners[(partners["country_iso3"] == c)
                                                    & (partners["hazard"] == h)
@@ -1765,9 +1771,9 @@ def build_landing(page, d, e):
         by = {}
         for n, who in xs:
             by.setdefault(n, []).append(who)
-        return [(f"† {', '.join(v)}: allows two activations a year; the budget per activation is half the value counted."
-                 if n == 2 else f"† {', '.join(v)}: allows {n} activations a year; the budget per activation is "
-                                f"the value counted divided by {n}.") for n, v in sorted(by.items())]
+        return [(f"† {', '.join(v)}: allows two activations a year; its CERF envelope is counted twice (the CERF budget per activation is half)."
+                 if n == 2 else f"† {', '.join(v)}: allows {n} activations a year; its CERF envelope is counted "
+                                f"{n} times (the CERF budget per activation is that divided by {n}).") for n, v in sorted(by.items())]
 
     def act_sentence(usd, n):   # actSentence() in LANDING_JS
         return f"<b>{_money(usd)}</b> released in <b>{n}</b> activation{'' if n == 1 else 's'}" if n else "0"
@@ -2729,15 +2735,15 @@ function fundBullets(cerf, pooled, other = 0){
 // the note ('*' already marks a past year's total that leaves frameworks out). f.apy: today's
 // figure; f.pre_apy: the year shown's (applyYear).
 const apyOf = f => pastY() ? (f.pre_apy || null) : f.apy > 1 ? f.apy : null;
-const apyNote = n => n === 2 ? tr8('allows two activations a year; the budget per activation is half this value.')
-  : tr8('allows {0} activations a year; the budget per activation is this value divided by {0}.', n);
+const apyNote = n => n === 2 ? tr8('allows two activations a year; its CERF envelope is counted twice (the CERF budget per activation is half).')
+  : tr8('allows {0} activations a year; its CERF envelope is counted {0} times (the CERF budget per activation is that divided by {0}).', n);
 const apyMark = n => n ? `<span class='tmark' title='${esc(apyNote(n))}'>†</span>` : '';
 // the pre-arranged tile's note, one line per number of activations a year — apy_notes() in Python
 function apyTileNotes(fs){
   const by = {}; Object.values(L).forEach(c => c.fws.forEach(f => { if(fs.includes(f)) (by[f.apy] ||= []).push(`${tr8(c.name)} ${tr8(f.hz_label).toLowerCase()}`); }));
   return Object.keys(by).sort((a, b) => a - b).map(n => '† ' + (+n === 2
-    ? tr8('{0}: allows two activations a year; the budget per activation is half the value counted.', by[n].join(', '))
-    : tr8('{0}: allows {1} activations a year; the budget per activation is the value counted divided by {1}.', by[n].join(', '), n)));
+    ? tr8('{0}: allows two activations a year; its CERF envelope is counted twice (the CERF budget per activation is half).', by[n].join(', '))
+    : tr8('{0}: allows {1} activations a year; its CERF envelope is counted {1} times (the CERF budget per activation is that divided by {1}).', by[n].join(', '), n)));
 }
 // the activations tile's figure: '$39M released in 14 activations', both numbers in bold (owner,
 // 2026-10-28) — act_sentence() in Python
@@ -3135,7 +3141,7 @@ function renderSide(){
 // (2026-10-28: Fiji read $3.94M here against the table's $2.75M); the document's own figure, where
 // it differs, is a row of its own (pillarBody). A version that allows N activations a year shows N
 // times its envelope, as the tiles count it. The budget check (fundingBlock) keeps the envelope.
-const verPre = v => v.envelope > 0 ? v.envelope * (v.apy > 1 ? v.apy : 1) : null;   // > 0: prearranged_now's rule
+const verPre = v => v.envelope > 0 ? v.envelope + (v.apy > 1 ? (v.apy - 1) * (v.env_cerf || 0) : 0) : null;   // > 0: prearranged_now's rule; only CERF counts N times
 // ---------- the building blocks of AA: model · plan · funding · learning (always shown)
 const PILLARS = ['model', 'plan', 'funding', 'learning'];
 function pillarsBar(f, v){
