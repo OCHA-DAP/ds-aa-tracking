@@ -522,12 +522,15 @@ def envelope_by_fund(rows, reg):
     named" belongs to the country's own pooled fund, or its regional fund where it has no country
     fund (Burkina Faso -> RhPF-WCA); a version with both an unnamed-CBPF row and its fund's own row
     states the same money twice (Nigeria 2026: a sheet's "CBPF" $1M and the NHF's $1M): the larger,
-    not the sum. rows: v_version_funding rows (country_iso3, hazard, version, fund_code, total_usd,
-    any other columns kept as keys); reg: aa.fund rows (fund_code, fund_type, country_iso3)."""
+    not the sum. Only positive amounts count, and a row with no fund is not a per-fund row (as the
+    SQL of prearranged_now). Two rows of one fund (two financiers) also give the larger: no version
+    has them today. rows: v_version_funding rows (country_iso3, hazard, version, fund_code,
+    total_usd, any other columns kept as keys); reg: aa.fund rows (fund_code, fund_type, country_iso3)."""
+    rows = rows[pd.to_numeric(rows["total_usd"], errors="coerce") > 0]
     if not len(rows):
         return rows.copy()
     keys = ["country_iso3", "hazard", "version"]
-    comp = set(map(tuple, rows.loc[rows["fund_code"] != "all", keys].astype(str).values))
+    comp = set(map(tuple, rows.loc[rows["fund_code"].notna() & (rows["fund_code"] != "all"), keys].astype(str).values))
     dup = pd.Series([tuple(k) in comp for k in rows[keys].astype(str).values], index=rows.index, dtype=bool)
     rows = rows[~((rows["fund_code"] == "all") & dup)].copy()
     reg = reg[reg["country_iso3"].notna()]
@@ -1904,7 +1907,7 @@ def build_funding(page, d):
     # the tiles as the page opens (current frameworks and non-framework allocations, both funds);
     # drawUN repaints them for every filter. Shares of the money whose split is known.
     cr = act[(act["fund_code"] == "cerf") & act["g"].isin(["c", "a"])]
-    sp = [(float(v or 0), un_split[ac]) for ac, v in zip(cr["allocation_code"], cr["amount_usd"]) if ac in un_split]
+    sp = [(float(v), un_split[ac]) for ac, v in zip(cr["allocation_code"], cr["amount_usd"].fillna(0)) if ac in un_split]
     known = sum(v for v, _ in sp)
     sub_total = sum(v * sum(x["g"].values()) for v, x in sp)
     local_usd = sum(v * x["l"].get("local", 0) for v, x in sp)
@@ -3453,7 +3456,9 @@ def build_framework_pages(page, tbl, d, e=None):
     cur, ver, act = d["current"], d["versions"], d["activation"]
     # the pre-arranged series of the Financing page (funding_series): the current year is
     # pre-arranged now (prearranged_now, two activations a year counted twice), past years as
-    # reported — the sheets' June figure showed Cuba's 2026 as $4M against the map's $9M (2026-10-28)
+    # reported — the sheets' June figure showed Cuba's 2026 as $4M against the map's $9M (2026-10-28).
+    # A country with two live frameworks gets its Country and Regional Fund mirror allocations on a
+    # 'multi' row, which no framework page shows (none today; the Financing page counts them by country)
     pre, cov = funding_series(d)[0], d["covered"]
     import figure_check
     rep, cal = d["report"], d["calendar"]

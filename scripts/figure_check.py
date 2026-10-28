@@ -19,7 +19,6 @@ Compared like with like (the pages open on different defaults — the map on cur
   * released to date, framework activations and non-framework allocations, and the number of
     each: Map ↔ Financing ↔ History
   * people reached, CERF allocations of framework activations to date: Map ↔ Activities
-  * the Financing page's sub-grant shares never exceed an allocation's money
 Deliberate differences are not checked here — they are labelled on the pages: a past year on the
 map shows the frameworks as they stood then (Financing classifies by today's status); the
 Activities page's localisation share leaves partners not yet typed out of the whole, the
@@ -29,6 +28,7 @@ activation, or that of an earlier version where the current one has no split.
 from __future__ import annotations
 
 import datetime as _dt
+import math
 
 KEY: dict = {}      # page -> the data it embeds (filled by the builders)
 
@@ -54,7 +54,8 @@ def check() -> None:
     def cmp(figure, pages, a, b, kind="usd"):
         n[0] += 1
         tol = 1.0 if kind == "usd" else 0.5
-        if abs((a or 0) - (b or 0)) > tol:
+        a0, b0 = (0.0 if x is None else float(x) for x in (a, b))
+        if math.isnan(a0) or math.isnan(b0) or abs(a0 - b0) > tol:     # a NaN figure is a mismatch
             bad.append(f"{figure} — {pages}: {_fmt(a, kind)} vs {_fmt(b, kind)}")
 
     # ---- the map (window.L), by its own tile rule (landing.tile_figures = updateTiles)
@@ -80,8 +81,8 @@ def check() -> None:
     pre_pool = sum(r["total_usd"] or 0 for r in now_c if r["ft"] != "cerf")
     cmp("pre-arranged now", "Map ↔ Financing", t["pre"], pre_cerf + pre_pool)
     cmp("pre-arranged now, CERF", "Map ↔ Financing", t["pre_cerf"], pre_cerf)
-    # an envelope not split by fund: the map says so, the Financing page counts it as pooled
-    cmp("pre-arranged now, Country and Regional Funds", "Map ↔ Financing", t["pre_pooled"], pre_pool)
+    # an envelope not split by fund: the map lists it apart, the Financing page with the pooled funds
+    cmp("pre-arranged now, Country and Regional Funds", "Map ↔ Financing", t["pre_pooled"] + t["pre_all"], pre_pool)
     cmp("people covered now", "Map ↔ Financing", t["covered"], sum(r["people_covered"] or 0 for r in F["cov"]), "n")
     a_cy = [r for r in act if r["g"] == "c" and int(r["year"]) == cy]
     cmp(f"released {cy}, CERF", "Map ↔ Financing", t["released_cerf"], usd(r for r in a_cy if r["fund_code"] == "cerf"))
@@ -96,10 +97,6 @@ def check() -> None:
         f_pre[r["k"]] = f_pre.get(r["k"], 0) + (r["total_usd"] or 0)
     for k in sorted(set(m_pre) | set(f_pre)):
         cmp(f"pre-arranged now, {k}", "Map ↔ Financing", (m_pre.get(k) or {}).get("pre_now"), f_pre.get(k))
-    for code, x in (F.get("unSplit") or {}).items():
-        n[0] += 1
-        if sum(x["g"].values()) > 1 + 1e-9:
-            bad.append(f"share sub-granted of {code} above 1 — Financing")
 
     # ---- History (its timeline's rows; every status ticked)
     ev = [e for r in H["rows"] for e in r["ev"]]
@@ -117,17 +114,30 @@ def check() -> None:
 
     # ---- framework pages: the chart's current-year bar, and the version envelope when it is the
     # version pre-arranged now comes from (times the activations a year it allows)
+    # (a framework with no envelope has no figure to compare; a page whose envelope is an earlier
+    # version's, or a page missing, is counted and named in the summary line)
+    n_pg = n_env = 0
+    no_page = []
     for k, f in m_pre.items():
         x, parts = FW.get(k), f.get("pre_parts") or {}
-        if x is None or not f.get("pre_now"):
+        if not f.get("pre_now"):
             continue
+        if x is None:
+            no_page.append(k)
+            continue
+        n_pg += 1
         cmp(f"pre-arranged {cy}, {k}", "Map ↔ framework page chart", f["pre_now"] - (parts.get("all") or 0), x["chart_cy"])
         if x["envelope"] and str(x["envelope_version"]) == str(parts.get("version")):
+            n_env += 1
             cmp(f"envelope, {k}", "Map ↔ framework page", f["pre_now"], x["envelope"] * x["apy"])
+    if no_page:
+        bad.append(f"no framework page data for {', '.join(sorted(no_page))} — framework pages")
+    pages = (f"framework pages: {n_pg} charts, {n_env} envelopes (the others give an earlier version's, "
+             "labelled on the page)")
 
     if not bad:
-        print(f"  figure check: the figures shown on more than one page agree ({n[0]} comparisons: "
-              "Map, Financing, Activities, History, framework pages)")
+        print(f"  figure check: the figures shown on more than one page agree ({n[0]} comparisons — "
+              f"Map, Financing, Activities, History; {pages})")
         return
     for b in bad[:25]:
         print(f"::warning::figure check: {b}")

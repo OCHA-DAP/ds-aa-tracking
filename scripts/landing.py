@@ -1188,8 +1188,8 @@ def assemble(d, e):
         ["country_iso3", "hazard", "version", "name", "acronym", "org_type", "roles",
          "agency_parent", "amount_usd"])
     # the CERF AA sub-grants of the framework pages and the Financing page (d["subgrant_aa"]: the
-    # allocations the activation record draws on, agency names merged) — the sheet's own AA flag
-    # missed four allocations and spelled UN Women two ways (2026-10-28)
+    # allocations the activation record draws on, amounts recorded) — the sheet's own AA flag
+    # missed four allocations (2026-10-28)
     subg = (d["subgrant_aa"][d["subgrant_aa"]["country_iso3"].notna()]
             .groupby(["country_iso3", "agency", "partner_name", "partner_acronym", "partner_type"],
                      as_index=False, dropna=False)["subgrant_usd"].sum().rename(columns={"subgrant_usd": "usd"})
@@ -3166,7 +3166,7 @@ function pillarBody(f, v){
   const rows = [];
   const c = L[state.iso];
   if(state.pillar==='funding'){
-    rows.push([tr8('Pre-arranged'), `${money(verPre(v))}${v.apy > 1 && verPre(v) != null ? apyMark(v.apy) + ` <span class='muted'>· ${esc(apyNote(v.apy))}</span>` : ''}${v.all_in===false?` <span class='muted'>· ${esc(tr8('split budget per window'))}</span>`:v.all_in===true?` <span class='muted'>· ${esc(tr8('all-in'))}</span>`:''}`]);
+    rows.push([tr8('Pre-arranged'), `${money(verPre(v))}${v.apy > 1 && verPre(v) != null ? apyMark(v.apy) + ` <span class='muted'>· ${esc(apyNote(v.apy))}</span>` : ''}${v.regional?` <span class='muted'>· ${esc(tr8('regional document total (all countries)'))}</span>`:''}${v.all_in===false?` <span class='muted'>· ${esc(tr8('split budget per window'))}</span>`:v.all_in===true?` <span class='muted'>· ${esc(tr8('all-in'))}</span>`:''}`]);
     // the document's own figure, where it differs from the envelope counted (or there is none)
     if(v.prearranged_doc!=null && (!(v.envelope > 0) || Math.abs(v.envelope - v.prearranged_doc) > 0.01*Math.max(v.envelope, v.prearranged_doc))) rows.push([tr8('In the framework document'), `${money(v.prearranged_doc)} <span class='muted'>${esc(tr8("the figure the document states; the tiles, the table and the Financing page count the envelope recorded for the version"))}${v.regional?' · '+esc(tr8('regional document total (all countries)')):''}</span>`]);
     if(v.cofin) rows.push([tr8('Co-financing'), `${money(v.cofin)}${v.cofin_sources.length?` <span class='muted'>${esc(v.cofin_sources.join(', '))}</span>`:''}`]);
