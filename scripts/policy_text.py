@@ -107,7 +107,7 @@ POLICY_CSS = """
           padding:12px 16px; margin:4px 0 14px; max-width:980px; }
 .policy-h { font-weight:700; font-size:15px; color:#0f2540; margin-bottom:4px; cursor:pointer; list-style:none; }
 .policy-h::-webkit-details-marker { display:none; }
-.policy-h::before { content:"\25B8"; display:inline-block; width:1em; color:#1f69b3; transition:transform .15s; }
+.policy-h::before { content:"\\25B8"; display:inline-block; width:1em; color:#1f69b3; transition:transform .15s; }
 .policy[open] > .policy-h::before { transform:rotate(90deg); }
 .policy:not([open]) > .policy-h { margin-bottom:0; }
 @media (prefers-reduced-motion: reduce) { .policy-h::before { transition:none; } }

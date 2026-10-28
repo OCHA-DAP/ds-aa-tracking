@@ -626,12 +626,6 @@ def build_plan(page, d):
     ppl_total = sum(x["reached"] for x in rep)
     n_over = sum(1 for x in fin if x["planned"] and x["reached"] >= x["planned"])
 
-    def _plab(x):
-        """The chart label without its tag; the page adds '(interim…)' in its language."""
-        return f"{x['iso3']} {x['year']} · {str(x['code']).split('-')[-1]}"
-    ppl = [{"label": _plab(x), "planned": x["planned"], "reached": x["reached"],
-            "tag": "proj" if x["src"] == "projects" else "interim" if x["not_due"] else "",
-            "np": x["np"], "nr": x["nr"]} for x in rep]
     nd_list = ", ".join(x["code"] for x in prow if x["status"] == "not due")
     def gap_txt(w):
         return "; ".join(
@@ -786,10 +780,8 @@ def build_plan(page, d):
  <div class='tile'><div class='v'>{n_over} <span style='font-size:14px;font-weight:400'>{TF("of {n}", n=len(fin))}</span></div><div class='l'>{TB("allocations with a final report that reached<br>at least as many people as planned")}</div></div>
  <div class='tile'><div class='v'>{fem['planned']:.0%} → {fem['reached']:.0%}</div><div class='l'>{TBF("women and girls, share of people planned → reached<br>({n} allocations with both)", n=len(both))}</div></div>
 </div>
+<details class='note' style='font-size:12px;margin:2px 0 10px'><summary style='cursor:pointer'>{T("How the people figures are counted")}</summary>{ppl_how}</details>
 <div class='grid'>
- <div class='panel'><h3>{T("People planned and reached, per CERF allocation of a framework activation")}</h3>
-   <div style='position:relative;height:{max(300, 26 * len(ppl) + 60)}px'><canvas id='pl4' style='max-height:none'></canvas></div>
-   <div class='note'>{ppl_how}</div></div>
  <div class='panel'><h3>{T("By sex, age and disability")}</h3>
    <div style='position:relative;height:300px'><canvas id='pl5' style='max-height:none'></canvas></div>
    <div class='note'>{TBF("Summed over the {n} of these allocations with both a planned and a reached breakdown (CERF GMS reports 2020–2024). Women / men are adults, girls / boys children. Persons with disabilities is a separate count, overlapping the others.", n=len(both))}</div></div>
@@ -832,7 +824,6 @@ def build_plan(page, d):
         "loc": loc_rows,
         "cash": cash_rows,
         "cashHz": cash_hz,
-        "ppl": ppl,
         "dis": dis,
     }
     js = """
@@ -850,7 +841,6 @@ function sxOrder(byF){
       idx.forEach(i=>r.appendChild(c[i+1])); r.insertBefore(first, r.firstChild); }); }); }
 document.querySelectorAll("input[name='sxo']").forEach(el=>el.addEventListener('change', ()=>sxOrder(el.value==='f')));
 const pc = v=>v==null?'':' · '+Math.round(v*100)+'%';
-const pTag = r=>r.tag==='proj' ? ' ('+tr8('interim, {0} of {1} projects', r.nr, r.np)+')' : r.tag ? ' ('+tr8('interim')+')' : '';
 const num = v=>Number(v).toLocaleString('en-US');
 function drawPlan(){   // again on a language switch: the labels are translated as drawn
   mkChart('pl2','bar',D.loc.map(r=>r.year+pc(r.share)),[
@@ -864,14 +854,10 @@ function drawPlan(){   // again on a language switch: the labels are translated 
     {label:'cash and vouchers',data:D.cashHz.map(r=>r.cash),backgroundColor:PAL[2]},
     {label:'other modalities',data:D.cashHz.map(r=>r.other),backgroundColor:'#c8ccd2'}],
     {stacked:true,totals:true,allLabels:true,extra:{indexAxis:'y'}});
-  mkChart('pl4','bar',D.ppl.map(r=>r.label+pTag(r)),[
-    {label:'planned',data:D.ppl.map(r=>r.planned),backgroundColor:PAL[0]},
-    {label:'reached',data:D.ppl.map(r=>r.reached),backgroundColor:PAL[2]}],
-    {count:true,allLabels:true,extra:{indexAxis:'y'}});
   mkChart('pl5','bar',D.dis.labels,[
     {label:'planned',data:D.dis.planned,backgroundColor:PAL[0]},
     {label:'reached',data:D.dis.reached,backgroundColor:PAL[2]}],{count:true,allLabels:true});
-  [['pl4','x'],['pl5','y']].forEach(([id,ax])=>{ const ch=document.getElementById(id)._chart;
+  [['pl5','y']].forEach(([id,ax])=>{ const ch=document.getElementById(id)._chart;
     if(!ch) return; ch.options.scales[ax].ticks.callback=num;
     ch.options.plugins.tooltip.callbacks.label=c=>` ${c.dataset.label}: ${num(ax==='x'?c.parsed.x:c.parsed.y)}`; ch.update(); });
 }

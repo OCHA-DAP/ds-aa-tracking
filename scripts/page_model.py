@@ -17,7 +17,6 @@ import pandas as pd
 import site_i18n as i18n
 from dashboards import (
     LIFE_LABEL,
-    _cal_strip,
     _dash_page,
     _gh_url,
     _loose,
@@ -451,7 +450,7 @@ def model_windows(d):
 def build_model(page, d):
     m = model_windows(d)
     fws, win, ws, wa = m["fws"], m["win"], m["ws"], m["wa"]
-    unmatched, loose_acts, cat_fw, cat_win = m["unmatched"], m["loose_acts"], m["cat_fw"], m["cat_win"]
+    cat_fw, cat_win = m["cat_fw"], m["cat_win"]
     wrows = [x for x in win if x["window"] is not None]
     no_trig = [f for f in fws if not f["trig"]]
     n_life = {lc: sum(f["lifecycle"] == lc for f in fws) for lc in LIVE}
@@ -508,10 +507,6 @@ def build_model(page, d):
                        if n_wmix == 1 else
                        TBF("Mixed = a single window that combines forecast and observed data ({n} windows).", n=n_wmix))
                 if n_wmix else "")
-    structs = ["single window", "staged: readiness → action",
-               "several, not staged", "not recorded"]
-    structs = [s for s in structs if any(f["structure"] == s for f in fws)]
-    geos = sorted({f["geo"] for f in fws}, key=lambda g: (g == "not recorded", g))
     act = d["act_all"].copy()
     act["year"] = act["event_date"].astype(str).str[:4]
     act = act[act["year"].str.match(r"^\d{4}$")].copy()
@@ -520,15 +515,12 @@ def build_model(page, d):
         lambda t: "framework triggers" if t == "framework_aa" else "non-framework allocations")
     data = {
         "cat": by_life(cat_order, lambda f, k: k in f["cats"]),
-        # trigger WINDOWS of the current versions (the windows table's rows), not frameworks:
+        # trigger WINDOWS of the current versions, not frameworks:
         # most frameworks mix forecast and observational windows, which a framework count hides
         "basis": {"labels": hz, "sets": [{"label": b, "data": [n_wb.get((h, b), 0) for h in hz]}
                                          for b in w_bases]},
-        "struct": by_life(structs, lambda f, k: f["structure"] == k),
-        "geo": by_life(geos, lambda f, k: f["geo"] == k),
         "rec": by_life(records, lambda f, k: f["record"] == k),
         "prov": {"labels": [p for p, _ in prov_multi], "data": [len(n) for _, n in prov_multi]},
-        "rp": [x["rp"] for x in wrows if x["rp"] is not None],
         "act": json.loads(_records(
             act.drop_duplicates(["country_iso3", "hazard", "event_date", "event_type"]), ["year", "kind"])),
     }
@@ -549,50 +541,9 @@ def build_model(page, d):
     alias_rows = "".join(f"<tr><td><code>{_esc(rx)}</code></td><td>{_esc(lab)}</td></tr>"
                          for rx, lab in PROVIDER_ALIAS)
 
-    def _state_cell(x):
-        st = _tri(lambda w: _state(x["ad"], w))
-        return f"<span class='act'>{st}</span>" if x["activated"] else f"<span class='muted'>{st}</span>"
-
-    def _trunc(s, n):
-        s = _nofire(s)
-        return (f"<span title='{html.escape(s, quote=True)}'>{html.escape(s[:n].rstrip())}…</span>"
-                if len(s) > n else html.escape(s))
-
-    def _lead_cell(t):
-        """A lead time the record states is its own text (truncated); one assembled from the
-        record's months follows the language."""
-        return _trunc(_lead(t), 70) if t.get("lead time") else _tri(lambda w: _lead(t, w), cut=70)
-
     def _ver(f):
         tag = f" <span class='muted'>({T('draft')})</span>" if f["version_status"] == "development" else ""
         return f"{_esc(f['version'])}{tag}"
-
-    tr = []
-    for x in win:
-        f = x["f"]
-        head = (f"<tr data-life='{f['lifecycle']}'><td>{_fw(f)}</td><td>{_life(f['lifecycle'])}</td>"
-                f"<td class='nw'>{_ver(f)}</td>")
-        if x["window"] is None:
-            tr.append(head + f"<td colspan='8' class='muted'>{T('no structured trigger recorded yet for this version')}</td></tr>")
-            continue
-        rp = _trunc(x["rp_txt"], 60) if x["rp_txt"] else (TF("1-in-{n} yr", n=f"{x['rp']:.1f}") if x["rp"] else "")
-        tr.append(head + f"<td>{_esc(x['window'])}</td><td>{T(x['basis'])}</td>"
-                  f"<td class='small'>{', '.join(T(c) for c in x['cats'])}</td><td class='small'>{_trunc(x['indicator'], 110)}</td>"
-                  f"<td class='small'>{_lead_cell(x['t'])}</td><td class='small'>{rp}</td>"
-                  f"<td class='small nw'>{_tri(lambda w, x=x: _bt(x['p'], w))}</td><td class='small'>{_state_cell(x)}</td></tr>")
-    life_boxes = "".join(
-        f"<label><input type='checkbox' value='{lc}' checked onchange='mfilt()'> "
-        f"<span class='sw' style='background:{LIFE_COLOR[lc]}'></span>{T(LIFE_LABEL[lc])} ({n_life[lc]})</label>"
-        for lc in LIVE)
-    no_trig_html = ", ".join(f"{_fw(f)} ({_esc(f['version'])})" for f in no_trig)
-    loose_html = ("<p class='note2'>" + TBF(
-        "<b>Activations on current versions with the window not recorded:</b> {list}. These are curation "
-        "items: the activation is on record, which window activated is not.",
-        list="; ".join(_esc(a) for a in loose_acts)) + "</p>") if loose_acts else ""
-    unm_html = ("<p class='note2'>" + TBF(
-        "Backtest windows that do not map one-to-one onto a window of the framework record (not in the "
-        "table or the return-period chart): {list}.", list="; ".join(_esc(u) for u in unmatched))
-        + "</p>") if unmatched else ""
 
     def act_cell(f):
         if not f["acts"]:
@@ -643,13 +594,6 @@ def build_model(page, d):
         f"<td class='nw'>{_ver(f)}</td><td class='small'>{doc_cell(f)}</td><td class='small'>{code_cell(f)}</td></tr>"
         for f in fws)
 
-    cal = d["calendar"]
-    cal_rows = "".join(
-        f"<tr><td>{_fw(f)}</td><td>{_life(f['lifecycle'])}</td>"
-        f"<td>{_cal_strip(cal, f['country_iso3'], f['hazard'])}</td></tr>" for f in fws)
-
-    n_bt = sum(1 for x in wrows if x["rp_src"] == "backtest" and x["rp"] is not None)
-    n_st = sum(1 for x in wrows if x["rp_src"] == "stated" and x["rp"] is not None)
     assign_note = TB(
         "Each trigger window's indicator, window and trigger text (and the framework's list of trigger "
         "indicators) is matched against the keywords below — whole words, ignoring case and accents. A window "
@@ -661,9 +605,6 @@ def build_model(page, d):
         "observational, {m} mixed (forecast and observational windows), {nr} not recorded. A framework count "
         "hides the observational windows inside the mixed frameworks, so the chart counts windows.",
         f=n_fwb["forecast"], o=n_fwb["observational"], m=n_fwb["mixed"], nr=n_fwb["not recorded"])
-    cal_note = TB(
-        "Green cells = the months each framework is monitored in a typical year, from its current version's "
-        "record (the planning sheet where the record lists none). Not this year's schedule.")
     panels = f"""
 <style>
 .lf {{ display:inline-block; padding:0 8px; border-radius:9px; font-size:11px; font-weight:600; white-space:nowrap; }}
@@ -686,7 +627,9 @@ p.note2 {{ font-size:12px; color:#555; margin:6px 0; }}
  <div class='tile'><div class='v'>{len(wrows)}</div><div class='l'>{T("trigger windows on the current versions")}</div></div>
  <div class='tile'><div class='v'>{n_act}</div><div class='l'>{T("current frameworks activated at least once (any version)")}</div></div>
 </div>
-<h2>{T("What do the triggers watch?")}</h2>
+<h2>{T("Trigger design per hazard")}</h2>
+{tl_html}
+<h2>{T("Trigger variables")}</h2>
 <div class='grid'>
  <div class='panel'><h3>{T("Current frameworks, by what their triggers watch")}</h3><canvas id='m1' height='300'></canvas>
    <div class='note'>{TBF("A framework counts once under every variable its triggers use (a cyclone framework with a wind window and a rainfall window counts under both), so the bars add up to more than {n}.", n=len(fws))}</div></div>
@@ -697,24 +640,18 @@ p.note2 {{ font-size:12px; color:#555; margin:6px 0; }}
    <table class='data'><thead><tr><th>{T('variable')}</th><th>{T('keywords')}</th></tr></thead><tbody>{map_rows}</tbody></table>
    {uncl_html}</details></div>
 </div>
-<h2>{T("How are the triggers built?")}</h2>
+<h2>{T("Data and models")}</h2>
 <div class='grid'>
  <div class='panel'><h3>{T("Forecast or observed data? Trigger windows by hazard")}</h3><canvas id='m2' height='260'></canvas>
-   <div class='note'>{TBF("Counts the {n} trigger windows of the current versions (the rows of the windows table below), by the basis each window records.", n=len(wrows))}{mix_note}
+   <div class='note'>{TBF("Counts the {n} trigger windows of the current versions, by the basis each window records.", n=len(wrows))}{mix_note}
    {by_fw_note}</div></div>
- <div class='panel'><h3>{T("One window or several?")}</h3><canvas id='m3' height='260'></canvas>
-   <div class='note'>{TB("Staged = a readiness window followed by an action window on the same event. Several, not staged = windows split by season, lead time, area or data source.")}</div></div>
- <div class='panel'><h3>{T("At what geographic level?")}</h3><canvas id='m4' height='260'></canvas>
-   <div class='note'>{TB("Administrative level at which the trigger is evaluated, from the framework record (admin 4 = union level in Bangladesh).")}</div></div>
- <div class='panel'><h3>{T("How often would each trigger activate?")}</h3><canvas id='m5' height='260'></canvas>
-   <div class='note'>{TBF("Designed return period of each window, 1-in-N years. From the backtest where one is recorded ({b} windows), otherwise the return period the framework states ({s} windows); ranges and qualitative statements are left out.", b=n_bt, s=n_st)}</div></div>
  <div class='panel span2'><h3>{T("Which data and models do they use?")}</h3><canvas id='m6' height='320'></canvas>
    <div class='note'>{TBF("Number of current frameworks listing each source ({n} of {m} list their sources).", n=n_with_src, m=len(fws))}
    {TBF("Used by one framework only: {list}.", list=_esc(', '.join(prov_single)))}</div>
    <details class='map'><summary>{T("Name variants folded together")}</summary>
    <table class='data'><thead><tr><th>{T('source name matches')}</th><th>{T('counted as')}</th></tr></thead><tbody>{alias_rows}</tbody></table></details></div>
 </div>
-<h2>{T("Have the triggers activated?")}</h2>
+<h2>{T("Activations")}</h2>
 <div class='grid'>
  <div class='panel'><h3>{T("Current frameworks, by activation record")}</h3><canvas id='m7' height='260'></canvas>
    <div class='note'>{TB("Any version of the framework. Partially = only part of the allocation or only the readiness window was released.")}</div></div>
@@ -722,16 +659,6 @@ p.note2 {{ font-size:12px; color:#555; margin:6px 0; }}
 </div>
 <section><div class='scroll' style='max-height:420px'><table class='data'><thead><tr><th>{T('framework')}</th><th>{T('status')}</th><th>{T('record')}</th><th>{T('activations (month · window · version)')}</th></tr></thead><tbody>{rec_rows}</tbody></table></div>
 <p class='note2'><i>{T(NOT_RECORDED)}</i> {T("= the activation is on record but which window activated is not — a curation item.")}</p></section>
-<h2>{T("Every trigger window, framework by framework")}</h2>
-<p class='meta'>{TBF("One row per window of the latest version of each current framework, from its framework record. No structured trigger recorded yet for {n}: {list}.", n=len(no_trig), list=no_trig_html)}</p>
-<section><div class='lfbar'><input class='filter' id='wq' {ATTR("placeholder", "filter windows…")} oninput='mfilt()'>{life_boxes}</div>
-<div class='scroll'><table class='data' id='wtab'><thead><tr><th>{T('framework')}</th><th>{T('status')}</th><th>{T('version')}</th><th>{T('window')}</th><th>{T('basis')}</th><th>{T('measures')}</th><th>{T('indicator')}</th><th>{T('lead time')}</th><th>{T('return period')}</th><th>{T('backtest')}</th><th>{T('activated on this version')}</th></tr></thead><tbody>{''.join(tr)}</tbody></table></div>
-{loose_html}{unm_html}</section>
-<h2>{T("How much warning do the triggers give?")}</h2>
-{tl_html}
-<h2>{T("When are the triggers monitored?")}</h2>
-<p class='meta'>{cal_note}</p>
-<section><div class='scroll'><table class='data'><thead><tr><th>{T('framework')}</th><th>{T('status')}</th><th>{T('months monitored (typical year)')}</th></tr></thead><tbody>{cal_rows}</tbody></table></div></section>
 <h2>{T("Where are the models documented?")}</h2>
 <p class='meta'>{TB("Framework document, model report and published analyses, and the analysis code (an analysis reference from an earlier version is marked with that version).")}</p>
 <section><div class='scroll'><table class='data'><thead><tr><th>{T('framework')}</th><th>{T('status')}</th><th>{T('version')}</th><th>{T('documents & analyses')}</th><th>{T('analysis code')}</th></tr></thead><tbody>{doc_rows}</tbody></table></div></section>"""
@@ -739,25 +666,16 @@ p.note2 {{ font-size:12px; color:#555; margin:6px 0; }}
 const BASIS_COL = {'forecast':PAL[0],'observational':PAL[1],'mixed':PAL[2],'not recorded':'#bdbdbd'};
 function lifeSets(o){ return o.sets.map(s=>({label:s.label, data:s.data, backgroundColor:s.color})); }
 const H = {extra:{indexAxis:'y'}};
-const bins = [['≤ 1-in-3',0,3],['1-in-3 to 5',3,5],['1-in-5 to 10',5,10],['> 1-in-10',10,1e9]];
 const yrs = uniqSorted(D.act, r=>r.year), kinds = ['framework triggers','non-framework allocations'];
 function drawModel(){   // again on a language switch: mkChart translates the labels
   mkChart('m1','bar',D.cat.labels,lifeSets(D.cat),{stacked:true,count:true,totals:true,allLabels:true,...H});
   mkChart('m2','bar',D.basis.labels,D.basis.sets.map(s=>({label:s.label,data:s.data,backgroundColor:BASIS_COL[s.label]})),{stacked:true,count:true,totals:true});
-  mkChart('m3','bar',D.struct.labels,lifeSets(D.struct),{stacked:true,count:true,totals:true,allLabels:true,...H});
-  mkChart('m4','bar',D.geo.labels,lifeSets(D.geo),{stacked:true,count:true,totals:true,allLabels:true});
-  mkChart('m5','bar',bins.map(b=>b[0]),[{label:'windows',data:bins.map(b=>D.rp.filter(v=>v>b[1]&&v<=b[2]).length)}],{count:true});
   mkChart('m6','bar',D.prov.labels,[{label:'frameworks',data:D.prov.data}],{count:true,allLabels:true,...H});
   mkChart('m7','bar',D.rec.labels,lifeSets(D.rec),{stacked:true,count:true,totals:true,allLabels:true,...H});
   mkChart('m8','bar',yrs,kinds.map(k=>({label:k, data:yrs.map(y=>D.act.filter(r=>r.year===y&&r.kind===k).length)})),{stacked:true,count:true});
 }
 drawModel();
 document.addEventListener('aalang', drawModel);
-function mfilt(){
-  const q = document.getElementById('wq').value.toLowerCase();
-  const on = new Set([...document.querySelectorAll('.lfbar input[type=checkbox]:checked')].map(b=>b.value));
-  document.querySelectorAll('#wtab tbody tr').forEach(r=>{
-    r.style.display = (on.has(r.dataset.life) && r.textContent.toLowerCase().includes(q)) ? '' : 'none'; }); }
 """ + TL_JS
     _dash_page(page, "pillar-model.html", "Model",
                TB("<b>The model block of anticipatory action</b> — the triggers: what they measure, "
@@ -891,7 +809,7 @@ TL_JS = r"""
     r.setAttribute('width', w); t.setAttribute('x', cx + w / 2);
   }
   function draw(p, host, cal){
-    const W = 1000, L = 230, R = 18, rowH = 22, headH = 20, gH = 12, top = 30;
+    const W = 1000, L = 230, R = 18, rowH = 17, headH = 18, gH = 8, top = 28;   // compact rows (owner, 2026-10-28)
     const min = cal ? 0 : p.min, max = cal ? 12 : p.max, ticks = [];
     for (let t = min; t <= max; t += cal ? 1 : p.step) ticks.push(t);
     let n = 0; p.fws.forEach(f => f.legs.forEach(l => { n += Math.max(1, l.wins.length); }));
@@ -911,35 +829,35 @@ TL_JS = r"""
     const bands = [];
     let y = top;
     p.fws.forEach(f => {
-      const name = nm(f.name), hd = mk('text', {x: 0, y: y + 14, 'font-size': 13.5, 'font-weight': 600}, name);
+      const name = nm(f.name), hd = mk('text', {x: 0, y: y + 13, 'font-size': 13.5, 'font-weight': 600}, name);
       svg.appendChild(hd);
-      chip(svg, f.status, (hd.getComputedTextLength() || name.length * 7.4) + 10, y + 3, gid);
+      chip(svg, f.status, (hd.getComputedTextLength() || name.length * 7.4) + 10, y + 2, gid);
       y += headH;
       f.legs.forEach(leg => {
         const k = Math.max(1, leg.wins.length), y0 = y;
         if (leg.len && leg.start) bands.push([y0, y0 + k * rowH, leg.len, leg.start]);
-        if (leg.leg) svg.appendChild(mk('text', {x: 12, y: y0 + 15, 'font-size': 12, class: 'muted'}, leg.leg));
-        if (!leg.wins.length) svg.appendChild(mk('text', {x: x(min) + 6, y: y0 + 15, 'font-size': 12, class: 'faint'}, tr8('trigger windows not recorded yet')));
+        if (leg.leg) svg.appendChild(mk('text', {x: 12, y: y0 + 12, 'font-size': 12, class: 'muted'}, leg.leg));
+        if (!leg.wins.length) svg.appendChild(mk('text', {x: x(min) + 6, y: y0 + 12, 'font-size': 12, class: 'faint'}, tr8('trigger windows not recorded yet')));
         leg.wins.forEach((w, i) => {
-          const yy = y0 + i * rowH + 4, full = name + (leg.leg ? ' · ' + leg.leg : ''), st = stageName(w.st);
+          const yy = y0 + i * rowH + 2.5, full = name + (leg.leg ? ' · ' + leg.leg : ''), st = stageName(w.st);
           const g = mk('g', {tabindex: 0, 'aria-label': `${full}: ${st}, ${w.lab}`});
           svg.appendChild(g);
           let x0, x1;
           if (w.m) {          // one mark per month checked: at its offset from the season start, or at its own month
             const offs = w.m.map(m => [m, cal ? m - 1 : seasonOffset(m, leg.start || 1, leg.len, p.after)]);
             x0 = Math.min(...offs.map(([, o]) => x(o))); x1 = Math.max(...offs.map(([, o]) => x(o + 1)));
-            g.appendChild(mk('rect', {class: 'hit', x: x0 - 3, y: yy - 4, width: x1 - x0 + 6, height: rowH, fill: 'transparent'}));
+            g.appendChild(mk('rect', {class: 'hit', x: x0 - 3, y: yy - 2.5, width: x1 - x0 + 6, height: rowH, fill: 'transparent'}));
             offs.forEach(([m, o]) => {
-              g.appendChild(mk('rect', {x: x(o) + 1.5, y: yy, width: x(o + 1) - x(o) - 3, height: 14, rx: 3, fill: COL[w.st]}));
-              g.appendChild(mk('text', {x: (x(o) + x(o + 1)) / 2, y: yy + 11, 'font-size': 10.5, 'text-anchor': 'middle', style: 'fill:#10151c;font-weight:600'}, mon(m)));
+              g.appendChild(mk('rect', {x: x(o) + 1.5, y: yy, width: x(o + 1) - x(o) - 3, height: 12, rx: 3, fill: COL[w.st]}));
+              g.appendChild(mk('text', {x: (x(o) + x(o + 1)) / 2, y: yy + 9.5, 'font-size': 10, 'text-anchor': 'middle', style: 'fill:#10151c;font-weight:600'}, mon(m)));
             });
           } else {
             x0 = x(w.a); x1 = Math.max(x(w.b), x0 + 4);
-            g.appendChild(mk('rect', {class: 'hit', x: x0 - 3, y: yy - 4, width: x1 - x0 + 6, height: rowH, fill: 'transparent'}));   // larger hit target
-            g.appendChild(mk('rect', {x: x0, y: yy, width: x1 - x0, height: 14, rx: 3, fill: COL[w.st]}));
+            g.appendChild(mk('rect', {class: 'hit', x: x0 - 3, y: yy - 2.5, width: x1 - x0 + 6, height: rowH, fill: 'transparent'}));   // larger hit target
+            g.appendChild(mk('rect', {x: x0, y: yy, width: x1 - x0, height: 12, rx: 3, fill: COL[w.st]}));
           }
           // the label in text ink beside the bar; left of it when the right side would run out of the chart
-          const lt = mk('text', {class: 'lab', x: x1 + 6, y: yy + 11, 'font-size': 11.5}, w.lab);
+          const lt = mk('text', {class: 'lab', x: x1 + 6, y: yy + 10, 'font-size': 11}, w.lab);
           g.appendChild(lt);
           if (x1 + 6 + (lt.getComputedTextLength() || w.lab.length * 6.2) > W) { lt.setAttribute('x', x0 - 6); lt.setAttribute('text-anchor', 'end'); }
           const row = (key, v) => v ? `<br><span class="k">${escH(key)}</span> ${escH(v)}` : '';
