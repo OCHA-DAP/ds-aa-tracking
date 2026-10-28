@@ -45,6 +45,11 @@ value, never the key. Keep:
 A string that has no entry shows in English; the build lists them in
 `site_build/i18n-missing.json` and says how many in its log.
 
+The build's identifier guard (`write_site()` in `scripts/build_site.py`) also reads the French and
+Spanish values the pages carry: a database name in one (`aa.cerf_subgrant`) is removed and a code
+(`under_development`) replaced by its words in that language, and the publish run warns about it.
+Keep table names and codes out of the translations: the warning means the value needs fixing here.
+
 ## Choices the reviewers should confirm
 
 French (KB glossary unless marked *suggestion*):
@@ -60,6 +65,7 @@ French (KB glossary unless marked *suggestion*):
 - **backtest** stays *backtest* (as the KB's French pages have it); *analyse historique* is the attested alternative.
 - **framework record** (the tracking database's entry for a framework) → *fiche du cadre* (*suggestion*).
 - **rainfall** (what a trigger watches) → *précipitations* (KB glossary: the indicator, not *pluie*).
+- **non-framework** (AA money allocated without a framework; the site said *ad hoc* until the team's 9 October 2026 meeting) → *hors cadre*: *allocations hors cadre*, *allocation hors cadre* (*suggestion*).
 
 Spanish (GLOSSARY.md; only two independent Spanish documents exist — the Dry Corridor
 template and Cuba — so several terms are suggestions):
@@ -76,6 +82,7 @@ template and Cuba — so several terms are suggestions):
 - **return period 1-in-N** → *1 en N años* (the documents' form).
 - **backtest** → *análisis histórico* (*suggestion*; the documents have *desempeño histórico* for the historical performance).
 - **framework record** → *ficha del marco* (*suggestion*); **rainfall** → *precipitación*.
+- **non-framework** → *fuera de marco*: *asignaciones fuera de marco*, *asignación fuera de marco* (*suggestion*).
 
 UN agency acronyms (WFP, WHO…) stay in English for now, like the other organisation names;
 the reviewers may prefer the UN French / Spanish acronyms (PAM, OMS…).

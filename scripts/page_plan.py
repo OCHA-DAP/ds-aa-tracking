@@ -20,6 +20,7 @@ from dashboards import (
     _dash_page,
     _st,
     haz,
+    hazard_word,
 )
 from site_i18n import ATTRC, TB, TBC, TBF, TF, T
 
@@ -114,7 +115,7 @@ def _cerf_label(iasc, cerf):
 def _extra():
     """One engine, one read per table, each tolerant of an older snapshot (empty frame).
     The CERF rows are those of the allocations framework activations drew on (CERF_FW_CODES_SQL:
-    ad hoc and early-action allocations left out), as the map counts them by default — not the
+    non-framework and early-action allocations left out), as the map counts them by default — not the
     mirror's title keyword (aa_keyword) nor its sub-grant flag (is_aa)."""
     import ocha_stratus as stratus
     e = stratus.get_engine(stage="dev")
@@ -456,7 +457,7 @@ def build_plan(page, d):
         def z(x, has_v=has_v):
             return x if (x or has_v) else ""
         trs += (f"<tr><td><a href='{link}'>{html.escape(r.country_name)}</a> — "
-                f"{r.hazard.replace('_', ' ')}</td>"
+                f"{hazard_word(r.hazard)}</td>"
                 f"<td>{_st(LIFE_LABEL.get(r.lifecycle, r.lifecycle))}</td>"
                 f"<td>{ver}{stale}</td>"
                 f"<td class='num'>{z(r.un_impl)}</td><td class='num'>{z(r.government)}</td>"
@@ -717,21 +718,21 @@ def build_plan(page, d):
         "livelihoods; Protection takes in its areas of responsibility — child protection, gender-based "
         "violence, mine action; WASH takes in early recovery; Logistics takes in coordination and support "
         "services — agreed in review 2026-10-16), plus multi-purpose cash (cross-sector, as CERF reports it). "
-        "CERF rows are placed by CERF's own IASC sector (aa.cerf_project_sector.iasc_sector_name; its "
+        "CERF rows are placed by CERF's own IASC sector, as its project records give it (its "
         f"'Multi-Sector' is multi-purpose cash). '{OTHER_SECTOR}' holds framework labels that are not an "
         "IASC sector (e.g. early warning messaging, community engagement): CERF has no such sector, so they "
         "are not folded into one. A combined label (e.g. 'Health &amp; Nutrition') counts in both columns. "
         "'To be determined' is left out.")
     cash_how = TB(
-        "Computed inside the CERF CVA file (aa.cerf_cva_history): cash and voucher amount over the approved "
+        "Computed inside CERF's cash-and-voucher file: cash and voucher amount over the approved "
         "amount of the same rows, by the file's year. The file has no allocation code: a row counts when a "
         "CERF allocation of a framework activation for the same country and emergency type falls within a "
         "year of it (the file's years do not always match the allocation year). The rest is 'other "
         "modalities' (in-kind goods and services together — the data do not separate in-kind).")
     ppl_how = TBC(lambda w: (
-        w("From the CERF allocation record (individuals planned / reached, aa.cerf_allocation). Where it has "
+        w("From the CERF allocation record (individuals planned / reached). Where it has "
           "no people reached, the sum over the allocation's projects that report a figure — both planned and "
-          "reached, over the same projects (aa.cerf_project; partial, and a person reached by two projects "
+          "reached, over the same projects (CERF project records; partial, and a person reached by two projects "
           "counts twice){list}.").format(list=": " + html.escape(fb_txt(w)) if fb_txt(w) else "")
         + " " + w("<i>Interim</i>: the final report is not due yet (CERF report due date after today), so the "
                   "figures may change.")
@@ -761,10 +762,10 @@ def build_plan(page, d):
 <div class='grid'>
  <div class='panel'><h3>{T("Planned: frameworks with budget in the sector")}</h3>
    {_matrix(plan_cnt, cols, plan_note, 'frameworks', tot)}
-   <div class='note'>{TB("Row label: frameworks with a sector split of all current frameworks for the hazard. From the framework documents' agency × sector split (aa.v_window_funding_split, latest version).")}</div></div>
+   <div class='note'>{TB("Row label: frameworks with a sector split of all current frameworks for the hazard. From the framework documents' agency × sector split (as recorded for each framework, latest version).")}</div></div>
  <div class='panel'><h3>{T("Delivered: sector representation across framework activations (based on CERF allocations)")}</h3>
    {_matrix(cerf_cnt, cols, cerf_note, 'allocations', tot)}
-   <div class='note'>{TB("Row label: those allocations with sector records for the hazard (CERF emergency type). From the CERF project sectors of the allocations (aa.cerf_project_sector).")}
+   <div class='note'>{TB("Row label: those allocations with sector records for the hazard (CERF emergency type). From the CERF project sectors of the allocations, as CERF records them.")}
    {odd_note}</div></div>
 </div>
 <details><summary style='cursor:pointer;font-size:13px'>{T("Sector mapping (labels as recorded → IASC sector)")}</summary>
@@ -791,7 +792,7 @@ def build_plan(page, d):
    <div class='note'>{ppl_how}</div></div>
  <div class='panel'><h3>{T("By sex, age and disability")}</h3>
    <div style='position:relative;height:300px'><canvas id='pl5' style='max-height:none'></canvas></div>
-   <div class='note'>{TBF("Summed over the {n} of these allocations with both a planned and a reached breakdown (aa.cerf_application_people; CERF GMS reports 2020–2024). Women / men are adults, girls / boys children. Persons with disabilities is a separate count, overlapping the others.", n=len(both))}</div></div>
+   <div class='note'>{TBF("Summed over the {n} of these allocations with both a planned and a reached breakdown (CERF GMS reports 2020–2024). Women / men are adults, girls / boys children. Persons with disabilities is a separate count, overlapping the others.", n=len(both))}</div></div>
 </div>
 
 <h2>{T("Partners")}</h2>
@@ -805,11 +806,11 @@ def build_plan(page, d):
 <div class='grid'>
  <div class='panel'><h3>{T("CERF sub-grants of framework activations by recipient, per year")}</h3>
    <div style='position:relative;height:330px'><canvas id='pl2' style='max-height:none'></canvas></div>
-   <div class='note'>{TB("From the CERF sub-grant records of those allocations (aa.cerf_subgrant), CERF's own <i>localization</i> field: 'Local' = government, national NGOs and national Red Cross / Red Crescent societies. The share in the label is local money over money whose partner is determined; 'not yet determined' (TBD) is shown but left out of the share. Agencies' direct spending is not in these bars. 2023 looks low because the only framework activations that year were DRC cholera ($1.5M). The CERF early-action allocations reported to the Anticipation Hub for 2023 are not counted as anticipatory action here, following the definition the Grand Bargain adopted at the end of 2024.")}</div></div>
+   <div class='note'>{TB("From the CERF sub-grant records of those allocations, CERF's own <i>localization</i> field: 'Local' = government, national NGOs and national Red Cross / Red Crescent societies. The share in the label is local money over money whose partner is determined; 'not yet determined' (TBD) is shown but left out of the share. Agencies' direct spending is not in these bars. 2023 looks low because the only framework activations that year were DRC cholera ($1.5M). The CERF early-action allocations reported to the Anticipation Hub for 2023 are not counted as anticipatory action here, following the definition the Grand Bargain adopted at the end of 2024.")}</div></div>
 </div>
 
 <h2>{T("AA in the humanitarian plans")}</h2>
-<p class='meta'>{TB("Of the countries in the Global Humanitarian Overview, how many face shocks AA can address, and how many have AA feasible, pre-arranged or a framework. One source per year, as recorded in aa.plan_inclusion.")}</p>
+<p class='meta'>{TB("Of the countries in the Global Humanitarian Overview, how many face shocks AA can address, and how many have AA feasible, pre-arranged or a framework. One source per year, as recorded in the AA team's tracking sheets.")}</p>
 <div class='scroll' style='max-height:none'><table class='data kpi'><thead><tr><th>{T("year")}</th><th>{T("source")}</th>
 <th class='num'>{T("GHO plans")}</th><th class='num'>{T("exposed to shocks AA can address")}</th><th class='num'>{T("AA feasible")}</th>
 <th class='num'>{T("AA pre-arranged")}</th><th class='num'>{T("AA framework")}</th></tr></thead><tbody>{kpi_rows}</tbody></table></div>
@@ -884,7 +885,7 @@ document.addEventListener('aalang', ()=>{ drawPlan();
                "CERF sub-grants, and how far AA appears in the humanitarian plans. Figures "
                "follow the latest version of "
                "each current framework (active, being updated or in development). The CERF figures "
-               "count the allocations of framework activations only, as the map does: ad hoc "
+               "count the allocations of framework activations only, as the map does: non-framework "
                "allocations are left out. The money is on the "
                "<a href='dash-funding.html'>Financing</a> page."),
                panels, json.dumps(data, default=str), js)

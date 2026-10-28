@@ -268,6 +268,244 @@ def _admin_home(admin):
             "and has its own password.</div>" + "".join(cards))
 
 
+# ---------------------------------------------------------------- no database words, no codes
+# Owner's rule (2026-10-27): the public site never shows a table, view or column name, nor a raw
+# code (a status, hazard, event type, report, fund…) — always words. The pages map every code to
+# its words (dashboards.code_words); this is the safety net for what slips through, mostly
+# curators' notes in the data. write_site() runs it on every public page as written.
+#
+# Default (owner, 2026-10-28: "auto-remove"): the page is CLEANED and the build goes on — a table
+# or view name is removed (with what it leaves behind: an empty "()", a dangling separator), a
+# code is replaced by its words, a code with none is humanised (underscores → spaces); each page
+# cleaned gets a ::warning:: line in the publish run naming every change, so the data or the code
+# gets fixed at the source. A data fix should not have to wait for a failed nightly publish.
+# AA_SITE_GUARD=strict: the build stops instead, naming each page and hit (for local checks).
+#
+# Cleaned: the visible text (scripts, styles and comments left alone), the attributes a reader
+# sees or the language toggle swaps in (title, placeholder, aria-label, alt, data-en / -fr / -es,
+# data-<attr>-<lang>), and the French and Spanish VALUES of the page's script dictionary
+# (window.I18N; its keys never). Warned only, never rewritten: the strings the page's scripts
+# pass to tr8() / yr() — they are code, and the dictionary's keys. Not seen at all: a data value a
+# script prints as it is.
+GUARD_STRICT = os.environ.get("AA_SITE_GUARD", "").strip().lower() == "strict"
+# aa.<table>[.<column>] and v_<view>. A table name has an underscore (file extensions never do:
+# 'aa.pdf' is not one) or is one of the schema's single-word tables; a column, when given, has one
+# too ('aa.window.html' is a file). Not followed by '.<letter>' (a file name).
+_ONE_WORD_TABLES = sorted({t for names in (trk_schema.TABLES, trk_schema.DURABLE_TABLES,
+                                           trk_schema.LEGACY_TABLES, trk_schema.VIEWS)
+                           for t in names if "_" not in t} | {"activation", "cirv", "fund", "window"})
+_DB_NAME = (r"(?:aa\.(?:[a-z]+_[a-z_]+|" + "|".join(_ONE_WORD_TABLES) + r")(?:\.[a-z]+_[a-z_]+)?"
+            r"|v_[a-z]+(?:_[a-z]+)*)(?!\.?[\w/-])")
+_NOT_IN_PATH = (r"(?<![\w/.=?&-])", r"(?![\w/-])")                    # not in a file name, path or query
+_GUARD = {}
+
+
+def _code_words():
+    """{code: its words} — the site's coded values that read as codes (an underscore, or a coined
+    hyphenation), from the vocabularies the pages already map to words; None where a code has
+    none (it is then humanised)."""
+    import dashboards
+    import landing
+    vocabs = (dashboards.EVENT_TYPE_LABEL, dashboards.REPORT_CHANNEL_LABEL,
+              dashboards.VERSION_SOURCE_LABEL, dashboards.PARTNER_ROLE_LABEL, dashboards.HAZARD_WORD,
+              dashboards.FUND_TYPE_LABEL, dashboards.DOC_TYPE_LABEL, dict(dashboards.PREMISES),
+              landing.SHEET_STATUS_LABEL, dashboards._NOTE_FIELDS)      # _NOTE_FIELDS: the version record's columns
+    words = {k: w for v in vocabs for k, w in v.items() if "_" in k}
+    words |= {k: dashboards.VERSION_SOURCE_LABEL[k] for k in ("kb-frontmatter", "sheet-revision", "pa-monorepo")}
+    words |= {"adhoc aa": dashboards.EVENT_TYPE_LABEL["adhoc_aa"],
+              "framework aa": dashboards.EVENT_TYPE_LABEL["framework_aa"],
+              "non_aa_mobilised": None, "cerf_secretariat": "CERF secretariat", "rcrc_nat": None,
+              "window-unattributed": None}
+    return words
+
+
+def _guard():
+    """The guard's patterns and words, built once."""
+    if not _GUARD:
+        words = _code_words()
+        codes = "|".join(map(re.escape, sorted(words, key=len, reverse=True)))
+        lb, la = _NOT_IN_PATH
+        _GUARD["words"] = words
+        # detection: a database name, a fund code (cbpf-afg) or a known code
+        _GUARD["any"] = re.compile(lb + r"(?:" + _DB_NAME + r"|(?:cbpf|rhpf)(?:-[a-z]+)+|" + codes + r")" + la)
+        _GUARD["code"] = re.compile(lb + r"(?:(?:cbpf|rhpf)(?:-[a-z]+)+|" + codes + r")" + la)
+        db = lb + _DB_NAME + la
+        # a database name goes with what it leaves behind, the most specific shape first
+        _GUARD["drop"] = [
+            (re.compile(r"\s*\(\s*" + db + r"\s*\)"), ""),               # "x (aa.t)"        -> "x"
+            (re.compile(r"\(\s*" + db + r"\s*[,;:]\s*"), "("),            # "(aa.t, curated"  -> "(curated"
+            (re.compile(r"\s*[,;]\s*" + db + r"(?=\s*\))"), ""),          # "reached, aa.t)"  -> "reached)"
+            (re.compile(r"\s+[·—–]\s*" + db), ""),                        # "x · aa.t"        -> "x"
+            (re.compile(db + r"\s*[·,;]\s*"), ""),                        # "aa.t, x"         -> "x"
+            (re.compile(r"[ \t]+" + db), ""),                             # "in aa.t."        -> "in."
+            (re.compile(db), ""),
+        ]
+    return _GUARD
+
+
+def _words_for(code, lang):
+    """A code's words in a language (the site's own tables; English where they have none): a fund
+    code as the pages name it, a code with no words humanised — never the code."""
+    import dashboards
+    if re.fullmatch(r"(?:cbpf|rhpf)(?:-[a-z]+)+", code):
+        return dashboards.fund_label(code)
+    w = _guard()["words"].get(code) or re.sub(r"[_-]+", " ", code)
+    return i18n.TABLES[lang].get(i18n.key(w), w) if lang in i18n.TABLES else w
+
+
+def _clean_text(t, lang, esc, changes):
+    """t without database names and with codes in words; each change appended to changes as
+    (original, replacement). esc: how a replacement is escaped where it lands (text / attribute)."""
+    g = _guard()
+    if not g["any"].search(html.unescape(t)):
+        return t
+
+    def word(m):
+        w = _words_for(m.group(0), lang)
+        changes.append((m.group(0), w))
+        return esc(w)
+    t = g["code"].sub(word, t)
+    for rx, rep in g["drop"]:
+        def drop(m, rep=rep):
+            changes.append((re.search(_DB_NAME, m.group(0)).group(0), ""))
+            return rep
+        t = rx.sub(drop, t)
+    return t
+
+
+# a tag's attributes one after another (a quoted value is consumed whole, so a 'title=' inside
+# another attribute's value is never taken for an attribute); the ones a reader sees
+_TAG_ATTR = re.compile(r"""(\s+)([^\s=/>"']+)(?:(\s*=\s*)("[^"]*"|'[^']*'|[^\s>"']+))?""")
+_SHOWN_ATTR = re.compile(r"title|placeholder|aria-label|alt|data-(?:en|fr|es)|data-[a-z-]+-(?:en|fr|es)")
+# a page in pieces: scripts, styles, comments, tags (a quoted attribute value may hold a '>'), text
+_PIECES = re.compile(r"""(<script\b.*?</script>|<style\b.*?</style>|<!--.*?-->|<(?:[^>"']|"[^"]*"|'[^']*')*>)""",
+                     re.S | re.I)
+_I18N_RX = re.compile(r"window\.I18N = (\{.*?\});\n")
+_TITLES_RX = re.compile(r"window\.AA_TITLES = (\{.*?\});\n")
+
+
+def _shown_attrs(tag):
+    """[(name, value as written, quote)] of the attributes of a tag a reader sees."""
+    out = []
+    if tag.startswith("<") and not tag.startswith(("</", "<!")):
+        for m in _TAG_ATTR.finditer(tag):
+            v = m.group(4)
+            if v is not None and _SHOWN_ATTR.fullmatch(m.group(2).lower()):
+                q = v[0] if v[0] in "\"'" else ""
+                out.append((m.group(2).lower(), v[1:-1] if q else v, q))
+    return out
+
+
+def _attr_lang(name):
+    return name[-2:] if name[-3:] in ("-en", "-fr", "-es") else "en"
+
+
+def _is_code_piece(piece):
+    return re.match(r"<(?:script|style)\b|<!--", piece, re.I) is not None
+
+
+def _scripts_strings(doc):
+    """The strings a page's scripts pass to tr8() / yr() (code: warned about, never rewritten)."""
+    scripts = "\n".join(re.findall(r"<script\b[^>]*>(.*?)</script>", doc, re.S | re.I))
+    return list(i18n._call_literals(scripts))
+
+
+def _shown_identifiers(doc):
+    """[(match, context)] of the database names and raw codes a public page shows (strict mode)."""
+    g = _guard()
+    pieces = _PIECES.split(doc)
+    texts = [" ".join(pieces[0::2]), *_scripts_strings(doc)]
+    texts += [v for p in pieces[1::2] if not _is_code_piece(p) for _, v, _ in _shown_attrs(p)]
+    m = _I18N_RX.search(doc)
+    if m:
+        texts += [v for tab in json.loads(m.group(1)).values() for v in tab.values()]
+    m = _TITLES_RX.search(doc)
+    if m:
+        texts += list(json.loads(m.group(1)).values())
+    out = []
+    for t in texts:
+        t = html.unescape(t)
+        for hit in g["any"].finditer(t):
+            out.append((hit.group(0), " ".join(t[max(0, hit.start() - 60):hit.end() + 30].split())))
+    return out
+
+
+def _clean_page(doc):
+    """(doc cleaned, [(original, replacement)], [script strings showing one]) — see above."""
+    changes = []
+
+    def txt(w):
+        return html.escape(w, quote=False)
+
+    def attr(w):
+        return html.escape(w, quote=True)
+
+    def tag(t):
+        if not t.startswith("<") or t.startswith(("</", "<!")):
+            return t
+
+        def one(m):
+            name, v = m.group(2).lower(), m.group(4)
+            if v is None or not _SHOWN_ATTR.fullmatch(name):
+                return m.group(0)
+            q = v[0] if v[0] in "\"'" else ""
+            new = _clean_text(v[1:-1] if q else v, _attr_lang(name), attr, changes)
+            return m.group(1) + m.group(2) + m.group(3) + q + new + q
+        return _TAG_ATTR.sub(one, t)
+
+    def values(piece, rx, clean):
+        """A JSON object in a head script, its values cleaned (keys never); as it was when clean."""
+        m = rx.search(piece)
+        if not m:
+            return piece
+        obj = json.loads(m.group(1))
+        new = clean(obj)
+        return piece if new == obj else piece[:m.start(1)] + json.dumps(new, ensure_ascii=False) + piece[m.end(1):]
+    out = []
+    for i, piece in enumerate(_PIECES.split(doc)):
+        if i % 2 == 0:
+            out.append(_clean_text(piece, "en", txt, changes))           # text between tags
+        elif piece[:7].lower() == "<script" and _I18N_RX.search(piece):
+            # the script dictionary's values and the tab titles; keys and code never
+            piece = values(piece, _I18N_RX, lambda tabs: {
+                l: {k: _clean_text(v, l, lambda w: w, changes) for k, v in tab.items()} for l, tab in tabs.items()})
+            out.append(values(piece, _TITLES_RX, lambda t: {
+                l: _clean_text(v, l if l in i18n.TABLES else "en", lambda w: w, changes) for l, v in t.items()}))
+        elif _is_code_piece(piece):
+            out.append(piece)
+        else:
+            out.append(tag(piece))
+    g = _guard()
+    script_hits = [s for s in _scripts_strings(doc) if g["any"].search(s)]
+    return "".join(out), changes, script_hits
+
+
+def _report_cleaned(cleaned):
+    """One ::warning:: line per page the guard cleaned (visible in the publish run's summary), and
+    one summary line."""
+    if not cleaned:
+        print(f"  identifier guard ({'strict' if GUARD_STRICT else 'auto-remove'}): no database names "
+              "or raw codes on the public pages")
+        return
+    n = n_scripts = 0
+    for name, (changes, script_hits) in sorted(cleaned.items()):
+        n_scripts += len(script_hits)
+        pairs = list(dict.fromkeys(f"{a!r}→{b!r}" for a, b in changes))
+        n += len(changes)
+        bits = []
+        if changes:
+            bits.append(f"{len(changes)} database name(s) / code(s) cleaned: " + ", ".join(pairs[:8])
+                        + (f" (+{len(pairs) - 8} more)" if len(pairs) > 8 else ""))
+        if script_hits:
+            bits.append(f"{len(script_hits)} script string(s) show one, not rewritten: "
+                        + ", ".join(repr(x[:60]) for x in script_hits[:3]))
+        print(f"::warning::public page {name}: " + "; ".join(bits))
+    print(f"::warning::identifier guard (auto-remove): {n} replacement(s), {n_scripts} script string(s) "
+          f"warned, on {len(cleaned)} public page(s) "
+          "— fix them at the source (the data, or the label tables in dashboards.py); "
+          "AA_SITE_GUARD=strict fails the build instead")
+
+
 def write_site():
     """Write every registered page: the public ones at the root, the rest under admin/.
 
@@ -291,7 +529,7 @@ def write_site():
     token = os.environ.get("EXTRACT_TOKEN", "").strip() or (
         (Path(__file__).parents[1] / ".extract_token").read_text().strip()
         if (Path(__file__).parents[1] / ".extract_token").exists() else "")
-    cut = {}
+    cut, leaks, cleaned = {}, {}, {}
     for name, (title, body) in _PAGES.items():
         if name in public:
             if to_admin:
@@ -310,6 +548,13 @@ def write_site():
                           public=True)
             if (token and token in doc) or "x-site-token" in doc:
                 raise SystemExit(f"FATAL: public page {name} carries the data service's token")
+            if GUARD_STRICT:
+                if hits := _shown_identifiers(doc):
+                    leaks[name] = hits
+            else:
+                doc, changes, script_hits = _clean_page(doc)
+                if changes or script_hits:
+                    cleaned[name] = (changes, script_hits)
             (OUT / name).write_text(doc)
         else:
             body = to_root.sub(lambda m: "../" + m.group(1), body)
@@ -319,6 +564,13 @@ def write_site():
     (adm_dir / "index.html").write_text(_render(
         "admin/index.html", "AA tracking — admin site", _admin_home(admin), NAV_ADMIN,
         f"Generated {stamp} from the dev <code>aa</code> schema ({DATA_STAMP}) · admin site"))
+    if leaks:
+        lines = [f"  {n}: {w!r} in “…{c}…”" for n, hits in sorted(leaks.items())
+                 for w, c in dict(hits).items()]
+        raise SystemExit("FATAL (AA_SITE_GUARD=strict): public pages show database names or raw codes "
+                         "(owner's rule: words only — map the code to its words, see dashboards.code_words):\n"
+                         + "\n".join(lines[:60]) + (f"\n  … and {len(lines) - 60} more" if len(lines) > 60 else ""))
+    _report_cleaned(cleaned)
     for asset in ROOT_ASSETS:
         shutil.copy(Path(__file__).parents[1] / "site_src" / asset, OUT / asset)
     for asset in ADMIN_ASSETS:
