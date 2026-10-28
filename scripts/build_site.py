@@ -245,7 +245,8 @@ def _render(name, title, body, nav, meta, public=False):
     # the header marks the page it is on (aria-current; the tab underlined), links only
     i = nav.find("<nav")
     if i >= 0:
-        nav = nav[:i] + nav[i:].replace(f'<a href="{name}"', f'<a href="{name}" aria-current="page"', 1)
+        nav = nav[:i] + re.sub(rf'(<a\b[^>]*?)href="{re.escape(name)}"', rf'\1href="{name}" aria-current="page"',
+                               nav[i:], count=1)
     skip = T("Skip to content") if public else "Skip to content"
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
