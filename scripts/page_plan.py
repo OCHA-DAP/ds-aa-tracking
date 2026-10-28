@@ -743,12 +743,15 @@ def build_plan(page, d):
         "".join(w(t).format(**{k: (v(w) if callable(v) else v) for k, v in vals.items()}) for t, vals in kpi_note)))
     rep_tag = (TF(" ({n} interim)", n=len(rep) - len(fin)) if len(rep) > len(fin) else "")
     gap_tag = (TF("{n} gap", n=len(gaps)) if len(gaps) == 1 else TF("{n} gaps", n=len(gaps)))
+    # the organisations tile, second in the row: what the count is made of, by type (owner, 2026-10-28)
+    org_mix = "<ul class='tb'>" + "".join(
+        f"<li>{T(label)} {int(n_by.get(k, 0))}</li>" for k, label in TYPE_GROUPS if n_by.get(k, 0)) + "</ul>"
     panels = f"""
 <div class='tiles'>
  <div class='tile'><div class='v'>{n_iasc}</div><div class='l'>{TB("sectors where the portfolio has planned or delivered AA<br>(IASC sector names; framework budgets, CERF projects of framework activations)")}</div></div>
+ <div class='tile'><div class='v'>{n_orgs}</div><div class='l'>{TF("organisations named in {n} current frameworks", n=n_fw_pt)}{org_mix}</div></div>
  <div class='tile'><div class='v'>{cash_share}</div><div class='l'>{TB("of the framework activations' CERF money in CERF's CVA file<br>delivered as cash or vouchers")}</div></div>
  <div class='tile'><div class='v'>{ppl_total / 1e6:.1f}M</div><div class='l'>{TBF("people reached, summed over the {n} of {m} CERF<br>allocations of framework activations that report it", n=len(rep), m=len(al))}</div></div>
- <div class='tile'><div class='v'>{n_orgs}</div><div class='l'>{TF("organisations named in {n} current frameworks", n=n_fw_pt)}</div></div>
  <div class='tile'><div class='v'>{loc_share}</div><div class='l'>{TBF("of the CERF sub-grant money of framework activations<br>to national / local actors (partner determined, {years})", years=sg_years)}</div></div>
 </div>
 

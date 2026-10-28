@@ -145,6 +145,7 @@ table.data.acts { min-width:560px; } table.data.acts td:first-child { white-spac
 @media (max-width:759px) { .tiles { grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; } .tile { padding:10px 12px; } }
 .tile .v { font-size:22px; font-weight:700; }
 .tile .l { font-size:12px; color:#666; }
+.tile .l ul.tb { margin:4px 0 0; padding:0 0 0 15px; } .tile .l ul.tb li { margin:0; }   /* a tile's breakdown, as on the Map */
 .fbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; background:#fff;
         border:1px solid #e0e0e0; border-radius:6px; padding:10px 14px; margin:12px 0;
         position:sticky; top:0; z-index:5; }
