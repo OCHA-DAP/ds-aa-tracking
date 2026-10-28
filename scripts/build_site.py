@@ -288,7 +288,14 @@ def _admin_home(admin):
 # pass to tr8() / yr() — they are code, and the dictionary's keys. Not seen at all: a data value a
 # script prints as it is.
 GUARD_STRICT = os.environ.get("AA_SITE_GUARD", "").strip().lower() == "strict"
-_DB_NAME = r"(?:aa\.[a-z_]+(?:\.[a-z_]+)*|v_[a-z]+(?:_[a-z]+)*)"      # aa.<table>[.<column>], v_<view>
+# aa.<table>[.<column>] and v_<view>. A table name has an underscore (file extensions never do:
+# 'aa.pdf' is not one) or is one of the schema's single-word tables; a column, when given, has one
+# too ('aa.window.html' is a file). Not followed by '.<letter>' (a file name).
+_ONE_WORD_TABLES = sorted({t for names in (trk_schema.TABLES, trk_schema.DURABLE_TABLES,
+                                           trk_schema.LEGACY_TABLES, trk_schema.VIEWS)
+                           for t in names if "_" not in t} | {"activation", "cirv", "fund", "window"})
+_DB_NAME = (r"(?:aa\.(?:[a-z]+_[a-z_]+|" + "|".join(_ONE_WORD_TABLES) + r")(?:\.[a-z]+_[a-z_]+)?"
+            r"|v_[a-z]+(?:_[a-z]+)*)(?!\.?[\w/-])")
 _NOT_IN_PATH = (r"(?<![\w/.=?&-])", r"(?![\w/-])")                    # not in a file name, path or query
 _GUARD = {}
 
@@ -366,11 +373,35 @@ def _clean_text(t, lang, esc, changes):
     return t
 
 
-_ATTR_RX = re.compile(r"""(\s(title|placeholder|aria-label|alt|data-(?:en|fr|es)|data-[a-z-]+-(?:en|fr|es))=)(["'])(.*?)\3""", re.S)
+# a tag's attributes one after another (a quoted value is consumed whole, so a 'title=' inside
+# another attribute's value is never taken for an attribute); the ones a reader sees
+_TAG_ATTR = re.compile(r"""(\s+)([^\s=/>"']+)(?:(\s*=\s*)("[^"]*"|'[^']*'|[^\s>"']+))?""")
+_SHOWN_ATTR = re.compile(r"title|placeholder|aria-label|alt|data-(?:en|fr|es)|data-[a-z-]+-(?:en|fr|es)")
 # a page in pieces: scripts, styles, comments, tags (a quoted attribute value may hold a '>'), text
 _PIECES = re.compile(r"""(<script\b.*?</script>|<style\b.*?</style>|<!--.*?-->|<(?:[^>"']|"[^"]*"|'[^']*')*>)""",
                      re.S | re.I)
 _I18N_RX = re.compile(r"window\.I18N = (\{.*?\});\n")
+_TITLES_RX = re.compile(r"window\.AA_TITLES = (\{.*?\});\n")
+
+
+def _shown_attrs(tag):
+    """[(name, value as written, quote)] of the attributes of a tag a reader sees."""
+    out = []
+    if tag.startswith("<") and not tag.startswith(("</", "<!")):
+        for m in _TAG_ATTR.finditer(tag):
+            v = m.group(4)
+            if v is not None and _SHOWN_ATTR.fullmatch(m.group(2).lower()):
+                q = v[0] if v[0] in "\"'" else ""
+                out.append((m.group(2).lower(), v[1:-1] if q else v, q))
+    return out
+
+
+def _attr_lang(name):
+    return name[-2:] if name[-3:] in ("-en", "-fr", "-es") else "en"
+
+
+def _is_code_piece(piece):
+    return re.match(r"<(?:script|style)\b|<!--", piece, re.I) is not None
 
 
 def _scripts_strings(doc):
@@ -382,12 +413,15 @@ def _scripts_strings(doc):
 def _shown_identifiers(doc):
     """[(match, context)] of the database names and raw codes a public page shows (strict mode)."""
     g = _guard()
-    shown = re.sub(r"<script\b.*?</script>|<style\b.*?</style>|<!--.*?-->", " ", doc, flags=re.S | re.I)
-    texts = [re.sub(r"<[^>]+>", " ", shown), *(m.group(4) for m in _ATTR_RX.finditer(shown)),
-             *_scripts_strings(doc)]
+    pieces = _PIECES.split(doc)
+    texts = [" ".join(pieces[0::2]), *_scripts_strings(doc)]
+    texts += [v for p in pieces[1::2] if not _is_code_piece(p) for _, v, _ in _shown_attrs(p)]
     m = _I18N_RX.search(doc)
     if m:
         texts += [v for tab in json.loads(m.group(1)).values() for v in tab.values()]
+    m = _TITLES_RX.search(doc)
+    if m:
+        texts += list(json.loads(m.group(1)).values())
     out = []
     for t in texts:
         t = html.unescape(t)
@@ -409,20 +443,35 @@ def _clean_page(doc):
     def tag(t):
         if not t.startswith("<") or t.startswith(("</", "<!")):
             return t
-        return _ATTR_RX.sub(lambda m: m.group(1) + m.group(3) + _clean_text(
-            m.group(4), (m.group(2)[-2:] if m.group(2)[-3:] in ("-en", "-fr", "-es") else "en"),
-            attr, changes) + m.group(3), t)
+
+        def one(m):
+            name, v = m.group(2).lower(), m.group(4)
+            if v is None or not _SHOWN_ATTR.fullmatch(name):
+                return m.group(0)
+            q = v[0] if v[0] in "\"'" else ""
+            new = _clean_text(v[1:-1] if q else v, _attr_lang(name), attr, changes)
+            return m.group(1) + m.group(2) + m.group(3) + q + new + q
+        return _TAG_ATTR.sub(one, t)
+
+    def values(piece, rx, clean):
+        """A JSON object in a head script, its values cleaned (keys never); as it was when clean."""
+        m = rx.search(piece)
+        if not m:
+            return piece
+        obj = json.loads(m.group(1))
+        new = clean(obj)
+        return piece if new == obj else piece[:m.start(1)] + json.dumps(new, ensure_ascii=False) + piece[m.end(1):]
     out = []
     for i, piece in enumerate(_PIECES.split(doc)):
         if i % 2 == 0:
             out.append(_clean_text(piece, "en", txt, changes))           # text between tags
-        elif piece[:7].lower() == "<script" and (m := _I18N_RX.search(piece)):
-            tabs = json.loads(m.group(1))                               # the dictionary's values only
-            new = {l: {k: _clean_text(v, l, lambda w: w, changes) for k, v in tab.items()}
-                   for l, tab in tabs.items()}
-            out.append(piece if new == tabs else piece[:m.start(1)]
-                       + json.dumps(new, ensure_ascii=False) + piece[m.end(1):])
-        elif re.match(r"<(?:script|style)\b|<!--", piece, re.I):
+        elif piece[:7].lower() == "<script" and _I18N_RX.search(piece):
+            # the script dictionary's values and the tab titles; keys and code never
+            piece = values(piece, _I18N_RX, lambda tabs: {
+                l: {k: _clean_text(v, l, lambda w: w, changes) for k, v in tab.items()} for l, tab in tabs.items()})
+            out.append(values(piece, _TITLES_RX, lambda t: {
+                l: _clean_text(v, l if l in i18n.TABLES else "en", lambda w: w, changes) for l, v in t.items()}))
+        elif _is_code_piece(piece):
             out.append(piece)
         else:
             out.append(tag(piece))
@@ -438,8 +487,9 @@ def _report_cleaned(cleaned):
         print(f"  identifier guard ({'strict' if GUARD_STRICT else 'auto-remove'}): no database names "
               "or raw codes on the public pages")
         return
-    n = 0
+    n = n_scripts = 0
     for name, (changes, script_hits) in sorted(cleaned.items()):
+        n_scripts += len(script_hits)
         pairs = list(dict.fromkeys(f"{a!r}→{b!r}" for a, b in changes))
         n += len(changes)
         bits = []
@@ -450,7 +500,8 @@ def _report_cleaned(cleaned):
             bits.append(f"{len(script_hits)} script string(s) show one, not rewritten: "
                         + ", ".join(repr(x[:60]) for x in script_hits[:3]))
         print(f"::warning::public page {name}: " + "; ".join(bits))
-    print(f"::warning::identifier guard (auto-remove): {n} replacement(s) on {len(cleaned)} public page(s) "
+    print(f"::warning::identifier guard (auto-remove): {n} replacement(s), {n_scripts} script string(s) "
+          f"warned, on {len(cleaned)} public page(s) "
           "— fix them at the source (the data, or the label tables in dashboards.py); "
           "AA_SITE_GUARD=strict fails the build instead")
 
