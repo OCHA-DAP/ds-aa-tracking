@@ -528,8 +528,10 @@ def build(d, e, public, out, snapshot_at):
         me = (r.country_iso3, r.hazard, str(r.event_date), r.event_type, wn or "")
         rows = []
         for x in f.itertuples():
+            # every funding row carries every key, as every table row does (null: no figure)
             row = {"fund_code": x.fund_code, "allocation_code": _cell(x.allocation_code),
-                   "amount_usd": _cell(x.amount_usd)}
+                   "amount_usd": _cell(x.amount_usd), "people_reached": None,
+                   "people_reached_interim": None, "people_planned": None, "allocation_shared": None}
             if x.fund_code == "cerf" and x.allocation_code in reach:
                 got, interim, planned = reach[x.allocation_code]
                 mine_ = first.get(x.allocation_code) == me
