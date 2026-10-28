@@ -16,9 +16,15 @@
 #   renditions (<key>-w<width>.jpg, scripts/sync_media.py): any other nested path aborts
 #   before committing, and any other directory in the pushed tree is fatal
 # - every page published is a staticrypt page: one that is not aborts before committing
+# - the OPEN LAYER (scripts/llm_layer.py) is published unencrypted on purpose: llms.txt,
+#   llms-full.txt, robots.txt, sitemap.xml, *.md (framework pages, document reads), pdf-*.txt
+#   (document texts) and aa-*.json / aa-*.csv (the tables) at the top level, for fetch-based
+#   tools and LLMs. Never a page, never anything from admin/.
 # The mock-up of the site on unocha.org (scripts/mock_unocha.py: mock-unocha*.html, unlisted) is
 # made from the built public pages and published with them, under the public password.
 set -euo pipefail
+OPEN_GLOBS='*.md aa-*.json aa-*.csv pdf-*.txt llms.txt llms-full.txt robots.txt sitemap.xml'
+open_files() { ( cd "$1" && shopt -s nullglob && for g in $OPEN_GLOBS; do for f in $g; do echo "$f"; done; done ); }
 cd "$(dirname "$0")/.."
 PW="${SITE_PASSWORD:-anticipation2026}"
 ADMIN_PW="${ADMIN_PASSWORD:-}"
@@ -33,9 +39,17 @@ if [ -z "${SKIP_BUILD:-}" ]; then
   uv run python scripts/mock_unocha.py \
     || { rm -f site_build/mock-*.html; echo "::warning::mock-up (scripts/mock_unocha.py) failed: not published"; }
   rm -rf site_encrypted          # nothing from an earlier build may be published by accident
+  # the password page is all a program (a crawler, an AI assistant) gets from a page: it says
+  # where the open layer is, in the visible text and as an alternate link, so a reader that
+  # cannot type a password is not left at a dead end (staticrypt inserts the instructions as HTML)
   npx -y staticrypt site_build/*.html -d site_encrypted -p "$PW" --short --remember 30 \
     --template-title "AA tracking review" \
-    --template-instructions "Internal review site. Ask Tristan for the password."
+    --template-instructions "Internal review site. Ask Tristan for the password.<br><br><small>Programs and AI assistants: the data behind these pages is public and is published openly on purpose, no password needed. Start at <a href='llms.txt'>llms.txt</a>.</small>"
+  for f in site_encrypted/*.html; do
+    alt=llms.txt; b=$(basename "$f" .html)
+    [ -f "site_build/$b.md" ] && alt="$b.md"          # a framework page: its Markdown twin
+    ALT="$alt" perl -pi -e '$d ||= s{</head>}{<link rel="alternate" type="text/markdown" href="$ENV{ALT}" title="Machine-readable version, no password" />\n<link rel="help" type="text/plain" href="llms.txt" title="Index of the open, machine-readable layer" />\n</head>}' "$f"
+  done
   # the admin password goes through the environment, not the command line
   STATICRYPT_PASSWORD="$ADMIN_PW" npx -y staticrypt site_build/$ADMIN/*.html -d site_encrypted/$ADMIN \
     --short --remember 30 \
@@ -64,6 +78,7 @@ trap 'git worktree remove --force "$WT" 2>/dev/null || true' EXIT
 # the published tree is exactly this build: a page dropped from the build, or moved to the
 # admin site, must not linger at its old address
 rm -f "$WT"/*.html "$WT"/adm-*.json "$WT"/pdf.min.js "$WT"/pdf.worker.min.js
+for f in $(open_files "$WT"); do rm -f "$WT/$f"; done
 rm -rf "${WT:?}/$ADMIN" "${WT:?}/media"
 mkdir "$WT/$ADMIN" "$WT/media"
 if compgen -G 'site_media/*.jpg' >/dev/null; then cp site_media/*.jpg "$WT/media/"; fi
@@ -79,11 +94,14 @@ for a in pdf.min.js pdf.worker.min.js; do          # the data-entry page only: a
 done
 # per-country admin-boundary geometry for the landing map (public CODAB data, not encrypted)
 cp site_build/adm-*.json "$WT"/
+# the open layer (unencrypted by design; the build already checked it for the proxy token)
+for f in $(open_files site_build); do cp "site_build/$f" "$WT/$f"; done
 touch "$WT/.nojekyll"
 (
   cd "$WT"
   git add -u .                   # tracked files only: what changed and what went away
   for f in *.html adm-*.json chart.umd.js sankey.js unocha.css .nojekyll; do git add -f "./$f"; done
+  for f in $(open_files .); do git add -f "./$f"; done
   for f in $ADMIN/*.html $ADMIN/pdf.min.js $ADMIN/pdf.worker.min.js; do git add -f "./$f"; done
   if [ -n "$(ls -A media)" ]; then git add -f ./media; fi
   # the tree about to be committed (not just what changed)
@@ -99,10 +117,17 @@ touch "$WT/.nojekyll"
     fi
   done
   [ -f "$ADMIN/index.html" ] || { echo "FATAL: the admin site has no index.html — aborting" >&2; exit 1; }
+  # the open files are plain data: never a token, never a page
+  for f in $(open_files .); do
+    if grep -q "x-site-token\|staticrypt" "$f"; then
+      echo "FATAL: open file $f carries a token or a page — aborting" >&2; exit 1
+    fi
+  done
+  [ -f llms.txt ] || { echo "FATAL: the open layer is missing (no llms.txt) — aborting" >&2; exit 1; }
   if git diff --cached --quiet; then
     echo "nothing changed — not publishing"
   elif [ -n "${DRY_RUN:-}" ]; then
-    echo "DRY_RUN: would publish $(git ls-files | grep -c -v "/") top-level files, $(git ls-files "$ADMIN" | wc -l | tr -d ' ') under $ADMIN/ and $(git ls-files media | wc -l | tr -d ' ') under media/"
+    echo "DRY_RUN: would publish $(git ls-files | grep -c -v "/") top-level files ($(open_files . | wc -l | tr -d ' ') open), $(git ls-files "$ADMIN" | wc -l | tr -d ' ') under $ADMIN/ and $(git ls-files media | wc -l | tr -d ' ') under media/"
     git diff --cached --stat | tail -1
   else
     git commit -q -m "Publish review site $(date +%F)"
