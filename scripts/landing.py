@@ -685,6 +685,12 @@ PRE_FUNDS = ("cerf", "pooled", "all")   # the fund parts of a pre-arranged envel
 # document is authoritative, and the owner's sheet quotes it — else the backtest's
 # (aa.v_framework_performance: Weibull over the simulated activation years). Swap to prefer the backtest.
 RP_PREFER = ("stated", "backtest")
+# the two figures, one frame each of (country_iso3, hazard, version, rp) — read here and by the
+# Model page's frameworks table (page_model), so the two tables show the same return period
+RP_SQL = {"backtest": "SELECT country_iso3, hazard, version, overall_return_period AS rp "
+                      "FROM aa.v_framework_performance WHERE overall_return_period IS NOT NULL",
+          "stated": "SELECT country_iso3, hazard, version, overall_rp_reported AS rp "
+                    "FROM aa.version_performance_reported WHERE overall_rp_reported IS NOT NULL"}
 
 
 def _rp_fields(bt, st):
@@ -692,6 +698,35 @@ def _rp_fields(bt, st):
     by = {"backtest": bt, "stated": st}
     src = next((k for k in RP_PREFER if by[k] is not None), None)
     return {"rp": by[src] if src else None, "rp_src": src, "rp_bt": bt, "rp_st": st}
+
+
+def kb_key_match(series, version):
+    """A version label against a column of them: the same, or one a prefix of the other
+    ('2026' / '2026-04-17')."""
+    return series.map(lambda v: v == version or str(v).startswith(version)
+                      or version.startswith(str(v)))
+
+
+def rp_of(df, c, h, version):
+    """A version's figure in a (country, hazard, version, rp) frame: its own row, else the one
+    row whose label is a prefix of the other ('2026' / '2026-04-17'); none when ambiguous."""
+    x = df[(df["country_iso3"] == c) & (df["hazard"] == h)]
+    y = x[x["version"].astype(str) == str(version)]
+    if not len(y):
+        y = x[kb_key_match(x["version"].astype(str), str(version))]
+    return _num(y["rp"].iloc[0]) if len(y) == 1 else None
+
+
+def monitoring_months(fm, cal, c, h):
+    """A version's monitoring months in any year and where they come from: its record's
+    monitoring_period, else the tracking sheets' calendar for the pair (cal: d["calendar"]).
+    The Model page's frameworks table reads them the same way."""
+    mp = fm.get("monitoring_period") or {}
+    months = [int(m) for m in (mp.get("months") or []) if isinstance(m, int)]
+    if months:
+        return months, mp.get("source")
+    months = sorted(int(m) for m in cal.loc[(cal["country_iso3"] == c) & (cal["hazard"] == h), "month"].unique())
+    return months, "calendar sheet" if months else None
 
 
 def _fund_registry(_try):
@@ -1116,10 +1151,8 @@ def assemble(d, e):
                  ["country_iso3", "hazard", "n"])
     adhoc_cerf = _adhoc_cerf(e, acts, actf, _try)
     # the framework's OVERALL return period (any of its windows activating in a year), per version
-    fperf = _try("SELECT country_iso3, hazard, version, overall_return_period AS rp FROM aa.v_framework_performance "
-                 "WHERE overall_return_period IS NOT NULL", ["country_iso3", "hazard", "version", "rp"])
-    frep = _try("SELECT country_iso3, hazard, version, overall_rp_reported AS rp FROM aa.version_performance_reported "
-                "WHERE overall_rp_reported IS NOT NULL", ["country_iso3", "hazard", "version", "rp"])
+    fperf = _try(RP_SQL["backtest"], ["country_iso3", "hazard", "version", "rp"])
+    frep = _try(RP_SQL["stated"], ["country_iso3", "hazard", "version", "rp"])
     freg = _fund_registry(_try)
     # versions that allow more than one activation a year (tropical cyclones: two storms in a
     # season; aa.framework_version.activations_per_year). Their pre-arranged money is multiplied
@@ -1202,19 +1235,6 @@ def assemble(d, e):
                 return pg
         return None
 
-    def kb_key_match(series, version):
-        return series.map(lambda v: v == version or str(v).startswith(version)
-                          or version.startswith(str(v)))
-
-    def rp_of(df, c, h, version):
-        """A version's figure in a (country, hazard, version, rp) frame: its own row, else the one
-        row whose label is a prefix of the other ('2026' / '2026-04-17'); none when ambiguous."""
-        x = df[(df["country_iso3"] == c) & (df["hazard"] == h)]
-        y = x[x["version"].astype(str) == str(version)]
-        if not len(y):
-            y = x[kb_key_match(x["version"].astype(str), str(version))]
-        return _num(y["rp"].iloc[0]) if len(y) == 1 else None
-
     countries = {}
     for _, r in cur.iterrows():
         c, h = r["country_iso3"], r["hazard"]
@@ -1235,13 +1255,7 @@ def assemble(d, e):
             fm = pg["fm"] if pg else {}
             mp = fm.get("monitoring_period") or {}
             tf = fm.get("trigger_facets") or {}
-            months = [int(m) for m in (mp.get("months") or []) if isinstance(m, int)]
-            if not months:
-                months = sorted(int(m) for m in cal.loc[(cal["country_iso3"] == c)
-                                                        & (cal["hazard"] == h), "month"].unique())
-                months_src = "calendar sheet" if months else None
-            else:
-                months_src = mp.get("source")
+            months, months_src = monitoring_months(fm, cal, c, h)
             # backtested windows for this version
             w_v = win[(win["country_iso3"] == c) & (win["hazard"] == h)
                       & kb_key_match(win["version"], v.version)]
