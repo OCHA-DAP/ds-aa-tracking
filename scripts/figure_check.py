@@ -136,8 +136,14 @@ def check() -> None:
              "labelled on the page)")
 
     if not bad:
+        # what the pre-arranged comparisons can and cannot catch (review of PR #58): the Map, the
+        # Financing page and the framework pages all read prearranged_now(), so those checks catch a
+        # page that transforms it differently, not a wrong envelope; released money, the counts,
+        # History's events and people reached come from independent queries
         print(f"  figure check: the figures shown on more than one page agree ({n[0]} comparisons — "
-              f"Map, Financing, Activities, History; {pages})")
+              f"Map, Financing, Activities, History; {pages}). Pre-arranged figures share one source "
+              f"(prearranged_now) and are checked for consistent handling; released money, counts and "
+              f"people reached are independent")
         return
     for b in bad[:25]:
         print(f"::warning::figure check: {b}")

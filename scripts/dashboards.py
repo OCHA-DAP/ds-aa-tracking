@@ -1082,8 +1082,10 @@ def cofinancing_now(d, cof, cy):
     map's current year count it. cof: the dated co-financing rows (funding_series, kind
     'cofinancing'). A framework's figure is its current-year total (the sheet totals are
     authoritative for amounts), split in the proportions of the lines its latest version states
-    (d["cof_lines"]): the document's own figures where the lines add up to the total; the lines
-    themselves where no yearly total is recorded; the total under its own financier ("not
+    (d["cof_lines"]) when the lines make the total within 5% (the document's own figures), or
+    exceed a total reported for the same version (scaled down to it); lines short of the total
+    keep their stated figures and leave the rest 'not recorded'; an earlier version's smaller total
+    gives way to the lines; the lines themselves where no yearly total is recorded; the total under its own financier ("not
     recorded" when it names none) where no line does. A line naming only a group ('partners',
     COF_GROUP) is a total in words, not a line. One source per version (the most recently
     entered), so a document read twice is not counted twice — but a later entry of other lines
@@ -1103,12 +1105,27 @@ def cofinancing_now(d, cof, cy):
         t = tot[(tot["country_iso3"] == c) & (tot["hazard"] == h)]
         lk = ln[(ln["country_iso3"] == c) & (ln["hazard"] == h)]
         if len(lk) and lk["amount_usd"].sum() > 0:
-            f = t["amount_usd"].sum() / lk["amount_usd"].sum() if len(t) else 1.0
+            lsum, tsum = float(lk["amount_usd"].sum()), float(t["amount_usd"].sum()) if len(t) else None
+            # the total split in the lines' proportions only when both belong to the same version (or
+            # nearly agree): another version's lines would put figures on organisations that no
+            # document states (review of PR #58: Cuba's 2025 total over the 2026 lines gave WFP $2.3M,
+            # the document $218k). Otherwise the lines count as stated and whatever the total holds
+            # beyond them stays unattributed ('not recorded'); a later document stating more than an
+            # older version's total counts its lines.
+            # proportional only where the lines nearly make the total, or (same version) exceed it and
+            # the total binds; lines short of the total keep their stated figures and the shortfall
+            # stays 'not recorded' (Niger floods: FAO's $100k stated, WFP's amount still to confirm)
+            same_v = tsum is not None and set(t["version"].astype(str)) == set(lk["version"].astype(str))
+            same = tsum is not None and (abs(lsum - tsum) <= 0.05 * tsum or (same_v and lsum > tsum))
+            f = tsum / lsum if same else 1.0
+            rest = round(tsum - lsum, 2) if tsum is not None and not same and tsum > lsum else 0.0
             parts = [(r.version, r.financier, r.agency, round(float(r.amount_usd * f), 2)) for r in lk.itertuples()]
             # cents: the parts add up to the framework's figure exactly
-            fig = round(float(t["amount_usd"].sum() if len(t) else lk["amount_usd"].sum()), 2)
+            fig = round(tsum if same else lsum, 2)
             v, fin, ag, usd = parts[-1]
             parts[-1] = (v, fin, ag, round(usd + fig - sum(x[3] for x in parts), 2))
+            if rest:
+                parts.append((t["version"].iloc[-1], None, None, rest))
         else:
             parts = [(r.version, r.financier, None, float(r.amount_usd)) for r in t.itertuples()]
         for v, fin, ag, usd in parts:
@@ -1654,8 +1671,10 @@ function mountFlow(cfg){
   function drawFlow(){
     const mode = modeOf();
     fillChoices(mode);
-    const want = (document.getElementById('flS').value || '').trim();
-    pick = choices.get(want) || '';
+    // the pick is kept by its id, so a language switch (labels re-translated) or a year with
+    // other names keeps it: the box shows its label again, or empties if it is not in this view
+    if(pick){ const hit = [...choices].find(([, v])=>v===pick);
+      document.getElementById('flS').value = hit ? hit[0] : ''; if(!hit) pick = ''; }
     if(pick.startsWith('c:') && !flC.checked) flC.checked = true;     // a country needs the country column
     if(pick.startsWith('d:') && !flD.checked) flD.checked = true;     // a donor, the donor column
     const F = buildFlow(D.flow, mode, flY.value, flD.checked, mode==='r' && flP.checked, D.fundNames, 12, keep, cfg.topOrgs, flK.checked, flC.checked, pick);
@@ -1689,7 +1708,7 @@ function mountFlow(cfg){
   document.querySelectorAll("input[name='flM']").forEach(el=>el.addEventListener('change', ()=>{ fillYears(); drawFlow(); }));
   fillYears();
   [flY, flD, flP, flK, flC].forEach(el=>el.addEventListener('change', drawFlow));
-  document.getElementById('flS').addEventListener('change', drawFlow);
+  document.getElementById('flS').addEventListener('change', ev=>{ pick = choices.get(ev.target.value.trim()) || ''; drawFlow(); });
   document.addEventListener('aalang', ()=>{ fillYears(); drawFlow(); });
   drawFlow();
   return drawFlow;
@@ -1727,9 +1746,10 @@ COF_YEAR_HOW = ("Pre-arranged co-financing only: money from outside CERF and the
                 "and cumulative (a stock).")
 COF_WHO_HOW = ("Today's pre-arranged co-financing — the current year of the chart by year — by who co-finances "
                "it. The yearly totals mostly name no co-financer; the framework documents do. So each "
-               "framework's total is split in the proportions of the co-financing lines its latest framework "
-               "document states: where those lines add up to the total, the bars show the document's own "
-               "figures; where the document states lines but no total is reported for the year, the lines "
+               "framework's co-financing is shown by the lines its latest framework document states: where "
+               "those lines make up the year's total, the bars show the document's own figures; where they fall "
+               "short of it, the lines count as the document states them and the rest of the total is <i>not "
+               "recorded</i>; where the document states lines but no total is reported for the year, the lines "
                "themselves count. A framework whose co-financing names no one is in the <i>not recorded</i> "
                "bar, shown last. One bar per organisation: the kind of money (an agency's own funds, a trust "
                "fund, preparedness or implementation co-financing) and each framework's share are in the "
@@ -3535,6 +3555,13 @@ def build_framework_pages(page, tbl, d, e=None):
         # by the one envelope rule (envelope_by_fund): Nigeria's 2026 "CBPF" and NHF rows are one $1M
         envelope = float(envelope_by_fund(ev, d["fund_names"])["total_usd"].sum())
         n_apy = (d.get("act_factors") or {}).get((c, h, str(split_version)), 1)
+        # the split is an earlier version's while the current one allows N activations a year: the
+        # chart's current-year bar counts the current envelope N times (review of PR #58: Cuba)
+        cur_apy = (d.get("act_factors") or {}).get((c, h, str(version)), 1)
+        if split_note and cur_apy > 1:
+            split_note += (" <span class='muted' style='font-size:11px'>"
+                           + TF("The current version ({v}) allows {n} activations a year: the chart, the map and the Financing page count its envelope {n} times.", v=version, n=cur_apy)
+                           + "</span>")
         cy_ = pd.Timestamp.now().year     # the cross-page figure check (build_site): this page's pre-arranged figures
         figure_check.KEY.setdefault("fw", {})[f"{c}|{h}"] = dict(
             chart_cy=(sum(v[chart_data["years"].index(cy_)] for v in chart_data["series"].values())
