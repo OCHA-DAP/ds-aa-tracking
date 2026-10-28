@@ -610,7 +610,7 @@ def _fetch(e):
              AND s.sector_amount IS NOT NULL""", e)
     d["agency"] = pd.read_sql(
         """SELECT c.year, c.country_iso3, p.agency_short_name AS agency,
-                  p.amount_approved
+                  p.amount_approved, p.application_code
            FROM aa.cerf_project p
            JOIN aa.cerf_allocation c ON c.application_code = p.application_code
            WHERE c.application_code IN (""" + _CERF_AA_CODES_SQL + ")", e)
@@ -768,12 +768,16 @@ def _fetch(e):
     # and the "funded sub-grantees" block of the framework pages)
     # dated by the allocation's year, as the agency totals are (the sub-grant sheet's own year
     # runs a year early for some: CERF-HTI-24-RR-1399, a 2025 allocation, was dated 2024)
+    # The AA sub-grants are those of the AA allocations the site counts (_CERF_AA_CODES_SQL), as
+    # the Activities page reads them — not the sheet's is_aa flag, which misses four of them
+    # (NER 2022, NPL 2021, MDG 2023, TLS 2024: $4.0M; 2026-10-28)
     d["subgrant_aa"] = pd.read_sql(
         """SELECT g.project_code, g.application_code, g.agency, coalesce(c.year, g.year) AS year,
                   g.country_iso3, g.partner_name, g.partner_type, g.localization, g.subgrant_usd
            FROM aa.cerf_subgrant g
            LEFT JOIN aa.cerf_allocation c ON c.application_code = g.application_code
-           WHERE g.is_aa AND g.subgrant_usd IS NOT NULL""", e)
+           WHERE g.application_code IN (""" + _CERF_AA_CODES_SQL + """)
+             AND g.subgrant_usd IS NOT NULL""", e)
     # the agency × sector split of EVERY version (the framework pages show the current
     # version's split next to its envelope; plan_rows above keeps only the live ones)
     d["split_all"] = pd.read_sql(
@@ -1854,41 +1858,43 @@ def build_funding(page, d):
         pr["amount_usd"] = pr["amount_usd"].astype(float) * [
             fac.get((c, h, str(v)), 1) for c, h, v in zip(pr["country_iso3"], pr["hazard"], pr["version"])]
 
-    # UN agencies vs partners: CERF AA project money per year (direct UN spend) against
-    # what the agencies sub-granted (cerf_subgrant, is_aa) by partner-type group
+    # UN agencies vs partners (owner, 2026-10-28: the chart's 2026 $43.7M did not match the map's
+    # CERF $38M): CERF's RELEASED money — the CERF rows of 'AA released by year, by fund' (c2), by
+    # the activation's year, every filter of the page — split per allocation by the share its
+    # agencies sub-granted of its project budgets (at most all of it), by partner-type group and by
+    # localisation; the rest is direct UN spend. Project budgets can exceed the money released
+    # (COD-26-RR-1554: $1.5M of projects on $1.0M), so the share carries over, never the budget, and
+    # a sub-grant counts in the year its allocation's money does. An allocation with no project
+    # records (or a row with no allocation code) has no split: 'split not known' (drawUN).
     sg = d["subgrant_aa"].copy()
     PT_GROUP = {"INGO": "INGO", "NNGO": "NNGO / local", "GOV": "government",
                 "RedC": "Red Cross / Red Crescent", "REDC": "Red Cross / Red Crescent"}
     sg["grp"] = sg["partner_type"].map(PT_GROUP).fillna("other")
-    # per region too, so the section follows the region filter (2026-10-16 LAC review: it
-    # showed the world's sub-grants from 2020 next to LAC's $22.5M)
-    rg_of = dict(zip(cur["country_iso3"], cur["region"].fillna("?")))
-    sg["rg"] = sg["country_iso3"].map(rg_of).fillna("?")
-    agr = d["agency"].assign(rg=d["agency"]["country_iso3"].map(rg_of).fillna("?"))
-    ag_year = agr.groupby("year")["amount_approved"].sum()
-    ag_yr = agr.groupby(["year", "rg"])["amount_approved"].sum()
-    sg_yr = sg.groupby(["year", "rg"])["subgrant_usd"].sum()
-    un_rows = [{"year": int(y), "rg": rg, "grp": "direct UN spend",
-                "usd": float(max(ag_yr.get((y, rg), 0) - sg_yr.get((y, rg), 0), 0))}
-               for y, rg in sorted(set(ag_yr.index) | set(sg_yr.index)) if y >= 2020]
-    un_rows += [{"year": int(r.year), "rg": r.rg, "grp": r.grp, "usd": float(r.subgrant_usd)}
-                for r in sg.groupby(["year", "rg", "grp"])["subgrant_usd"].sum().reset_index()
-                .itertuples() if r.year >= 2020]
-    un_partners = {"": int(sg["partner_name"].nunique()),
-                   **{rg: int(g["partner_name"].nunique()) for rg, g in sg.groupby("rg")}}
-    sub_total = float(sg["subgrant_usd"].sum())
-    loc = sg["localization"].fillna("").str.lower()
-    local_usd = float(sg.loc[loc == "local", "subgrant_usd"].sum())
+    # the local / national part: sub-grants typed Local; international NGOs and partners not yet
+    # typed (TBD, blank) make up the rest
+    sg["lk"] = sg["localization"].fillna("").str.lower().map({"local": "local", "ingo": "intl"}).fillna("untyped")
+    proj = d["agency"].groupby("application_code")["amount_approved"].sum()
+    pid = {n: i for i, n in enumerate(sorted(sg["partner_name"].dropna().astype(str).unique()))}
+    un_split = {}     # allocation code -> {g: share by group, l: share by localisation, p: partner ids}
+    for ac in act.loc[act["fund_code"] == "cerf", "allocation_code"].dropna().unique():
+        b = float(proj.get(ac, 0) or 0)
+        if b <= 0:
+            continue
+        x = sg[sg["application_code"] == ac]
+        k = 1 / max(b, float(x["subgrant_usd"].sum()))
+        un_split[ac] = {"g": {g: v * k for g, v in x.groupby("grp")["subgrant_usd"].sum().items() if v > 0},
+                        "l": {g: v * k for g, v in x.groupby("lk")["subgrant_usd"].sum().items() if v > 0},
+                        "p": sorted({pid[n] for n in x["partner_name"].dropna().astype(str)})}
+    # the tiles as the page opens (current frameworks and non-framework allocations, both funds);
+    # drawUN repaints them for every filter. Shares of the money whose split is known.
+    cr = act[(act["fund_code"] == "cerf") & act["g"].isin(["c", "a"])]
+    sp = [(float(v or 0), un_split[ac]) for ac, v in zip(cr["allocation_code"], cr["amount_usd"]) if ac in un_split]
+    known = sum(v for v, _ in sp)
+    sub_total = sum(v * sum(x["g"].values()) for v, x in sp)
+    local_usd = sum(v * x["l"].get("local", 0) for v, x in sp)
+    sub_share = (sub_total / known * 100) if known else 0
     local_share = (local_usd / sub_total * 100) if sub_total else 0
-    un_total = float(ag_year[ag_year.index >= 2020].sum())
-    sub_share = (sub_total / un_total * 100) if un_total else 0
-    # the local / national share per year: sub-grants typed Local ÷ all AA sub-grants that year;
-    # international NGOs and partners not yet typed (TBD, blank) make up the rest
-    sg["lk"] = loc.map({"local": "local", "ingo": "intl"}).fillna("untyped")
-    local_rows = [{"year": int(y), "rg": rg, "local": float(g.loc[g["lk"] == "local", "subgrant_usd"].sum()),
-                   "intl": float(g.loc[g["lk"] == "intl", "subgrant_usd"].sum()),
-                   "untyped": float(g.loc[g["lk"] == "untyped", "subgrant_usd"].sum())}
-                  for (y, rg), g in sg.groupby(["year", "rg"]) if y >= 2020]
+    n_un_partners = len({i for v, x in sp if v > 0 for i in x["p"]})
 
     flow_rows, flow_years, flow_default, fund_names = _money_flows(d, pre, act)
 
@@ -2016,15 +2022,15 @@ def build_funding(page, d):
 <p class='empty' id='unNone' style='display:none'>{T("The sub-grant reports are CERF's: select CERF, or both funds, to see them.")}</p>
 <div id='unBox'>
 <div class='tiles'>
- <div class='tile'><div class='v' id='uS'>{sub_share:.0f}%</div><div class='l' id='uSl'>{T("of CERF AA project money sub-granted to partners (2020→)")}</div></div>
+ <div class='tile'><div class='v' id='uS'>{sub_share:.0f}%</div><div class='l' id='uSl'>{T("of the CERF AA money released, sub-granted to partners")}</div></div>
  <div class='tile'><div class='v' id='uL'>{local_share:.0f}%</div><div class='l'>{T("localisation share — sub-grants to local / national actors (NNGO, government, Red Cross / Red Crescent)")}</div></div>
- <div class='tile'><div class='v' id='uT'>${sub_total/1e6:,.1f}M</div><div class='l' id='uTl'>{TF("sub-granted in total · {n} partners", n=sg['partner_name'].nunique())}</div></div>
+ <div class='tile'><div class='v' id='uT'>${sub_total/1e6:,.1f}M</div><div class='l' id='uTl'>{TF("sub-granted in total · {n} partners", n=n_un_partners)}</div></div>
 </div>
 <div class='grid'>
  <div class='panel'><h3>{T("CERF AA allocations by year — direct UN spend vs sub-granted to partners")}</h3><canvas id='c9' height='280'></canvas>
-   {how("Direct UN spend = CERF AA project budgets (OneGMS mirror; the allocations the activation record draws on, framework and non-framework) minus the sub-grants reported for the same year (CERF's sub-grant records, curated AA set). Partner groups from the sub-grant partner type; 'other' includes partners not yet typed. CERF's sub-grant reports cover framework and non-framework allocations together and carry no hazard: this section follows the fund switch and the region filter only. 2023 looks low because the only framework activations that year were DRC cholera ($1.5M): the CERF early-action allocations reported to the Anticipation Hub for 2023 are not counted as anticipatory action here, following the definition the Grand Bargain adopted at the end of 2024.")}</div>
+   {how("The CERF part of <i>AA released by year, by fund</i>, split in two: each bar is the CERF money released that year, the same figure as the CERF bar of that chart and the map's CERF figure, and follows the same filters. Each allocation's money is split by the share its agencies passed on to partners: the sub-grants CERF's records report for the allocation, divided by the allocation's project budgets (at most all of it). Project budgets can be larger than the money released, so the share carries over, not the budget. A sub-grant counts in the year the allocation's money is counted, whatever year its record carries. The rest is direct UN spend, which includes sub-grants not reported yet, so recent years show more direct spend. <i>Split not known</i>: money whose CERF allocation is not recorded, or has no project budgets; it is left out of the share sub-granted. Partner groups from the sub-grant partner type; 'other' includes partners not yet typed. 2023 looks low because the only framework activations that year were DRC cholera ($1.5M): the CERF early-action allocations reported to the Anticipation Hub for 2023 are not counted as anticipatory action here, following the definition the Grand Bargain adopted at the end of 2024.")}</div>
  <div class='panel'><h3>{T("Share of CERF AA sub-grants to local and national actors, by year")}</h3><canvas id='c10' height='280'></canvas>
-   {how("Each bar is one year's CERF AA sub-grants (100%): to local and national actors (national / local NGOs, government, national Red Cross / Red Crescent societies), to international NGOs, and to partners not yet typed in the reports. The label is the local and national share; the recent years fill in as partners are typed. Follows the fund switch and the region filter only.")}</div>
+   {how("Each bar is the part of one year's CERF money released that went to partners, the partner part of the chart on the left (100%): to local and national actors (national / local NGOs, government, national Red Cross / Red Crescent societies), to international NGOs, and to partners not yet typed in the reports. The label is the local and national share; the recent years fill in as partners are typed. Follows the same filters as the chart on the left.")}</div>
 </div>
 </div>"""
 
@@ -2034,7 +2040,7 @@ def build_funding(page, d):
                                          "in_gho", "g"])),
         "act": json.loads(_records(act, ["k", "country_iso3", "hz", "region", "year",
                                          "fund_code", "amount_usd", "event_type",
-                                         "in_gho", "g"])),
+                                         "in_gho", "g", "allocation_code"])),
         "ver": json.loads(_records(ver, ["k", "year", "kb_status", "hz", "region", "g", "funds"])),
         "now": json.loads(_records(vf, ["k", "country_iso3", "hz", "region", "ft", "total_usd", "g", "x"])),
         "fw": json.loads(_records(fw, ["k", "hz", "region", "lifecycle", "technical_support", "g", "funds"])),
@@ -2044,7 +2050,7 @@ def build_funding(page, d):
         "cof": json.loads(_records(cof, ["k", "hz", "region", "year", "in_gho", "g", "amount_usd"])),
         "cofNow": json.loads(_records(cof_now, ["k", "hz", "region", "g", "in_gho", "who", "amount_usd", "detail"])),
         "fwList": fw_list,
-        "un": un_rows, "local": local_rows, "unPartners": un_partners,
+        "unSplit": un_split,
         "flow": flow_rows, "flowYears": flow_years, "flowDefault": flow_default,
         "fundNames": fund_names, "cy": cy,
     }
@@ -2254,32 +2260,42 @@ function draw(){
   stackedBy('c8', SS, r=>r.sector, r=>r.amount_usd, {keys:topKeys(SS,r=>r.sector,r=>r.amount_usd,18), extra:{indexAxis:'y'}});
   tiles(s, geo, A, N);
   fwPaint(s, N);
-  // UN agencies and partners: CERF sub-grant reports, the fund switch only
+  // UN agencies and partners: the CERF part of c2 (A), split by the sub-grant reports
   const un = s.fund!=='pooled';
   unBox.style.display = un ? '' : 'none'; unNone.style.display = un ? 'none' : '';
-  if(un) drawUN(s);
+  if(un) drawUN(s, A);
   if(window._flowDraw) _flowDraw();
 }
-// UN vs partners (CERF data; hidden when only the Country and Regional Funds are selected):
-// the region filter applies, the other filters don't (the sub-grant reports carry no hazard)
-const UG = ['direct UN spend','INGO','NNGO / local','Red Cross / Red Crescent','government','other'];
-function drawUN(s){
-  const U = D.un.filter(r=>!s.rg || r.rg===s.rg);
-  const uy = uniqSorted(U, r=>r.year);
-  mkChart('c9','bar',uy.map(yLab),UG.map((g,i)=>({label:g, backgroundColor:PAL[i],
-    data:uy.map(y=>sumOf(U.filter(r=>r.grp===g&&r.year===y), r=>r.usd))})).filter(d=>d.data.some(v=>v)),
-    {stacked:true, totals:true});
-  const all = sumOf(U, r=>r.usd), sub = sumOf(U.filter(r=>r.grp!=='direct UN spend'), r=>r.usd);
-  // local and national share of the CERF AA sub-grants, per year (100% bars, local share labelled)
-  const by = {}; D.local.filter(r=>!s.rg || r.rg===s.rg).forEach(r=>{ const o = by[r.year] ??= {year:r.year, local:0, intl:0, untyped:0};
-    o.local += r.local; o.intl += r.intl; o.untyped += r.untyped; });
-  const L = Object.values(by).sort((a,b)=>a.year-b.year), yl = L.map(r=>r.year);
+// UN vs partners (hidden when only the Country and Regional Funds are selected): the CERF rows of
+// c2 (A: every filter applied, by the activation's year), each allocation's money split by the
+// share its agencies sub-granted of its project budgets (D.unSplit: g by partner group, l by
+// localisation, p the partners); no split recorded: 'split not known'. So c9 = c2's CERF bars.
+const UG = ['direct UN spend','INGO','NNGO / local','Red Cross / Red Crescent','government','other','split not known'];
+function drawUN(s, A){
+  const C = A.filter(r=>r.fund_code==='cerf'), uy = uniqSorted(C, r=>r.year);
+  const by = {}, lby = {}, pids = new Set();
+  let known = 0, sub = 0;
+  C.forEach(r=>{ const v = r.amount_usd||0, x = D.unSplit[r.allocation_code], o = by[r.year] ??= {};
+    const add = (g, u) => { o[g] = (o[g]||0) + u; };
+    if(!x){ add('split not known', v); return; }
+    const l = lby[r.year] ??= {year:r.year, local:0, intl:0, untyped:0};
+    let s_ = 0;
+    Object.entries(x.g).forEach(([g, sh])=>{ add(g, v*sh); s_ += v*sh; });
+    add('direct UN spend', v - s_); known += v; sub += s_;
+    Object.entries(x.l).forEach(([k, sh])=>{ l[k] += v*sh; });
+    if(v > 0) x.p.forEach(i=>pids.add(i)); });
+  const ds = UG.map((g,i)=>({label:g, backgroundColor: g==='split not known' ? '#c8ccd2' : PAL[i],
+    data:uy.map(y=>(by[y]||{})[g]||0)})).filter(d=>d.data.some(v=>v));
+  if(s.cum) ds.forEach(d=>{ d.data = cumulate(d.data); });   // as c2
+  mkChart('c9','bar',uy.map(yLab),ds,{stacked:true, totals:true});
+  // local and national share of the money passed to partners, per year (100% bars, local share labelled)
+  const L = Object.values(lby).filter(r=>r.local+r.intl+r.untyped > 0.5).sort((a,b)=>a.year-b.year), yl = L.map(r=>r.year);
   const lt = sumOf(L, r=>r.local), st = sumOf(L, r=>r.local+r.intl+r.untyped);
-  uS.textContent = all ? Math.round(100*sub/all)+'%' : '–';
-  uSl.textContent = tr8('of CERF AA project money sub-granted to partners') + (uy.length ? ` (${uy[0]}→)` : '') + (s.rg ? ` · ${tr8(s.rg)}` : '');
+  uS.textContent = known ? Math.round(100*sub/known)+'%' : '–';
+  uSl.textContent = tr8('of the CERF AA money released, sub-granted to partners') + (uy.length ? ` (${uy[0]}→)` : '') + (s.rg ? ` · ${tr8(s.rg)}` : '');
   uL.textContent = st ? Math.round(100*lt/st)+'%' : '–';
   uT.textContent = '$'+(sub/1e6).toLocaleString('en-US', {minimumFractionDigits:1, maximumFractionDigits:1})+'M';
-  uTl.textContent = tr8('sub-granted in total · {0} partners', D.unPartners[s.rg||''] || 0) + (s.rg ? ` · ${tr8(s.rg)}` : '');
+  uTl.textContent = tr8('sub-granted in total · {0} partners', pids.size) + (s.rg ? ` · ${tr8(s.rg)}` : '');
   const tot = r => r.local + r.intl + r.untyped, pc = (r, k) => tot(r) ? 100*r[k]/tot(r) : 0;
   const parts = [['local','local and national actors','#1baf7a'], ['intl','international NGOs','#9aa3c7'], ['untyped','partner not yet typed','#d9d9d6']];
   const ch = mkChart('c10','bar',yl.map(yLab), parts.map(([k,lab,col])=>({label:lab, backgroundColor:col, data:L.map(r=>pc(r,k))})), {stacked:true});
