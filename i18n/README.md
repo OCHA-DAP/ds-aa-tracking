@@ -45,6 +45,11 @@ value, never the key. Keep:
 A string that has no entry shows in English; the build lists them in
 `site_build/i18n-missing.json` and says how many in its log.
 
+The build's identifier guard (`write_site()` in `scripts/build_site.py`) also reads the French and
+Spanish values the pages carry: a database name in one (`aa.cerf_subgrant`) is removed and a code
+(`under_development`) replaced by its words in that language, and the publish run warns about it.
+Keep table names and codes out of the translations: the warning means the value needs fixing here.
+
 ## Choices the reviewers should confirm
 
 French (KB glossary unless marked *suggestion*):
