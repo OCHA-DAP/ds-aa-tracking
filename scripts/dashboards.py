@@ -274,7 +274,7 @@ function mkChart(id, type, labels, datasets, opts={}){
     ...(opts.totals ? {grace:'10%%'} : {})};
   const catAxis = {stacked:!!opts.stacked, grid:{display:false}, ticks:{autoSkip:!opts.allLabels}};
   const cb = {label:c=>{const v=horiz?c.parsed.x:(c.parsed.y??c.parsed);return ` ${c.dataset.label??''}: ${fmt(v)}`;}};
-  if(opts.totals) cb.footer = items=>tr8('total: {0}', fmt(items.reduce((s,c)=>s+((horiz?c.parsed.x:c.parsed.y)||0),0)));
+  if(opts.totals && datasets.length>1) cb.footer = items=>tr8('total: {0}', fmt(items.reduce((s,c)=>s+((horiz?c.parsed.x:c.parsed.y)||0),0)));
   el._chart = new Chart(el, { type, data:{labels, datasets},
     plugins: opts.totals ? [stackTotals] : [],
     options:{
@@ -1063,8 +1063,11 @@ def cofinancing_now(d, cof, cy):
     themselves where no yearly total is recorded; the total under its own financier ("not
     recorded" when it names none) where no line does. A line naming only a group ('partners',
     COF_GROUP) is a total in words, not a line. One source per version (the most recently
-    entered), so a document read twice is not counted twice. Rows: country_iso3, hazard,
-    version, who, detail (the line as recorded), amount_usd."""
+    entered), so a document read twice is not counted twice — but a later entry of other lines
+    for the same version under a new source would hide the earlier set: enter a version's lines
+    together, under one source. A dated row that also carries an agency is in neither the
+    totals (aa.prearranged_funding) nor the lines (undated): none is recorded today. Rows:
+    country_iso3, hazard, version, who, detail (the line as recorded), amount_usd."""
     ln = d["cof_lines"].copy()
     ln = ln[[not (_cof_base(f).lower() in COF_GROUP and not isinstance(a, str))
              for f, a in zip(ln["financier"], ln["agency"])]]
@@ -1076,16 +1079,20 @@ def cofinancing_now(d, cof, cy):
     for c, h in sorted(set(zip(tot["country_iso3"], tot["hazard"])) | set(zip(ln["country_iso3"], ln["hazard"]))):
         t = tot[(tot["country_iso3"] == c) & (tot["hazard"] == h)]
         lk = ln[(ln["country_iso3"] == c) & (ln["hazard"] == h)]
-        if len(lk):
+        if len(lk) and lk["amount_usd"].sum() > 0:
             f = t["amount_usd"].sum() / lk["amount_usd"].sum() if len(t) else 1.0
-            parts = [(r.version, r.financier, r.agency, r.amount_usd * f) for r in lk.itertuples()]
+            parts = [(r.version, r.financier, r.agency, round(float(r.amount_usd * f), 2)) for r in lk.itertuples()]
+            # cents: the parts add up to the framework's figure exactly
+            fig = round(float(t["amount_usd"].sum() if len(t) else lk["amount_usd"].sum()), 2)
+            v, fin, ag, usd = parts[-1]
+            parts[-1] = (v, fin, ag, round(usd + fig - sum(x[3] for x in parts), 2))
         else:
-            parts = [(r.version, r.financier, None, r.amount_usd) for r in t.itertuples()]
+            parts = [(r.version, r.financier, None, float(r.amount_usd)) for r in t.itertuples()]
         for v, fin, ag, usd in parts:
             fin = fin if isinstance(fin, str) else ""
             ag = ag if isinstance(ag, str) else ""
             out.append({"country_iso3": c, "hazard": h, "version": v,
-                        "who": cof_who(fin, ag) or "not recorded", "amount_usd": round(float(usd), 2),
+                        "who": cof_who(fin, ag) or "not recorded", "amount_usd": usd,
                         "detail": " — ".join(x for x in (fin, ag if ag not in fin else "") if x)})
     return pd.DataFrame(out, columns=["country_iso3", "hazard", "version", "who", "detail", "amount_usd"])
 
@@ -2224,7 +2231,7 @@ function draw(){
       if(g['not recorded']) keys.push('not recorded');
       cofWhoBox.style.height = Math.max(120, 40 + 17*keys.length) + 'px';
       if(!keys.length){ cofWhoBox.style.display = 'none'; cofWhoX.style.display = '';
-        cofWhoX.textContent = tr8('No pre-arranged co-financing recorded in this selection.'); }
+        cofWhoX.textContent = tr8('No pre-arranged co-financing in place today in this selection.'); }
       else {
         const ch = mkChart('cofWho','bar',keys,[{label:tr8('in place today ({0})', yLab(CY)), data:keys.map(k=>g[k]),
           backgroundColor:keys.map(k=>k==='not recorded' ? '#b9c3cf' : PAL[3])}],
