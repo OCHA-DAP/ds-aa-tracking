@@ -100,6 +100,17 @@ function filt(inp) {
   rows.forEach(r => { r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none'; });
 }
 window.CSVS = window.CSVS || {};
+// a box that scrolls can be reached and scrolled by keyboard, and is named after its section's
+// heading so a screen reader says what it holds (WCAG 2.1.1; the heading follows the language)
+function scrollAccess() {
+  document.querySelectorAll('.scroll').forEach((d, i) => {
+    if (d.hasAttribute('tabindex') || (d.scrollHeight <= d.clientHeight + 1 && d.scrollWidth <= d.clientWidth + 1)) return;
+    d.tabIndex = 0; d.setAttribute('role', 'region');
+    const h = d.closest('.panel, section, .blk') && d.closest('.panel, section, .blk').querySelector('h2, h3, h4');
+    if (h) { h.id = h.id || 'sx-' + i; d.setAttribute('aria-labelledby', h.id); }
+  });
+}
+addEventListener('load', scrollAccess);
 function dlcsv(id, name) {
   const blob = new Blob([window.CSVS[id]], {type: 'text/csv;charset=utf-8'});
   const a = document.createElement('a');
@@ -885,6 +896,8 @@ cerf_allocation_storm · cerf_supplement
 """
     page("overview.html", "AA tracking — schema & data review", idx)
     write_site()
+    import figure_check
+    figure_check.check()      # the figures shown on more than one page agree
     i18n.report_missing()
 
 

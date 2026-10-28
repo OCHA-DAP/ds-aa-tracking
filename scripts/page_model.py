@@ -5,7 +5,12 @@ What the page covers: the current (= latest recorded) version of every current f
 (active, being updated, in development); non-framework allocations have no trigger and are left
 out. Trigger windows come from the framework records (aa.version_page.triggers, one row per window of the framework's "Trigger windows" table),
 enriched with the older backtest windows (aa.window / aa.v_window_performance) where one
-matches. Activations come from aa.window_activation + aa.window_status."""
+matches. Activations come from aa.window_activation + aa.window_status.
+
+The page: the lead-time timelines per hazard, the trigger variables, and one sortable, filterable
+table of the frameworks (owner, 2026-10-28) whose first columns are the Map's (landing.py: the
+same status labels, monitoring months and return period), then the trigger sources, thresholds,
+windows, activations and documents that the bar charts and the two tables below them showed."""
 
 import functools
 import html
@@ -13,24 +18,26 @@ import json
 import re
 import unicodedata
 
+import landing
 import pandas as pd
 import site_i18n as i18n
 from dashboards import (
-    LIFE_LABEL,
-    _cal_strip,
     _dash_page,
     _gh_url,
     _loose,
-    _records,
     _words,
     haz,
     hazard_word,
 )
-from site_i18n import ATTR, TB, TBF, TF, T
+from site_i18n import ATTR, ATTRC, TB, TBF, TD, TF, T
 
 LIVE = ["active", "updating", "development"]
-LIFE_COLOR = {"active": "#2171b5", "updating": "#6baed6", "development": "#a9cce3"}   # the map's blues
+# the Map's status badges (landing.py .badge: green active, two-tone blue being updated, amber in
+# development) and its order for sorting (LANDING_JS ST_ORDER)
+BADGE = {"active": "endorsed", "updating": "updating", "development": "development"}
 NOT_RECORDED = "window not recorded"
+# a framework record's overall basis (trigger_facets.basis, _basis) in the frameworks table
+BASIS_LABEL = {"forecast": "forecast", "observational": "observed", "mixed": "forecast and observed"}
 
 # ------------------------------------------------ what the triggers measure (shown on the page)
 # A trigger is assigned to every variable whose keyword appears in its text (whole words,
@@ -238,6 +245,21 @@ def _timeline_rows():
         return pd.DataFrame(columns=TL_COLS)
 
 
+@functools.lru_cache(maxsize=1)
+def _rp_frames():
+    """The overall return period per version, both figures (landing.RP_SQL: the backtest's and
+    the one the document states), so the frameworks table shows the Map's; empty when unavailable."""
+    cols, out = ["country_iso3", "hazard", "version", "rp"], {}
+    for k, sql in landing.RP_SQL.items():   # one at a time, as landing's _try: a missing table costs only its figure
+        try:
+            import ocha_stratus as stratus
+            out[k] = pd.read_sql(sql, stratus.get_engine(stage="dev"))
+        except Exception as exc:   # noqa: BLE001 — that figure then shows '—'
+            print(f"  model page: {k} return periods unavailable ({exc.__class__.__name__})")
+            out[k] = pd.DataFrame(columns=cols)
+    return out
+
+
 # one panel per hazard, each on its own clock: (hazard, title, unit, axis from, to, step); a bar
 # beyond the axis widens it. Drought marks are months placed against the season start: a month
 # within the season, or within `to` months of its start, counts after it, any other before it
@@ -352,7 +374,99 @@ def _frameworks(d):
 
 
 def _life(lc):
-    return f"<span class='lf lf-{lc}'>{T(LIFE_LABEL.get(lc, lc))}</span>"
+    """A status as the Map's badge (landing.KB_LABEL; LANDING_JS badge())."""
+    return f"<span class='badge b-{BADGE.get(lc, 'development')}'>{T(landing.KB_LABEL.get(lc, lc))}</span>"
+
+
+# ------------------------------------------------ the frameworks table's cells
+_SAME = {"same", "same as above", "idem"}   # a timeline row that repeats the row before it
+
+
+def _attr_l(name, vals):
+    """An attribute in every language from values already in each ({'en', 'fr', 'es'}): the
+    shape ATTR() writes, which the language switch swaps."""
+    v = {l: html.escape(str(x), quote=True) for l, x in vals.items()}
+    return f'{name}="{v["en"]}" ' + " ".join(f'data-{name}-{l}="{x}"' for l, x in v.items())
+
+
+def _mstrip(months):
+    """The monitoring months as the Map's strip (LANDING_JS monthStrip: month initials, the
+    months monitored filled), named in words for a screen reader and on hover."""
+    months = [m for m in months if 1 <= m <= 12]
+    if not months:
+        return "<span class='muted'>—</span>"
+    langs = ("en",) + i18n.LANGS
+    ini = {l: (i18n.tr(l, "JFMAMJJASOND") if l != "en" else "JFMAMJJASOND") for l in langs}
+    names = {"en": MONTHS_EN, **{l: i18n.MONTH_ABBR[l][1:] for l in i18n.LANGS}}
+    say = {l: (i18n.tr(l, "Monitored: {0}") if l != "en" else "Monitored: {0}").format(
+               ", ".join(names[l][m - 1] for m in months)) for l in langs}
+    cells = "".join(f"<span class='mm{' on' if m in months else ''}'>{T(*(ini[l][m - 1] for l in langs))}</span>"
+                    for m in range(1, 13))
+    return f"<span class='mstrip' role='img' {_attr_l('aria-label', say)} {_attr_l('title', say)}>{cells}</span>"
+
+
+def _thresholds(f, tl):
+    """The framework's trigger thresholds in short, [(label html, text)], one per trigger window:
+    the hand-entered timeline rows (indicator: threshold), else the framework record's windows.
+    The label tells the rows apart: the leg and the stage where the framework has several, else
+    the row's own label; a record window's name."""
+    def join(ind, thr):
+        return f"{ind}: {thr}" if ind and thr else ind or thr
+    r = tl[(tl["country_iso3"] == f["country_iso3"]) & (tl["hazard"] == f["hazard"])
+           & (tl["version"] == f["version"])].sort_values("seq")
+    out, prev = [], ""
+    legs = [_nofire(x).strip() for x in r["leg"]]
+    many_legs, many_st = len(set(legs)) > 1, r["stage"].nunique() > 1
+    for w, leg in zip(r.itertuples(), legs):
+        ind = _nofire(w.indicator).strip()
+        ind = prev if ind.lower() in _SAME else ind
+        prev = ind
+        lab = [x for x in (_esc(leg) if many_legs and leg else "",
+                           T(w.stage) if many_st and w.stage in ("readiness", "action", "observational") else "") if x]
+        if not lab and len(r) > 1:
+            lab = [_esc(w.label)]
+        out.append((" · ".join(lab), join(ind, _nofire(w.threshold).strip())))
+    if not len(r):
+        for t in f["trig"]:
+            txt = join(_nofire(t.get("indicator")).strip(), _nofire(t.get("threshold")).strip()) \
+                or _nofire(t.get("trigger")).strip()
+            if txt:
+                out.append((_esc(t.get("window") or ""), txt))
+    return [x for x in dict.fromkeys(out) if x[1]]
+
+
+def _thr_cell(lines, cut=70, show=2):
+    """The thresholds, each cut at `cut` characters; when one is cut or there are more than
+    `show`, the cell opens (a <details>) on the full text."""
+    if not lines:
+        return "<span class='muted'>—</span>"
+
+    def ln(lab, txt, n=None):
+        t = txt if n is None or len(txt) <= n else txt[:n].rstrip() + "…"
+        tp = "<span class='tp'>" + lab + "</span> " if lab else ""
+        return f"<span class='ln'>{tp}{html.escape(t)}</span>"
+    full = "".join(ln(lab, t) for lab, t in lines)
+    if len(lines) <= show and all(len(t) <= cut for _, t in lines):
+        return full
+    more = len(lines) - show
+    short = "".join(ln(lab, t, cut) for lab, t in lines[:show])
+    tg = TF("{n} more", n=more) if more > 0 else T("full text")
+    return (f"<details class='thr'><summary><span class='sh'>{short}<span class='tg'>{tg}</span></span>"
+            f"<span class='tg op'>{T('show less')}</span></summary>{full}</details>")
+
+
+def _win_names(f, tl):
+    """The trigger windows' names: the framework record's, else the timeline rows' labels (with
+    the leg where there are several)."""
+    names = [x for x in (_nofire(t.get("window") or t.get("trigger")).strip() for t in f["trig"]) if x]
+    if names:
+        return names
+    r = tl[(tl["country_iso3"] == f["country_iso3"]) & (tl["hazard"] == f["hazard"])
+           & (tl["version"] == f["version"])].sort_values("seq")
+    legs = [_nofire(x).strip() for x in r["leg"]]
+    many = len(set(legs)) > 1
+    return [x for x in (" · ".join(y for y in (leg if many else "", _nofire(w.label).strip()) if y)
+                        for w, leg in zip(r.itertuples(), legs)) if x]
 
 
 def model_windows(d):
@@ -450,11 +564,8 @@ def model_windows(d):
 
 def build_model(page, d):
     m = model_windows(d)
-    fws, win, ws, wa = m["fws"], m["win"], m["ws"], m["wa"]
-    unmatched, loose_acts, cat_fw, cat_win = m["unmatched"], m["loose_acts"], m["cat_fw"], m["cat_win"]
-    wrows = [x for x in win if x["window"] is not None]
-    no_trig = [f for f in fws if not f["trig"]]
-    n_life = {lc: sum(f["lifecycle"] == lc for f in fws) for lc in LIVE}
+    fws, ws, wa = m["fws"], m["ws"], m["wa"]
+    cat_fw, cat_win = m["cat_fw"], m["cat_win"]
 
     # ------------------------------------------------ activation record per framework (all versions
     # of its current line: an earlier framework a distinct new one replaced — dashboards.old_versions,
@@ -474,66 +585,14 @@ def build_model(page, d):
         f["record"] = ("activated fully (at least once)" if full
                        else "activated partially only" if any(_flag(x[2]) is False for x in f["acts"])
                        else "activated (extent not recorded)" if f["acts"] else "never activated")
-    records = ["activated fully (at least once)", "activated partially only",
-               "activated (extent not recorded)", "never activated"]
-    records = [r for r in records if any(f["record"] == r for f in fws)]
 
-    # ------------------------------------------------ providers (counted by framework)
-    prov = {}
-    for f in fws:
-        for p in {provider(x) for x in (f["fm"].get("data_sources") or [])}:
-            prov.setdefault(p, []).append(f["name"])
-    prov_multi = sorted([(p, n) for p, n in prov.items() if len(n) > 1], key=lambda x: (-len(x[1]), x[0]))
-    prov_single = sorted(p for p, n in prov.items() if len(n) == 1)
-    n_with_src = sum(bool(f["fm"].get("data_sources")) for f in fws)
-
-    # ------------------------------------------------ chart data
-    def by_life(keys, keyf):
-        return {"labels": keys, "sets": [{"label": LIFE_LABEL[lc], "color": LIFE_COLOR[lc],
-                                          "data": [sum(1 for f in fws if f["lifecycle"] == lc and keyf(f, k))
-                                                   for k in keys]} for lc in LIVE]}
+    # ------------------------------------------------ trigger variables: the frameworks with a trigger
+    # recorded (one with none — NO_TRIGGER, which the draft page still counts — has no row)
     cat_order = [c for c, _ in MEASURE if c in cat_fw]
     cat_order.sort(key=lambda c: -len(cat_fw[c]))
-    cat_order += [c for c in (UNCLASSIFIED, NO_TRIGGER) if c in cat_fw]
-    hz = [h for h in ["drought", "flood", "storm", "cholera", "other"] if any(haz(f["hazard"]) == h for f in fws)]
-    bases = ["forecast", "observational", "mixed", "not recorded"]
-    n_wb = {}
-    for x in wrows:
-        k = (haz(x["f"]["hazard"]), x["basis"])
-        n_wb[k] = n_wb.get(k, 0) + 1
-    w_bases = [b for b in bases if any(k[1] == b for k in n_wb)]
-    n_wmix = sum(n for (_, b), n in n_wb.items() if b == "mixed")
-    n_fwb = {b: sum(f["basis"] == b for f in fws) for b in bases}
-    mix_note = (" " + (TBF("Mixed = a single window that combines forecast and observed data ({n} window).", n=n_wmix)
-                       if n_wmix == 1 else
-                       TBF("Mixed = a single window that combines forecast and observed data ({n} windows).", n=n_wmix))
-                if n_wmix else "")
-    structs = ["single window", "staged: readiness → action",
-               "several, not staged", "not recorded"]
-    structs = [s for s in structs if any(f["structure"] == s for f in fws)]
-    geos = sorted({f["geo"] for f in fws}, key=lambda g: (g == "not recorded", g))
-    act = d["act_all"].copy()
-    act["year"] = act["event_date"].astype(str).str[:4]
-    act = act[act["year"].str.match(r"^\d{4}$")].copy()
-    act["year"] = act["year"].astype(int)
-    act["kind"] = act["event_type"].map(
-        lambda t: "framework triggers" if t == "framework_aa" else "non-framework allocations")
-    data = {
-        "cat": by_life(cat_order, lambda f, k: k in f["cats"]),
-        # trigger WINDOWS of the current versions (the windows table's rows), not frameworks:
-        # most frameworks mix forecast and observational windows, which a framework count hides
-        "basis": {"labels": hz, "sets": [{"label": b, "data": [n_wb.get((h, b), 0) for h in hz]}
-                                         for b in w_bases]},
-        "struct": by_life(structs, lambda f, k: f["structure"] == k),
-        "geo": by_life(geos, lambda f, k: f["geo"] == k),
-        "rec": by_life(records, lambda f, k: f["record"] == k),
-        "prov": {"labels": [p for p, _ in prov_multi], "data": [len(n) for _, n in prov_multi]},
-        "rp": [x["rp"] for x in wrows if x["rp"] is not None],
-        "act": json.loads(_records(
-            act.drop_duplicates(["country_iso3", "hazard", "event_date", "event_type"]), ["year", "kind"])),
-    }
+    cat_order += [c for c in (UNCLASSIFIED,) if c in cat_fw]
+    n_cat = len({(f["country_iso3"], f["hazard"]) for k in cat_order for f in cat_fw[k]})
 
-    # ------------------------------------------------ HTML pieces
     def fw_list(fl):
         return ", ".join(_fw(f) for f in fl)
 
@@ -546,72 +605,31 @@ def build_model(page, d):
     uncl = cat_win.get(UNCLASSIFIED, [])
     uncl_html = ("<p class='small'>" + TBF("<b>Windows no keyword matched</b> (counted as unclassified): {list}",
                                          list="; ".join(_esc(u) for u in uncl)) + "</p>") if uncl else ""
-    alias_rows = "".join(f"<tr><td><code>{_esc(rx)}</code></td><td>{_esc(lab)}</td></tr>"
-                         for rx, lab in PROVIDER_ALIAS)
+    cat_note = (TBF("A framework counts under every variable its triggers use, so the counts add up to more than {n}.",
+                    n=n_cat) if sum(len(cat_fw[k]) for k in cat_order) > n_cat else "")
+    assign_note = TB(
+        "Each trigger window's indicator, window and trigger text (and the framework's list of trigger "
+        "indicators) is matched against the keywords below — whole words, ignoring case and accents. A window "
+        "can match several variables. The framework's data sources are used only when its trigger text matches "
+        "nothing (they list validation data too, e.g. FloodScan for a river-gauge trigger). \"Unclassified\" = "
+        "trigger recorded but no keyword matched.")
 
-    def _state_cell(x):
-        st = _tri(lambda w: _state(x["ad"], w))
-        return f"<span class='act'>{st}</span>" if x["activated"] else f"<span class='muted'>{st}</span>"
-
-    def _trunc(s, n):
-        s = _nofire(s)
-        return (f"<span title='{html.escape(s, quote=True)}'>{html.escape(s[:n].rstrip())}…</span>"
-                if len(s) > n else html.escape(s))
-
-    def _lead_cell(t):
-        """A lead time the record states is its own text (truncated); one assembled from the
-        record's months follows the language."""
-        return _trunc(_lead(t), 70) if t.get("lead time") else _tri(lambda w: _lead(t, w), cut=70)
-
-    def _ver(f):
-        tag = f" <span class='muted'>({T('draft')})</span>" if f["version_status"] == "development" else ""
-        return f"{_esc(f['version'])}{tag}"
-
-    tr = []
-    for x in win:
-        f = x["f"]
-        head = (f"<tr data-life='{f['lifecycle']}'><td>{_fw(f)}</td><td>{_life(f['lifecycle'])}</td>"
-                f"<td class='nw'>{_ver(f)}</td>")
-        if x["window"] is None:
-            tr.append(head + f"<td colspan='8' class='muted'>{T('no structured trigger recorded yet for this version')}</td></tr>")
-            continue
-        rp = _trunc(x["rp_txt"], 60) if x["rp_txt"] else (TF("1-in-{n} yr", n=f"{x['rp']:.1f}") if x["rp"] else "")
-        tr.append(head + f"<td>{_esc(x['window'])}</td><td>{T(x['basis'])}</td>"
-                  f"<td class='small'>{', '.join(T(c) for c in x['cats'])}</td><td class='small'>{_trunc(x['indicator'], 110)}</td>"
-                  f"<td class='small'>{_lead_cell(x['t'])}</td><td class='small'>{rp}</td>"
-                  f"<td class='small nw'>{_tri(lambda w, x=x: _bt(x['p'], w))}</td><td class='small'>{_state_cell(x)}</td></tr>")
-    life_boxes = "".join(
-        f"<label><input type='checkbox' value='{lc}' checked onchange='mfilt()'> "
-        f"<span class='sw' style='background:{LIFE_COLOR[lc]}'></span>{T(LIFE_LABEL[lc])} ({n_life[lc]})</label>"
-        for lc in LIVE)
-    no_trig_html = ", ".join(f"{_fw(f)} ({_esc(f['version'])})" for f in no_trig)
-    loose_html = ("<p class='note2'>" + TBF(
-        "<b>Activations on current versions with the window not recorded:</b> {list}. These are curation "
-        "items: the activation is on record, which window activated is not.",
-        list="; ".join(_esc(a) for a in loose_acts)) + "</p>") if loose_acts else ""
-    unm_html = ("<p class='note2'>" + TBF(
-        "Backtest windows that do not map one-to-one onto a window of the framework record (not in the "
-        "table or the return-period chart): {list}.", list="; ".join(_esc(u) for u in unmatched))
-        + "</p>") if unmatched else ""
+    # ------------------------------------------------ the frameworks table: one row per current
+    # framework. Its first columns are the Map's (landing.py, the table under the map): the same
+    # labels, months (landing.monitoring_months) and return period (landing.rp_of, _rp_fields)
+    rpf, tl = _rp_frames(), _timeline_rows()
+    tl = tl.assign(version=tl["version"].astype(str))
 
     def act_cell(f):
+        rec = T(f["record"])
         if not f["acts"]:
-            return "<span class='muted'>—</span>"
+            return f"<span class='rec muted'>{rec}</span>"
         out = []
         for dte, wn, full, ver in f["acts"]:
             wlab = f"<i>{T(NOT_RECORDED)}</i>" if _unrec(wn) else _esc(wn)
             ext = {False: f" ({T('partial')})", None: f" ({T('extent not recorded')})"}.get(_flag(full), "")
-            out.append(f"<b>{_esc(dte)}</b> {wlab}{ext} <span class='muted'>v{_esc(ver)}</span>")
-        return "<br>".join(out)
-    rec_rows = "".join(
-        f"<tr data-life='{f['lifecycle']}'><td>{_fw(f)}</td><td>{_life(f['lifecycle'])}</td>"
-        f"<td>{T(f['record'])}</td><td class='small'>{act_cell(f)}</td></tr>" for f in fws)
-    n_act = sum(f["record"] != "never activated" for f in fws)
-
-    tl_data, tl_notes = timelines(fws)
-    data["tl"] = {"panels": [tl_data[h] for h, *_ in TL_PANELS if h in tl_data],
-                  "mon": {"en": MONTHS_EN, **{l: i18n.MONTH_ABBR[l][1:] for l in i18n.LANGS}}}
-    tl_html = _timeline_html(fws, tl_data, tl_notes)
+            out.append(f"<span class='ln'><b>{_esc(dte)}</b> {wlab}{ext} <span class='muted'>v{_esc(ver)}</span></span>")
+        return f"<span class='rec'>{rec}</span>" + "".join(out)
 
     def doc_cell(f):
         links = []
@@ -623,153 +641,142 @@ def build_model(page, d):
             if isinstance(s, dict) and s.get("url"):
                 links.append(f"<a href='{html.escape(s['url'], quote=True)}' "
                              f"title='{html.escape(_nofire(s.get('title') or ''), quote=True)}'>"
-                             f"{T(_nofire(s.get('kind') or 'link'))}</a>")
-        return " · ".join(links) or "<span class='muted'>—</span>"
+                             f"{TD(_nofire(s.get('kind') or 'link'))}</a>")
+        return " · ".join(links)
 
     def code_cell(f):
         links = []
         u = _gh_url(f["ref"]) if f["ref"] else None
-        if u:
-            lab = str(f["ref"]).split("@")[0] + ":" + str(f["ref"]).split(":", 1)[-1]
+        if u:   # the repository as the link, the path in its title (a long path squeezed the column)
+            repo, path = str(f["ref"]).split("@")[0], str(f["ref"]).split(":", 1)[-1]
             note = "" if f["ref_version"] == f["version"] else f" <span class='muted'>{TF('(for v{v})', v=f['ref_version'])}</span>"
-            links.append(f"<a href='{html.escape(u, quote=True)}'>{_esc(lab)}</a>{note}")
+            links.append(f"<a class='cd' href='{html.escape(u, quote=True)}' title='{_esc(repo + ':' + path)}'>{_esc(repo)}</a>{note}")
         for repo in dict.fromkeys(re.findall(r"ocha-dap/([\w.\-]+)", str(f["fm"].get("source_repo") or ""),
                                              flags=re.IGNORECASE)):
             if not (u and repo in u):
-                links.append(f"<a href='https://github.com/OCHA-DAP/{repo}'>{_esc(repo)}</a>")
-        return "<br>".join(links) or "<span class='muted'>—</span>"
-    doc_rows = "".join(
-        f"<tr data-life='{f['lifecycle']}'><td>{_fw(f)}</td><td>{_life(f['lifecycle'])}</td>"
-        f"<td class='nw'>{_ver(f)}</td><td class='small'>{doc_cell(f)}</td><td class='small'>{code_cell(f)}</td></tr>"
-        for f in fws)
+                links.append(f"<a class='cd' href='https://github.com/OCHA-DAP/{repo}'>{_esc(repo)}</a>")
+        return "<br>".join(links)
 
-    cal = d["calendar"]
-    cal_rows = "".join(
-        f"<tr><td>{_fw(f)}</td><td>{_life(f['lifecycle'])}</td>"
-        f"<td>{_cal_strip(cal, f['country_iso3'], f['hazard'])}</td></tr>" for f in fws)
+    def rp_cell(rp):
+        if rp["rp"] is None:
+            return "<span class='muted'>—</span>"
 
-    n_bt = sum(1 for x in wrows if x["rp_src"] == "backtest" and x["rp"] is not None)
-    n_st = sum(1 for x in wrows if x["rp_src"] == "stated" and x["rp"] is not None)
-    assign_note = TB(
-        "Each trigger window's indicator, window and trigger text (and the framework's list of trigger "
-        "indicators) is matched against the keywords below — whole words, ignoring case and accents. A window "
-        "can match several variables. The framework's data sources are used only when its trigger text matches "
-        "nothing (they list validation data too, e.g. FloodScan for a river-gauge trigger). \"Unclassified\" = "
-        f"trigger recorded but no keyword matched; \"{NO_TRIGGER}\" = no structured trigger on the current version.")
-    by_fw_note = TBF(
-        "Counted by framework instead, from each framework record's overall basis: {f} forecast, {o} "
-        "observational, {m} mixed (forecast and observational windows), {nr} not recorded. A framework count "
-        "hides the observational windows inside the mixed frameworks, so the chart counts windows.",
-        f=n_fwb["forecast"], o=n_fwb["observational"], m=n_fwb["mixed"], nr=n_fwb["not recorded"])
-    cal_note = TB(
-        "Green cells = the months each framework is monitored in a typical year, from its current version's "
-        "record (the planning sheet where the record lists none). Not this year's schedule.")
+        def tip(w):   # LANDING_JS rpTitle(): both figures behind the one shown
+            out = []
+            for k, lab in (("rp_bt", "historical simulation: {0}"), ("rp_st", "stated in the framework: {0}")):
+                if rp[k] is not None:
+                    out.append(w(lab).format(w("1-in-{0} yr").format(landing._tofixed(rp[k], 1))))
+            return " · ".join(out)
+        return f"<span {ATTRC('title', tip)}>{TF('1-in-{n} yr', n=landing._tofixed(rp['rp'], 1))}</span>"
+
+    rows, gaps = [], {"sources": [], "thresholds": [], "windows": []}
+    for f in fws:
+        c, h, v = f["country_iso3"], f["hazard"], f["version"]
+        months, _ = landing.monitoring_months(f["fm"], d["calendar"], c, h)
+        rp = landing._rp_fields(landing.rp_of(rpf["backtest"], c, h, v), landing.rp_of(rpf["stated"], c, h, v))
+        ds = f["fm"].get("data_sources") or []
+        srcs = list(dict.fromkeys(provider(x) for x in ([ds] if isinstance(ds, str) else ds) if str(x).strip()))
+        bl = BASIS_LABEL.get(f["basis"])
+        src = ((f"<span class='bs'>{T(bl)}</span>" if bl else "")
+               + (f"<span class='ln'>{_esc(', '.join(srcs))}</span>" if srcs else ""))
+        thr = _thresholds(f, tl)
+        names = [x for x in _win_names(f, tl) if x]
+        nw = (f["fm"].get("trigger_facets") or {}).get("n_windows")
+        n_win = len(names) or (nw if isinstance(nw, int) else 0)
+        win = f"<b>{n_win}</b>" + "".join(f"<span class='ln'>{_esc(x)}</span>" for x in names)
+        docs = "<br>".join(x for x in (doc_cell(f), code_cell(f)) if x)
+        for k, have in (("sources", srcs), ("thresholds", thr), ("windows", n_win)):
+            if not have:
+                gaps[k].append(f["name"])
+        dash = "<span class='muted'>—</span>"
+        name = T(*i18n.country(c, f["country_name"]).values())
+        rows.append(
+            f"<tr data-life='{f['lifecycle']}'>"
+            f"<td data-k='country' class='nw'><a href='fw-{c.lower()}-{h}.html'>{name}</a></td>"
+            f"<td data-k='hazard'>{T(landing._haz_label(h))}</td>"
+            f"<td data-k='status' data-v='{LIVE.index(f['lifecycle'])}'>{_life(f['lifecycle'])}</td>"
+            f"<td class='nq nw'>{_mstrip(months)}</td>"
+            f"<td data-k='rp' data-v='{'' if rp['rp'] is None else rp['rp']}' class='num nw'>{rp_cell(rp)}</td>"
+            f"<td>{src or dash}</td><td class='thc'>{_thr_cell(thr)}</td>"
+            f"<td data-k='windows' data-v='{n_win or ''}'>{win if n_win else dash}</td>"
+            f"<td data-k='acts' data-v='{len(f['acts'])}'>{act_cell(f)}</td>"
+            f"<td class='dc'>{docs or dash}</td></tr>")
+    for k, names in gaps.items():
+        if names:
+            print(f"  model page: no {k} recorded for {len(names)} framework(s): {', '.join(names)}")
+
+    # the headings: the sortable ones a button each (LANDING_JS fwSort's columns; Monitoring and the
+    # text columns are not sorted); FWM_JS keeps aria-sort and the arrow on the sorted one
+    cols = [("country", "Country"), ("hazard", "Hazard"), ("status", "Status"), (None, "Monitoring"),
+            ("rp", "Return period"), (None, "Trigger sources"), (None, "Basic thresholds"),
+            ("windows", "Windows"), ("acts", "Activations"), (None, "Documents & code")]
+
+    def th(k, lab):
+        if not k:
+            return f"<th>{T(lab)}</th>"
+        on = k == "country"                     # the rows come sorted by country, as FWM_JS starts
+        sort = " aria-sort='ascending'" if on else ""
+        cls = " class='num'" if k == "rp" else ""
+        return (f"<th data-k='{k}'{sort}{cls}><button type='button'>{T(lab)}"
+                f"<span class='ar' aria-hidden='true'>{'▲' if on else ''}</span></button></th>")
+    head = "".join(th(k, lab) for k, lab in cols)
+    n_life = {lc: sum(f["lifecycle"] == lc for f in fws) for lc in LIVE}
+    life_boxes = "".join(f"<label><input type='checkbox' value='{lc}' checked> {_life(lc)} ({n_life[lc]})</label>"
+                         for lc in LIVE if n_life[lc])
+    unrec = any(_unrec(x[1]) for f in fws for x in f["acts"])
+    fw_notes = "".join(f"<p class='note2'>{x}</p>" for x in [
+        TB("<b>Return period</b>: as stated in the framework document, else from the historical simulation "
+           "(hover over it for both)."),
+        TB("<b>Trigger sources</b>: whether the triggers use forecast or observed data, or both (windows of both "
+           "kinds, or one window that combines the two), then the data and models the framework record lists."),
+        f"<b>{T('Activations')}</b>: " + TB("Any version of the framework. Partially = only part of the allocation "
+                                            "or only the readiness window was released.")
+        + (f" <i>{T(NOT_RECORDED)}</i> {T('= the activation is on record but which window activated is not — a curation item.')}"
+           if unrec else "")])
+
+    tl_data, tl_notes = timelines(fws)
+    data = {"tl": {"panels": [tl_data[h] for h, *_ in TL_PANELS if h in tl_data],
+                   "mon": {"en": MONTHS_EN, **{l: i18n.MONTH_ABBR[l][1:] for l in i18n.LANGS}}}}
+    tl_html = _timeline_html(fws, tl_data, tl_notes)
+
     panels = f"""
 <style>
-.lf {{ display:inline-block; padding:0 8px; border-radius:9px; font-size:11px; font-weight:600; white-space:nowrap; }}
-.lf-active {{ background:#dbe9f6; color:#17548a; }} .lf-updating {{ background:#e6f1f8; color:#2b6d99; }}
-.lf-development {{ background:#fdf1dc; color:#8a5c0a; }}
-td.small, .small {{ font-size:11.5px; }} .muted {{ color:#888; }} .nw {{ white-space:nowrap; }}
-span.act {{ color:#b3261e; font-weight:600; }}
-.lfbar {{ display:flex; gap:14px; flex-wrap:wrap; align-items:center; margin:10px 0; font-size:12.5px; }}
-.lfbar .sw {{ display:inline-block; width:11px; height:11px; border-radius:2px; margin:0 4px 0 2px; vertical-align:-1px; }}
-.lfbar input.filter {{ margin:0; }}
+td.small, .small {{ font-size:11.5px; }} .muted {{ color:#666; }} .nw {{ white-space:nowrap; }}
 details.map {{ margin-top:8px; font-size:12px; }} details.map summary {{ cursor:pointer; color:#1d5aa8; }}
 details.map table.data {{ margin:6px 0; }}
 p.note2 {{ font-size:12px; color:#555; margin:6px 0; }}
-.span2 {{ grid-column:span 2; }} @media (max-width:900px) {{ .span2 {{ grid-column:auto; }} }}
+{FWM_CSS}
 {TL_CSS}
 </style>
-<div class='tiles'>
- <div class='tile'><div class='v'>{len(fws)}</div><div class='l'>{TF("current frameworks · {a} active · {u} being updated · {d} in development", a=n_life['active'], u=n_life['updating'], d=n_life['development'])}</div></div>
- <div class='tile'><div class='v'>{len(fws) - len(no_trig)}</div><div class='l'>{T("with their trigger windows recorded (current version)")}</div></div>
- <div class='tile'><div class='v'>{len(wrows)}</div><div class='l'>{T("trigger windows on the current versions")}</div></div>
- <div class='tile'><div class='v'>{n_act}</div><div class='l'>{T("current frameworks activated at least once (any version)")}</div></div>
-</div>
-<h2>{T("What do the triggers watch?")}</h2>
-<div class='grid'>
- <div class='panel'><h3>{T("Current frameworks, by what their triggers watch")}</h3><canvas id='m1' height='300'></canvas>
-   <div class='note'>{TBF("A framework counts once under every variable its triggers use (a cyclone framework with a wind window and a rainfall window counts under both), so the bars add up to more than {n}.", n=len(fws))}</div></div>
- <div class='panel'><h3>{T("Which frameworks, and how many windows")}</h3>
-   <div class='scroll' style='max-height:360px'><table class='data'><thead><tr><th>{T('variable')}</th><th>{T('frameworks')}</th><th>{T('windows')}</th><th>{T('frameworks')}</th></tr></thead><tbody>{cat_rows}</tbody></table></div>
-   <details class='map'><summary>{T("How a trigger is assigned to a variable")}</summary>
-   <p>{assign_note}</p>
-   <table class='data'><thead><tr><th>{T('variable')}</th><th>{T('keywords')}</th></tr></thead><tbody>{map_rows}</tbody></table>
-   {uncl_html}</details></div>
-</div>
-<h2>{T("How are the triggers built?")}</h2>
-<div class='grid'>
- <div class='panel'><h3>{T("Forecast or observed data? Trigger windows by hazard")}</h3><canvas id='m2' height='260'></canvas>
-   <div class='note'>{TBF("Counts the {n} trigger windows of the current versions (the rows of the windows table below), by the basis each window records.", n=len(wrows))}{mix_note}
-   {by_fw_note}</div></div>
- <div class='panel'><h3>{T("One window or several?")}</h3><canvas id='m3' height='260'></canvas>
-   <div class='note'>{TB("Staged = a readiness window followed by an action window on the same event. Several, not staged = windows split by season, lead time, area or data source.")}</div></div>
- <div class='panel'><h3>{T("At what geographic level?")}</h3><canvas id='m4' height='260'></canvas>
-   <div class='note'>{TB("Administrative level at which the trigger is evaluated, from the framework record (admin 4 = union level in Bangladesh).")}</div></div>
- <div class='panel'><h3>{T("How often would each trigger activate?")}</h3><canvas id='m5' height='260'></canvas>
-   <div class='note'>{TBF("Designed return period of each window, 1-in-N years. From the backtest where one is recorded ({b} windows), otherwise the return period the framework states ({s} windows); ranges and qualitative statements are left out.", b=n_bt, s=n_st)}</div></div>
- <div class='panel span2'><h3>{T("Which data and models do they use?")}</h3><canvas id='m6' height='320'></canvas>
-   <div class='note'>{TBF("Number of current frameworks listing each source ({n} of {m} list their sources).", n=n_with_src, m=len(fws))}
-   {TBF("Used by one framework only: {list}.", list=_esc(', '.join(prov_single)))}</div>
-   <details class='map'><summary>{T("Name variants folded together")}</summary>
-   <table class='data'><thead><tr><th>{T('source name matches')}</th><th>{T('counted as')}</th></tr></thead><tbody>{alias_rows}</tbody></table></details></div>
-</div>
-<h2>{T("Have the triggers activated?")}</h2>
-<div class='grid'>
- <div class='panel'><h3>{T("Current frameworks, by activation record")}</h3><canvas id='m7' height='260'></canvas>
-   <div class='note'>{TB("Any version of the framework. Partially = only part of the allocation or only the readiness window was released.")}</div></div>
- <div class='panel'><h3>{T("Activations per year — framework triggers vs non-framework allocations")}</h3><canvas id='m8' height='260'></canvas></div>
-</div>
-<section><div class='scroll' style='max-height:420px'><table class='data'><thead><tr><th>{T('framework')}</th><th>{T('status')}</th><th>{T('record')}</th><th>{T('activations (month · window · version)')}</th></tr></thead><tbody>{rec_rows}</tbody></table></div>
-<p class='note2'><i>{T(NOT_RECORDED)}</i> {T("= the activation is on record but which window activated is not — a curation item.")}</p></section>
-<h2>{T("Every trigger window, framework by framework")}</h2>
-<p class='meta'>{TBF("One row per window of the latest version of each current framework, from its framework record. No structured trigger recorded yet for {n}: {list}.", n=len(no_trig), list=no_trig_html)}</p>
-<section><div class='lfbar'><input class='filter' id='wq' {ATTR("placeholder", "filter windows…")} oninput='mfilt()'>{life_boxes}</div>
-<div class='scroll'><table class='data' id='wtab'><thead><tr><th>{T('framework')}</th><th>{T('status')}</th><th>{T('version')}</th><th>{T('window')}</th><th>{T('basis')}</th><th>{T('measures')}</th><th>{T('indicator')}</th><th>{T('lead time')}</th><th>{T('return period')}</th><th>{T('backtest')}</th><th>{T('activated on this version')}</th></tr></thead><tbody>{''.join(tr)}</tbody></table></div>
-{loose_html}{unm_html}</section>
-<h2>{T("How much warning do the triggers give?")}</h2>
+<h2>{T("Trigger design per hazard")}</h2>
 {tl_html}
-<h2>{T("When are the triggers monitored?")}</h2>
-<p class='meta'>{cal_note}</p>
-<section><div class='scroll'><table class='data'><thead><tr><th>{T('framework')}</th><th>{T('status')}</th><th>{T('months monitored (typical year)')}</th></tr></thead><tbody>{cal_rows}</tbody></table></div></section>
-<h2>{T("Where are the models documented?")}</h2>
-<p class='meta'>{TB("Framework document, model report and published analyses, and the analysis code (an analysis reference from an earlier version is marked with that version).")}</p>
-<section><div class='scroll'><table class='data'><thead><tr><th>{T('framework')}</th><th>{T('status')}</th><th>{T('version')}</th><th>{T('documents & analyses')}</th><th>{T('analysis code')}</th></tr></thead><tbody>{doc_rows}</tbody></table></div></section>"""
-    js = """
-const BASIS_COL = {'forecast':PAL[0],'observational':PAL[1],'mixed':PAL[2],'not recorded':'#bdbdbd'};
-function lifeSets(o){ return o.sets.map(s=>({label:s.label, data:s.data, backgroundColor:s.color})); }
-const H = {extra:{indexAxis:'y'}};
-const bins = [['≤ 1-in-3',0,3],['1-in-3 to 5',3,5],['1-in-5 to 10',5,10],['> 1-in-10',10,1e9]];
-const yrs = uniqSorted(D.act, r=>r.year), kinds = ['framework triggers','non-framework allocations'];
-function drawModel(){   // again on a language switch: mkChart translates the labels
-  mkChart('m1','bar',D.cat.labels,lifeSets(D.cat),{stacked:true,count:true,totals:true,allLabels:true,...H});
-  mkChart('m2','bar',D.basis.labels,D.basis.sets.map(s=>({label:s.label,data:s.data,backgroundColor:BASIS_COL[s.label]})),{stacked:true,count:true,totals:true});
-  mkChart('m3','bar',D.struct.labels,lifeSets(D.struct),{stacked:true,count:true,totals:true,allLabels:true,...H});
-  mkChart('m4','bar',D.geo.labels,lifeSets(D.geo),{stacked:true,count:true,totals:true,allLabels:true});
-  mkChart('m5','bar',bins.map(b=>b[0]),[{label:'windows',data:bins.map(b=>D.rp.filter(v=>v>b[1]&&v<=b[2]).length)}],{count:true});
-  mkChart('m6','bar',D.prov.labels,[{label:'frameworks',data:D.prov.data}],{count:true,allLabels:true,...H});
-  mkChart('m7','bar',D.rec.labels,lifeSets(D.rec),{stacked:true,count:true,totals:true,allLabels:true,...H});
-  mkChart('m8','bar',yrs,kinds.map(k=>({label:k, data:yrs.map(y=>D.act.filter(r=>r.year===y&&r.kind===k).length)})),{stacked:true,count:true});
-}
-drawModel();
-document.addEventListener('aalang', drawModel);
-function mfilt(){
-  const q = document.getElementById('wq').value.toLowerCase();
-  const on = new Set([...document.querySelectorAll('.lfbar input[type=checkbox]:checked')].map(b=>b.value));
-  document.querySelectorAll('#wtab tbody tr').forEach(r=>{
-    r.style.display = (on.has(r.dataset.life) && r.textContent.toLowerCase().includes(q)) ? '' : 'none'; }); }
-""" + TL_JS
+<section><h2>{T("Trigger variables")}</h2>
+ <div class='scroll'><table class='data'><thead><tr><th>{T('variable')}</th><th>{T('frameworks')}</th><th>{T('windows')}</th><th>{T('frameworks')}</th></tr></thead><tbody>{cat_rows}</tbody></table></div>
+ {f"<p class='note2'>{cat_note}</p>" if cat_note else ""}
+ <details class='map'><summary>{T("How a trigger is assigned to a variable")}</summary>
+ <p>{assign_note}</p>
+ <table class='data'><thead><tr><th>{T('variable')}</th><th>{T('keywords')}</th></tr></thead><tbody>{map_rows}</tbody></table>
+ {uncl_html}</details></section>
+<section><h2>{T("Frameworks and their triggers")}</h2>
+ <div class='lfbar' id='fwmst'><input class='filter' id='fwmq' type='search' {ATTR("placeholder", "filter frameworks…")} {ATTR("aria-label", "Filter the frameworks")}>{life_boxes}<span id='fwmn' class='fwmn' aria-live='polite'></span></div>
+ <div class='scroll'><table class='data fwm' id='fwm'><thead><tr>{head}</tr></thead><tbody>{''.join(rows)}</tbody></table></div>
+ {fw_notes}</section>"""
     _dash_page(page, "pillar-model.html", "Model",
                TB("<b>The model block of anticipatory action</b> — the triggers: what they measure, "
                   "where and when they are monitored, on what basis, how often they are designed to "
                   "activate, and what has activated. Covers every current framework (active, being "
                   "updated or in development), as set out in its latest version. <b>Non-framework allocations "
-                  "are not included</b>: they have no trigger (they appear only as a comparison in the "
-                  "activations-per-year chart)."),
-               panels, json.dumps(data, default=str).replace("</", "<\\/"), js)   # free text: never close the script
+                  "are not included</b>: they have no trigger."),
+               panels, json.dumps(data, default=str).replace("</", "<\\/"), TL_JS + FWM_JS)   # free text: never close the script
 
 
 MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def _tl_head(h, title):
+    """A hazard's heading: a button that opens and closes its panel, all open at first (TL_JS)."""
+    return (f"<h3><button type='button' class='tl-tog' aria-expanded='true' aria-controls='tl-b-{h}'>"
+            f"{T(title)}</button></h3>")
 
 
 def _timeline_html(fws, panels, notes):
@@ -799,17 +806,18 @@ def _timeline_html(fws, panels, notes):
             f"<div class='note'><b>{T(*i18n.country(f['country_iso3'], f['country_name']).values())}</b>: "
             f"{html.escape(nt)}</div>" for f, nt in notes.get(h, []))
         gen = f"<div class='note'>{general[h]}</div>" if h in general else ""
-        out.append(f"<section class='panel tl-panel' id='tl-{h}'><div class='tl-ph'><h3>{T(panels[h]['title'])}</h3>"
+        out.append(f"<section class='panel tl-panel' id='tl-{h}'><div class='tl-ph'>{_tl_head(h, panels[h]['title'])}"
                    f"<span class='tl-clock'>{clocks[h]}</span>{seg}</div>"
-                   f"<div class='tl-x' data-tl='{h}'></div>{fw_notes}{gen}</section>")
+                   f"<div class='tl-b' id='tl-b-{h}'><div class='tl-x' data-tl='{h}'></div>{fw_notes}{gen}</div></section>")
     chol = [f for f in fws if haz(f["hazard"]) == "cholera"]
     if chol:
         names = ", ".join(T(*i18n.country(f["country_iso3"], f["country_name"]).values()) for f in chol)
-        out.append(f"<section class='panel tl-panel' id='tl-cholera'><div class='tl-ph'><h3>{T('Cholera')}</h3>"
-                   f"<span class='tl-clock'>{T('no forecast lead time')}</span></div><div class='note'>"
+        out.append(f"<section class='panel tl-panel' id='tl-cholera'><div class='tl-ph'>{_tl_head('cholera', 'Cholera')}"
+                   f"<span class='tl-clock'>{T('no forecast lead time')}</span></div>"
+                   f"<div class='tl-b' id='tl-b-cholera'><div class='note'>"
                    + TBF("{list}: the triggers use weekly surveillance data — a framework activates when reported "
                          "cases cross the agreed thresholds, so there is no forecast lead time to draw.", list=names)
-                   + "</div></section>")
+                   + "</div></div></section>")
     legend = "".join(f"<span><i class='tl-sw' style='background:var(--s-{k})'></i>{T(s)}</span>"
                      for k, s in (("ready", "readiness"), ("action", "action"), ("obs", "observational")))
     legend += f"<span><i class='tl-sw tl-ev'></i>{T('the event (landfall, flood peak, season start)')}</span>"
@@ -834,7 +842,16 @@ TL_CSS = """
 .tl-panel { margin:12px 0; }
 .tl-ph { display:flex; flex-wrap:wrap; justify-content:space-between; gap:4px 16px; align-items:baseline;
          max-width:1150px; }   /* the plot's own width */
-.tl-ph h3 { margin:2px 0 4px; }
+.tl-panel .tl-ph h3 { margin:2px 0 4px; font-size:18px; }   /* over DASH_CSS .panel h3, written after */
+/* the heading opens and closes the panel (owner, 2026-10-28): a chevron, pointing down when open */
+.tl-tog { font:inherit; font-weight:700; color:inherit; background:none; border:0; padding:2px 4px 2px 0;
+          cursor:pointer; display:inline-flex; align-items:center; gap:10px; text-align:left; }
+.tl-tog::before { content:''; width:7px; height:7px; border-right:2px solid currentColor; border-bottom:2px solid currentColor;
+                  transform:translateY(-2px) rotate(45deg); }
+.tl-tog[aria-expanded="false"]::before { transform:rotate(-45deg); }
+.tl-tog:hover { color:#1d5aa8; }
+.tl-tog:focus-visible { outline:2px solid var(--s-ready); outline-offset:2px; border-radius:3px; }
+.tl-panel.shut .tl-clock, .tl-panel.shut .tl-seg { display:none; }   /* they belong to the closed chart */
 .tl-clock { font-size:12px; color:var(--tl-muted); }
 .tl-seg { display:inline-flex; border:1px solid #c9d3de; border-radius:6px; overflow:hidden; background:#fff; }
 .tl-seg button { font:inherit; font-size:12.5px; border:0; background:transparent; color:var(--tl-ink);
@@ -861,6 +878,15 @@ svg.tl .st-upd rect { stroke:#9ecae1; } svg.tl .st-upd text { fill:#1a5fa0; }
 # or on the calendar. Labels sit beside the bars in text ink, never on them.
 TL_JS = r"""
 (function(){
+  // a hazard's heading opens and closes its panel (all open at first); a chart is drawn again on
+  // opening, as text measured while hidden has no width
+  let onToggle = () => {};
+  document.querySelectorAll('.tl-tog').forEach(b => b.addEventListener('click', () => {
+    const open = b.getAttribute('aria-expanded') !== 'true', sec = b.closest('.tl-panel');
+    b.setAttribute('aria-expanded', String(open)); sec.classList.toggle('shut', !open);
+    document.getElementById(b.getAttribute('aria-controls')).hidden = !open;
+    onToggle(sec, open);
+  }));
   const TL = window.D && D.tl; if (!TL || !TL.panels.length) return;
   const NS = 'http://www.w3.org/2000/svg';
   const mk = (t, a, txt) => { const e = document.createElementNS(NS, t); for (const k in (a || {})) e.setAttribute(k, a[k]);
@@ -891,7 +917,7 @@ TL_JS = r"""
     r.setAttribute('width', w); t.setAttribute('x', cx + w / 2);
   }
   function draw(p, host, cal){
-    const W = 1000, L = 230, R = 18, rowH = 22, headH = 20, gH = 12, top = 30;
+    const W = 1000, L = 230, R = 18, rowH = 17, headH = 18, gH = 8, top = 28;   // compact rows (owner, 2026-10-28)
     const min = cal ? 0 : p.min, max = cal ? 12 : p.max, ticks = [];
     for (let t = min; t <= max; t += cal ? 1 : p.step) ticks.push(t);
     let n = 0; p.fws.forEach(f => f.legs.forEach(l => { n += Math.max(1, l.wins.length); }));
@@ -911,35 +937,35 @@ TL_JS = r"""
     const bands = [];
     let y = top;
     p.fws.forEach(f => {
-      const name = nm(f.name), hd = mk('text', {x: 0, y: y + 14, 'font-size': 13.5, 'font-weight': 600}, name);
+      const name = nm(f.name), hd = mk('text', {x: 0, y: y + 13, 'font-size': 13.5, 'font-weight': 600}, name);
       svg.appendChild(hd);
-      chip(svg, f.status, (hd.getComputedTextLength() || name.length * 7.4) + 10, y + 3, gid);
+      chip(svg, f.status, (hd.getComputedTextLength() || name.length * 7.4) + 10, y + 2, gid);
       y += headH;
       f.legs.forEach(leg => {
         const k = Math.max(1, leg.wins.length), y0 = y;
         if (leg.len && leg.start) bands.push([y0, y0 + k * rowH, leg.len, leg.start]);
-        if (leg.leg) svg.appendChild(mk('text', {x: 12, y: y0 + 15, 'font-size': 12, class: 'muted'}, leg.leg));
-        if (!leg.wins.length) svg.appendChild(mk('text', {x: x(min) + 6, y: y0 + 15, 'font-size': 12, class: 'faint'}, tr8('trigger windows not recorded yet')));
+        if (leg.leg) svg.appendChild(mk('text', {x: 12, y: y0 + 12, 'font-size': 12, class: 'muted'}, leg.leg));
+        if (!leg.wins.length) svg.appendChild(mk('text', {x: x(min) + 6, y: y0 + 12, 'font-size': 12, class: 'faint'}, tr8('trigger windows not recorded yet')));
         leg.wins.forEach((w, i) => {
-          const yy = y0 + i * rowH + 4, full = name + (leg.leg ? ' · ' + leg.leg : ''), st = stageName(w.st);
+          const yy = y0 + i * rowH + 2.5, full = name + (leg.leg ? ' · ' + leg.leg : ''), st = stageName(w.st);
           const g = mk('g', {tabindex: 0, 'aria-label': `${full}: ${st}, ${w.lab}`});
           svg.appendChild(g);
           let x0, x1;
           if (w.m) {          // one mark per month checked: at its offset from the season start, or at its own month
             const offs = w.m.map(m => [m, cal ? m - 1 : seasonOffset(m, leg.start || 1, leg.len, p.after)]);
             x0 = Math.min(...offs.map(([, o]) => x(o))); x1 = Math.max(...offs.map(([, o]) => x(o + 1)));
-            g.appendChild(mk('rect', {class: 'hit', x: x0 - 3, y: yy - 4, width: x1 - x0 + 6, height: rowH, fill: 'transparent'}));
+            g.appendChild(mk('rect', {class: 'hit', x: x0 - 3, y: yy - 2.5, width: x1 - x0 + 6, height: rowH, fill: 'transparent'}));
             offs.forEach(([m, o]) => {
-              g.appendChild(mk('rect', {x: x(o) + 1.5, y: yy, width: x(o + 1) - x(o) - 3, height: 14, rx: 3, fill: COL[w.st]}));
-              g.appendChild(mk('text', {x: (x(o) + x(o + 1)) / 2, y: yy + 11, 'font-size': 10.5, 'text-anchor': 'middle', style: 'fill:#10151c;font-weight:600'}, mon(m)));
+              g.appendChild(mk('rect', {x: x(o) + 1.5, y: yy, width: x(o + 1) - x(o) - 3, height: 12, rx: 3, fill: COL[w.st]}));
+              g.appendChild(mk('text', {x: (x(o) + x(o + 1)) / 2, y: yy + 9.5, 'font-size': 10, 'text-anchor': 'middle', style: 'fill:#10151c;font-weight:600'}, mon(m)));
             });
           } else {
             x0 = x(w.a); x1 = Math.max(x(w.b), x0 + 4);
-            g.appendChild(mk('rect', {class: 'hit', x: x0 - 3, y: yy - 4, width: x1 - x0 + 6, height: rowH, fill: 'transparent'}));   // larger hit target
-            g.appendChild(mk('rect', {x: x0, y: yy, width: x1 - x0, height: 14, rx: 3, fill: COL[w.st]}));
+            g.appendChild(mk('rect', {class: 'hit', x: x0 - 3, y: yy - 2.5, width: x1 - x0 + 6, height: rowH, fill: 'transparent'}));   // larger hit target
+            g.appendChild(mk('rect', {x: x0, y: yy, width: x1 - x0, height: 12, rx: 3, fill: COL[w.st]}));
           }
           // the label in text ink beside the bar; left of it when the right side would run out of the chart
-          const lt = mk('text', {class: 'lab', x: x1 + 6, y: yy + 11, 'font-size': 11.5}, w.lab);
+          const lt = mk('text', {class: 'lab', x: x1 + 6, y: yy + 10, 'font-size': 11}, w.lab);
           g.appendChild(lt);
           if (x1 + 6 + (lt.getComputedTextLength() || w.lab.length * 6.2) > W) { lt.setAttribute('x', x0 - 6); lt.setAttribute('text-anchor', 'end'); }
           const row = (key, v) => v ? `<br><span class="k">${escH(key)}</span> ${escH(v)}` : '';
@@ -986,8 +1012,95 @@ TL_JS = r"""
     const p = TL.panels.find(q => q.key === 'drought');
     draw(p, dsec.querySelector('.tl-x'), droughtCal);
   }));
+  onToggle = (sec, open) => { tip.hidden = true;
+    const p = open && TL.panels.find(q => 'tl-' + q.key === sec.id);
+    if (p) draw(p, sec.querySelector('.tl-x'), p.key === 'drought' && droughtCal); };
   drawAll();
   document.addEventListener('aalang', drawAll);
+})();
+"""
+
+# The frameworks table (the Map's first columns, then the triggers): a heading's button sorts it,
+# with the Map's rules (LANDING_JS fwSort: names, status and return period ascending at the first
+# click, counts descending; a row without the figure last either way; ties by country, then
+# hazard; names compared in the language shown, again on a switch), and the text box and the
+# status boxes filter it. The months strip is left out of the text search (its initials would
+# match 'jas' everywhere).
+FWM_CSS = """
+table.fwm { min-width:1180px; font-size:12px; }
+table.fwm th { vertical-align:bottom; z-index:1; }
+table.fwm th button { font:inherit; font-weight:700; color:inherit; background:none; border:0; padding:0;
+                      cursor:pointer; text-align:inherit; }
+table.fwm th button:hover { color:#1d5aa8; }
+table.fwm th button:focus-visible { outline:2px solid #1d5aa8; outline-offset:2px; border-radius:2px; }
+table.fwm th .ar { color:#5b6472; font-size:10px; margin-left:3px; }
+table.fwm td { line-height:1.35; }
+table.fwm td.num { text-align:right; }
+table.fwm .ln, table.fwm .bs, table.fwm .rec { display:block; }
+table.fwm .ln + .ln { margin-top:2px; }
+table.fwm .bs { font-weight:600; }
+table.fwm .bs::first-letter, table.fwm .rec::first-letter { text-transform:uppercase; }
+table.fwm .tp { color:#555; font-weight:600; }
+table.fwm td a { overflow-wrap:anywhere; }
+table.fwm td.dc { line-height:24px; }   /* links a line apart: 24 px targets (WCAG 2.5.8) */
+table.fwm td.dc a { white-space:nowrap; } table.fwm td.dc a.cd { white-space:normal; }   /* a repository name may break */
+table.fwm td.thc { min-width:220px; }
+/* the Map's status badges and months strip (landing.py: .badge, .b-*, table.fwtab .mm) */
+.fwm .badge, .lfbar .badge { padding:1px 7px; border-radius:9px; font-size:11px; font-weight:600; margin:0;
+                             white-space:nowrap; }
+.b-endorsed { background:#e2f3e6; color:#1e7a37; } .b-development { background:#fdf0d5; color:#8a5c0a; }
+.b-updating { background:linear-gradient(135deg,#dbeafe 0 50%,#eef4fa 50% 100%); color:#1a5fa0; border:1px solid #9ecae1; }
+.fwm .mstrip { display:inline-flex; gap:1px; }
+.fwm .mm { display:inline-grid; place-items:center; width:14px; height:15px; font-size:8.5px; border-radius:3px;
+           background:#f0f2f5; color:#5b6472; }
+.fwm .mm.on { background:#2171b5; color:#fff; }
+/* a long threshold: cut, the cell opens on the full text */
+details.thr > summary { cursor:pointer; list-style:none; }
+details.thr > summary::-webkit-details-marker { display:none; }
+details.thr .tg { display:block; color:#1d5aa8; margin-top:2px; }
+details.thr > summary:hover .tg { text-decoration:underline; }
+details.thr > summary:focus-visible { outline:2px solid #1d5aa8; outline-offset:2px; border-radius:2px; }
+details.thr[open] > summary .sh, details.thr:not([open]) > summary .op { display:none; }
+.lfbar { display:flex; gap:8px 14px; flex-wrap:wrap; align-items:center; margin:10px 0; font-size:12.5px; }
+.lfbar input.filter { margin:0; max-width:100%; }
+.lfbar label { display:inline-flex; align-items:center; gap:5px; cursor:pointer; }
+.fwmn { color:#555; font-size:12px; }
+"""
+
+FWM_JS = r"""
+(function(){
+  const tab = document.getElementById('fwm'); if (!tab) return;
+  const tb = tab.tBodies[0], rows = [...tb.rows], S = {k: 'country', dir: 1};
+  const UP = ['country', 'hazard', 'status', 'rp'];
+  const cell = (r, k) => r.querySelector(`td[data-k='${k}']`), txt = (r, k) => cell(r, k).textContent.trim();
+  const val = (r, k) => { const v = cell(r, k).dataset.v; return v === undefined ? txt(r, k) : v === '' ? null : +v; };
+  const cmpT = (a, b, k) => txt(a, k).localeCompare(txt(b, k), aaLang());
+  function sort(){
+    const {k, dir} = S;
+    rows.sort((a, b) => { const x = val(a, k), y = val(b, k);
+      const c = typeof x === 'string' ? dir * x.localeCompare(y, aaLang())
+              : x == null || y == null ? (x == null) - (y == null) : dir * (x - y);
+      return c || cmpT(a, b, 'country') || cmpT(a, b, 'hazard'); });
+    tb.append(...rows);
+    tab.querySelectorAll('th[data-k]').forEach(th => { const on = th.dataset.k === k;
+      if (on) th.setAttribute('aria-sort', dir > 0 ? 'ascending' : 'descending'); else th.removeAttribute('aria-sort');
+      th.querySelector('.ar').textContent = on ? (dir > 0 ? '▲' : '▼') : ''; });
+  }
+  tab.querySelectorAll('th[data-k] button').forEach(b => b.addEventListener('click', () => {
+    const k = b.parentNode.dataset.k;
+    S.dir = S.k === k ? -S.dir : (UP.includes(k) ? 1 : -1); S.k = k; sort(); }));
+  const q = document.getElementById('fwmq'), shown = document.getElementById('fwmn');
+  const boxes = [...document.querySelectorAll('#fwmst input[type=checkbox]')];
+  const hay = r => [...r.cells].map(c => c.classList.contains('nq') ? '' : c.textContent).join(' ').toLowerCase();
+  function filter(){
+    const s = q.value.trim().toLowerCase(), on = new Set(boxes.filter(b => b.checked).map(b => b.value));
+    let n = 0;
+    rows.forEach(r => { const show = on.has(r.dataset.life) && (!s || hay(r).includes(s)); r.hidden = !show; n += show; });
+    shown.textContent = tr8('{0} of {1} frameworks shown', n, rows.length);
+  }
+  q.addEventListener('input', filter); boxes.forEach(b => b.addEventListener('change', filter));
+  document.addEventListener('aalang', () => { sort(); filter(); });
+  sort(); filter();
 })();
 """
 

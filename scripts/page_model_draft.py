@@ -364,7 +364,7 @@ def build_model_draft(page, d):
 <style>
 .span2 {{ grid-column:1 / -1; }}
 p.how {{ font-size:12.5px; color:#444; margin:0 0 10px; }}
-.muted {{ color:#888; }}
+.muted {{ color:#666; }}
 .lg {{ display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:#444; margin:0 0 10px; }}
 .lg .sw {{ display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:5px; vertical-align:-2px; box-sizing:border-box; }}
 .tgrid {{ display:flex; flex-wrap:wrap; gap:16px 30px; align-items:flex-start; }}

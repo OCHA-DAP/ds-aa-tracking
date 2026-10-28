@@ -685,6 +685,12 @@ PRE_FUNDS = ("cerf", "pooled", "all")   # the fund parts of a pre-arranged envel
 # document is authoritative, and the owner's sheet quotes it — else the backtest's
 # (aa.v_framework_performance: Weibull over the simulated activation years). Swap to prefer the backtest.
 RP_PREFER = ("stated", "backtest")
+# the two figures, one frame each of (country_iso3, hazard, version, rp) — read here and by the
+# Model page's frameworks table (page_model), so the two tables show the same return period
+RP_SQL = {"backtest": "SELECT country_iso3, hazard, version, overall_return_period AS rp "
+                      "FROM aa.v_framework_performance WHERE overall_return_period IS NOT NULL",
+          "stated": "SELECT country_iso3, hazard, version, overall_rp_reported AS rp "
+                    "FROM aa.version_performance_reported WHERE overall_rp_reported IS NOT NULL"}
 
 
 def _rp_fields(bt, st):
@@ -692,6 +698,35 @@ def _rp_fields(bt, st):
     by = {"backtest": bt, "stated": st}
     src = next((k for k in RP_PREFER if by[k] is not None), None)
     return {"rp": by[src] if src else None, "rp_src": src, "rp_bt": bt, "rp_st": st}
+
+
+def kb_key_match(series, version):
+    """A version label against a column of them: the same, or one a prefix of the other
+    ('2026' / '2026-04-17')."""
+    return series.map(lambda v: v == version or str(v).startswith(version)
+                      or version.startswith(str(v)))
+
+
+def rp_of(df, c, h, version):
+    """A version's figure in a (country, hazard, version, rp) frame: its own row, else the one
+    row whose label is a prefix of the other ('2026' / '2026-04-17'); none when ambiguous."""
+    x = df[(df["country_iso3"] == c) & (df["hazard"] == h)]
+    y = x[x["version"].astype(str) == str(version)]
+    if not len(y):
+        y = x[kb_key_match(x["version"].astype(str), str(version))]
+    return _num(y["rp"].iloc[0]) if len(y) == 1 else None
+
+
+def monitoring_months(fm, cal, c, h):
+    """A version's monitoring months in any year and where they come from: its record's
+    monitoring_period, else the tracking sheets' calendar for the pair (cal: d["calendar"]).
+    The Model page's frameworks table reads them the same way."""
+    mp = fm.get("monitoring_period") or {}
+    months = [int(m) for m in (mp.get("months") or []) if isinstance(m, int)]
+    if months:
+        return months, mp.get("source")
+    months = sorted(int(m) for m in cal.loc[(cal["country_iso3"] == c) & (cal["hazard"] == h), "month"].unique())
+    return months, "calendar sheet" if months else None
 
 
 def _fund_registry(_try):
@@ -969,7 +1004,7 @@ def _year_history(d, e, excl, _try):
     flagged retired today, a DERIVED retirement date (none is recorded): the day after its last
     version's validity ended, else the first status report saying dormant / retired.
     Only past years are kept — the current year is the live record."""
-    from dashboards import funding_series
+    from dashboards import cofinancing_now, funding_series
     past = f"{TODAY.year}-01-01"
     pair, country, series = {}, {}, {}
 
@@ -1005,12 +1040,16 @@ def _year_history(d, e, excl, _try):
     pre, _ = funding_series(d)
     fac = d.get("act_factors") or {}
     # co-financing pre-arranged (money from outside the OCHA-managed funds, recorded with the
-    # pre-arranged figures): per pair and year, every year — the rows the Financing page's
-    # "Co-financing pre-arranged, by agency" counts (a stock per year, as reported for the year)
+    # pre-arranged figures): per pair and year, every year — what the Financing page's
+    # "Co-financing pre-arranged, by year" counts (a stock per year, as reported for the year;
+    # the current year is each framework's co-financing now, dashboards.cofinancing_now: its
+    # yearly total, or the lines its latest framework document states where it has none)
     cof = {}
     cf = pre[(pre["kind"] == "cofinancing") & pre["amount_usd"].notna() & pre["year"].notna()]
     for (c, h, y), g in cf.groupby(["country_iso3", "hazard", "year"]):
         cof.setdefault((c, h), {})[str(int(y))] = float(g["amount_usd"].sum())
+    for (c, h), g in cofinancing_now(d, cf, TODAY.year).groupby(["country_iso3", "hazard"]):
+        cof.setdefault((c, h), {})[str(TODAY.year)] = float(g["amount_usd"].sum())
     pre = pre[(pre["kind"] == "prearranged") & pre["amount_usd"].notna()
               & (pre["year"].astype(int) >= YEAR_FIRST) & (pre["year"].astype(int) < TODAY.year)]
     pairs = set(zip(d["current"]["country_iso3"], d["current"]["hazard"]))
@@ -1089,7 +1128,8 @@ def assemble(d, e):
            FROM aa.activation a WHERE a.event_type NOT IN ({excl}) ORDER BY a.event_date DESC""", e)
     actf = pd.read_sql(
         """SELECT f.country_iso3, f.hazard, f.event_date, f.window_name, f.event_label,
-                  f.event_type, f.fund_code, f.allocation_code, f.amount_usd, c.year AS alloc_year
+                  f.event_type, f.fund_code, f.allocation_code, f.amount_usd, f.people_targeted,
+                  c.year AS alloc_year
            FROM aa.activation_funding f
            LEFT JOIN (SELECT DISTINCT ON (application_code) application_code, year
                       FROM aa.cerf_allocation ORDER BY application_code, year) c
@@ -1115,10 +1155,8 @@ def assemble(d, e):
                  ["country_iso3", "hazard", "n"])
     adhoc_cerf = _adhoc_cerf(e, acts, actf, _try)
     # the framework's OVERALL return period (any of its windows activating in a year), per version
-    fperf = _try("SELECT country_iso3, hazard, version, overall_return_period AS rp FROM aa.v_framework_performance "
-                 "WHERE overall_return_period IS NOT NULL", ["country_iso3", "hazard", "version", "rp"])
-    frep = _try("SELECT country_iso3, hazard, version, overall_rp_reported AS rp FROM aa.version_performance_reported "
-                "WHERE overall_rp_reported IS NOT NULL", ["country_iso3", "hazard", "version", "rp"])
+    fperf = _try(RP_SQL["backtest"], ["country_iso3", "hazard", "version", "rp"])
+    frep = _try(RP_SQL["stated"], ["country_iso3", "hazard", "version", "rp"])
     freg = _fund_registry(_try)
     # versions that allow more than one activation a year (tropical cyclones: two storms in a
     # season; aa.framework_version.activations_per_year). Their pre-arranged money is multiplied
@@ -1149,18 +1187,20 @@ def assemble(d, e):
                   amount_usd FROM aa.framework_partner ORDER BY org_type, name""",
         ["country_iso3", "hazard", "version", "name", "acronym", "org_type", "roles",
          "agency_parent", "amount_usd"])
-    subg = _try(
-        """SELECT country_iso3, agency, partner_name, partner_acronym, partner_type,
-                  sum(subgrant_usd) AS usd
-           FROM aa.cerf_subgrant WHERE is_aa AND country_iso3 IS NOT NULL
-           GROUP BY 1, 2, 3, 4, 5 ORDER BY 1, 2, 6 DESC NULLS LAST""",
-        ["country_iso3", "agency", "partner_name", "partner_acronym", "partner_type", "usd"])
+    # the CERF AA sub-grants of the framework pages and the Financing page (d["subgrant_aa"]: the
+    # allocations the activation record draws on, amounts recorded) — the sheet's own AA flag
+    # missed four allocations (2026-10-28)
+    subg = (d["subgrant_aa"][d["subgrant_aa"]["country_iso3"].notna()]
+            .groupby(["country_iso3", "agency", "partner_name", "partner_acronym", "partner_type"],
+                     as_index=False, dropna=False)["subgrant_usd"].sum().rename(columns={"subgrant_usd": "usd"})
+            .sort_values(["country_iso3", "agency", "usd"], ascending=[True, True, False], na_position="last"))
     # every version's pre-arranged envelope (all funds; an 'all' total is dropped where the
     # per-fund split exists — the dashboards' rule) for the budget sanity check
     vfa = pd.read_sql(
         """SELECT country_iso3, hazard, version, fund_code, total_usd
            FROM aa.v_version_funding WHERE kind = 'prearranged' AND total_usd IS NOT NULL""", e)
-    envelope = _envelopes(vfa)
+    from dashboards import envelope_by_fund
+    envelope = _envelopes(envelope_by_fund(vfa, d["fund_names"]))   # the one envelope rule
     pre_parts = {}                        # pair -> pre-arranged now by fund, and the version it comes from
     for (c_, h_, v_), parts in _envelope_parts(d["vfund"]).items():
         p = pre_parts.setdefault((c_, h_), {"version": v_})
@@ -1201,19 +1241,6 @@ def assemble(d, e):
                 return pg
         return None
 
-    def kb_key_match(series, version):
-        return series.map(lambda v: v == version or str(v).startswith(version)
-                          or version.startswith(str(v)))
-
-    def rp_of(df, c, h, version):
-        """A version's figure in a (country, hazard, version, rp) frame: its own row, else the one
-        row whose label is a prefix of the other ('2026' / '2026-04-17'); none when ambiguous."""
-        x = df[(df["country_iso3"] == c) & (df["hazard"] == h)]
-        y = x[x["version"].astype(str) == str(version)]
-        if not len(y):
-            y = x[kb_key_match(x["version"].astype(str), str(version))]
-        return _num(y["rp"].iloc[0]) if len(y) == 1 else None
-
     countries = {}
     for _, r in cur.iterrows():
         c, h = r["country_iso3"], r["hazard"]
@@ -1234,13 +1261,7 @@ def assemble(d, e):
             fm = pg["fm"] if pg else {}
             mp = fm.get("monitoring_period") or {}
             tf = fm.get("trigger_facets") or {}
-            months = [int(m) for m in (mp.get("months") or []) if isinstance(m, int)]
-            if not months:
-                months = sorted(int(m) for m in cal.loc[(cal["country_iso3"] == c)
-                                                        & (cal["hazard"] == h), "month"].unique())
-                months_src = "calendar sheet" if months else None
-            else:
-                months_src = mp.get("source")
+            months, months_src = monitoring_months(fm, cal, c, h)
             # backtested windows for this version
             w_v = win[(win["country_iso3"] == c) & (win["hazard"] == h)
                       & kb_key_match(win["version"], v.version)]
@@ -1497,12 +1518,13 @@ def assemble(d, e):
 
 
 def _reach_fields(x, reach, reach_row):
-    """The people-reached fields of one activation funding row (CERF rows only): the
-    allocation's figure on the row that carries it (`interim` when summed over projects;
-    `planned`, the people it planned to reach, when there is no figure yet — the estimate's
-    stand-in), `shared` on a later activation drawing on the same allocation."""
+    """The people-reached fields of one activation funding row. CERF: the allocation's figure
+    on the row that carries it (`interim` when summed over projects; `planned`, the people it
+    planned to reach, when there is no figure yet — the estimate's stand-in), `shared` on a
+    later activation drawing on the same allocation. A Country or Regional Fund allocation
+    reports too late to count, so the people it targets stand in (`planned`; owner, 2026-10-28)."""
     if x.fund_code != "cerf":
-        return {}
+        return {"planned": _num(x.people_targeted)} if pd.notna(x.people_targeted) else {}
     code = _s(x.allocation_code)
     if code and reach_row.get(code) != x.Index:
         return {"reached": None, "shared": True}
@@ -1639,6 +1661,13 @@ def tile_figures(countries, layers, year=None):
     # has no figure yet, the allocation's planned people stand in (the estimate)
     cerf = [x for x in rows if x["fund"] == "cerf" and not x.get("shared")]
     tgt = [x for x in cerf if x.get("reached") is None and x.get("planned")]
+    # Country and Regional Fund allocations: the people they target (owner, 2026-10-28), each
+    # allocation once
+    seen, pool = set(), []
+    for x in rows:
+        if x["fund"] != "cerf" and not (x["code"] and x["code"] in seen):
+            seen.add(x["code"]); pool.append(x)
+    ptgt = [x for x in pool if x.get("planned")]
     part = lambda k: sum(((f["pre_parts"] or {}).get(k) or 0) for f in fw)
     return {"n_fw": len(fw),
             "n_active": sum(1 for f in fw if f["disp"] == "active"),
@@ -1655,6 +1684,7 @@ def tile_figures(countries, layers, year=None):
             "n_interim": sum(1 for x in cerf if x.get("reached") is not None and x.get("interim")),
             "targeted": sum(x["planned"] for x in tgt), "n_tgt": len(tgt),
             "n_cerf": len(cerf),
+            "ptargeted": sum(x["planned"] for x in ptgt), "n_ptgt": len(ptgt), "n_pool": len(pool),
             "n_nousd": sum(1 for a in acts if not any(x["usd"] or x.get("shared") for x in a["funding"])),
             "pre_cerf": part("cerf"), "pre_pooled": part("pooled"), "pre_all": part("all"),
             # frameworks whose pre-arranged money counts N activations a year (apy: assemble)
@@ -1689,6 +1719,8 @@ def build_landing(page, d, e):
     cur = d["current"]
     names = dict(zip(cur["country_iso3"], cur["country_name"]))
     countries = assemble(d, e)
+    import figure_check
+    figure_check.KEY["map"] = countries      # the cross-page figure check (build_site)
     svg, bboxes, wdata = world_data(set(countries), names)
     for iso, cd in countries.items():
         if not cd.get("name"):                        # non-framework-only country: Natural Earth name
@@ -1717,13 +1749,13 @@ def build_landing(page, d, e):
         return f"Not shown: {', '.join(xs)}." if xs else ""
 
     def est(g):   # people reached, with the targeted stand-ins: '~' marks an estimate
-        return ("~" if g["n_tgt"] else "") + _people(g["reached"] + g["targeted"])
+        return ("~" if g["n_tgt"] or g["n_ptgt"] else "") + _people(g["reached"] + g["targeted"] + g["ptargeted"])
     def usd(g):   # ' ($17M)' after a count of activations the layers switched off would add
         return f" ({_money(g['released'])})" if g["released"] >= 5e4 else ""
     ns_act = not_shown(ad["n_act"] and f"{ad['n_act']} non-framework allocation{'s' if ad['n_act'] > 1 else ''}{usd(ad)}",
                        ret["n_act"] and f"{ret['n_act']} on retired frameworks{usd(ret)}")
-    ns_reach = not_shown((ad["n_rep"] or ad["n_tgt"]) and f"non-framework allocations {est(ad)}",
-                         (ret["n_rep"] or ret["n_tgt"]) and f"retired frameworks {est(ret)}")
+    ns_reach = not_shown((ad["n_rep"] or ad["n_tgt"] or ad["n_ptgt"]) and f"non-framework allocations {est(ad)}",
+                         (ret["n_rep"] or ret["n_tgt"] or ret["n_ptgt"]) and f"retired frameworks {est(ret)}")
 
     def funds(cerf, pooled, other=0):   # fundBullets() in LANDING_JS
         return [x for x in (cerf >= 5e4 and f"CERF {_money(cerf)}",
@@ -1740,17 +1772,21 @@ def build_landing(page, d, e):
     def act_sentence(usd, n):   # actSentence() in LANDING_JS
         return f"<b>{_money(usd)}</b> released in <b>{n}</b> activation{'' if n == 1 else 's'}" if n else "0"
     n_cerf, n_rep, n_tgt = t["n_cerf"], t["n_rep"], t["n_tgt"]
-    n_none = n_cerf - n_rep - n_tgt
+    n_pool, n_ptgt = t["n_pool"], t["n_ptgt"]
+    n_none, n_pnone = n_cerf - n_rep - n_tgt, n_pool - n_ptgt
     reach_note = " ".join(x for x in (
         (f"Estimate = {_people(t['reached'])} reported by CERF ({n_rep} of {n_cerf} allocations) + "
          f"{_people(t['targeted'])} targeted where there is no report yet ({n_tgt} of {n_cerf}).") if n_tgt
         else f"{n_rep} of the {n_cerf} CERF allocations have a figure." if n_rep else "",
         (f"{n_none} CERF allocation has neither a reported nor a targeted figure: left out." if n_none == 1
          else f"{n_none} CERF allocations have neither a reported nor a targeted figure: left out." if n_none else ""),
+        (f"+ {_people(t['ptargeted'])} targeted by Country and Regional Fund allocations ({n_ptgt} of {n_pool})." if n_ptgt else ""),
+        (f"{n_pnone} Country or Regional Fund allocation has no targeted figure: left out." if n_pnone == 1
+         else f"{n_pnone} Country and Regional Fund allocations have no targeted figure: left out." if n_pnone else ""),
         "Summed over CERF allocations: CERF's own de-duplicated figure for each one, from its final report"
         + (f", or the sum over its projects where the allocation has none yet ({t['n_interim']} interim)" if t["n_interim"] else "")
         + ". A person reached under two allocations counts twice. Reports come about nine months after an allocation, so recent years are incomplete."
-        + " Country and Regional Funds report no figure here. Not people covered: that is what the plans cover now.",
+        + " Country and Regional Funds report too late to count here, so their allocations count with the people they target. Not people covered: that is what the plans cover now.",
         ns_reach) if x)
     # each tile opens with an icon and its name in large type (2026-10-27 review comments)
     def tile_key(icon, name):
@@ -1786,9 +1822,9 @@ def build_landing(page, d, e):
                                   "page gives the same figure for the same layers. Early action allocations are not counted.",
                                   t["n_nousd"] and f"{t['n_nousd']} of the {t['n_act']} have no amount recorded.", ns_act) if x),
              vs=bool(t["n_act"])),
-        tile("t-reach", "people", "Reached", est(t) if n_rep or n_tgt else "—",
-             f"people reached: no CERF allocation in {Y} on the layers shown" if not n_cerf
-             else f"people reached with the {Y} releases — CERF allocations, estimate" if n_tgt
+        tile("t-reach", "people", "Reached or targeted by activations", est(t) if n_rep or n_tgt or n_ptgt else "—",
+             f"people reached or targeted: no allocation in {Y} on the layers shown" if not n_cerf and not n_pool
+             else f"people reached or targeted with the {Y} releases — estimate" if n_tgt or n_ptgt
              else f"people reached with the {Y} releases — CERF allocations" if n_rep
              else f"people reached with the {Y} releases: no report yet for the CERF allocation" if n_cerf == 1
              else f"people reached with the {Y} releases: no report yet for the {n_cerf} CERF allocations",
@@ -2049,6 +2085,7 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
 /* the activations tile: '$39M released in 14 activations', the two figures in bold (owner, 2026-10-28) */
 .gtiles .tile .v.vs { font-size:13.5px; font-weight:400; line-height:1.3; color:#0f2540; }
 .gtiles .tile .v.vs b { font-size:22px; font-weight:700; }
+.gtiles .tile .v.vs b:nth-of-type(2)::before { content:"\A"; white-space:pre; }   /* the count on its own line */
 @media (max-width:759px){ .gtiles .tile .v.vs b { font-size:18px; } }
 .gtiles .gcap { grid-column:1 / -1; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#64748b; margin:-2px 0 -6px 2px; }
 @media (max-width:1199px){ .gtiles { grid-template-columns:repeat(3, minmax(0, 1fr)); } }
@@ -2236,16 +2273,20 @@ function flowActs(f, LY){
 function flowFigures(fs, LY){
   const acts = fs.flatMap(f => flowActs(f, LY)), rows = acts.flatMap(a => a.funding || []);
   const sum = (xs, k) => xs.reduce((t, x) => t + (x[k] || 0), 0);
-  // people reached: CERF allocations only (the mirror has no figure for the pooled funds); an
-  // allocation drawn by two activations is counted once, on the first (the others: shared)
-  // where CERF has no figure yet, the allocation's planned people stand in (the estimate)
+  // people reached: CERF's figures; an allocation drawn by two activations is counted once, on
+  // the first (the others: shared); where CERF has no figure yet, the allocation's planned people
+  // stand in (the estimate). Country and Regional Fund allocations report too late, so the people
+  // they target count (owner, 2026-10-28), each allocation once — tile_figures() in Python
   const cerf = rows.filter(x => x.fund === 'cerf' && !x.shared), rep = cerf.filter(x => x.reached != null),
         tgt = cerf.filter(x => x.reached == null && x.planned);
+  const seen = new Set(), pool = rows.filter(x => x.fund !== 'cerf' && !(x.code && seen.has(x.code)) && (seen.add(x.code), true)),
+        ptgt = pool.filter(x => x.planned);
   return { n: acts.length, nAd: acts.filter(a => a.type === 'adhoc_aa').length,
            usd: sum(rows, 'usd'), usdCerf: sum(rows.filter(x => x.fund === 'cerf'), 'usd'),
            noUsd: acts.filter(a => !(a.funding || []).some(x => x.usd || x.shared)).length,
            reached: sum(rep, 'reached'), nRep: rep.length, nCerf: cerf.length, nInterim: rep.filter(x => x.interim).length,
-           targeted: sum(tgt, 'planned'), nTgt: tgt.length };
+           targeted: sum(tgt, 'planned'), nTgt: tgt.length,
+           ptargeted: sum(ptgt, 'planned'), nPtgt: ptgt.length, nPool: pool.length };
 }
 // what the flow figures count under the layers shown, in words
 function flowWhat(F){ return F.nAd === 0 ? 'framework activations' : F.nAd === F.n ? 'non-framework allocations' : 'framework activations and non-framework allocations'; }
@@ -2771,27 +2812,32 @@ function updateTiles(){
        note: [tr8(F.nAd
          ? 'Money released when a framework activated, or allocated for anticipatory action outside a framework, from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.'
          : 'Money released when a framework activated, from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.'),
+         // a past year shows the frameworks as they stood at its end; the Financing page's layers are today's
+         past ? tr8('For a past year the map shows the frameworks as they stood at its end: a framework retired since counts here under current frameworks, on the Financing page under retired. Tick both layers there to compare.') : '',
          F.noUsd ? tr8('{0} of the {1} have no amount recorded.', F.noUsd, F.n) : '',
          notShown((lab, G) => G.n ? (G.nAd ? tr8(G.n === 1 ? '{0} non-framework allocation' : '{0} non-framework allocations', G.n)
                                           : tr8(lab === 'retired frameworks' ? '{0} on retired frameworks' : '{0} on current frameworks', G.n))
                                     + (G.usd >= 5e4 ? ` (${money(G.usd)})` : '') : null)]});
   // people reached: CERF's figures, and where it has none yet the allocation's planned people —
   // an estimate, marked '~' (owner's request, 2026-10-27)
-  const est = G => (G.nTgt ? '~' : '') + people(G.reached + G.targeted), nNone = F.nCerf - F.nRep - F.nTgt;
-  set('t-reach', F.nRep || F.nTgt ? est(F) : '—',
-      !F.nCerf ? yr('people reached: no CERF allocation on the layers shown', 'people reached: no CERF allocation in {0} on the layers shown')
-      : F.nTgt ? yr('people reached to date — CERF allocations, estimate', 'people reached with the {0} releases — CERF allocations, estimate')
+  const est = G => (G.nTgt || G.nPtgt ? '~' : '') + people(G.reached + G.targeted + G.ptargeted),
+        nNone = F.nCerf - F.nRep - F.nTgt, nPnone = F.nPool - F.nPtgt;
+  set('t-reach', F.nRep || F.nTgt || F.nPtgt ? est(F) : '—',
+      !F.nCerf && !F.nPool ? yr('people reached or targeted: no allocation on the layers shown', 'people reached or targeted: no allocation in {0} on the layers shown')
+      : F.nTgt || F.nPtgt ? yr('people reached or targeted to date — estimate', 'people reached or targeted with the {0} releases — estimate')
       : F.nRep ? yr('people reached to date — CERF allocations', 'people reached with the {0} releases — CERF allocations')
       : F.nCerf === 1 ? yr('people reached to date: no report yet for the CERF allocation', 'people reached with the {0} releases: no report yet for the CERF allocation')
       : tr8(YEAR != null ? 'people reached with the {1} releases: no report yet for the {0} CERF allocations' : 'people reached to date: no report yet for the {0} CERF allocations', F.nCerf, YEAR),
       {note: [F.nTgt ? tr8('Estimate = {0} reported by CERF ({1} of {2} allocations) + {3} targeted where there is no report yet ({4} of {2}).', people(F.reached), F.nRep, F.nCerf, people(F.targeted), F.nTgt)
                      : F.nRep ? tr8('{0} of the {1} CERF allocations have a figure.', F.nRep, F.nCerf) : '',
               nNone ? tr8(nNone === 1 ? '{0} CERF allocation has neither a reported nor a targeted figure: left out.' : '{0} CERF allocations have neither a reported nor a targeted figure: left out.', nNone) : '',
+              F.nPtgt ? tr8('+ {0} targeted by Country and Regional Fund allocations ({1} of {2}).', people(F.ptargeted), F.nPtgt, F.nPool) : '',
+              nPnone ? tr8(nPnone === 1 ? '{0} Country or Regional Fund allocation has no targeted figure: left out.' : '{0} Country and Regional Fund allocations have no targeted figure: left out.', nPnone) : '',
               tr8("Summed over CERF allocations: CERF's own de-duplicated figure for each one, from its final report")
                 + (F.nInterim ? tr8(', or the sum over its projects where the allocation has none yet ({0} interim)', F.nInterim) : '')
                 + tr8('. A person reached under two allocations counts twice. Reports come about nine months after an allocation, so recent years are incomplete.')
-                + ' ' + tr8('Country and Regional Funds report no figure here. Not people covered: that is what the plans cover now.'),
-              notShown((lab, G) => G.nRep || G.nTgt ? `${tr8(lab)} ${est(G)}` : null)]});
+                + ' ' + tr8('Country and Regional Funds report too late to count here, so their allocations count with the people they target. Not people covered: that is what the plans cover now.'),
+              notShown((lab, G) => G.nRep || G.nTgt || G.nPtgt ? `${tr8(lab)} ${est(G)}` : null)]});
   const g = document.getElementById('gtiles'); if(g) g.classList.toggle('global', !!state.iso);
   const cap = document.getElementById('gcap'); if(cap) cap.textContent = (state.iso ? tr8('Global portfolio — not {0}: its own figures are in the panel', tr8(L[state.iso].name)) : tr8('Global portfolio — all layers currently shown on the map'))
     + (past ? ' · ' + tr8('as at 31 December {0}', YEAR) : YEAR != null ? ' · ' + tr8('{0}, as of today', YEAR) : '');
@@ -3084,11 +3130,12 @@ function renderSide(){
     (f.page && f.page!=='#' ? `<p class='small' style='margin-top:12px'><a href='${f.page}'>${esc(tr8('full framework page →'))}</a></p>` : '');
   annotate(side, side);
 }
-// a version's pre-arranged money: the document's figure, else its envelope. A version that allows
-// N activations a year shows N times its envelope — the figure the tiles and the table count (the
-// document's own figure may already be a yearly total). The budget check (fundingBlock) keeps the envelope.
-const verPre = v => v.apy > 1 ? ((v.envelope ?? v.prearranged_doc) == null ? null : (v.envelope ?? v.prearranged_doc) * v.apy)
-  : (v.prearranged_doc ?? v.envelope);
+// a version's pre-arranged money: its envelope (dashboards.envelope_by_fund, the one rule), the
+// figure the tiles, the table and the Financing page count — not the document's figure first
+// (2026-10-28: Fiji read $3.94M here against the table's $2.75M); the document's own figure, where
+// it differs, is a row of its own (pillarBody). A version that allows N activations a year shows N
+// times its envelope, as the tiles count it. The budget check (fundingBlock) keeps the envelope.
+const verPre = v => v.envelope > 0 ? v.envelope * (v.apy > 1 ? v.apy : 1) : null;   // > 0: prearranged_now's rule
 // ---------- the building blocks of AA: model · plan · funding · learning (always shown)
 const PILLARS = ['model', 'plan', 'funding', 'learning'];
 function pillarsBar(f, v){
@@ -3104,7 +3151,8 @@ function pillarsBar(f, v){
      esc([v.basis && tr8(v.basis), v.months.length ? tr8('{0} months monitored', v.months.length) : null, nA ? tr8(nA > 1 ? '{0} activations' : '{0} activation', nA) : tr8('never activated')].filter(Boolean).join(' · '))],
     ['plan', tr8('Activities'), nUN ? esc(tr8(nUN > 1 ? '{0} UN agencies funded' : '{0} UN agency funded', nUN)) : '—',
      [v.target_people ? esc(tr8('{0} people targeted', num(v.target_people))) : (f.covered ? esc(tr8('{0} people covered', num(f.covered))) : null), nPart ? esc(tr8(nPart > 1 ? '{0} partners in total' : '{0} partner in total', nPart)) : null].filter(Boolean).join('<br>')],
-    ['funding', tr8('Financing'), verPre(v) == null ? '—' : money(verPre(v)) + apyMark(v.apy > 1 && v.apy), esc((v.prearranged_doc ?? v.envelope) ? tr8('pre-arranged') + (funds.length?' · '+funds.map(fundName).join(', '):'') : tr8(f.tech ? 'technical support only' : 'no figure yet'))],
+    ['funding', tr8('Financing'), verPre(v) == null ? '—' : money(verPre(v)) + apyMark(v.apy > 1 && v.apy), esc(v.envelope > 0 ? tr8('pre-arranged') + (funds.length?' · '+funds.map(fundName).join(', '):'')
+       : v.prearranged_doc != null ? tr8('no envelope recorded; the document states {0}', money(v.prearranged_doc)) : tr8(f.tech ? 'technical support only' : 'no figure yet'))],
     ['learning', tr8('Learning'), esc(nDocs ? tr8(nDocs > 1 ? '{0} documents' : '{0} document', nDocs) : tr8('no documents yet')), esc(tr8('evaluations, reviews, reports'))],
   ];
   if(!PILLARS.includes(state.pillar)) state.pillar = 'model';
@@ -3119,7 +3167,8 @@ function pillarBody(f, v){
   const c = L[state.iso];
   if(state.pillar==='funding'){
     rows.push([tr8('Pre-arranged'), `${money(verPre(v))}${v.apy > 1 && verPre(v) != null ? apyMark(v.apy) + ` <span class='muted'>· ${esc(apyNote(v.apy))}</span>` : ''}${v.regional?` <span class='muted'>· ${esc(tr8('regional document total (all countries)'))}</span>`:''}${v.all_in===false?` <span class='muted'>· ${esc(tr8('split budget per window'))}</span>`:v.all_in===true?` <span class='muted'>· ${esc(tr8('all-in'))}</span>`:''}`]);
-    if(v.envelope!=null && v.prearranged_doc!=null && Math.abs(v.envelope - v.prearranged_doc) > 0.01*Math.max(v.envelope, v.prearranged_doc)) rows.push([tr8('Envelope (registry)'), `${money(v.envelope)} <span class='muted'>${esc(tr8("from the version's window funding; the document says {0}", money(v.prearranged_doc)))}</span>`]);
+    // the document's own figure, where it differs from the envelope counted (or there is none)
+    if(v.prearranged_doc!=null && (!(v.envelope > 0) || Math.abs(v.envelope - v.prearranged_doc) > 0.01*Math.max(v.envelope, v.prearranged_doc))) rows.push([tr8('In the framework document'), `${money(v.prearranged_doc)} <span class='muted'>${esc(tr8("the figure the document states; the tiles, the table and the Financing page count the envelope recorded for the version"))}${v.regional?' · '+esc(tr8('regional document total (all countries)')):''}</span>`]);
     if(v.cofin) rows.push([tr8('Co-financing'), `${money(v.cofin)}${v.cofin_sources.length?` <span class='muted'>${esc(v.cofin_sources.join(', '))}</span>`:''}`]);
     if(f.tech) rows.push([tr8('OCHA role'), `<span class='badge b-tech'>${esc(tr8('technical support'))}</span> <span class='muted'>${esc(tr8('no funding commitment'))}</span>`]);
     return miniTable(rows) + fundingBlock(v);

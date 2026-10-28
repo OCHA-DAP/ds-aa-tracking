@@ -156,6 +156,10 @@ def _extra():
                       JOIN aa.cerf_project p USING (project_code)
                       WHERE p.application_code IN """ + fw + " AND s.sector_amount > 0",
                    ["application_code", "sector", "iasc", "sector_amount"]),
+        # the agencies CERF funded directly through those allocations (the partners tile)
+        "recip": ("""SELECT DISTINCT application_code, country_iso3, agency_short_name AS agency
+                     FROM aa.cerf_project WHERE application_code IN """ + fw,
+                  ["application_code", "country_iso3", "agency"]),
         # d["subgrant_aa"] without the partner acronym, which the name matching uses
         "subgrant": ("""SELECT project_code, application_code, agency, year, country_iso3,
                                partner_name, partner_acronym, partner_type, localization,
@@ -360,7 +364,7 @@ def _matrix(counts, cols, row_note, title_unit, freq=None):
         for c in cols:
             v = counts.get((h, c), 0)
             a = 0.10 + 0.8 * v / mx if v else 0
-            fg = "#fff" if a > 0.55 else "#1a1a1a"
+            fg = "#1a1a1a"   # dark on every shade: white never reaches 4.5:1 on this blue (WCAG 1.4.3)
             tip = ATTRC("title", lambda w, h=h, c=c, v=v: f"{w(h)} · {w(c)}: {v} {w(title_unit)}")
             cells += (f"<td class='mx' style='background:rgba({r0},{g0},{b0},{a:.2f});color:{fg}'"
                       f" {tip}>{v or ''}</td>")
@@ -371,14 +375,16 @@ def _matrix(counts, cols, row_note, title_unit, freq=None):
 
 PLAN_CSS = """
 table.mxt { border-collapse:collapse; font-size:12px; background:#fff; }
-table.mxt th.sx { vertical-align:bottom; height:130px; padding:0 2px; font-weight:500; }
+/* the header row is as tall as the longest sector name may wrap to (two lines of ~175px, French and
+   Spanish included), so no name is cut at the top of the box */
+table.mxt th.sx { vertical-align:bottom; height:182px; padding:4px 2px 0; font-weight:500; }
 table.mxt th.sx span { writing-mode:vertical-rl; transform:rotate(180deg); white-space:normal;
-  max-height:150px; display:inline-block; color:#444; line-height:1.15; text-align:left; }
+  max-height:175px; display:inline-block; color:#444; line-height:1.15; text-align:left; }
 table.mxt th.rh { text-align:left; padding:4px 10px 4px 4px; white-space:nowrap; font-weight:600; }
-table.mxt th.rh .muted { font-weight:400; color:#888; font-size:11px; }
+table.mxt th.rh .muted { font-weight:400; color:#666; font-size:11px; }
 table.mxt td.mx { width:34px; min-width:34px; height:28px; text-align:center; border:1px solid #fff;
   font-weight:600; }
-.muted { color:#888; }
+.muted { color:#666; }
 ul.nm { margin:4px 0 10px; padding-left:18px; font-size:12.5px; }
 ul.nm li { margin:2px 0; }
 .notyet { background:#fbfaf6; border:1px dashed #d8d2bf; border-radius:6px; padding:10px 16px; margin:18px 0; }
@@ -404,7 +410,26 @@ def build_plan(page, d):
     n_ingo = int(n_by.get("ingo", 0))
     n_fw_pt = int(fw["version"].notna().sum()) if len(fw) else 0
     sgd = sg[~sg["tbd"]]
-    n_funded_all = sgd["skey"].nunique()
+    # partners that received or are pre-arranged to receive funding (owner, 2026-10-28): the
+    # agencies CERF funded directly through framework activations or that hold a pre-arranged share
+    # of a current framework's budget, each once, and every sub-grantee, once per country (an agency
+    # that is also a sub-grantee counts once). The pooled funds keep no record per partner here.
+    lv_ = live[["country_iso3", "hazard", "latest_version"]].rename(columns={"latest_version": "version"})
+    pre_ag = d["split_all"].merge(lv_, on=["country_iso3", "hazard", "version"])["agency"].dropna()
+    agencies = {_n(a) for a in pre_ag} | ({_n(a) for a in ex["recip"]["agency"].dropna()} if len(ex["recip"]) else set())
+    subs = sgd.drop_duplicates("skey")
+    subs = subs[~subs["partner_acronym"].fillna("").map(_n).isin(agencies)]
+    sub_kind = subs["partner_type"].fillna("").str.lower().map(
+        lambda t: "government" if t == "gov" else "nngo" if t in ("nngo", "national partners")
+        else "ingo" if t in ("ingo", "ngos") else "rcrc" if t == "redc" else "other")
+    n_recip = len(agencies) + len(subs)
+    recip_mix = "<ul class='tb'>" + "".join(
+        f"<li>{T(label)} {n}</li>" for label, n in (
+            ("agencies funded directly or pre-arranged", len(agencies)),
+            *((lab, int((sub_kind == k).sum())) for k, lab in (
+                ("government", "Government"), ("nngo", "National / local NGOs"),
+                ("ingo", "International NGOs"), ("rcrc", "Red Cross / Red Crescent"), ("other", "Other"))))
+        if n) + "</ul>"
     cmp_ = fw[fw["has_sub"]] if len(fw) else fw
     n_named = int(cmp_["funded"].str.len().sum() + cmp_["unfunded"].str.len().sum()) if len(cmp_) else 0
     n_named_f = int(cmp_["funded"].str.len().sum()) if len(cmp_) else 0
@@ -624,14 +649,10 @@ def build_plan(page, d):
     n_due = sum(1 for x in prow if x["status"] == "not due")
     gaps = [x for x in prow if x["status"] == "gap"]
     ppl_total = sum(x["reached"] for x in rep)
+    import figure_check                       # the cross-page figure check (build_site)
+    figure_check.KEY["activities"] = dict(reached=ppl_total, n_rep=len(rep), n_cerf=len(al), n_live=n_live)
     n_over = sum(1 for x in fin if x["planned"] and x["reached"] >= x["planned"])
 
-    def _plab(x):
-        """The chart label without its tag; the page adds '(interim…)' in its language."""
-        return f"{x['iso3']} {x['year']} · {str(x['code']).split('-')[-1]}"
-    ppl = [{"label": _plab(x), "planned": x["planned"], "reached": x["reached"],
-            "tag": "proj" if x["src"] == "projects" else "interim" if x["not_due"] else "",
-            "np": x["np"], "nr": x["nr"]} for x in rep]
     nd_list = ", ".join(x["code"] for x in prow if x["status"] == "not due")
     def gap_txt(w):
         return "; ".join(
@@ -747,12 +768,15 @@ def build_plan(page, d):
         "".join(w(t).format(**{k: (v(w) if callable(v) else v) for k, v in vals.items()}) for t, vals in kpi_note)))
     rep_tag = (TF(" ({n} interim)", n=len(rep) - len(fin)) if len(rep) > len(fin) else "")
     gap_tag = (TF("{n} gap", n=len(gaps)) if len(gaps) == 1 else TF("{n} gaps", n=len(gaps)))
+    # the organisations tile, second in the row: what the count is made of, by type (owner, 2026-10-28)
+    org_mix = "<ul class='tb'>" + "".join(
+        f"<li>{T(label)} {int(n_by.get(k, 0))}</li>" for k, label in TYPE_GROUPS if n_by.get(k, 0)) + "</ul>"
     panels = f"""
 <div class='tiles'>
  <div class='tile'><div class='v'>{n_iasc}</div><div class='l'>{TB("sectors where the portfolio has planned or delivered AA<br>(IASC sector names; framework budgets, CERF projects of framework activations)")}</div></div>
+ <div class='tile'><div class='v'>{n_orgs}</div><div class='l'>{TF("organisations named in {n} current frameworks", n=n_fw_pt)}{org_mix}</div></div>
  <div class='tile'><div class='v'>{cash_share}</div><div class='l'>{TB("of the framework activations' CERF money in CERF's CVA file<br>delivered as cash or vouchers")}</div></div>
  <div class='tile'><div class='v'>{ppl_total / 1e6:.1f}M</div><div class='l'>{TBF("people reached, summed over the {n} of {m} CERF<br>allocations of framework activations that report it", n=len(rep), m=len(al))}</div></div>
- <div class='tile'><div class='v'>{n_orgs}</div><div class='l'>{TF("organisations named in {n} current frameworks", n=n_fw_pt)}</div></div>
  <div class='tile'><div class='v'>{loc_share}</div><div class='l'>{TBF("of the CERF sub-grant money of framework activations<br>to national / local actors (partner determined, {years})", years=sg_years)}</div></div>
 </div>
 
@@ -786,10 +810,8 @@ def build_plan(page, d):
  <div class='tile'><div class='v'>{n_over} <span style='font-size:14px;font-weight:400'>{TF("of {n}", n=len(fin))}</span></div><div class='l'>{TB("allocations with a final report that reached<br>at least as many people as planned")}</div></div>
  <div class='tile'><div class='v'>{fem['planned']:.0%} → {fem['reached']:.0%}</div><div class='l'>{TBF("women and girls, share of people planned → reached<br>({n} allocations with both)", n=len(both))}</div></div>
 </div>
+<details class='note' style='font-size:12px;margin:2px 0 10px'><summary style='cursor:pointer'>{T("How the people figures are counted")}</summary>{ppl_how}</details>
 <div class='grid'>
- <div class='panel'><h3>{T("People planned and reached, per CERF allocation of a framework activation")}</h3>
-   <div style='position:relative;height:{max(300, 26 * len(ppl) + 60)}px'><canvas id='pl4' style='max-height:none'></canvas></div>
-   <div class='note'>{ppl_how}</div></div>
  <div class='panel'><h3>{T("By sex, age and disability")}</h3>
    <div style='position:relative;height:300px'><canvas id='pl5' style='max-height:none'></canvas></div>
    <div class='note'>{TBF("Summed over the {n} of these allocations with both a planned and a reached breakdown (CERF GMS reports 2020–2024). Women / men are adults, girls / boys children. Persons with disabilities is a separate count, overlapping the others.", n=len(both))}</div></div>
@@ -801,7 +823,7 @@ def build_plan(page, d):
  <div class='tile'><div class='v'>{n_nat} <span style='font-size:14px;font-weight:400'>{TF("of {n}", n=n_orgs)}</span></div><div class='l'>{TBF("named organisations are national / local actors: {g} government,<br>{n} national NGOs, {r} national RC/RC societies", g=int(n_by.get('government', 0)), n=int(n_by.get('nngo', 0)), r=int(n_by.get('rcrc_nat', 0)))}</div></div>
  <div class='tile'><div class='v'>{n_un}</div><div class='l'>{T("UN agencies named as implementers")}</div></div>
  <div class='tile'><div class='v'>{n_ingo}</div><div class='l'>{T("international NGOs")}</div></div>
- <div class='tile'><div class='v'>{n_funded_all}</div><div class='l'>{TF("non-UN recipients of CERF funding (Red Cross, NGOs, government) through sub-grants of framework activations, {years}", years=sg_years)}</div></div>
+ <div class='tile'><div class='v'>{n_recip}</div><div class='l'>{TF("partners that received or are pre-arranged to receive funding, sub-grantees included ({years})", years=sg_years)}{recip_mix}</div></div>
 </div>
 <div class='grid'>
  <div class='panel'><h3>{T("CERF sub-grants of framework activations by recipient, per year")}</h3>
@@ -832,7 +854,6 @@ def build_plan(page, d):
         "loc": loc_rows,
         "cash": cash_rows,
         "cashHz": cash_hz,
-        "ppl": ppl,
         "dis": dis,
     }
     js = """
@@ -850,7 +871,6 @@ function sxOrder(byF){
       idx.forEach(i=>r.appendChild(c[i+1])); r.insertBefore(first, r.firstChild); }); }); }
 document.querySelectorAll("input[name='sxo']").forEach(el=>el.addEventListener('change', ()=>sxOrder(el.value==='f')));
 const pc = v=>v==null?'':' · '+Math.round(v*100)+'%';
-const pTag = r=>r.tag==='proj' ? ' ('+tr8('interim, {0} of {1} projects', r.nr, r.np)+')' : r.tag ? ' ('+tr8('interim')+')' : '';
 const num = v=>Number(v).toLocaleString('en-US');
 function drawPlan(){   // again on a language switch: the labels are translated as drawn
   mkChart('pl2','bar',D.loc.map(r=>r.year+pc(r.share)),[
@@ -864,14 +884,10 @@ function drawPlan(){   // again on a language switch: the labels are translated 
     {label:'cash and vouchers',data:D.cashHz.map(r=>r.cash),backgroundColor:PAL[2]},
     {label:'other modalities',data:D.cashHz.map(r=>r.other),backgroundColor:'#c8ccd2'}],
     {stacked:true,totals:true,allLabels:true,extra:{indexAxis:'y'}});
-  mkChart('pl4','bar',D.ppl.map(r=>r.label+pTag(r)),[
-    {label:'planned',data:D.ppl.map(r=>r.planned),backgroundColor:PAL[0]},
-    {label:'reached',data:D.ppl.map(r=>r.reached),backgroundColor:PAL[2]}],
-    {count:true,allLabels:true,extra:{indexAxis:'y'}});
   mkChart('pl5','bar',D.dis.labels,[
     {label:'planned',data:D.dis.planned,backgroundColor:PAL[0]},
     {label:'reached',data:D.dis.reached,backgroundColor:PAL[2]}],{count:true,allLabels:true});
-  [['pl4','x'],['pl5','y']].forEach(([id,ax])=>{ const ch=document.getElementById(id)._chart;
+  [['pl5','y']].forEach(([id,ax])=>{ const ch=document.getElementById(id)._chart;
     if(!ch) return; ch.options.scales[ax].ticks.callback=num;
     ch.options.plugins.tooltip.callbacks.label=c=>` ${c.dataset.label}: ${num(ax==='x'?c.parsed.x:c.parsed.y)}`; ch.update(); });
 }
