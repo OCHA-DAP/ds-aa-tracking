@@ -130,7 +130,8 @@ def check() -> None:
         if x["envelope"] and str(x["envelope_version"]) == str(parts.get("version")):
             n_env += 1
             cmp(f"envelope, {k}", "Map ↔ framework page", f["pre_now"],
-                x["envelope"] + x.get("envelope_cerf", x["envelope"]) * (x["apy"] - 1))   # CERF counts N times
+                x["envelope"] - x.get("envelope_released", 0.0)       # a released pooled envelope is not committed
+                + x.get("envelope_cerf", x["envelope"]) * (x["apy"] - 1))   # CERF counts N times
     if no_page:
         bad.append(f"no framework page data for {', '.join(sorted(no_page))} — framework pages")
     pages = (f"framework pages: {n_pg} charts, {n_env} envelopes (the others give an earlier version's, "
