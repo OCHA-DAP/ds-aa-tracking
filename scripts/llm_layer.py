@@ -18,8 +18,12 @@ build (so the nightly publish keeps it current):
                           (aa.framework_document, extracted with pypdf from the blob archive,
                           cached under data/framework_documents/)
 - aa-<name>.json / .csv   the tables behind the pages (one JSON object with the rows and the
-                          stamps, every row carrying every column; the CSV is the same rows)
-- robots.txt, sitemap.xml (the open files first; the encrypted pages last)
+                          stamps, every row carrying every column; the CSV is the same rows); the
+                          money rows carry the pages' layer (current / retired / non-framework,
+                          dashboards._layer_of) so every toggle of the Financing page can be
+                          reproduced, and the figures the pages multiply or estimate (two
+                          activations a year, people reached) say so in a column
+- robots.txt, sitemap.xml (the open files first; the listed encrypted pages last)
 
 A reader that knows nothing about the site has to be able to use it (tested 2026-10-09 with
 readers given only the URL): the figures agree across files to the dollar (pre-arranged money
@@ -70,27 +74,51 @@ Counting rules (an LLM summing these files without them gets wrong totals):
   most recent version that has one, all funds. `prearranged_usd` in aa-frameworks is that same
   figure per framework, and the portfolio page's headline is its sum. Past years keep the
   reported series. It is not reduced by what activations released during the year.
-- Released money is what activations drew: the `funding` rows of aa-activations. The
-  Financing page's released series counts framework activations (`event_type` =
-  `framework_aa`) only; ad hoc AA allocations (`adhoc_aa`) are listed but shown separately.
-  Early action allocations are not anticipatory action and are not in these files.
-- CBPF and regional-fund pre-arranged money comes from the OneGMS allocation mirror
-  (source `onegms-mirror`); hand-tracked CBPF rows are kept only for country-years the
-  mirror does not cover, so the same money is never counted twice.
+- Two activations a year: a framework version whose document allows the trigger to activate
+  twice in one season (`activations_per_year` = 2, some tropical-cyclone frameworks) has its
+  envelope COUNTED TWICE in every pre-arranged figure here, as on the pages; the budget per
+  activation is half the figure. The amounts are already multiplied: never multiply again.
+- Released money is what activations drew: the `funding` rows of aa-activations. Two kinds:
+  framework activations (`event_type` `framework_aa`) and non-framework allocations
+  (`adhoc_aa`: anticipatory money allocated without a framework; they have no version and
+  no window, and nothing is pre-arranged for them). Early action allocations are not
+  anticipatory action and are not in these files.
+- Layers, as on the site: every money row carries `layer` = `current` (a framework that is
+  active, being updated or in development today), `retired` (a retired framework, in the
+  years it was live) or `non_framework`. The Financing page opens with the current and
+  non-framework layers on and the retired layer off; the map's activation tile counts
+  framework activations. Add up the layers the question needs, and say which.
 - A framework is one (country, hazard) pair. Regional frameworks do not exist: the Central
   America Dry Corridor is four national frameworks (El Salvador, Guatemala, Honduras and the
   retired Nicaragua), even where a document title calls it regional or one document serves
-  several of them.
+  several of them. One exception: a pair can also hold an EARLIER framework that a distinct
+  new one replaced rather than revised (Somalia drought: the 2019-2021 food security
+  framework, replaced by the 2026 one). Its versions, activations and money carry
+  `replaced_framework` = true and the `retired` layer: they are a retired framework's, never
+  the current framework's.
+- Money comes from CERF and the Country and Regional Funds (the country-based pooled funds
+  and the regional humanitarian funds), together the OCHA-managed funds. Pooled-fund
+  pre-arranged money comes from the OneGMS allocation mirror (source `onegms-mirror`);
+  hand-tracked rows are kept only for country-years the mirror does not cover, so the same
+  money is never counted twice. Co-financing (money from outside the OCHA-managed funds,
+  aa-cofinancing) is a separate stock: never add it to the pre-arranged figures.
 - A framework version is one framework document: `endorsed`, or `development` while it is
-  still being written. `lifecycle` says where the framework stands today: active, updating,
-  development, pipeline or retired (defined under Vocabulary). Count frameworks by
-  `lifecycle`, not by `status`.
+  still being written. `lifecycle` says where the framework stands today: active, updating
+  (being updated), development, pipeline or retired (defined under Vocabulary). Count
+  frameworks by `lifecycle`, not by `status`.
 - A trigger window has two return periods and they can differ: the one its document states
   (aa-trigger-windows, free text) and the one from the historical simulation (backtest) of
-  the trigger (aa-windows, `return_period` in years, with the activation probability).
-- Activations also include ad hoc anticipatory allocations for hazards and countries that
-  have no framework; they have no version and no window.
+  the trigger (aa-windows, `return_period` in years, with the activation probability). For a
+  whole framework version, `return_period_years` (aa-frameworks, aa-versions) is the figure
+  the map's table shows: the one the document states where there is one, otherwise the
+  backtest's (`return_period_basis` says which; both figures are given).
+- People reached (`people_reached` in the funding rows of aa-activations) is CERF's figure for
+  an allocation, from its final report; an allocation that serves several activations carries
+  it once. It is not people covered (what the frameworks cover now) or people targeted.
 """
+
+# the map layer a money row belongs to (dashboards._layer_of), in words
+LAYER = {"c": "current", "r": "retired", "a": "non_framework"}
 
 
 # ---------------------------------------------------------------------- helpers
@@ -234,6 +262,52 @@ def _document_windows(name, trig, idx):
     return got if sub else []
 
 
+def _read(e, sql, cols):
+    """A table that may not exist in an older snapshot: an empty frame, never a crash."""
+    try:
+        return pd.read_sql(sql, e)
+    except Exception as exc:  # noqa: BLE001
+        print(f"::warning::open layer: {exc.__class__.__name__} reading {sql.split('FROM')[1].split()[0]}")
+        return pd.DataFrame(columns=cols)
+
+
+RP_NONE = {"return_period_years": None, "return_period_basis": None,
+           "return_period_stated_years": None, "return_period_backtest_years": None}
+
+
+def _return_periods(e):
+    """(country, hazard, version) -> a version's OVERALL return period (any window activating in a
+    year) as the map's table shows it (landing._rp_fields, in its order RP_PREFER: the figure the
+    document states, else the backtest's), with both figures. A version label that is a prefix of
+    the other ('2026' / '2026-04-17') matches when it is the only one, as landing.rp_of does."""
+    import landing
+
+    cols = ["country_iso3", "hazard", "version", "rp"]
+    bt = _read(e, "SELECT country_iso3, hazard, version::text AS version, overall_return_period AS rp "
+                  "FROM aa.v_framework_performance WHERE overall_return_period IS NOT NULL", cols)
+    st = _read(e, "SELECT country_iso3, hazard, version::text AS version, overall_rp_reported AS rp "
+                  "FROM aa.version_performance_reported WHERE overall_rp_reported IS NOT NULL", cols)
+    def of(df, c, h, v):
+        x = df[(df["country_iso3"] == c) & (df["hazard"] == h)]
+        y = x[x["version"] == v]
+        if not len(y):
+            y = x[[a.startswith(v) or v.startswith(a) for a in x["version"]]]
+            if len(y) != 1:
+                return None
+        return float(y["rp"].iloc[0]) if len(y) else None
+    r2 = lambda x: None if x is None else round(x, 2)      # noqa: E731
+    words = {"stated": "stated in the framework", "backtest": "historical simulation"}
+    out = {}
+    ver = pd.read_sql("SELECT country_iso3, hazard, version::text AS version FROM aa.framework_version", e)
+    for c, h, v in set(zip(ver["country_iso3"], ver["hazard"], ver["version"])):
+        f = landing._rp_fields(of(bt, c, h, v), of(st, c, h, v))
+        if f["rp"] is not None:
+            out[(c, h, v)] = {"return_period_years": r2(f["rp"]), "return_period_basis": words[f["rp_src"]],
+                              "return_period_stated_years": r2(f["rp_st"]),
+                              "return_period_backtest_years": r2(f["rp_bt"])}
+    return out
+
+
 # ---------------------------------------------------------------------- the build
 def build(d, e, public, out, snapshot_at):
     """Write the layer into `out`; return the set of file names written."""
@@ -264,8 +338,10 @@ def build(d, e, public, out, snapshot_at):
     cur = d["current"].sort_values(["country_name", "hazard"])
     fvm = d["fv_meta"]
     vpage = d["vpage"]
-    kb_of = {(r.country_iso3, r.hazard): r.kb_framework for r in cur.itertuples()
-             if isinstance(r.kb_framework, str)}
+    layer_of = dashboards._layer_of(d)          # the map's layers: c current, r retired
+    old = d.get("old") or set()                 # versions of a framework a new one replaced
+    fac = d.get("act_factors") or {}            # versions allowing two activations a year
+    rp = _return_periods(e)                     # (c, h, version) -> the map table's figures
     name_of = dict(zip(cur["country_iso3"], cur["country_name"]))
 
     # ---- the documents: structured reads (version pages) and the archived PDFs' text
@@ -277,21 +353,37 @@ def build(d, e, public, out, snapshot_at):
     # ---- funding: the annual series the Financing page charts. Its current-year rows are
     # pre-arranged money NOW (dashboards.prearranged_now, the one definition every page uses);
     # the registry rows below carry the same figure, so every file agrees to the dollar.
-    pre, act = dashboards.funding_series(d)
+    # released="all": the non-framework allocations ride along on their own layer, as on the
+    # Financing page (its layer toggles); co-financing is kept apart from the pre-arranged money
+    pre, act = dashboards.funding_series(d, released="all")
+    cof = pre[pre["kind"] == "cofinancing"].copy()
     pre = pre[pre["kind"] == "prearranged"].copy()
-    pre["source"] = [x if x in ("framework-record", "onegms-mirror", "version-inferred") else "tracking-sheets"
-                     for x in pre["source"].astype(str)]
+    for df in (pre, cof):
+        df["source"] = [x if x in ("framework-record", "onegms-mirror", "version-inferred") else "tracking-sheets"
+                        for x in df["source"].astype(str)]
+        df["version"] = [None if pd.isna(v) else str(v) for v in df["version"]]
+        df["layer"] = [LAYER[layer_of(c, h, v)] for c, h, v in zip(df["country_iso3"], df["hazard"], df["version"])]
+        df["replaced_framework"] = [(c, h, v) in old for c, h, v in zip(df["country_iso3"], df["hazard"], df["version"])]
+    # funding_series has already multiplied these rows (activation_factors): the factor says so
+    pre["activations_per_year"] = [fac.get((c, h, v), 1) for c, h, v in zip(pre["country_iso3"], pre["hazard"], pre["version"])]
+    act = act.copy()
+    act["layer"] = ["non_framework" if t == "adhoc_aa" else LAYER[layer_of(c, h, v)]
+                    for t, c, h, v in zip(act["event_type"], act["country_iso3"], act["hazard"], act["version"])]
     now_year = date.today().year
     now = pre[(pre["year"] == now_year) & (pre["source"] == "framework-record")]
     now_all = now.groupby(["country_iso3", "hazard"])["amount_usd"].sum().to_dict()
     now_cerf = now[now["fund_code"] == "cerf"].groupby(["country_iso3", "hazard"])["amount_usd"].sum().to_dict()
     now_ver = {(x.country_iso3, x.hazard): str(x.version) for x in d["vfund"].itertuples()}
+    # co-financing as reported for the year, per framework: the map table's column
+    cof_now = cof[cof["year"] == now_year].groupby(["country_iso3", "hazard"])["amount_usd"].sum().to_dict()
 
     # ---- frameworks: every pair the registry tracks (the map shows the pipeline ones as points)
     fw_rows = []
     for r in cur.itertuples():
         page = pages.get((r.country_iso3, r.hazard))
         pair = (r.country_iso3, r.hazard)
+        latest = (r.country_iso3, r.hazard, str(r.latest_version)) if pd.notna(r.latest_version) else None
+        apy = fac.get((*pair, now_ver[pair]), 1) if pair in now_all else fac.get(latest, 1)
         fw_rows.append({
             "country_iso3": r.country_iso3, "country_name": r.country_name, "region": _cell(r.region),
             "hazard": r.hazard, "lifecycle": _cell(r.lifecycle), "status": _cell(r.status),
@@ -300,21 +392,26 @@ def build(d, e, public, out, snapshot_at):
             "current_version": _cell(r.current_version), "valid_until": _cell(r.valid_until),
             "n_windows": _cell(r.n_windows), "n_windows_triggered": _cell(r.n_triggered),
             "fully_triggered": bool(r.fully_triggered) if pd.notna(r.fully_triggered) else None,
+            **rp.get(latest, RP_NONE),
             "prearranged_usd": _cell(now_all.get(pair)),
             "prearranged_cerf_usd": _cell(now_cerf.get(pair)) if pair in now_all else None,
             "prearranged_year": now_year if pair in now_all else None,
             "prearranged_version": now_ver.get(pair) if pair in now_all else None,
+            "activations_per_year": apy,
+            "cofinancing_usd": _cell(cof_now.get(pair)),
             "people_covered": _cell(r.people_covered),
             "page_html": SITE_URL + page if page else None,
             "page_markdown": SITE_URL + f"fw-{r.country_iso3.lower()}-{r.hazard}.md",
         })
     write_table("frameworks", fw_rows,
                 "The framework registry: one row per (country, hazard) pair the portfolio tracks, "
-                "with its lifecycle, latest version, the pre-arranged funding in place now "
-                "(`prearranged_usd`, all funds; `prearranged_cerf_usd` its CERF part; the envelope of "
-                "`prearranged_version`; these sum to the current-year rows of aa-prearranged-funding and "
-                "aa-funding-annual) and people covered, and the link to its Markdown page (an HTML page "
-                "exists only where the map opens one).")
+                "with its lifecycle, latest version, the return period of that version as the map's table "
+                "shows it, the pre-arranged funding in place now (`prearranged_usd`, all funds; "
+                "`prearranged_cerf_usd` its CERF part; the envelope of `prearranged_version`, counted "
+                "twice where `activations_per_year` is 2; these sum to the current-year rows of "
+                "aa-prearranged-funding and aa-funding-annual), this year's co-financing (outside the "
+                "OCHA-managed funds, never added to pre-arranged) and people covered, and the link to its "
+                "Markdown page (an HTML page exists only where the map opens one).")
 
     # ---- versions: the registry rows + the page fields + the document links
     v_rows, trig_rows, trig_table, trig_of = [], [], [], {}   # trig_rows: the document's own keys (pages)
@@ -326,7 +423,9 @@ def build(d, e, public, out, snapshot_at):
         kb_status = _cell(kbs.loc[key, "kb_status"]) if key in kbs.index else None
         facts, trig = _version_facts(vpage, r.kb_framework, r.version)
         row = {"country_iso3": r.country_iso3, "hazard": r.hazard, "version": str(r.version),
-               "status": kb_status, "valid_from": _cell(r.valid_from), "valid_until": _cell(r.valid_until),
+               "status": kb_status, "replaced_framework": key in old,
+               "valid_from": _cell(r.valid_from), "valid_until": _cell(r.valid_until),
+               "activations_per_year": fac.get(key, 1), **rp.get(key, RP_NONE),
                "document_title": _cell(r.doc_title), "document_url": _cell(r.doc_url),
                "analysis_ref": _cell(r.analysis_ref),
                "document_read": (SITE_URL + reads[(r.kb_framework, str(r.version))]
@@ -343,10 +442,11 @@ def build(d, e, public, out, snapshot_at):
                                "version": str(r.version), "row": i + 1, **_trigger_row(t)})
     write_table("versions", v_rows,
                 "Every registered version of every framework (`status`: an endorsed document, one still "
-                "in development, or a retired one): validity, the document "
-                "(its official page, its structured read `document_read`, its full text "
-                "`document_text`), and the version's scope, trigger basis, indicators, data sources, "
-                "monitoring months and implementing agencies.")
+                "in development, or a retired one; `replaced_framework`: a version of an earlier framework "
+                "that a distinct new one replaced): validity, the activations a year it allows, its overall "
+                "return period, the document (its official page, its structured read `document_read`, its "
+                "full text `document_text`), and the version's scope, trigger basis, indicators, data "
+                "sources, monitoring months and implementing agencies.")
     write_table("trigger-windows", trig_table,
                 "The trigger windows as the framework document states them, per version, in the "
                 "document's order (`row`): window, basis, indicator, threshold, lead time, the return "
@@ -406,8 +506,17 @@ def build(d, e, public, out, snapshot_at):
                 "in or after the year its version took effect: from then on only real activations "
                 "(aa-activations) count, and the site does not show that row.")
 
-    # ---- real activations (every framework and ad hoc): one row per event, funding nested
+    # ---- real activations (framework and non-framework): one row per event, funding nested
     fund = d["activation"]
+    # people reached per CERF allocation (the map's Reached tile, landing._cerf_reached): an
+    # allocation drawn by several activations reports one figure, carried by its earliest one
+    import landing
+    cerf_f = fund[(fund["fund_code"] == "cerf") & fund["allocation_code"].notna()]
+    reach = landing._cerf_reached(sorted(set(cerf_f["allocation_code"])), lambda sql, cols: _read(e, sql, cols))
+    keyed = cerf_f.assign(_k=list(zip(cerf_f["country_iso3"], cerf_f["hazard"], cerf_f["event_date"].astype(str),
+                                      cerf_f["event_type"], cerf_f["window_name"].fillna(""))))
+    first = {code: min(g["_k"], key=lambda k: k[2]) for code, g in keyed.groupby("allocation_code")}
+    shared = {code for code, g in keyed.groupby("allocation_code") if g["_k"].nunique() > 1}
     a_rows = []
     for r in d["act_all"].sort_values("event_date", ascending=False).itertuples():
         wn = r.window_name if isinstance(r.window_name, str) else None
@@ -416,40 +525,77 @@ def build(d, e, public, out, snapshot_at):
                  & (fund["event_date"].astype(str) == str(r.event_date))
                  & (fund["event_type"] == r.event_type)
                  & (fund["window_name"].fillna("") == (wn or ""))]
-        rows = [{"fund_code": x.fund_code, "allocation_code": _cell(x.allocation_code),
-                 "amount_usd": _cell(x.amount_usd)} for x in f.itertuples()]
+        me = (r.country_iso3, r.hazard, str(r.event_date), r.event_type, wn or "")
+        rows = []
+        for x in f.itertuples():
+            row = {"fund_code": x.fund_code, "allocation_code": _cell(x.allocation_code),
+                   "amount_usd": _cell(x.amount_usd)}
+            if x.fund_code == "cerf" and x.allocation_code in reach:
+                got, interim, planned = reach[x.allocation_code]
+                mine_ = first.get(x.allocation_code) == me
+                row.update({"people_reached": _cell(got) if mine_ else None,
+                            "people_reached_interim": bool(interim and got) if mine_ else None,
+                            "people_planned": _cell(planned) if mine_ else None,
+                            "allocation_shared": x.allocation_code in shared})
+            rows.append(row)
+        version = _cell(r.version)
         a_rows.append({"country_iso3": r.country_iso3, "country_name": name_of.get(r.country_iso3),
                        "hazard": r.hazard, "event_type": r.event_type, "event_date": _cell(r.event_date),
                        "window_name": wn, "event_label": lab or None,
-                       "version": _cell(r.version), "people_targeted": _cell(r.people_targeted),
+                       "version": version,
+                       "layer": ("non_framework" if r.event_type == "adhoc_aa"
+                                 else LAYER[layer_of(r.country_iso3, r.hazard, version)]),
+                       "replaced_framework": (r.country_iso3, r.hazard, str(version)) in old,
+                       "people_targeted": _cell(r.people_targeted),
                        "amount_usd": sum(x["amount_usd"] or 0 for x in rows) if rows else None,
                        "fund_codes": "; ".join(sorted({x["fund_code"] for x in rows})) or None,
                        "funding": rows})
     write_table("activations", a_rows,
                 "Every real activation since 2020: framework activations (event_type framework_aa) "
-                "and ad hoc anticipatory allocations (adhoc_aa), with the money each drew per fund "
-                "(`funding`; `amount_usd` is their sum). Early action is not included.")
+                "and non-framework allocations (adhoc_aa: anticipatory money allocated without a "
+                "framework), with the money each drew per fund (`funding`; `amount_usd` is their sum) "
+                "and, for a CERF allocation, the people it reached (`people_reached`, CERF's figure; "
+                "`people_reached_interim`: summed from its projects' interim reports, no final report "
+                "yet; `people_planned`: the people the allocation planned to reach). `allocation_shared`: "
+                "the allocation serves several activations and its figures sit on the earliest one only. "
+                "`layer` and `replaced_framework` as in the counting rules. Early action is not included.")
 
     # ---- funding tables (the series computed above)
     p_rows = _records(pre.sort_values(["year", "country_iso3", "hazard", "fund_code"]),
-                      ["country_iso3", "hazard", "year", "fund_code", "financier", "amount_usd", "source", "in_gho"])
+                      ["country_iso3", "hazard", "year", "version", "fund_code", "financier", "amount_usd",
+                       "activations_per_year", "source", "layer", "replaced_framework", "in_gho"])
     write_table("prearranged-funding", p_rows,
                 "Pre-arranged funding in place per framework, year and fund: a STOCK (the envelope "
-                "standing that year), never summed across years. `source`: framework-record (the current "
+                "standing that year), never summed across years. `version`: the version the envelope "
+                "belongs to (blank for a pooled-fund allocation made at country level; hazard `multi` or "
+                "`?` there means the country has several or no live framework). `activations_per_year` 2: "
+                "the amount is already the envelope counted twice. `source`: framework-record (the current "
                 "envelope), onegms-mirror (pooled-fund allocations), tracking-sheets (the team's "
                 "reported series), version-inferred (carried from the version in force). `in_gho`: "
                 "the country was in that year's Global Humanitarian Overview.")
-    act = act.copy()
-    yr_pre = pre.groupby(["year", "fund_code"])["amount_usd"].sum()
-    yr_rel = act.groupby(["year", "fund_code"])["amount_usd"].sum()
+    c_rows = _records(cof.sort_values(["year", "country_iso3", "hazard"]),
+                      ["country_iso3", "hazard", "year", "version", "financier", "amount_usd", "source",
+                       "layer", "replaced_framework", "in_gho"])
+    write_table("cofinancing", c_rows,
+                "Co-financing pre-arranged for a framework: money from outside CERF and the Country and "
+                "Regional Funds, recorded with the pre-arranged figures (the Financing page's co-financing "
+                "chart and the map table's column). A stock per year as reported for the year, never "
+                "summed across years and never added to the OCHA-managed pre-arranged money. `financier`: "
+                "who provides it, where recorded (most rows do not record one yet). How much of it was "
+                "disbursed is not recorded.")
+    yr_pre = pre.groupby(["year", "fund_code", "layer"])["amount_usd"].sum()
+    yr_rel = act.groupby(["year", "fund_code", "layer"])["amount_usd"].sum()
     keys = sorted(set(yr_pre.index) | set(yr_rel.index))
-    y_rows = [{"year": int(y), "fund_code": fc,
-               "prearranged_usd": _cell(yr_pre.get((y, fc))), "released_usd": _cell(yr_rel.get((y, fc)))}
-              for y, fc in keys]
+    y_rows = [{"year": int(y), "fund_code": fc, "layer": lay,
+               "prearranged_usd": _cell(yr_pre.get((y, fc, lay))), "released_usd": _cell(yr_rel.get((y, fc, lay)))}
+              for y, fc, lay in keys]
     write_table("funding-annual", y_rows,
-                "The Financing page's series: per year and fund, the pre-arranged stock in place and "
-                "the money released by framework activations. Do not add a year's pre-arranged to its "
-                "released.")
+                "The Financing page's series: per year, fund and layer, the pre-arranged stock in place and "
+                "the money released (framework activations on the current and retired layers, "
+                "non-framework allocations on their own). The page opens with the current and "
+                "non-framework layers on and the retired layer off. `fund_code` all: a pre-arranged total the "
+                "source did not split by fund, which the page's annual chart (stacked by fund) leaves out. Do "
+                "not add a year's pre-arranged to its released, nor pre-arranged across years.")
 
     # ---- plan: agency × sector split of the live frameworks' current version
     pl = _records(d["plan_rows"].sort_values(["country_iso3", "hazard", "agency", "sector"]),
@@ -460,7 +606,7 @@ def build(d, e, public, out, snapshot_at):
             x["window_name"] = None
     write_table("plan-split", pl,
                 "The pre-arranged budget of each live framework's latest version split by implementing "
-                "agency and sector (the Plan page), per trigger window where the budget is per window "
+                "agency and sector (the Activities page), per trigger window where the budget is per window "
                 "(`window_name`; blank: the split is for the whole framework). OCHA-managed money only "
                 "(`fund_code`), never an agency's own co-financing. A framework's rows add up to its "
                 "budgeted split, which can differ by rounding from the envelope its document states "
@@ -472,8 +618,9 @@ def build(d, e, public, out, snapshot_at):
     try:
         fd = pd.read_sql("SELECT fund_code, fund_type, name, country_iso3 FROM aa.fund ORDER BY fund_code", e)
         write_table("funds", _records(fd[fd["fund_code"].isin(used)]),
-                    "The funds behind every `fund_code` in these files: CERF, the country-based pooled "
-                    "funds and the regional humanitarian pooled funds' country envelopes (`fund_type` "
+                    "The funds behind every `fund_code` in these files: CERF and the Country and Regional "
+                    "Funds, that is the country-based pooled funds and the regional humanitarian pooled "
+                    "funds' country envelopes (`fund_type` "
                     "cerf, cbpf or regional_fund; a name ending in a regional fund's acronym, such as "
                     "AP-RHPF, marks a country envelope of that regional fund).")
     except Exception as exc:
@@ -494,11 +641,33 @@ def build(d, e, public, out, snapshot_at):
                 "aa-plan-split. `agency_parent`: the UN agency a sub-grantee works under.")
 
     # ---- learning documents (public ones only: internal rows never leave the DB)
-    ld = _records(d["learning"], ["id", "title", "url", "publisher", "year", "doc_type", "scope",
+    ld = _records(d["learning"], ["id", "title", "url", "publisher", "year", "month", "doc_type", "scope",
                                   "country_iso3", "hazard", "premises", "key_stat", "summary", "section"])
     write_table("learning", ld,
-                "Learning products: after-action reviews, evaluations, activation reports, research "
-                "and guidance, per framework or global, with a one-line summary and key statistic.")
+                "Learning products (the Learning page): after-action reviews, evaluations, activation "
+                "reports, research and guidance, per framework or global, with a one-line summary and key "
+                "statistic. `year` and `month` date the publication, not the event it reports on.")
+
+    # ---- trigger timelines (the Model page): when each window can act, on its hazard's clock
+    import page_model
+    tl = page_model._timeline_rows()
+    latest_of = {(r.country_iso3, r.hazard): str(r.latest_version) for r in cur.itertuples()
+                 if pd.notna(r.latest_version)}
+    tl = tl.assign(version=tl["version"].astype(str))
+    tl["latest_version"] = [latest_of.get((c, h)) == v for c, h, v in zip(tl["country_iso3"], tl["hazard"], tl["version"])]
+    write_table("trigger-timelines", _records(
+        tl.sort_values(["hazard", "country_iso3", "version", "leg", "seq"], na_position="first"),
+        ["country_iso3", "hazard", "version", "latest_version", "leg", "seq", "stage", "lead_from", "lead_to",
+         "unit", "months", "season_start", "season_len", "label", "stated", "indicator", "threshold", "note"]),
+        "When each trigger window of a framework version can act, read by hand from the framework "
+        "document (the Model page's trigger timelines, which draw the latest version: "
+        "`latest_version`). Storms in hours (`unit` h) and floods in days (d) before (negative) or "
+        "after (positive) landfall or the flood peak, as a bar from `lead_from` to `lead_to`; drought "
+        "(`unit` mo) as the calendar `months` a trigger is checked, against the rainy season "
+        "(`season_start` month, `season_len` months). `stage`: readiness, action or observational "
+        "(acting on the observed event); `leg`: a river or a season, with `seq` ordering its rows; "
+        "`label`: the window's name; `stated`: the document's own wording of the timing; `note`: what "
+        "the document adds.")
 
     # ---- Markdown pages
     md_pages = []
@@ -507,29 +676,32 @@ def build(d, e, public, out, snapshot_at):
         page = pages.get((r.country_iso3, r.hazard))
         name = f"fw-{r.country_iso3.lower()}-{r.hazard}.md"
         text = _framework_md(d, r, fw_of[(r.country_iso3, r.hazard)], page, v_rows, trig_rows, w_rows,
-                             s_rows, a_rows, p_rows, pl, pt_rows, ld, snapshot_at, stamp)
+                             s_rows, a_rows, p_rows, c_rows, pl, pt_rows, ld, snapshot_at, stamp)
         (out / name).write_text(text)
         written.add(name)
         md_pages.append((name, f"{r.country_name} {r.hazard.replace('_', ' ')}",
                          f"{_cell(r.lifecycle) or ''}" + (f", version {r.latest_version}" if pd.notna(r.latest_version) else "")))
+    unsplit = [(x["year"], f"{name_of.get(x['country_iso3'], x['country_iso3'])} {x['hazard'].replace('_', ' ')}",
+                x["amount_usd"]) for x in p_rows if x["fund_code"] == "all" and x["amount_usd"]]
     portfolio = _portfolio_md(fw_rows, y_rows, md_pages, snapshot_at, stamp,
-                              [f"{n} {h.replace('_', ' ')}" for n, h, _ in dashboards.envelope_gaps(d)])
+                              [f"{n} {h.replace('_', ' ')}" for n, h, _ in dashboards.envelope_gaps(d)], unsplit)
     (out / "aa-portfolio.md").write_text(portfolio)
     written.add("aa-portfolio.md")
 
     # ---- llms.txt, llms-full.txt, robots.txt, sitemap.xml
     stamp_line = f"Data snapshot {snapshot_at} UTC; files generated {stamp}." if snapshot_at else f"Files generated {stamp}."
-    idx = [f"# OCHA anticipatory action — portfolio tracking\n",
+    idx = ["# OCHA anticipatory action — portfolio tracking\n",
            f"> The tracking record of OCHA's anticipatory action (AA) portfolio: every framework "
            f"(a country and a hazard), its versions, triggers and trigger windows, pre-arranged "
-           f"funding, activations and the money they released, implementing partners and learning "
-           f"documents. Maintained by the data science team of OCHA's Centre for Humanitarian Data. {stamp_line}\n",
+           f"funding and co-financing, activations and the money they released, the people reached, "
+           f"implementing partners, trigger timelines and learning documents. Maintained by the data science team of OCHA's Centre for Humanitarian Data. {stamp_line}\n",
            f"**Caveat.** {CAVEAT}\n",
            f"The HTML pages at {SITE_URL} sit behind a password while the site is under review. The "
            f"data itself is public, and the Markdown pages and data files listed here are published "
            f"openly on purpose: they are the interface for programs and AI assistants, need no password "
            f"and carry the same figures as the pages. Every file is regenerated from the database with "
-           f"each nightly publish.\n",
+           f"each nightly publish. The pages read in English, French and Spanish; these files are in "
+           f"English.\n",
            RULES,
            "## Portfolio\n",
            f"- [Portfolio overview]({SITE_URL}aa-portfolio.md): every framework with its lifecycle, "
@@ -563,7 +735,7 @@ def build(d, e, public, out, snapshot_at):
                    f"Columns: {', '.join(cols)}.")
     idx.append("\n## Vocabulary\n")
     idx.append("- `country_iso3`: ISO 3166-1 alpha-3. `hazard`: drought, flood, storm, cholera, plague, "
-               "food_insecurity for frameworks; ad hoc allocations in aa-activations also carry other "
+               "food_insecurity for frameworks; non-framework allocations in aa-activations also carry other "
                "hazards (locusts, for one) and countries without a framework.\n"
                "- `lifecycle` (aa-frameworks), the one rule every page counts by: `active` the latest "
                "version is endorsed, within its validity and not fully triggered; `updating` (being "
@@ -582,14 +754,31 @@ def build(d, e, public, out, snapshot_at):
                "framework, every window otherwise; where no windows are recorded, a full activation "
                "under it). `technical_support`: OCHA supported the framework "
                "technically, with no funding. `retired`: flagged as retired by hand.\n"
+               "- `replaced_framework` (aa-versions, aa-activations, aa-prearranged-funding, aa-cofinancing): "
+               "the row belongs to an earlier framework on the same (country, hazard) pair that a distinct new "
+               "framework replaced rather than revised; it counts as a retired framework's. `layer`: "
+               "`current`, `retired` or `non_framework`, the site's layer toggles (see the counting rules).\n"
+               "- `activations_per_year` (aa-frameworks, aa-versions, aa-prearranged-funding): how many "
+               "activations a year the version's document allows (1 for most). Where it is 2 the "
+               "pre-arranged amounts are already the envelope counted twice.\n"
+               "- Return periods: `return_period_years` the version's overall return period in years (any of "
+               "its windows activating in a year), `return_period_basis` where that figure comes from (`stated "
+               "in the framework` or `historical simulation`), with both figures in "
+               "`return_period_stated_years` and `return_period_backtest_years`. A window's own backtest "
+               "return period is `return_period` in aa-windows.\n"
                "- version `status` (aa-versions): `endorsed`, `development` (not yet endorsed), `retired`. "
                "`document_text` is a list of URLs (a version can have several archived documents, such "
                "as language editions). `analysis_ref`: where the trigger analysis lives, as "
                "repository@branch:path in the OCHA-DAP GitHub organisation.\n"
                "- People: `people_covered` (aa-frameworks) the people the framework covers, as last "
                "reported by the team; `target_people` (aa-versions) the people the version's document "
-               "targets; `people_targeted` (aa-activations) the people one activation targeted. They are "
-               "three different figures.\n"
+               "targets; `people_targeted` (aa-activations) the people one activation targeted; "
+               "`people_reached` (the funding rows of aa-activations) the people a CERF allocation reached, "
+               "from CERF's final report (`people_reached_interim` true: summed from its projects' reports "
+               "while there is no final one), and `people_planned` the people it planned to reach. The map's "
+               "Reached tile estimates a year as the reported figure, or the planned one where there is no "
+               "report yet, over the year's CERF allocations, each once. They are different figures: do "
+               "not add one to another.\n"
                "- `fund_code` (names in aa-funds): `cerf` the Central Emergency Response Fund; "
                "`cbpf-<iso3>` a country-based pooled fund, or a regional fund's envelope for that country "
                "where aa-funds says so; `rhpf-<region>-<iso3>` a regional humanitarian pooled fund's "
@@ -598,8 +787,8 @@ def build(d, e, public, out, snapshot_at):
                "`cbpf-unspecified` a pooled fund the source did not name. `allocation_code`: the fund's "
                "own code for the allocation, as recorded (formats differ by fund and year; one allocation "
                "can serve several frameworks). `financier`: the fund's name where the source gave one.\n"
-               "- `event_type`: `framework_aa` an activation of a framework's trigger; `adhoc_aa` an "
-               "anticipatory allocation outside a framework.\n"
+               "- `event_type`: `framework_aa` an activation of a framework's trigger; `adhoc_aa` a "
+               "non-framework allocation, anticipatory money allocated outside a framework.\n"
                "- Windows: `basis` is `forecast`, `observational` or `mixed` (what the trigger reads); "
                "`all_in`: one trigger releases the whole envelope. `window_name` in aa-windows, "
                "aa-activations and aa-simulated-activations is the name the tracking database records, "
@@ -608,9 +797,9 @@ def build(d, e, public, out, snapshot_at):
                "- Amounts are US dollars, to the dollar. Dates are ISO 8601. `event_date` keeps the "
                "precision recorded (YYYY, YYYY-MM or YYYY-MM-DD); `triggered_on`, `valid_from` and "
                "`valid_until` are full dates, so one known only to the month is written as its first day.\n")
-    idx.append(f"\n## Related\n\n- Code and schema (public repository): https://github.com/OCHA-DAP/ds-aa-tracking\n"
-               f"- OCHA anticipatory action: https://www.unocha.org/anticipatory-action\n"
-               f"- CERF: https://cerf.un.org/\n")
+    idx.append("\n## Related\n\n- Code and schema (public repository): https://github.com/OCHA-DAP/ds-aa-tracking\n"
+               "- OCHA anticipatory action: https://www.unocha.org/anticipatory-action\n"
+               "- CERF: https://cerf.un.org/\n")
     (out / "llms.txt").write_text("\n".join(idx))
     full = ([portfolio] + [(out / n).read_text() for n, _, _ in md_pages]
             + [(out / fn).read_text() for _, fn in sorted(reads.items())])
@@ -639,7 +828,7 @@ def _head(title, snapshot_at, stamp, html_page=None):
     return (f"# {title}\n\n> {CAVEAT}\n>\n> {s} · index: {SITE_URL}llms.txt{link}\n\n")
 
 
-def _framework_md(d, r, fw, page, v_rows, trig_rows, w_rows, s_rows, a_rows, p_rows, pl, pt_rows, ld,
+def _framework_md(d, r, fw, page, v_rows, trig_rows, w_rows, s_rows, a_rows, p_rows, c_rows, pl, pt_rows, ld,
                   snapshot_at, stamp):
     c, h = r.country_iso3, r.hazard
     mine = lambda rows: [x for x in rows if x["country_iso3"] == c and x["hazard"] == h]   # noqa: E731
@@ -661,11 +850,29 @@ def _framework_md(d, r, fw, page, v_rows, trig_rows, w_rows, s_rows, a_rows, p_r
     if fw.get("prearranged_usd"):
         mine_now = [x for x in p_rows if x["country_iso3"] == c and x["hazard"] == h
                     and x["year"] == fw["prearranged_year"] and x["source"] == "framework-record"]
+        apy = fw.get("activations_per_year") or 1
         facts.append(f"**Pre-arranged funding in place ({fw['prearranged_year']}):** {_m(fw['prearranged_usd'])} ("
                      + "; ".join(f"{x['fund_code']} {_m(x['amount_usd'])}" for x in mine_now)
-                     + f"), the envelope of version {fw['prearranged_version']}")
+                     + f"), the envelope of version {fw['prearranged_version']}"
+                     + (f", counted {'twice' if apy == 2 else f'{apy} times'}: the version allows {apy} "
+                        f"activations a year, so the budget per activation is {_m(fw['prearranged_usd'] / apy)}"
+                        if apy > 1 else ""))
+    if fw.get("cofinancing_usd"):
+        facts.append(f"**Co-financing reported for {date.today().year}** (outside the OCHA-managed funds, not "
+                     f"part of the pre-arranged figure): {_m(fw['cofinancing_usd'])}")
+    if fw.get("return_period_years"):
+        other = (fw["return_period_backtest_years"] if fw["return_period_basis"] == "stated in the framework"
+                 else fw["return_period_stated_years"])
+        facts.append(f"**Return period of the latest version** (any window activating in a year): "
+                     f"1-in-{fw['return_period_years']:g} yr, {fw['return_period_basis']}"
+                     + (f" (the historical simulation gives 1-in-{other:g} yr)" if other and fw["return_period_basis"] == "stated in the framework"
+                        else f" (the framework states 1-in-{other:g} yr)" if other else ""))
     if pd.notna(r.people_covered):
         facts.append(f"**People covered:** {int(r.people_covered):,}")
+    if any(v["replaced_framework"] for v in mine(v_rows)):
+        facts.append("**Replaced framework on this pair:** an earlier framework, replaced by a distinct new one "
+                     "rather than revised, shares this country and hazard. Its versions and activations are "
+                     "marked below; they count as a retired framework's, not this one's.")
     if pd.notna(r.n_windows) and r.n_windows:
         facts.append(f"**Trigger windows recorded for the latest version:** {int(r.n_windows)}, "
                      f"{int(r.n_triggered or 0)} triggered" + (" · fully triggered" if r.fully_triggered else ""))
@@ -721,8 +928,10 @@ def _framework_md(d, r, fw, page, v_rows, trig_rows, w_rows, s_rows, a_rows, p_r
     if not wv and wall:
         w_label = sorted({str(x["version"]) for x in wall})[-1]
         wv = [x for x in wall if str(x["version"]) == w_label]
+    gone = {v["version"] for v in mine(v_rows) if v["replaced_framework"]}
     out.append("## Trigger windows and backtest" + (f" (version {w_label})" if w_label else "")
-               + (" — the latest version with a recorded backtest" if w_label != version else "") + "\n")
+               + (" — the earlier, replaced framework's: this framework has none recorded yet" if w_label in gone
+                  else " — the latest version with a recorded backtest" if w_label != version else "") + "\n")
     if wv:
         out.append("The windows as the tracking database records them. `return_period` and "
                    "`activation_prob` come from the backtest (the historical simulation of the trigger), "
@@ -738,11 +947,20 @@ def _framework_md(d, r, fw, page, v_rows, trig_rows, w_rows, s_rows, a_rows, p_r
                           "triggered": lambda v: "triggered" if v else "not triggered"}))
 
     # real activations
-    av = mine(a_rows)
+    av = [{**x, "kind": ("non-framework allocation" if x["event_type"] == "adhoc_aa" else
+                         "activation of the earlier, replaced framework" if x["replaced_framework"] else
+                         "framework activation"),
+           "people_reached": sum(f.get("people_reached") or 0 for f in x["funding"]) or None}
+          for x in mine(a_rows)]
     out.append("## Activations\n")
-    out.append(_md_table(av, ["event_date", "event_type", "window_name", "version", "people_targeted", "fund_codes", "amount_usd"],
+    if av:
+        out.append("Framework activations and non-framework allocations (anticipatory money allocated "
+                   "without a framework). `people_reached`: CERF's figure for the allocation, where "
+                   "reported (an allocation shared by several activations is counted on the earliest).\n")
+    out.append(_md_table(av, ["event_date", "kind", "window_name", "version", "people_targeted", "people_reached",
+                              "fund_codes", "amount_usd"],
                          {"amount_usd": _m, "people_targeted": lambda v: f"{int(v):,}" if v is not None else "",
-                          "event_type": lambda v: (v or "").replace("_", " ")}))
+                          "people_reached": lambda v: f"{int(v):,}" if v is not None else ""}))
 
     # simulated
     sv = [x for x in mine(s_rows) if x.get("in_backtest")]
@@ -754,14 +972,14 @@ def _framework_md(d, r, fw, page, v_rows, trig_rows, w_rows, s_rows, a_rows, p_r
             by_v.setdefault(x["version"], []).append(x)
         for v, rows in sorted(by_v.items()):
             items = sorted({(x["event_year"], x["window_name"] or "", x["event_label"] or "") for x in rows})
-            out.append(f"- version {v}: " + "; ".join(
+            out.append(f"- version {v}" + (" (the earlier, replaced framework)" if v in gone else "") + ": " + "; ".join(
                 f"{y} {w}" + (f" ({lab})" if lab else "") for y, w, lab in items))
         out.append("")
 
     # plan
     pv = mine(pl)
     if pv:
-        out.append(f"## Plan: pre-arranged budget by agency and sector (version {pv[0]['version']})\n\n"
+        out.append(f"## Activities: pre-arranged budget by agency and sector (version {pv[0]['version']})\n\n"
                    f"OCHA-managed money only; total {_m(sum(x['amount_usd'] or 0 for x in pv))}.\n")
         pcols = ["agency", "sector", "fund_code", "amount_usd"]
         if any(x.get("window_name") for x in pv):
@@ -775,21 +993,37 @@ def _framework_md(d, r, fw, page, v_rows, trig_rows, w_rows, s_rows, a_rows, p_r
         p_label = sorted({str(x["version"]) for x in pall})[-1]
         ptv = [x for x in pall if str(x["version"]) == p_label]
     if ptv:
-        out.append(f"## Partners named in the framework document (version {p_label})\n\n"
+        out.append(f"## Partners named in the framework document (version {p_label}"
+                   + (", the earlier, replaced framework's" if p_label in gone else "") + ")\n\n"
                    "`amount_usd` is the budget the document attaches to the organisation and can include "
-                   "its own co-financing; the plan table above is the OCHA-managed share.\n")
+                   "its own co-financing; the activities table above is the OCHA-managed share.\n")
         out.append(_md_table(ptv, ["name", "acronym", "org_type", "roles", "agency_parent", "amount_usd"], {"amount_usd": _m}))
 
     # funding by year × fund
     pf = mine(p_rows)
     if pf:
-        out.append("## Pre-arranged funding in place, by year and fund\n\nA stock: the envelope standing each year, not added up across years.\n")
-        out.append(_md_table(pf, ["year", "fund_code", "financier", "amount_usd", "source"], {"amount_usd": _m}))
+        out.append("## Pre-arranged funding in place, by year and fund\n\nA stock: the envelope standing each year, "
+                   "not added up across years. `layer` retired: the money of an earlier, replaced framework.\n")
+        out.append(_md_table(pf, ["year", "version", "fund_code", "financier", "amount_usd", "source", "layer"],
+                             {"amount_usd": _m}))
+    cf = mine(c_rows)
+    if cf:
+        out.append("## Co-financing, by year\n\nOutside the OCHA-managed funds; a stock as reported for each year, "
+                   "never added to the pre-arranged money.\n")
+        out.append(_md_table(cf, ["year", "version", "financier", "amount_usd", "source"], {"amount_usd": _m}))
 
     # versions
-    out.append("## Versions\n\n`status`: endorsed, development (not yet endorsed) or retired. `read`: the "
-               "structured read of the version's document; `text`: the document's full text.\n")
-    out.append(_md_table(vs, ["version", "status", "valid_from", "valid_until", "document_title", "document_url", "read", "text"],
+    out.append("## Versions\n\n`status`: endorsed, development (not yet endorsed) or retired. `return_period`: "
+               "the version's overall return period (stated in the framework where it states one, otherwise "
+               "from the historical simulation). `read`: the structured read of the version's document; "
+               "`text`: the document's full text.\n")
+    vs = [{**v, "status": (v["status"] or "") + (" (earlier framework, replaced)" if v["replaced_framework"] else ""),
+           "return_period": (f"1-in-{v['return_period_years']:g} yr" if v.get("return_period_years") else "")
+                            + (" (stated)" if v.get("return_period_basis") == "stated in the framework"
+                               else " (simulation)" if v.get("return_period_basis") else "")}
+          for v in vs]
+    out.append(_md_table(vs, ["version", "status", "valid_from", "valid_until", "return_period", "document_title",
+                              "document_url", "read", "text"],
                          {"read": lambda v: v or "", "text": lambda v: ", ".join(v) if v else ""}))
 
     # learning
@@ -809,7 +1043,7 @@ def _framework_md(d, r, fw, page, v_rows, trig_rows, w_rows, s_rows, a_rows, p_r
     return "\n".join(out)
 
 
-def _portfolio_md(fw_rows, y_rows, md_pages, snapshot_at, stamp, gaps=()):
+def _portfolio_md(fw_rows, y_rows, md_pages, snapshot_at, stamp, gaps=(), unsplit=()):
     out = [_head("OCHA anticipatory action — the portfolio", snapshot_at, stamp)]
     live = [r for r in fw_rows if r["lifecycle"] in ("active", "updating", "development")]
     out.append(f"{len(fw_rows)} framework (country, hazard) pairs tracked; "
@@ -824,39 +1058,67 @@ def _portfolio_md(fw_rows, y_rows, md_pages, snapshot_at, stamp, gaps=()):
         cerf = sum(r["prearranged_cerf_usd"] or 0 for r in env)
         dev = sum(r["prearranged_usd"] for r in env if r["lifecycle"] == "development")
         out.append(f"**Pre-arranged funding in place in {year}: {_m(total)}** across {len(env)} live "
-                   f"frameworks (CERF {_m(cerf)}; country-based and regional pooled funds {_m(total - cerf)})."
+                   f"frameworks (CERF {_m(cerf)}; Country and Regional Funds {_m(total - cerf)})."
                    f" This is the one headline figure: the sum of `prearranged_usd` below, of the {year} rows "
                    f"of aa-prearranged-funding and of the {year} row of the annual table. It is the envelope "
                    f"standing for the year (for each live framework, that of its most recent version that "
                    f"has one), not what remains after this year's activations"
                    + (f", and it includes {_m(dev)} for frameworks still in development" if dev else "") + "."
+                   + (" It counts twice the envelopes of " + ", ".join(
+                       f"{r['country_name']} {r['hazard'].replace('_', ' ')}" for r in env if (r.get("activations_per_year") or 1) > 1)
+                      + ", whose versions allow two activations a year (the budget per activation is half)."
+                      if any((r.get("activations_per_year") or 1) > 1 for r in env) else "")
                    + (f" Live frameworks with no recorded envelope: {', '.join(gaps)}." if gaps else "") + "\n")
     out.append(RULES)
     out.append("## Frameworks\n\n`current_version`: the latest version not in development; `valid_until` is its "
                "end of validity. `prearranged_usd`: pre-arranged funding in place now, all funds.\n")
     out.append(_md_table(fw_rows, ["country_name", "country_iso3", "hazard", "region", "lifecycle", "latest_version",
-                                   "latest_version_status", "current_version", "valid_until", "prearranged_usd",
-                                   "prearranged_cerf_usd", "people_covered", "page_markdown"],
-                         {"prearranged_usd": _m, "prearranged_cerf_usd": _m,
+                                   "latest_version_status", "current_version", "valid_until", "return_period_years",
+                                   "prearranged_usd", "prearranged_cerf_usd", "activations_per_year",
+                                   "cofinancing_usd", "people_covered", "page_markdown"],
+                         {"prearranged_usd": _m, "prearranged_cerf_usd": _m, "cofinancing_usd": _m,
                           "people_covered": lambda v: f"{int(v):,}" if v is not None else "",
                           "hazard": lambda v: (v or "").replace("_", " ")}))
-    out.append("## Pre-arranged and released funding by year and fund\n\n"
-               "Pre-arranged is the stock standing that year; released is what framework activations drew. "
-               "They are not added together. `of_which_by_fund` breaks the two totals of the row down by "
-               "fund: its amounts are parts of those totals, not additions to them.\n")
+    out.append("## Pre-arranged and released funding by year\n\n"
+               "Pre-arranged is the stock standing that year (current and retired frameworks); released is "
+               "what framework activations drew, and, in its own column, the non-framework allocations. They "
+               "are not added together, and pre-arranged is not added across years. `retired_part`: how much "
+               "of the two framework figures belongs to retired frameworks (the Financing page opens with "
+               "that layer off). `framework_money_by_fund` breaks the two framework figures down by fund: "
+               "its amounts are parts of those figures, not additions to them.\n")
     years = sorted({r["year"] for r in y_rows})
     funds = sorted({r["fund_code"] for r in y_rows}, key=lambda f: (f != "cerf", f))
+    s_ = lambda rows, col: sum(r[col] or 0 for r in rows)      # noqa: E731
     tot = []
     for y in years:
         rows = [r for r in y_rows if r["year"] == y]
+        fwr = [r for r in rows if r["layer"] != "non_framework"]
+        ret = [r for r in rows if r["layer"] == "retired"]
         tot.append({"year": y,
-                    "prearranged_usd": sum(r["prearranged_usd"] or 0 for r in rows),
-                    "released_usd": sum(r["released_usd"] or 0 for r in rows),
-                    "of_which_by_fund": "; ".join(f"{f}: {_m(sum(r['prearranged_usd'] or 0 for r in rows if r['fund_code'] == f))} pre-arranged, "
-                                         f"{_m(sum(r['released_usd'] or 0 for r in rows if r['fund_code'] == f))} released"
-                                         for f in funds if any(r["fund_code"] == f for r in rows))})
-    out.append(_md_table(tot, ["year", "prearranged_usd", "released_usd", "of_which_by_fund"],
-                         {"prearranged_usd": _m, "released_usd": _m}))
+                    "prearranged_usd": s_(fwr, "prearranged_usd"),
+                    "released_framework_usd": s_(fwr, "released_usd"),
+                    "released_non_framework_usd": s_([r for r in rows if r["layer"] == "non_framework"], "released_usd"),
+                    "retired_part": (f"{_m(s_(ret, 'prearranged_usd'))} pre-arranged, {_m(s_(ret, 'released_usd'))} released"
+                                     if ret else ""),
+                    "framework_money_by_fund": "; ".join(
+                        f"{f}: {_m(s_([r for r in fwr if r['fund_code'] == f], 'prearranged_usd'))} pre-arranged, "
+                        f"{_m(s_([r for r in fwr if r['fund_code'] == f], 'released_usd'))} released"
+                        for f in funds if any(r["fund_code"] == f for r in fwr))})
+    out.append(_md_table(tot, ["year", "prearranged_usd", "released_framework_usd", "released_non_framework_usd",
+                               "retired_part", "framework_money_by_fund"],
+                         {"prearranged_usd": _m, "released_framework_usd": _m, "released_non_framework_usd": _m}))
+    rel = lambda keep: sum(r["released_usd"] or 0 for r in y_rows if r["layer"] in keep)      # noqa: E731
+    ry = sorted({r["year"] for r in y_rows if r["released_usd"]})
+    if ry:
+        span = f"{ry[0]}–{ry[-1]}"
+        out.append(f"Released {span}, by the Financing page's layers: {_m(rel(('current', 'non_framework')))} as the "
+                   f"page opens (current frameworks and non-framework allocations); "
+                   f"{_m(rel(('current', 'retired', 'non_framework')))} with the retired layer too; "
+                   f"{_m(rel(('current', 'retired')))} framework activations only.\n")
+    if unsplit:
+        out.append("The Financing page's annual chart stacks pre-arranged money by fund and so leaves out what "
+                   "was recorded with no fund split (`fund_code` all), which the figures above include: "
+                   + "; ".join(f"{_m(a)} for {lab} in {y}" for y, lab, a in sorted(unsplit)) + ".\n")
     out.append("## Framework pages\n")
     for name, title, sub in md_pages:
         out.append(f"- [{title}]({SITE_URL}{name}): {sub}")

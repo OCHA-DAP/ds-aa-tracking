@@ -99,8 +99,9 @@ are kept forever (the year-end official state, for the map's time view).
   document (the archived PDF's text, extracted with pypdf from the dev blob and cached under
   `data/framework_documents/`; `OPEN_LAYER_NO_PDF=1` skips it for a quick local build),
   `aa-<table>.json` + `.csv` (frameworks, versions, trigger-windows, windows,
-  simulated-activations, activations, prearranged-funding, funding-annual, plan-split,
-  partners, learning, funds), `robots.txt`, `sitemap.xml`. Everything the database holds about the
+  simulated-activations, activations, prearranged-funding, cofinancing, funding-annual,
+  plan-split, partners, learning, trigger-timelines, funds), `robots.txt`, `sitemap.xml` (the
+  listed pages only, not the unlisted climate ones). Everything the database holds about the
   portfolio goes in, except people and working material: never focal points, the version
   pages' working notes (frontmatter `extra`, raw extracts, QA notes), version provenance
   notes, activation comments, partner evidence, private documents or internal learning
@@ -114,7 +115,13 @@ are kept forever (the year-end official state, for the map's time view).
   page's headline); every JSON row carries every column and nested CSV cells are JSON; a coded
   window name (`wt1`, `ws`) carries the document's name for it (`document_window`, the page
   model's pairing, only where it is one-to-one); relative links in the document reads are
-  rewritten or dropped; amounts in the Markdown are to the dollar. GitHub Pages serves the
+  rewritten or dropped; amounts in the Markdown are to the dollar. The files follow the pages'
+  rules rather than restating them: every money row carries the map's layer (`current`,
+  `retired`, `non_framework`, from `dashboards._layer_of`), so each toggle of the Financing page
+  can be reproduced; a replaced framework's rows (`dashboards.old_versions`) say so; envelopes
+  of versions allowing two activations a year arrive multiplied and carry
+  `activations_per_year`; return periods and people reached come from the map's own helpers
+  (`landing._rp_fields`, `landing._cerf_reached`). GitHub Pages serves the
   site under `/ds-aa-tracking/`, so `robots.txt` and `llms.txt` are not at the host root where
   a crawler looks by convention: discovery relies on the password page's pointer and on links
   from elsewhere (this README: https://ocha-dap.github.io/ds-aa-tracking/llms.txt).

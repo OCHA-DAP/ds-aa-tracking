@@ -596,9 +596,11 @@ def write_site():
         (OUT / asset).unlink(missing_ok=True)
     # the open layer: Markdown twins of the public framework pages, the tables behind the
     # public pages, llms.txt — unencrypted by design (scripts/llm_layer.py); it must carry
-    # no token either, and it follows the public set (a page gone admin-only loses its twin)
+    # no token either, and it follows the public set (a page gone admin-only loses its twin;
+    # an unlisted page is not named in its sitemap either)
     import llm_layer
-    open_files = (llm_layer.build(_DATA["d"], _DATA["e"], public, OUT, SNAPSHOT_AT)
+    listed = {n for n in public if n not in UNLISTED_TABS}
+    open_files = (llm_layer.build(_DATA["d"], _DATA["e"], listed, OUT, SNAPSHOT_AT)
                   if _DATA.get("d") is not None else set())
     for n in sorted(open_files):
         doc = (OUT / n).read_text()
