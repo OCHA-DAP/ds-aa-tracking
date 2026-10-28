@@ -278,7 +278,8 @@ function mkChart(id, type, labels, datasets, opts={}){
   el._chart = new Chart(el, { type, data:{labels, datasets},
     plugins: opts.totals ? [stackTotals] : [],
     options:{
-    responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
+    // a horizontal chart's tooltip follows the row under the pointer (the value axis is x)
+    responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false,axis:horiz?'y':'x'},
     scales: opts.noscale?{}:(horiz ? {x:valAxis, y:catAxis} : {x:catAxis, y:valAxis}),
     plugins:{ legend:{display:datasets.length>1},
       tooltip:{callbacks:cb},
@@ -723,6 +724,19 @@ def _fetch(e):
            WHERE f.amount_usd IS NOT NULL AND (f.agency IS NOT NULL OR f.sector IS NOT NULL)
              AND f.kind = 'prearranged'
              AND l.lifecycle IN ('active', 'updating', 'development')""", e)
+    # the co-financing lines of the live frameworks' latest versions: the undated rows a
+    # framework document states, naming who co-finances (with an agency or not, so not in
+    # aa.prearranged_funding alone) — the Financing page splits each framework's co-financing
+    # now in their proportions
+    d["cof_lines"] = pd.read_sql(
+        """SELECT f.country_iso3, f.hazard, f.version, f.financier, f.agency, f.amount_usd,
+                  f.source, f.updated_at
+           FROM aa.window_funding f
+           JOIN aa.v_framework_lifecycle l
+             ON l.country_iso3 = f.country_iso3 AND l.hazard = f.hazard
+            AND l.latest_version = f.version
+           WHERE f.kind = 'cofinancing' AND f.year IS NULL AND f.amount_usd IS NOT NULL
+             AND l.lifecycle IN ('active', 'updating', 'development')""", e)
     d["act_all"] = pd.read_sql(
         """SELECT a.*, r.country_name FROM aa.activation a
            LEFT JOIN aa.country_hazard r ON r.country_iso3 = a.country_iso3 AND r.hazard = a.hazard
@@ -866,6 +880,31 @@ def _fetch(e):
 # the same agency under two names (PAHO is WHO's regional office for the Americas)
 AGENCY_ALIAS = {"WHO": "WHO (incl. PAHO)", "PAHO": "WHO (incl. PAHO)", "WHO/PAHO": "WHO (incl. PAHO)",
                 "OPS": "WHO (incl. PAHO)", "OPS/OMS": "WHO (incl. PAHO)", "OMS": "WHO (incl. PAHO)"}
+# co-financers under one name (the Financing page's chart by co-financer): the agencies as above,
+# and the Red Cross emergency fund by its owner's name
+COF_ALIAS = {**AGENCY_ALIAS, "PAHO/WHO": "WHO (incl. PAHO)", "DREF": "IFRC DREF"}
+# a co-financing line that names a group, not an organisation: a total in words
+# ('partners will contribute up to USD 3.7 million'), never one co-financer's share
+COF_GROUP = {"partners", "other partners"}
+
+
+def _cof_base(financier):
+    """A financier without its trailing parenthetical (the kind of money or the channel:
+    'FAO (preparedness co-financing)', 'DFAT (via Nepal Multi-Partner Trust Fund)')."""
+    fin = financier.strip() if isinstance(financier, str) else ""
+    return re.sub(r"\s*\([^()]*\)\s*$", "", fin).strip()
+
+
+def cof_who(financier, agency):
+    """The co-financer a co-financing line names, one name per organisation (2026-10-28 owner
+    comment): the financier without its parenthetical; an agency's own money ('Agency
+    co-financing (GFFO)', 'WFP HQ Trust Fund…') under the agency. None for a line that names
+    no one, or only a group (COF_GROUP)."""
+    base, ag = _cof_base(financier), agency.strip() if isinstance(agency, str) else ""
+    if ag and (not base or base.lower().startswith("agency co-financ")
+               or re.match(re.escape(ag) + r"\b", base)):
+        base = ag
+    return None if not base or base.lower() in COF_GROUP else COF_ALIAS.get(base, base)
 
 
 def _merge_labels(d):
@@ -1013,6 +1052,42 @@ def funding_series(d, released="framework"):
                     ignore_index=True)
     return pre, act
 
+
+def cofinancing_now(d, cof, cy):
+    """Each framework's co-financing NOW, by co-financer (2026-10-28 owner comment: the sheets'
+    yearly totals name no one; the framework documents do) — the Financing page's charts and the
+    map's current year count it. cof: the dated co-financing rows (funding_series, kind
+    'cofinancing'). A framework's figure is its current-year total (the sheet totals are
+    authoritative for amounts), split in the proportions of the lines its latest version states
+    (d["cof_lines"]): the document's own figures where the lines add up to the total; the lines
+    themselves where no yearly total is recorded; the total under its own financier ("not
+    recorded" when it names none) where no line does. A line naming only a group ('partners',
+    COF_GROUP) is a total in words, not a line. One source per version (the most recently
+    entered), so a document read twice is not counted twice. Rows: country_iso3, hazard,
+    version, who, detail (the line as recorded), amount_usd."""
+    ln = d["cof_lines"].copy()
+    ln = ln[[not (_cof_base(f).lower() in COF_GROUP and not isinstance(a, str))
+             for f, a in zip(ln["financier"], ln["agency"])]]
+    if len(ln):
+        last = ln.sort_values("updated_at").groupby(["country_iso3", "hazard"])["source"].last()
+        ln = ln[[last.get((c, h)) == s for c, h, s in zip(ln["country_iso3"], ln["hazard"], ln["source"])]]
+    tot = cof[(cof["kind"] == "cofinancing") & (cof["year"] == cy) & cof["amount_usd"].notna()]
+    out = []
+    for c, h in sorted(set(zip(tot["country_iso3"], tot["hazard"])) | set(zip(ln["country_iso3"], ln["hazard"]))):
+        t = tot[(tot["country_iso3"] == c) & (tot["hazard"] == h)]
+        lk = ln[(ln["country_iso3"] == c) & (ln["hazard"] == h)]
+        if len(lk):
+            f = t["amount_usd"].sum() / lk["amount_usd"].sum() if len(t) else 1.0
+            parts = [(r.version, r.financier, r.agency, r.amount_usd * f) for r in lk.itertuples()]
+        else:
+            parts = [(r.version, r.financier, None, r.amount_usd) for r in t.itertuples()]
+        for v, fin, ag, usd in parts:
+            fin = fin if isinstance(fin, str) else ""
+            ag = ag if isinstance(ag, str) else ""
+            out.append({"country_iso3": c, "hazard": h, "version": v,
+                        "who": cof_who(fin, ag) or "not recorded", "amount_usd": round(float(usd), 2),
+                        "detail": " — ".join(x for x in (fin, ag if ag not in fin else "") if x)})
+    return pd.DataFrame(out, columns=["country_iso3", "hazard", "version", "who", "detail", "amount_usd"])
 
 # Recipient categories of the money-flow Sankey: the colour of every recipient node, at every
 # level (agencies / grantees, and the final column). Keys are carried in the node ids; the
@@ -1609,6 +1684,28 @@ TWO_ACT_HOW = ("Frameworks marked * allow two activations a year: their pre-arra
                "twice here, and the budget per activation is half of it.")
 FUND_NOTE_4 = "<b>Donors</b> (the <i>donors</i> tick on the money-flow chart): each donor's share of a fund's income that year, applied to the fund's AA money that year — donors give to the pooled funds as a whole, not to anticipatory action. Donors report their AA funding annually under the <a href='https://interagencystandingcommittee.org/grand-bargain' target='_blank' rel='noopener'>Grand Bargain</a>."
 
+# the two co-financing charts' notes (2026-10-28 owner comment: split the chart by agency into a
+# time series and a chart per co-financer)
+COF_YEAR_HOW = ("Pre-arranged co-financing only: money from outside CERF and the Country and Regional Funds "
+                "recorded against a framework; how much of it was disbursed is not recorded. A stock, as at "
+                "the end of each year — the years are never added up. A past year counts the co-financing "
+                "totals reported for that year. The current year is today: each framework's total for the "
+                "year or, where none is reported, the co-financing its latest framework document states — the "
+                "figure the chart by co-financer splits, so the two charts agree. Follows the framework layers "
+                "and the hazard, region and GHO filters. Does not apply: the fund switch (the money is outside "
+                "the pooled funds), the non-framework layer (non-framework allocations carry no co-financing) "
+                "and cumulative (a stock).")
+COF_WHO_HOW = ("Today's pre-arranged co-financing — the current year of the chart by year — by who co-finances "
+               "it. The yearly totals mostly name no co-financer; the framework documents do. So each "
+               "framework's total is split in the proportions of the co-financing lines its latest framework "
+               "document states: where those lines add up to the total, the bars show the document's own "
+               "figures; where the document states lines but no total is reported for the year, the lines "
+               "themselves count. A framework whose co-financing names no one is in the <i>not recorded</i> "
+               "bar, shown last. One bar per organisation: the kind of money (an agency's own funds, a trust "
+               "fund, preparedness or implementation co-financing) and each framework's share are in the "
+               "tooltip. A line naming several organisations together stays one bar, as recorded. Follows the "
+               "same filters as the chart by year.")
+
 
 def build_funding(page, d):
     """The Financing page (dash-funding.html: the file name predates the rename, links keep it).
@@ -1788,17 +1885,20 @@ def build_funding(page, d):
 
     flow_rows, flow_years, flow_default, fund_names = _money_flows(d, pre, act)
 
-    # co-financing PRE-ARRANGED: window_funding kind='cofinancing' (the rows with no agency /
-    # sector line, i.e. aa.prearranged_funding — an agency breakdown of a total would count it
-    # twice). A stock per year end, grouped by who finances it: the financier as recorded, else
-    # "not recorded" (agency-level co-financing lines are not in this series). Disbursed co-financing is not
+    # co-financing PRE-ARRANGED, by year: the yearly totals (window_funding kind='cofinancing'
+    # with a year and no agency / sector line, i.e. aa.prearranged_funding — an agency breakdown
+    # of a total would count it twice), a stock per year end. Disbursed co-financing is not
     # known. The non_aa_mobilised amount is not co-financing: kept out, labelled on its own.
     cof = pre[pre["kind"] == "cofinancing"].copy()
-    fin = cof["financier"].where(cof["financier"].notna()
-                                 & (cof["financier"].astype(str).str.strip() != ""))
-    if "agency" in cof:
-        fin = fin.fillna(cof["agency"])
-    cof["who"] = fin.fillna("not recorded")
+    # ... and NOW, by co-financer: each framework's figure now (cofinancing_now), which both
+    # charts count — the by-year chart as its current year, so the two agree
+    gho_cy = set(d["gho"].loc[d["gho"]["in_gho"] & (d["gho"]["year"] == cy), "country_iso3"])
+    cof_now = cofinancing_now(d, cof, cy)
+    cof_now["k"] = pair_key(cof_now)
+    cof_now["hz"] = cof_now["hazard"].map(haz)
+    cof_now["region"] = [region_of.get((c, h)) or "?" for c, h in zip(cof_now["country_iso3"], cof_now["hazard"])]
+    cof_now["g"] = [layer(c, h, v) for c, h, v in zip(cof_now["country_iso3"], cof_now["hazard"], cof_now["version"])]
+    cof_now["in_gho"] = cof_now["country_iso3"].isin(gho_cy)
     cname = dict(zip(cur["country_iso3"], cur["country_name"]))
     nonaa = pre[pre["kind"] == "non_aa_mobilised"]
     nonaa_html = ("" if not len(nonaa) else
@@ -1890,17 +1990,19 @@ def build_funding(page, d):
    {how("Latest envelope of every framework that is active, being updated or in development.", two=True)}</div>
  <div class='panel'><h3>{T("Pre-arranged now, by region")}</h3><canvas id='c4' height='260'></canvas>
    {how("The same envelopes as by hazard, by the framework's region.", two=True)}</div>
- <div class='panel'><h3>{T("Co-financing pre-arranged, by agency")}</h3><canvas id='c6' height='260'></canvas><p class='empty' id='c6x' style='display:none'></p>
+ <div class='panel'><h3>{T("Co-financing pre-arranged, by year")}</h3><canvas id='cofYear' height='260'></canvas><p class='empty' id='cofYearX' style='display:none'></p>
    {f"<div class='note'>{nonaa_html}</div>" if nonaa_html else ""}
-   {how("Pre-arranged co-financing only: money from outside CERF and the Country and Regional Funds recorded against a framework (window funding of kind co-financing); how much of it was disbursed is not recorded. A stock, as at the end of each year (the current year: today) — the years sit side by side and are never added up. Grouped by the financier as recorded (most co-financing rows do not record one yet); rows with neither are the <i>not recorded</i> bar. Follows the framework layers and the hazard, region and GHO filters. Does not apply: the fund switch (the money is outside the pooled funds), the non-framework layer (non-framework allocations carry no co-financing) and cumulative (a stock).")}</div>
+   {how(COF_YEAR_HOW)}</div>
+ <div class='panel'><h3>{T("Co-financing pre-arranged now, by co-financer")}</h3><div id='cofWhoBox' style='position:relative;height:300px'><canvas id='cofWho' style='max-height:none'></canvas></div><p class='empty' id='cofWhoX' style='display:none'></p>
+   {how(COF_WHO_HOW)}</div>
 </div>
 <h2>{T("Where the pre-arranged money goes")}</h2>
 <p class='meta'>{T("The latest version of every current framework, split by agency and sector as the framework documents state it, stacked by fund.")}</p>
 <div class='grid'>
  <div class='panel'><h3>{T("Pre-arranged by agency")}</h3><canvas id='c7' height='320'></canvas>
-   {how("Envelope shares per implementing agency (the agency lines of the framework budgets; top 18). Follows the current-frameworks layer (retired frameworks have no pre-arranged money now), the fund switch and the hazard and region filters; the GHO filter does not apply.", two=True)}</div>
+   {how("Envelope shares per implementing agency (the agency lines of the framework budgets; top 18). Money with no agency split recorded (most Country and Regional Fund envelopes) is not in this chart. Follows the current-frameworks layer (retired frameworks have no pre-arranged money now), the fund switch and the hazard and region filters; the GHO filter does not apply.", two=True)}</div>
  <div class='panel'><h3>{T("Pre-arranged by sector")}</h3><canvas id='c8' height='320'></canvas>
-   {how("Sector lines of the same budgets; a line with an agency but no sector is not shown here. Follows the same toggles as by agency.", two=True)}</div>
+   {how("Sector lines of the same budgets; a line with an agency but no sector is not shown here. Money with no sector split recorded (most Country and Regional Fund envelopes) is not in this chart. Follows the same toggles as by agency.", two=True)}</div>
 </div>
 <h2>{T("UN agencies and partners")}</h2>
 <p class='meta'>{T("Once CERF releases AA money, the agencies partially spend it directly (in large part on procurement) and partially sub-grant it to implementing partners.")}</p>
@@ -1932,14 +2034,19 @@ def build_funding(page, d):
         "cov": json.loads(_records(cov, ["k", "hz", "region", "people_covered", "g", "funds"])),
         "split": json.loads(_records(pr, ["k", "hz", "region", "agency", "sector", "ft",
                                           "amount_usd", "g"])),
-        "cof": json.loads(_records(cof, ["k", "hz", "region", "year", "in_gho", "g", "who", "amount_usd"])),
+        "cof": json.loads(_records(cof, ["k", "hz", "region", "year", "in_gho", "g", "amount_usd"])),
+        "cofNow": json.loads(_records(cof_now, ["k", "hz", "region", "g", "in_gho", "who", "amount_usd", "detail"])),
         "fwList": fw_list,
         "un": un_rows, "local": local_rows, "unPartners": un_partners,
         "flow": flow_rows, "flowYears": flow_years, "flowDefault": flow_default,
         "fundNames": fund_names, "cy": cy,
     }
     js = FLOW_JS + """
-const FT = ['cerf','cbpf','regional_fund'];
+// two fund groups on this page's charts: CERF, and the Country and Regional Funds together, as
+// the fund switch, the tiles and the notes name them (2026-10-28 owner comment: the agency chart
+// said 'Country funds' and 'Regional funds'). The money-flow chart keeps each fund apart.
+const FG = [['cerf','CERF',FUND_COLORS.cerf], ['pooled','Country and Regional Funds',FUND_COLORS.cbpf]];
+const fgOf = ft => ft==='cerf' ? 'cerf' : 'pooled';
 // the current year as of the build: its figures update daily until it closes, so it is labelled
 // '2026*' (indicative; the footnote under the tiles) on every chart axis, selector and tile
 const CY = D.cy, yLab = y => +y===CY ? y+'*' : String(y);
@@ -2035,8 +2142,8 @@ const pairFundOK = (funds, s) => !s.fund || (funds||'').includes(s.fund==='cerf'
 const sumOf = (rows, f) => rows.reduce((t,r)=>t+(f(r)||0), 0);
 function stackedBy(id, rows, keyFn, valFn, opts){
   const keys = opts && opts.keys ? opts.keys : uniqSorted(rows, keyFn);
-  mkChart(id,'bar',keys,FT.map(ft=>({label:FUND_TYPE_LABEL[ft], backgroundColor:FUND_COLORS[ft],
-    data:keys.map(k=>groupSum(rows.filter(r=>r.ft===ft&&keyFn(r)===k),()=>0,valFn)[0]||0)})).filter(d=>d.data.some(v=>v)),
+  mkChart(id,'bar',keys,FG.map(([g,lab,col])=>({label:lab, backgroundColor:col,
+    data:keys.map(k=>groupSum(rows.filter(r=>fgOf(r.ft)===g&&keyFn(r)===k),()=>0,valFn)[0]||0)})).filter(d=>d.data.some(v=>v)),
     {stacked:true, totals:true, ...(opts||{})});
 }
 function topKeys(rows, keyFn, valFn, n){ const g = groupSum(rows.filter(r=>keyFn(r)!=null), keyFn, valFn);
@@ -2086,33 +2193,52 @@ function draw(){
   const A = D.act.filter(r=>geo(r) && (!gho||r.in_gho) && layerOK(r.g,s) && fundOK(r.fund_code,s));
   const years = uniqSorted(P.concat(A), r=>r.year);
   for(const [id, rows] of [['c1',P],['c2',A]]){
-    const ds = FT.map(ft=>{
-      let vals = years.map(y=>sumOf(rows.filter(r=>fundType(r.fund_code)===ft&&r.year===y), r=>r.amount_usd));
+    const ds = FG.map(([g,lab,col])=>{
+      let vals = years.map(y=>sumOf(rows.filter(r=>fgOf(fundType(r.fund_code))===g&&r.year===y), r=>r.amount_usd));
       if(s.cum && id==='c2') vals = cumulate(vals);   // pre-arranged is a stock: never cumulated
-      return {label:FUND_TYPE_LABEL[ft], data:vals, backgroundColor:FUND_COLORS[ft]};}).filter(d=>d.data.some(v=>v));
+      return {label:lab, data:vals, backgroundColor:col};}).filter(d=>d.data.some(v=>v));
     mkChart(id,'bar',years.map(yLab),ds,{stacked:true, totals:true});
   }
   const N = D.now.filter(r=>geo(r) && layerOK(r.g,s) && ftOK(r.ft,s));
   stackedBy('c3', N, r=>r.hz, r=>r.total_usd); stackedBy('c4', N, r=>r.region, r=>r.total_usd);
-  // co-financing PRE-ARRANGED, by who finances it: a stock at each year end, the years side by
-  // side (never stacked or added up). Money from outside the pooled funds: the fund switch
-  // cannot split it; ad hoc allocations carry none.
+  // co-financing PRE-ARRANGED: money from outside the pooled funds, so the fund switch cannot
+  // split it; ad hoc allocations carry none. By year, a stock at each year end (never added up),
+  // the current year being D.cofNow: each framework's figure now, which the second chart splits
+  // by co-financer — the two agree on the current year by construction.
   {
-    const C = D.cof.filter(r=>geo(r) && (!gho||r.in_gho) && layerOK(r.g,s));
+    const keep = r => geo(r) && (!gho||r.in_gho) && layerOK(r.g,s);
+    const Y = D.cof.filter(r=>+r.year!==CY && keep(r)), W = D.cofNow.filter(keep);
     const why = s.fund ? tr8('Co-financing is money from outside CERF and the Country and Regional Funds: the fund switch does not apply to it — select both funds to see it.')
       : !(s.cur||s.ret) ? tr8('Co-financing belongs to frameworks: select current or retired frameworks (non-framework allocations carry none).')
-      : !C.length ? tr8('No pre-arranged co-financing recorded in this selection.') : '';
-    c6.style.display = why ? 'none' : ''; c6x.style.display = why ? '' : 'none'; c6x.textContent = why;
+      : !(Y.length||W.length) ? tr8('No pre-arranged co-financing recorded in this selection.') : '';
+    cofYear.style.display = cofWhoBox.style.display = why ? 'none' : '';
+    [cofYearX, cofWhoX].forEach(el=>{ el.style.display = why ? '' : 'none'; el.textContent = why; });
     if(!why){
-      const g = groupSum(C, r=>r.who, r=>r.amount_usd);
+      const yrs = [...new Set(Y.map(r=>+r.year).concat(W.length ? [CY] : []))].sort((a,b)=>a-b);
+      mkChart('cofYear','bar',yrs.map(yLab),[{label:'Co-financing', backgroundColor:PAL[3],
+        data:yrs.map(y=>sumOf(y===CY ? W : Y.filter(r=>+r.year===y), r=>r.amount_usd))}], {stacked:true, totals:true});
+      // now, by co-financer: one bar per organisation, sorted by amount, 'not recorded' last; the
+      // box grows with the bars so each name stays readable
+      const g = groupSum(W, r=>r.who, r=>r.amount_usd);
       const keys = Object.keys(g).filter(k=>k!=='not recorded').sort((a,b)=>g[b]-g[a]);
       if(g['not recorded']) keys.push('not recorded');
-      const cy = uniqSorted(C, r=>r.year);
-      mkChart('c6','bar',keys, cy.map((y,i)=>({
-        label: +y===CY ? tr8('in place today ({0})', yLab(y)) : tr8('in place at end of {0}', y),
-        backgroundColor: i===cy.length-1 ? PAL[3] : '#b9c3cf',
-        data: keys.map(k=>sumOf(C.filter(r=>r.who===k && r.year===y), r=>r.amount_usd))})),
-        {allLabels:true, extra:{indexAxis:'y'}});
+      cofWhoBox.style.height = Math.max(120, 40 + 17*keys.length) + 'px';
+      if(!keys.length){ cofWhoBox.style.display = 'none'; cofWhoX.style.display = '';
+        cofWhoX.textContent = tr8('No pre-arranged co-financing recorded in this selection.'); }
+      else {
+        const ch = mkChart('cofWho','bar',keys,[{label:tr8('in place today ({0})', yLab(CY)), data:keys.map(k=>g[k]),
+          backgroundColor:keys.map(k=>k==='not recorded' ? '#b9c3cf' : PAL[3])}],
+          {allLabels:true, totals:true, extra:{indexAxis:'y'}});
+        // the frameworks behind a bar, and what each line says (the kind of money, the channel)
+        ch.options.plugins.tooltip.callbacks.afterBody = items=>{ const w = keys[items[0].dataIndex];
+          const R = W.filter(r=>r.who===w), by = groupSum(R, r=>r.k, r=>r.amount_usd);
+          const fws = Object.keys(by).sort((a,b)=>by[b]-by[a]);
+          return fws.slice(0,10).map(k=>{ const det = [...new Set(R.filter(r=>r.k===k).map(r=>r.detail))].filter(x=>x && x!==w);
+            return `${twoName(k)}: ${money(by[k])}` + (det.length ? ` (${det.join('; ')})` : ''); })
+            .concat(fws.length>10 ? [tr8('and {0} more', fws.length-10)] : []); };
+        ch.options.scales.y.ticks.callback = function(v){ const l = this.getLabelForValue(v);
+          return l.length>32 ? l.slice(0,31)+'…' : l; };
+        ch.update(); }
     }
   }
   const S = D.split.filter(r=>geo(r) && layerOK(r.g,s) && ftOK(r.ft,s));

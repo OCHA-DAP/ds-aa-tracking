@@ -1004,7 +1004,7 @@ def _year_history(d, e, excl, _try):
     flagged retired today, a DERIVED retirement date (none is recorded): the day after its last
     version's validity ended, else the first status report saying dormant / retired.
     Only past years are kept — the current year is the live record."""
-    from dashboards import funding_series
+    from dashboards import cofinancing_now, funding_series
     past = f"{TODAY.year}-01-01"
     pair, country, series = {}, {}, {}
 
@@ -1040,12 +1040,16 @@ def _year_history(d, e, excl, _try):
     pre, _ = funding_series(d)
     fac = d.get("act_factors") or {}
     # co-financing pre-arranged (money from outside the OCHA-managed funds, recorded with the
-    # pre-arranged figures): per pair and year, every year — the rows the Financing page's
-    # "Co-financing pre-arranged, by agency" counts (a stock per year, as reported for the year)
+    # pre-arranged figures): per pair and year, every year — what the Financing page's
+    # "Co-financing pre-arranged, by year" counts (a stock per year, as reported for the year;
+    # the current year is each framework's co-financing now, dashboards.cofinancing_now: its
+    # yearly total, or the lines its latest framework document states where it has none)
     cof = {}
     cf = pre[(pre["kind"] == "cofinancing") & pre["amount_usd"].notna() & pre["year"].notna()]
     for (c, h, y), g in cf.groupby(["country_iso3", "hazard", "year"]):
         cof.setdefault((c, h), {})[str(int(y))] = float(g["amount_usd"].sum())
+    for (c, h), g in cofinancing_now(d, cf, TODAY.year).groupby(["country_iso3", "hazard"]):
+        cof.setdefault((c, h), {})[str(TODAY.year)] = float(g["amount_usd"].sum())
     pre = pre[(pre["kind"] == "prearranged") & pre["amount_usd"].notna()
               & (pre["year"].astype(int) >= YEAR_FIRST) & (pre["year"].astype(int) < TODAY.year)]
     pairs = set(zip(d["current"]["country_iso3"], d["current"]["hazard"]))
