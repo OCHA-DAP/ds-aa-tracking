@@ -1195,8 +1195,12 @@ def _strip_sections(body):
         if title in DROP_SECTIONS or title.startswith("--- section"):
             continue
         keep.append(part)
-    text = "".join(keep)
-    return re.sub(r"(?m)^#+ +--- section.*$\n?", "", text)
+    text = re.sub(r"(?m)^#+ +--- section.*$\n?", "", "".join(keep))
+    # the body points into the frontmatter's working notes (`extra.*`), which stay in the
+    # database: an aside "(see `extra.x`)" goes, any other mention says what it was
+    text = re.sub(r"\s*\((?:see|captured in)\s+`extra\.[\w.*]+`\)", "", text)
+    text = re.sub(r",\s*see\s+`extra\.[\w.*]+`(?=\))", "", text)
+    return re.sub(r"`extra\.[\w.*]+`", "a working note (not published)", text)
 
 
 def _pdf_texts(e, out):
