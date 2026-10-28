@@ -1390,6 +1390,8 @@ def assemble(d, e):
                 # funds) — the sidebar compares the agency x sector split total against it
                 "envelope": envelope.get((c, h, v.version)),
                 "env_cerf": env_cerf.get((c, h, v.version)),
+                # its Country or Regional Fund envelope released by an activation (dashboards.pooled_spent)
+                "pool_spent": (c, h, str(v.version)) in (d.get("pool_spent") or set()),
                 "analysis_ref": _s(v.analysis_ref), "analysis_url": _analysis_url(_s(v.analysis_ref)),
                 "partners": _partner_rows(partners[(partners["country_iso3"] == c)
                                                    & (partners["hazard"] == h)
@@ -3141,7 +3143,11 @@ function renderSide(){
 // (2026-10-28: Fiji read $3.94M here against the table's $2.75M); the document's own figure, where
 // it differs, is a row of its own (pillarBody). A version that allows N activations a year shows N
 // times its envelope, as the tiles count it. The budget check (fundingBlock) keeps the envelope.
-const verPre = v => v.envelope > 0 ? v.envelope + (v.apy > 1 ? (v.apy - 1) * (v.env_cerf || 0) : 0) : null;   // > 0: prearranged_now's rule; only CERF counts N times
+// committed now: only CERF counts N times, and a Country or Regional Fund envelope an activation
+// released (pool_spent) no longer counts — prearranged_now's rules; null when nothing is committed
+const verPre = v => { if(!(v.envelope > 0)) return null;
+  const c = v.env_cerf || 0, x = (v.pool_spent ? 0 : v.envelope - c) + c * (v.apy > 1 ? v.apy : 1);
+  return x > 0.5 ? x : null; };
 // ---------- the building blocks of AA: model · plan · funding · learning (always shown)
 const PILLARS = ['model', 'plan', 'funding', 'learning'];
 function pillarsBar(f, v){
@@ -3157,7 +3163,8 @@ function pillarsBar(f, v){
      esc([v.basis && tr8(v.basis), v.months.length ? tr8('{0} months monitored', v.months.length) : null, nA ? tr8(nA > 1 ? '{0} activations' : '{0} activation', nA) : tr8('never activated')].filter(Boolean).join(' · '))],
     ['plan', tr8('Activities'), nUN ? esc(tr8(nUN > 1 ? '{0} UN agencies funded' : '{0} UN agency funded', nUN)) : '—',
      [v.target_people ? esc(tr8('{0} people targeted', num(v.target_people))) : (f.covered ? esc(tr8('{0} people covered', num(f.covered))) : null), nPart ? esc(tr8(nPart > 1 ? '{0} partners in total' : '{0} partner in total', nPart)) : null].filter(Boolean).join('<br>')],
-    ['funding', tr8('Financing'), verPre(v) == null ? '—' : money(verPre(v)) + apyMark(v.apy > 1 && v.apy), esc(v.envelope > 0 ? tr8('pre-arranged') + (funds.length?' · '+funds.map(fundName).join(', '):'')
+    ['funding', tr8('Financing'), verPre(v) == null ? '—' : money(verPre(v)) + apyMark(v.apy > 1 && v.apy), esc(verPre(v) != null ? tr8('pre-arranged') + (funds.length?' · '+funds.map(fundName).join(', '):'')
+       : v.pool_spent && v.envelope > 0 ? tr8('released by an activation: the Country or Regional Fund envelope ({0}) is no longer committed', money(v.envelope))
        : v.prearranged_doc != null ? tr8('no envelope recorded; the document states {0}', money(v.prearranged_doc)) : tr8(f.tech ? 'technical support only' : 'no figure yet'))],
     ['learning', tr8('Learning'), esc(nDocs ? tr8(nDocs > 1 ? '{0} documents' : '{0} document', nDocs) : tr8('no documents yet')), esc(tr8('evaluations, reviews, reports'))],
   ];
@@ -3172,7 +3179,8 @@ function pillarBody(f, v){
   const rows = [];
   const c = L[state.iso];
   if(state.pillar==='funding'){
-    rows.push([tr8('Pre-arranged'), `${money(verPre(v))}${v.apy > 1 && verPre(v) != null ? apyMark(v.apy) + ` <span class='muted'>· ${esc(apyNote(v.apy))}</span>` : ''}${v.regional?` <span class='muted'>· ${esc(tr8('regional document total (all countries)'))}</span>`:''}${v.all_in===false?` <span class='muted'>· ${esc(tr8('split budget per window'))}</span>`:v.all_in===true?` <span class='muted'>· ${esc(tr8('all-in'))}</span>`:''}`]);
+    if(v.pool_spent && v.envelope > (v.env_cerf || 0)) rows.push([tr8('Released, no longer committed'), `${money(v.envelope - (v.env_cerf || 0))} <span class='muted'>${esc(tr8('the Country or Regional Fund envelope an activation drew on'))}</span>`]);
+    rows.push([tr8('Pre-arranged'), `${verPre(v) == null ? '—' : money(verPre(v))}${v.apy > 1 && verPre(v) != null ? apyMark(v.apy) + ` <span class='muted'>· ${esc(apyNote(v.apy))}</span>` : ''}${v.regional?` <span class='muted'>· ${esc(tr8('regional document total (all countries)'))}</span>`:''}${v.all_in===false?` <span class='muted'>· ${esc(tr8('split budget per window'))}</span>`:v.all_in===true?` <span class='muted'>· ${esc(tr8('all-in'))}</span>`:''}`]);
     // the document's own figure, where it differs from the envelope counted (or there is none)
     if(v.prearranged_doc!=null && (!(v.envelope > 0) || Math.abs(v.envelope - v.prearranged_doc) > 0.01*Math.max(v.envelope, v.prearranged_doc))) rows.push([tr8('In the framework document'), `${money(v.prearranged_doc)} <span class='muted'>${esc(tr8("the figure the document states; the tiles, the table and the Financing page count the envelope recorded for the version"))}${v.regional?' · '+esc(tr8('regional document total (all countries)')):''}</span>`]);
     if(v.cofin) rows.push([tr8('Co-financing'), `${money(v.cofin)}${v.cofin_sources.length?` <span class='muted'>${esc(v.cofin_sources.join(', '))}</span>`:''}`]);
