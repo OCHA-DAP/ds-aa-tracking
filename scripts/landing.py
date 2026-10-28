@@ -680,11 +680,11 @@ def _envelope_parts(vf):
 
 PRE_FUNDS = ("cerf", "pooled", "all")   # the fund parts of a pre-arranged envelope (_envelope_parts)
 
-# A framework's overall return period (any of its windows activating in a year): the Model page's
-# rule for a window's return period, applied to the framework — the backtest's figure where one is
-# recorded (aa.v_framework_performance: Weibull over the simulated activation years), else the
-# one the framework states (version_performance_reported). Swap the two to prefer the stated one.
-RP_PREFER = ("backtest", "stated")
+# A framework's overall return period (any of its windows activating in a year): the figure the
+# framework document states (version_performance_reported) where there is one — the endorsed
+# document is authoritative, and the owner's sheet quotes it — else the backtest's
+# (aa.v_framework_performance: Weibull over the simulated activation years). Swap to prefer the backtest.
+RP_PREFER = ("stated", "backtest")
 
 
 def _rp_fields(bt, st):
