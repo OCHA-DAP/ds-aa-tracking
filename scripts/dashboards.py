@@ -1395,6 +1395,8 @@ FLOW_NOTE = " ".join(TB(x) for x in (
     f"country of the framework (pre-arranged) or of the activation (released). The {FLOW_TOP_COUNTRIES} "
     "countries receiving the most in the view are named, the rest grouped as <i>other countries</i>; "
     "a regional fund allocation that names no single country is <i>multi-country / regional</i>. "
+    "The grantees of a regional fund carry no country: a country's band from a regional fund reaches "
+    "that fund's grantees of the year in all its countries. "
     "Country boxes are grey: a band leaving one takes the colour of the box it reaches.",
     f"<b>Recipients</b>: the {FLOW_TOP_ORGS} partner and grantee organisations receiving the most in "
     "the view are named, the rest grouped per category (\"other national / local NGOs\"…). Every "
