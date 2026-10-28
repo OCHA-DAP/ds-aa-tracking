@@ -13,7 +13,7 @@ the page never carries a data snapshot. Two roles:
   delete on the tables this repo owns; every field change is audited to
   aa.entry_audit under the editor's name.
 
-Tables owned by other writers (KB loaders, OneGMS mirrors) and the audit table are
+Tables owned by other writers (OneGMS mirrors), the frozen KB-era record and the audit table are
 read-only regardless of role — the proxy enforces it, the page just says so.
 """
 
@@ -37,9 +37,10 @@ GROUPS = [
      "ds-aa-tracking", ["version_page", "learning_document", "framework_partner"]),
     ("Data entry (entered values win)", "ds-aa-tracking", [
         "entered_version", "entered_window", "entered_window_funding", "entry_audit"]),
-    ("Knowledge base — trigger performance (read-only, frozen at the KB flip)", "ds-knowledge-base", [
-        "window", "simulated_activation", "funding_breakdown", "actual_activation",
-        "activation_allocation", "version_performance_reported"]),
+    ("Backtests (owned here since 2026-10-05; edited as errors are found — see v_trk_backtest_check)",
+     "ds-aa-tracking", ["window", "simulated_activation", "version_performance_reported"]),
+    ("KB-era record (read-only, frozen 2026-10-05)", "ds-aa-tracking", [
+        "funding_breakdown", "actual_activation", "activation_allocation"]),
     ("OneGMS mirrors (read-only)", "ds-cerf-supplement", [
         "cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country",
         "cerf_allocation_storm", "cerf_supplement", "cbpf_fund", "cbpf_allocation",

@@ -5,7 +5,8 @@ studies so far (FEATURED), each called out of the countries it is about: on savi
 and livelihoods, on cost effectiveness and on speed. A small dot beside a country says
 what its findings are about, and hovering the country keeps its own callouts lit and shows
 its further headlines (HEADLINES, then its documents' key statistics). (2) The repository:
-every public learning document, filterable by country and hazard, sortable by year.
+every public learning document, filterable by country and hazard, newest first by publication
+month and year (re-sortable).
 
 A finding or a document opens in a panel INSIDE the page: over the map when it was opened
 from the map, beside its row when it was opened from the list. Nothing is fixed to the
@@ -16,15 +17,16 @@ Documents come from aa.learning_document (public rows only: internal ones are ex
 dashboards._fetch). The findings are curated below, each tied to the document that states
 it."""
 
-import html
 import itertools
 import json
 import re
 
 import landing
 import pandas as pd
-from dashboards import DOC_TYPE_LABEL, PREMISES, _aslist
+import site_i18n as i18n
+from dashboards import DOC_TYPE_LABEL, PREMISES, _aslist, hazard_word
 from import_learning import PLACEHOLDER
+from site_i18n import ATTR, OPT, OPTC, TB, TF, T
 
 # ---- the findings ---------------------------------------------------------------------------
 # The learning lead's selection ("What acting early achieves", mock-up of 5 October 2026):
@@ -80,7 +82,7 @@ FEATURED = [
        "chance of going a day without eating for families who received cash before the "
        "flood peak.",
        "Pople, Hill, Dercon and Brunckhorst, Centre for Disaster Protection (2021)", CDP_2021,
-       chips=[("+17%", "evacuated livestock"), ("−12%", "interest on loans")],
+       chips=[("+3 points", "evacuated livestock"), ("−12%", "interest on loans")],
        vs="similar households on the same lists who could not be reached in time; 8,954 "
           "households surveyed.",
        caveat="Not randomised, and compared with no assistance rather than a later "
@@ -109,6 +111,23 @@ FEATURED = [
        "innovating-anticipatory-action-lessons-2022-south-sudan-floods",
        caveat="An estimate for one supply route, with no method given. It compares road "
               "with air transport, not the cost per person or per outcome."),
+    # the fastest CERF releases on record (2025), added 2026-10-22: as reported by OCHA/CERF,
+    # from the activation being confirmed to the allocation — not the time to reach people
+    _f("speed", ("PHL",), "Programme data",
+       "Philippines, Super Typhoon Fung-wong (November 2025)", "2 min",
+       "from confirming the activation to nearly US$6 million released by CERF, ahead of "
+       "the typhoon's landfall.",
+       "UN, How anticipatory action shaped the response to the Philippines' twin typhoons (2025)",
+       "https://www.un.org/en/delegate/"
+       "how-anticipatory-action-shaped-response-philippines%E2%80%99-twin-typhoons",
+       caveat="The time to release the money once the activation was confirmed, as OCHA "
+              "reports it; not the time for assistance to reach people."),
+    _f("speed", ("CUB",), "Programme data", "Cuba, Hurricane Melissa (October 2025)", "4 min",
+       "to allocate US$4 million to Cuba ahead of Hurricane Melissa.",
+       "CERF, CERF at the forefront of anticipatory action (2025)",
+       "https://cerf.un.org/sites/default/files/resources/CERF_Atforefront_AA.pdf",
+       caveat="The time to allocate the money, as CERF reports it; not the time for "
+              "assistance to reach people."),
     _f("speed", ("BGD",), "Programme data", "Bangladesh, floods (July 2024)", "16 min",
        "from the flood alert to a US$6.2 million CERF allocation. About 430,000 people "
        "were reached within five days, before the peak.",
@@ -277,6 +296,23 @@ def _world(on):
     return "".join(paths), names, boxes, xy
 
 
+def _curated_missing():
+    """The findings and headlines are this page's own copy (the documents' text is not
+    translated): the page's script translates them, so the build looks each up once, which
+    lists a missing translation like any other string."""
+    for f in FEATURED:
+        for x in [f["design"], f["where"], f["big"], f["claim"], f["vs"], f["caveat"],
+                  *(v for c in f["chips"] for v in c)]:
+            if x and re.search(r"[A-Za-z]", x):      # a bare figure ('−6.8%') reads the same
+                for l in i18n.LANGS:
+                    i18n.tr(l, x)
+    for h in HEADLINES:
+        for x in (h["big"], h["text"]):
+            if re.search(r"[A-Za-z]", x):
+                for l in i18n.LANGS:
+                    i18n.tr(l, x)
+
+
 def build_learning(page, d):
     docs = d["learning"]          # public documents only (internal rows never leave _fetch)
     cur = d["current"]
@@ -294,14 +330,18 @@ def build_learning(page, d):
         recs.append({
             "id": int(r.id), "t": str(r.title).strip(), "u": _url(r.url),
             "pub": _t(r.publisher), "y": int(r.year) if pd.notna(r.year) else None,
-            "ty": DOC_TYPE_LABEL.get(r.doc_type, _t(r.doc_type) or "document").capitalize(),
+            # the publication month (1-12), when recorded; an older snapshot has no column
+            "m": int(r.month) if pd.notna(getattr(r, "month", None)) else None,
+            "ty": DOC_TYPE_LABEL.get(r.doc_type, "document").capitalize(),
             "type": r.doc_type, "iso": isos, "hz": hz,
             "pr": [p for p in _aslist(r.premises) if p in premise_label],
             "ks": _t(r.key_stat), "s": _t(r.summary), "ff": [],
             # the framework pages the document belongs to: its hazard's, or (a document
             # with no hazard) every framework of the country
             "fw": [[f"fw-{c.lower()}-{h}.html",
-                    f"{cnames.get(c) or c} · {HAZARD_LABEL.get(h, str(h).replace('_', ' '))}"]
+                    i18n.add(f"{cnames.get(c) or c} · {HAZARD_LABEL.get(h, hazard_word(h))}",
+                             "{country} · {hazard}", country=i18n.country(c, cnames.get(c) or c),
+                             hazard=HAZARD_LABEL.get(h, hazard_word(h)))]
                    for c in isos for h in fw_of.get(c, []) if hz in (None, h)],
         })
         if _t(r.url):
@@ -331,6 +371,9 @@ def build_learning(page, d):
 
     def name(c):
         return cnames.get(c) or wnames.get(c) or c
+    # the country names the page shows, in every language (the map's names included)
+    i18n.register_countries((c, name(c)) for c in set(wnames) | set(cnames))
+    _curated_missing()
 
     # the findings, on the countries of theirs that the map shows (feat_of: every finding of
     # a country, showcased or not)
@@ -410,7 +453,7 @@ def build_learning(page, d):
                                                 key=lambda kv: bool(def_of.get(kv[0]))))
     for r in recs:
         r["cn"] = [name(c) for c in r["iso"]]
-        r["hl"] = [{"n": ", ".join(name(c) for c in isos), "b": b, "t": t}
+        r["hl"] = [{"n": [name(c) for c in isos], "b": b, "t": t}
                    for (b, t), isos in r.get("hl", {}).items()]
         # the panel shows the document's default findings in full: its key statistic is not
         # repeated under them when it is the same figure
@@ -424,62 +467,61 @@ def build_learning(page, d):
     seen = {k for v in countries.values() for k in v["pips"]} | set(on)
     legend = "".join(
         f"<span class='lg-i'><span class='lg-d' style='background:{PREMISE_COLOR[k][0]}'></span>"
-        f"{html.escape(premise_label[k])}</span>" for k in PREMISE_COLOR if k in seen)
+        f"{T(premise_label[k])}</span>" for k in PREMISE_COLOR if k in seen)
 
     # ---- the repository's filters
-    c_opts = "".join(
-        f"<option value='{html.escape(c)}'>{html.escape(n)} ({n_docs[c]})</option>"
-        for n, c in sorted((name(c), c) for c in n_docs))
+    c_opts = "".join(OPTC(c, lambda w, n=n, c=c: f"{w(n)} ({n_docs[c]})")
+                     for n, c in sorted((name(c), c) for c in n_docs))
     n_global = sum(1 for r in recs if not r["iso"])
     hz_n = {}
     for r in recs:
         hz_n[r["hz"]] = hz_n.get(r["hz"], 0) + 1
-    h_opts = "".join(
-        f"<option value='{html.escape(h)}'>{html.escape(HAZARD_LABEL.get(h, h))} ({hz_n[h]})</option>"
-        for h in [*[h for h in HAZARD_LABEL if h in hz_n],
-                  *sorted(h for h in hz_n if h and h not in HAZARD_LABEL)])
+    h_opts = "".join(OPTC(h, lambda w, h=h: f"{w(HAZARD_LABEL.get(h, h))} ({hz_n[h]})")
+                     for h in [*[h for h in HAZARD_LABEL if h in hz_n],
+                               *sorted(h for h in hz_n if h and h not in HAZARD_LABEL)])
     n_int = int(d.get("n_internal_docs", 0))
 
     n_shown = sum(f["p"] in on for f in featured)
-    called = "" if n_shown == len(featured) else f"{n_shown} of them are called out. "
+    called = "" if n_shown == len(featured) else TF("{n} of them are called out. ", n=n_shown)
 
     data = {"docs": recs, "countries": countries, "featured": featured, "prem": prem,
             "on": on,
-            "hazard": HAZARD_LABEL, "vb": {"w": landing.VB_W, "h": round(landing.VB_H, 1)}}
+            "hazard": HAZARD_LABEL, "vb": {"w": landing.VB_W, "h": round(landing.VB_H, 1),
+                                           "cut": round(xy(55, 10)[0], 1)}}   # a phone's two panels
     # "</" never appears inside the page's script element, whatever a title holds
     data_js = json.dumps(data, separators=(",", ":"), ensure_ascii=False).replace("</", "<\\/")
     body = f"""<style>{LEARNING_CSS}</style>
 <div class='lmapwrap'>
-<div class='lmapbox' id='lmapbox' style='aspect-ratio:{landing.VB_W:.0f}/{landing.VB_H:.1f}'>
+<div class='lmapbox' id='lmapbox' style='--ar:{landing.VB_W:.0f}/{landing.VB_H:.1f}'>
  <svg id='lmap' viewBox='0 0 {landing.VB_W:.1f} {landing.VB_H:.1f}' preserveAspectRatio='xMidYMid meet'
-  role='img' aria-label='World map of headline findings on anticipatory action'>
+  role='img' {ATTR("aria-label", "World map of headline findings on anticipatory action")}>
   <g id='lworld'>{paths}</g><g id='ldots'>{dots}</g></svg>
+ <div id='lmapov' class='lmapov'></div>
  <div id='lpane' class='lpane'><svg id='leaders' class='leadersvg'></svg></div>
  <div id='hcard' class='hcard' hidden></div>
- <div class='llegend' id='llegend'><b>{html.escape(LEDE)}</b>{legend}
-  <span class='lg-h'>{called}The small dots beside a country say what its findings are about:
-  hover the country for more, click to keep it open. Click a finding for how the study was designed.</span></div>
+ <div class='llegend' id='llegend'><b>{T(LEDE)}</b>{legend}
+  <span class='lg-h'>{called}{TB("The small dots beside a country say what its findings are about: hover the country for more, click to keep it open. Click a finding for how the study was designed.")}</span></div>
 </div>
 <div id='hlstack' class='hlstack'></div>
-<aside id='mpanel' class='lpanel mpanel' role='region' aria-label='The finding or document opened from the map' tabindex='-1' hidden></aside>
+<aside id='mpanel' class='lpanel mpanel' role='region' {ATTR("aria-label", "The finding or document opened from the map")} tabindex='-1' hidden></aside>
 </div>
 <div class='lrepo' id='lrepo'>
- <h2>Learning documents</h2>
+ <h2>{T("Learning documents")}</h2>
  <div class='lbar'>
-  <label>Country <select id='f-c'><option value=''>All countries</option>{
-      f"<option value='_global'>Global, not country-specific ({n_global})</option>" if n_global else ""}{c_opts}</select></label>
-  <label>Hazard <select id='f-h'><option value=''>All hazards</option>{h_opts}{
-      f"<option value='_none'>Not hazard-specific ({hz_n[None]})</option>" if None in hz_n else ""}</select></label>
+  <label>{T("Country")} <select id='f-c'>{OPT("", "All countries")}{
+      OPTC("_global", lambda w: w("Global, not country-specific ({n})").format(n=n_global)) if n_global else ""}{c_opts}</select></label>
+  <label>{T("Hazard")} <select id='f-h'>{OPT("", "All hazards")}{h_opts}{
+      OPTC("_none", lambda w: w("Not hazard-specific ({n})").format(n=hz_n[None])) if None in hz_n else ""}</select></label>
   <span class='lcount' id='lcount'></span>
-  <button type='button' class='lclear' id='lclear' hidden>clear filters</button>
+  <button type='button' class='lclear' id='lclear' hidden>{T("clear filters")}</button>
  </div>
  <div class='lbody' id='lbody'>
- <table class='data ldocs'><thead><tr><th>Document</th><th>Country</th><th>Hazard</th>
-  <th class='yr'><button type='button' id='ysort' title='Sort by year'>Year <span id='yarrow'>▼</span></button></th>
-  <th>Link</th></tr></thead><tbody id='lrows'></tbody></table>
- <aside id='tpanel' class='lpanel tpanel' role='region' aria-label='The document opened from the list' tabindex='-1' hidden></aside>
+ <table class='data ldocs'><thead><tr><th>{T("Document")}</th><th>{T("Country")}</th><th>{T("Hazard")}</th>
+  <th class='yr'><button type='button' id='ysort' {ATTR("title", "Sort by publication date")}>{T("Published")} <span id='yarrow'>▼</span></button></th>
+  <th>{T("Link")}</th></tr></thead><tbody id='lrows'></tbody></table>
+ <aside id='tpanel' class='lpanel tpanel' role='region' {ATTR("aria-label", "The document opened from the list")} tabindex='-1' hidden></aside>
  </div>
- {f"<p class='meta'>{n_int} internal document{'' if n_int == 1 else 's'} held in the database {'is' if n_int == 1 else 'are'} not listed here.</p>" if n_int else ""}
+ {f"<p class='meta'>{TF('{n} internal document held in the database is not listed here.' if n_int == 1 else '{n} internal documents held in the database are not listed here.', n=n_int)}</p>" if n_int else ""}
 </div>
 <script>window.LD = {data_js};</script>
 <script>{LEARNING_JS}</script>"""
@@ -489,14 +531,24 @@ def build_learning(page, d):
 LEARNING_CSS = r"""
 .lmapbox { position:relative; width:100%; overflow:hidden; border-radius:12px; border:1px solid #e6eaef;
   background:linear-gradient(180deg,#eef3f8 0%,#e9eff5 100%);
-  box-shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px -12px rgba(16,24,40,.18); }
+  box-shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px -12px rgba(16,24,40,.18); aspect-ratio:var(--ar); }
 #lmap { width:100%; height:100%; display:block; }
-#lmap .cty { fill:#f7f8fa; stroke:#d3d9df; stroke-width:.45; vector-effect:non-scaling-stroke; transition:fill .2s; }
-#lmap .cty.on { fill:#cfe1f3; stroke:#8fb4d9; stroke-width:.7; cursor:pointer; }
-#lmap .cty.on:hover, #lmap .cty.on.sel { fill:#a9c9e8; }
-#lmap .ldot { fill:#51627a; stroke:#fff; stroke-width:1.2; vector-effect:non-scaling-stroke; cursor:pointer; }
-#lmap .ldot.feat { fill:#0f2540; stroke-width:1.8; }
-#lmap .lpip { stroke:#fff; stroke-width:.8; vector-effect:non-scaling-stroke; pointer-events:none; }
+/* the map and, on a phone, its two panels (.lmapov) */
+.lmapbox .cty { fill:#f7f8fa; stroke:#d3d9df; stroke-width:.45; vector-effect:non-scaling-stroke; transition:fill .2s; }
+.lmapbox .cty.on { fill:#cfe1f3; stroke:#8fb4d9; stroke-width:.7; cursor:pointer; }
+.lmapbox .cty.on:hover, .lmapbox .cty.on.sel { fill:#a9c9e8; }
+.lmapbox .ldot { fill:#51627a; stroke:#fff; stroke-width:1.2; vector-effect:non-scaling-stroke; cursor:pointer; }
+.lmapbox .ldot.feat { fill:#0f2540; stroke-width:1.8; }
+.lmapbox .lpip { stroke:#fff; stroke-width:.8; vector-effect:non-scaling-stroke; pointer-events:none; }
+.lmapov { display:none; }
+@media (max-width:760px){
+  /* a phone: the countries in two stacked panels, each about twice the scale (buildOverview) */
+  .lmapbox.ov { aspect-ratio:auto; }
+  .lmapbox.ov #lmap { display:none; }
+  .lmapbox.ov .lmapov { display:block; }
+  .lmapov svg { display:block; width:100%; height:auto; }
+  .lmapov svg + svg { border-top:1px dashed #cdd6e0; }
+}
 .lpane { position:absolute; inset:0; pointer-events:none; transition:opacity .2s; }
 .leadersvg { position:absolute; inset:0; width:100%; height:100%; overflow:visible; }
 .leader { stroke:#7c8ba1; stroke-width:1; stroke-linecap:round; transition:opacity .2s; }
@@ -546,7 +598,7 @@ LEARNING_CSS = r"""
 .lg-i { display:flex; align-items:center; gap:6px; } .lg-d { width:9px; height:9px; border-radius:50%; flex:none; }
 .lg-h { color:#6b7a8f; font-size:10.5px; line-height:1.3; margin-top:2px; }
 /* narrow screens: the callouts do not fit on the map, the findings are listed under it */
-.hlstack { display:none; }
+.hlstack { display:none; scroll-margin-top:35vh; }
 .lmapbox.compact .lpane, .lmapbox.compact .hcard, .lmapbox.compact .llegend { display:none; }
 .lmapbox.compact + .hlstack { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:8px; margin-top:10px; }
 .hlstack .hc-h, .hlstack .hc-f, .hlstack .hc-k { grid-column:1/-1; margin:0; }
@@ -580,7 +632,7 @@ table.ldocs td.lk a { color:#1d5aa8; text-decoration:none; } table.ldocs td.lk a
 .mpanel { position:absolute; z-index:8; top:10px; bottom:10px; right:10px; width:min(380px, calc(100% - 20px)); overflow-y:auto; }
 .mpanel.left { right:auto; left:10px; }
 .lmapbox.compact ~ .mpanel { position:relative; inset:auto; width:auto; margin-top:10px; overflow:visible; }
-.lbody { position:relative; }
+.lbody { position:relative; overflow-x:auto; }   /* five columns: on a phone the list scrolls, not the page */
 .lbody.open:not(.narrow) table.ldocs { width:calc(100% - 400px); }
 .tpanel { position:absolute; z-index:4; right:0; top:0; width:384px; }
 .lbody.narrow .tpanel { left:0; width:auto; }
@@ -619,6 +671,7 @@ table.ldocs tr.lspacer, table.ldocs tr.lspacer:hover td { cursor:default; backgr
 .lpanel p.fd-cav { font-size:12px; line-height:1.5; color:#56677b; margin:0 0 5px; }
 .lpanel p.fd-cite { font-size:11.5px; color:#56677b; margin:0; }
 .lbody.narrow table.ldocs td.lt { width:auto; } .lbody.narrow .lt-p { display:block; margin:2px 0 0; }
+@media (max-width:480px){ table.ldocs th, table.ldocs td { padding:6px 4px; font-size:12px; } }   /* a phone: the five columns fit */
 """
 
 LEARNING_JS = r"""
@@ -628,29 +681,38 @@ const LD = window.LD, C = LD.countries, DOCS = LD.docs, F = LD.featured, VB = LD
 const ON = new Set(LD.on), shown = i => ON.has(F[i].p);
 const BYID = new Map(DOCS.map(d => [d.id, d]));
 const P = k => LD.prem[k] || {l:'', c:'#94a3b8', ink:'#556270'};
+// what the page writes follows the language (tr8): the findings and headlines, which are this
+// page's own copy, included; the documents' titles, publishers, summaries and key statistics are
+// shown as recorded
+const PL = k => tr8(P(k).l), CN = iso => tr8(C[iso].n);
 const $ = id => document.getElementById(id);
 const svg = $('lmap'), mapbox = $('lmapbox'), lpane = $('lpane'), leaders = $('leaders'),
       legend = $('llegend'), hcard = $('hcard'), stack = $('hlstack');
 const NS = 'http://www.w3.org/2000/svg';
 function esc(s){ return s==null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
-const srcOf = d => [d.pub, d.y].filter(Boolean).join(' · ');
+// "Mar 2025" in the page's language, or the bare year when no month is recorded
+const pubDate = d => d.y == null ? null : d.m
+  ? new Date(d.y, d.m - 1, 15).toLocaleDateString(aaLang(), {month:'short', year:'numeric'}) : String(d.y);
+// sort key: year, then month; a document with a year but no month sorts after that year's dated ones
+const pubKey = d => d.y * 100 + (d.m || 0);
+const srcOf = d => [d.pub, pubDate(d)].filter(Boolean).join(' · ');
 // a default finding as a card: where and study design / the figure / the claim. On the map its
 // colour says the premise (the legend names the three); listed under the map, the card says it.
 function featButton(i, named, cls){
-  const f = F[i], p = P(f.p);
-  return `<button type='button' class='hl ${cls || ''}' data-f='${i}' style='--pc:${p.c}' aria-label='${esc(`${p.l}. ${f.w}: ${f.b} ${f.t} ${f.g}.`)}' title='${esc(p.l)}: how the study was designed and what it was compared against'>`
-    + `<span class='hl-k'><span class='hl-w'>${esc(f.w)}</span><span class='hl-g'>${esc(f.g)}</span></span>`
-    + (named ? `<span class='hl-p' style='color:${p.ink}'>${esc(p.l)}</span>` : '')
-    + `<span class='hl-b' style='color:${p.ink}'>${esc(f.b)}</span><span class='hl-t'>${esc(f.t)}</span></button>`;
+  const f = F[i], p = P(f.p), pl = PL(f.p), w = tr8(f.w), g = tr8(f.g), b = tr8(f.b), t = tr8(f.t);
+  return `<button type='button' class='hl ${cls || ''}' data-f='${i}' style='--pc:${p.c}' aria-label='${esc(`${pl}. ${w}: ${b} ${t} ${g}.`)}' title='${esc(tr8('{0}: how the study was designed and what it was compared against', pl))}'>`
+    + `<span class='hl-k'><span class='hl-w'>${esc(w)}</span><span class='hl-g'>${esc(g)}</span></span>`
+    + (named ? `<span class='hl-p' style='color:${p.ink}'>${esc(pl)}</span>` : '')
+    + `<span class='hl-b' style='color:${p.ink}'>${esc(b)}</span><span class='hl-t'>${esc(t)}</span></button>`;
 }
 // a further headline of a country: [premise] / the figure / the sentence / its source
 function hlButton(h, cls){
   const p = h.p ? P(h.p) : null, d = BYID.get(h.d);
   const s = d ? (srcOf(d) || (h.doc ? '' : d.t)) : '';       // h.doc: the sentence IS the document's title
-  return `<button type='button' class='hl ${cls}' data-doc='${h.d}' data-b='${esc(h.b || '')}' style='--pc:${p ? p.c : '#94a3b8'}' title='Open the source document'>`
-    + (p ? `<span class='hl-k'><span class='hl-p' style='color:${p.ink}'>${esc(p.l)}</span></span>` : '')
-    + (h.b ? `<span class='hl-b'>${esc(h.b)}</span>` : '')
-    + `<span class='hl-t'>${esc(h.t)}</span>`
+  return `<button type='button' class='hl ${cls}' data-doc='${h.d}' data-b='${esc(h.b || '')}' style='--pc:${p ? p.c : '#94a3b8'}' title='${esc(tr8('Open the source document'))}'>`
+    + (p ? `<span class='hl-k'><span class='hl-p' style='color:${p.ink}'>${esc(PL(h.p))}</span></span>` : '')
+    + (h.b ? `<span class='hl-b'>${esc(tr8(h.b))}</span>` : '')
+    + `<span class='hl-t'>${esc(h.b ? tr8(h.t) : h.t)}</span>`
     + (s ? `<span class='hl-s'>${esc(s)}</span>` : '') + `</button>`;
 }
 
@@ -735,9 +797,46 @@ function pairCost(Lb, c, o){
 const costOf = (Lb, c) => labels.reduce((s, o) => o === Lb || !o.at ? s : s + pairCost(Lb, c, o), c.cost);
 function seeded(a){ return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a);
   t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+// a phone: the map at 332 px is ~135 px tall and most of its countries a few pixels wide. The
+// overview draws the countries in two stacked panels split at 55°E, as on the map page (the
+// Americas and Africa | Asia and the Pacific): each about twice the scale. A tap works as on the map.
+const ov = $('lmapov'), PHONE = window.matchMedia('(max-width: 760px)');
+let OVBOX = null, OVPATHS = null;
+function ovBoxes(){   // the two panels' view boxes, from the countries on the map
+  if(OVBOX) return OVBOX;
+  const pad = 14, G = [[], []];
+  Object.values(C).forEach(c => G[(c.r[0] + c.r[2])/2 < VB.cut ? 0 : 1].push(c.r));   // by place on the map
+  OVBOX = G.filter(g => g.length).map(g => { const x0 = Math.min(...g.map(b=>b[0])) - pad, y0 = Math.min(...g.map(b=>b[1])) - pad;
+    return [x0, y0, Math.max(...g.map(b=>b[2])) + pad - x0, Math.max(...g.map(b=>b[3])) + pad - y0]; });
+  return OVBOX;
+}
+function buildOverview(on){
+  mapbox.classList.toggle('ov', on);
+  if(!on){ ov.innerHTML = ''; return; }
+  if(!OVPATHS) OVPATHS = [...svg.querySelectorAll('#lworld .cty')].map(p => {   // each country once: its path and its box
+    const d = p.getAttribute('d'), n = d.match(/-?[\d.]+/g).map(Number);
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for(let i = 0; i < n.length; i += 2){ x0 = Math.min(x0, n[i]); x1 = Math.max(x1, n[i]); y0 = Math.min(y0, n[i+1]); y1 = Math.max(y1, n[i+1]); }
+    return {html: `<path class='cty${p.classList.contains('on') ? ' on' : ''}' data-iso='${p.dataset.iso}' d='${d}'/>`, b: [x0, y0, x1, y1]}; });
+  const w = ov.clientWidth || mapbox.clientWidth || 330;
+  const feat = iso => C[iso].f.some(shown);
+  const isos = Object.keys(C).sort((a, b) => feat(a) - feat(b));   // the countries with a callout on top, as on the map
+  ov.innerHTML = ovBoxes().map(([x, y, bw, bh], i) => {
+    const u = 1.2 * bw / w;   // the map's dots and pips at 1.2 px a unit, whatever the panel's scale
+    const paths = OVPATHS.filter(o => o.b[2] > x && o.b[0] < x + bw && o.b[3] > y && o.b[1] < y + bh).map(o => o.html).join('');
+    const dots = isos.filter(iso => C[iso].x > x && C[iso].x < x + bw && C[iso].y > y && C[iso].y < y + bh).map(iso => {
+      const c = C[iso], r = (feat(iso) ? 4.2 : 2.8) * u;
+      return `<circle class='ldot${feat(iso) ? ' feat' : ''}' data-iso='${iso}' cx='${c.x}' cy='${c.y}' r='${r.toFixed(2)}'/>`
+        + c.pips.map((k, j) => `<circle class='lpip' cx='${(c.x + r + (3.2 + 4.2*j)*u).toFixed(1)}' cy='${c.y}' r='${(1.7*u).toFixed(2)}' style='fill:${P(k).c}'/>`).join('');
+    }).join('');
+    return `<svg viewBox='${x.toFixed(1)} ${y.toFixed(1)} ${bw.toFixed(1)} ${bh.toFixed(1)}' role='img' aria-label='${esc(tr8(i ? 'Asia and the Pacific' : 'The Americas and Africa'))}'>${paths}${dots}</svg>`;
+  }).join('');
+  if(pinned) mark(pinned);
+}
 let compact = false;
 function runLayout(){
-  const r = svg.getBoundingClientRect(), W = r.width, H = r.height;
+  const phone = PHONE.matches; buildOverview(phone);
+  const r = svg.getBoundingClientRect(), W = phone ? mapbox.clientWidth : r.width, H = r.height;
   if(!W) return;
   const k = W / VB.w, was = compact;
   compact = W < 1100;                                     // the cards no longer fit on the map: list them under it
@@ -777,15 +876,15 @@ let pinned = null;
 function countryHTML(iso, pin, inStack){
   const c = C[iso], nd = c.nd;
   const on = c.f.filter(shown), off = c.f.filter(i => !shown(i)), has = c.f.length, more = c.h;
-  const label = !more.length ? '' : more[0].doc ? (has ? 'Newest documents' : 'No headline figure yet · newest documents') : has ? `More from ${c.n}` : '';
-  return `<div class='hc-h'><b>${esc(c.n)}</b><span>${nd ? `${nd} document${nd>1?'s':''}` : 'no country document'}</span>`
-    + (pin ? `<button type='button' class='hc-x' aria-label='Close'>×</button>` : '') + `</div>`
+  const label = !more.length ? '' : more[0].doc ? tr8(has ? 'Newest documents' : 'No headline figure yet · newest documents') : has ? tr8('More from {0}', CN(iso)) : '';
+  return `<div class='hc-h'><b>${esc(CN(iso))}</b><span>${esc(nd ? tr8(nd > 1 ? '{0} documents' : '{0} document', nd) : tr8('no country document'))}</span>`
+    + (pin ? `<button type='button' class='hc-x' aria-label='${esc(tr8('Close'))}'>×</button>` : '') + `</div>`
     + (inStack ? on.map(i => featButton(i, true)).join('') : '')             // on the map they are the lit callouts
     + off.map(i => featButton(i, true, 'hc-i')).join('')                     // its findings that are not showcased
     + (label ? `<div class='hc-k'>${esc(label)}</div>` : '')
     + more.map(h => hlButton(h, 'hc-i')).join('')
-    + `<div class='hc-f'>` + (pin ? (nd ? `<button type='button' class='hc-more' data-iso='${iso}'>Show ${nd>1?`its ${nd} documents`:'its document'} in the list ↓</button>` : '')
-                                  : `<span class='hc-hint'>Click the country to keep this open</span>`) + `</div>`;
+    + `<div class='hc-f'>` + (pin ? (nd ? `<button type='button' class='hc-more' data-iso='${iso}'>${esc(nd > 1 ? tr8('Show its {0} documents in the list ↓', nd) : tr8('Show its document in the list ↓'))}</button>` : '')
+                                  : `<span class='hc-hint'>${esc(tr8('Click the country to keep this open'))}</span>`) + `</div>`;
 }
 function placeCard(iso){
   const r = svg.getBoundingClientRect(), k = r.width / VB.w, c = C[iso], rc = rectPx(c, k);
@@ -807,14 +906,14 @@ function placeCard(iso){
   }
   hcard.style.left = (best.cx-w/2)+'px'; hcard.style.top = (best.cy-h/2)+'px';
 }
-function mark(iso){ svg.querySelectorAll('.cty.sel').forEach(e => e.classList.remove('sel'));
-  if(iso){ const p = svg.querySelector(`.cty[data-iso='${iso}']`); if(p) p.classList.add('sel'); } }
+function mark(iso){ mapbox.querySelectorAll('.cty.sel').forEach(e => e.classList.remove('sel'));   // the map and a phone's panels
+  if(iso) mapbox.querySelectorAll(`.cty[data-iso='${iso}']`).forEach(p => p.classList.add('sel')); }
 function lit(iso){ labels.forEach(Lb => { const on = !!iso && Lb.isos.includes(iso);
   Lb.el.classList.toggle('keep', on); Lb.lns.forEach(ln => ln.classList.toggle('keep', on)); }); }
 function showCountry(iso, pin){
   if(!C[iso]) return;
   if(compact){ if(!pin) return;
-    stack.innerHTML = countryHTML(iso, true, true) + `<div class='hc-f'><button type='button' class='hc-more' data-back='1'>← The headline findings</button></div>`;
+    stack.innerHTML = countryHTML(iso, true, true) + `<div class='hc-f'><button type='button' class='hc-more' data-back='1'>${esc(tr8('← The headline findings'))}</button></div>`;
     mark(iso); return; }
   hcard.innerHTML = countryHTML(iso, pin, false); hcard.classList.toggle('pinned', !!pin); hcard.hidden = false;
   mapbox.classList.add('hovering'); mapbox.classList.toggle('pin', !!pin); mark(iso); lit(iso); placeCard(iso);
@@ -824,12 +923,16 @@ function hideCountry(){ hcard.hidden = true; hcard.classList.remove('pinned'); m
 function unpin(){ pinned = null; hideCountry();
   const rest = F.map((f, i) => shown(i) ? '' : featButton(i, true)).join('');
   stack.innerHTML = F.map((f, i) => shown(i) ? featButton(i, true) : '').join('')
-    + (rest ? `<div class='hc-k'>Also on the map</div>` + rest : ''); }
+    + (rest ? `<div class='hc-k'>${esc(tr8('Also on the map'))}</div>` + rest : ''); }
 const isoOf = t => (t && t.dataset && t.dataset.iso && C[t.dataset.iso] && (t.classList.contains('on') || t.classList.contains('ldot'))) ? t.dataset.iso : null;
 svg.addEventListener('mouseover', e => { const iso = isoOf(e.target); if(iso && !pinned) showCountry(iso, false); });
 svg.addEventListener('mouseout', e => { if(!pinned && isoOf(e.target) && !isoOf(e.relatedTarget)) hideCountry(); });
-svg.addEventListener('click', e => { const iso = isoOf(e.target); closeMapPanel(false);
-  if(iso && iso !== pinned){ pinned = iso; showCountry(iso, true); } else unpin(); });
+function tap(e){ const iso = isoOf(e.target); closeMapPanel(false);
+  if(iso && iso !== pinned){ pinned = iso; showCountry(iso, true); if(compact) reveal(stack); } else unpin(); }
+// narrow: the country's card is under the map, often below the screen; bring its top up, with
+// the end of the map still above it (scroll-margin-top)
+function reveal(el){ if(el.getBoundingClientRect().top > innerHeight * .7) el.scrollIntoView({behavior:'smooth', block:'start'}); }
+svg.addEventListener('click', tap); ov.addEventListener('click', tap);
 // a finding opens its source in the panel over the map; the pinned card can also filter the list
 function onHeadlineClick(e){
   const b = e.target.closest('button'); if(!b) return;
@@ -852,15 +955,15 @@ function matches(d){
 }
 function renderTable(){
   const list = DOCS.filter(matches).sort((a, b) => (a.y == null) - (b.y == null)       // no year: last, either way
-    || (state.desc ? b.y - a.y : a.y - b.y) || a.t.localeCompare(b.t));
+    || (state.desc ? pubKey(b) - pubKey(a) : pubKey(a) - pubKey(b)) || a.t.localeCompare(b.t));
   rows.innerHTML = list.map(d => `<tr data-id='${d.id}' tabindex='0'>`
     + `<td class='lt'><span class='lt-t'>${esc(d.t)}</span>${d.pub ? `<span class='lt-p'>${esc(d.pub)}</span>` : ''}</td>`
-    + `<td>${d.cn.length ? esc(d.cn.join(', ')) : 'Global'}</td><td>${d.hz ? esc(LD.hazard[d.hz] || d.hz) : '—'}</td>`
-    + `<td class='yr'>${d.y == null ? '—' : d.y}</td>`
-    + `<td class='lk'>${d.u ? `<a href='${esc(d.u)}' target='_blank' rel='noopener'>open ↗</a>` : `<span class='lnone' title='No public link recorded'>none</span>`}</td></tr>`).join('')
-    || `<tr><td colspan='5' class='lnone'>No document matches these filters.</td></tr>`;
+    + `<td>${d.cn.length ? esc(d.cn.map(n => tr8(n)).join(', ')) : esc(tr8('Global'))}</td><td>${d.hz ? esc(tr8(LD.hazard[d.hz] || LD.hazard.other)) : '—'}</td>`
+    + `<td class='yr'>${d.y == null ? '—' : esc(pubDate(d))}</td>`
+    + `<td class='lk'>${d.u ? `<a href='${esc(d.u)}' target='_blank' rel='noopener'>${esc(tr8('open ↗'))}</a>` : `<span class='lnone' title='${esc(tr8('No public link recorded'))}'>${esc(tr8('none'))}</span>`}</td></tr>`).join('')
+    || `<tr><td colspan='5' class='lnone'>${esc(tr8('No document matches these filters.'))}</td></tr>`;
   const filtered = !!(fC.value || fH.value);
-  $('lcount').textContent = filtered ? `${list.length} of ${DOCS.length} documents` : `${DOCS.length} documents`;
+  $('lcount').textContent = filtered ? tr8('{0} of {1} documents', list.length, DOCS.length) : tr8('{0} documents', DOCS.length);
   $('lclear').hidden = !filtered; $('yarrow').textContent = state.desc ? '▼' : '▲';
   markRow(); placeListPanel();
 }
@@ -883,17 +986,17 @@ rows.addEventListener('keydown', e => { if(e.key !== 'Enter' && e.key !== ' ') r
 function findingHTML(f, lead, cite){
   const p = P(f.p);
   return `<div class='fd${lead ? ' lead' : ''}' style='--pc:${p.c};--pi:${p.ink}'>`
-    + `<div class='fd-top'><span class='fd-badge'>${esc(f.g)}</span><span class='fd-prem'>${esc(p.l)}</span></div>`
-    + `<div class='fd-where'>${esc(f.w)}</div><div class='fd-big'>${esc(f.b)}</div><p class='fd-claim'>${esc(f.t)}</p>`
-    + (f.ch.length ? `<div class='fd-chips'>${f.ch.map(([v, l]) => `<span class='fd-chip'><b>${esc(v)}</b>${esc(l)}</span>`).join('')}</div>` : '')
-    + (f.vs ? `<p class='fd-vs'><b>Compared with:</b> ${esc(f.vs)}</p>` : '')
-    + (f.cav ? `<p class='fd-cav'>${esc(f.cav)}</p>` : '')
+    + `<div class='fd-top'><span class='fd-badge'>${esc(tr8(f.g))}</span><span class='fd-prem'>${esc(PL(f.p))}</span></div>`
+    + `<div class='fd-where'>${esc(tr8(f.w))}</div><div class='fd-big'>${esc(tr8(f.b))}</div><p class='fd-claim'>${esc(tr8(f.t))}</p>`
+    + (f.ch.length ? `<div class='fd-chips'>${f.ch.map(([v, l]) => `<span class='fd-chip'><b>${esc(tr8(v))}</b>${esc(tr8(l))}</span>`).join('')}</div>` : '')
+    + (f.vs ? `<p class='fd-vs'><b>${esc(tr8('Compared with:'))}</b> ${esc(tr8(f.vs))}</p>` : '')
+    + (f.cav ? `<p class='fd-cav'>${esc(tr8(f.cav))}</p>` : '')
     + (cite ? `<p class='fd-cite'>${esc(f.cite)}</p>` : '') + `</div>`;
 }
 // lead: what the panel was opened from, shown first — {f: a finding} or {b: a headline's figure}
 function facts(d, lead){
   const out = [...d.hl].sort((a, b) => (b.b === lead.b) - (a.b === lead.b))
-    .map(h => `<li${h.b === lead.b ? " class='lead'" : ''}><i>${esc(h.n)}</i><b>${esc(h.b)}.</b> ${esc(h.t)}</li>`);
+    .map(h => `<li${h.b === lead.b ? " class='lead'" : ''}><i>${esc(h.n.map(n => tr8(n)).join(', '))}</i><b>${esc(tr8(h.b))}.</b> ${esc(tr8(h.t))}</li>`);
   // the document's key statistic, one fact per clause
   if(d.ks) d.ks.split(/;\s+/).forEach(s => { s = s.trim().replace(/\.$/, ''); if(s) out.push(`<li>${esc(s.charAt(0).toUpperCase() + s.slice(1))}.</li>`); });
   return out.join('');
@@ -901,24 +1004,24 @@ function facts(d, lead){
 const tagsHTML = tags => `<div class='sd-tags'>${tags.map(t => `<span class='sd-tag'>${esc(t)}</span>`).join('')}</div>`;
 function docHTML(d, lead){
   const ff = [...d.ff].sort((a, b) => (b === lead.f) - (a === lead.f)), f = facts(d, lead);
-  return `<div class='sd-k'>${esc(d.ty)}${d.y ? ' · ' + d.y : ''}</div><h3>${esc(d.t)}</h3>`
+  return `<div class='sd-k'>${esc(tr8(d.ty))}${d.y ? ' · ' + esc(pubDate(d)) : ''}</div><h3>${esc(d.t)}</h3>`
     + (d.pub ? `<div class='sd-pub'>${esc(d.pub)}</div>` : '')
-    + tagsHTML([...(d.cn.length ? d.cn : ['Global']), ...(d.hz ? [LD.hazard[d.hz] || d.hz] : [])])
-    + (d.u ? `<a class='sd-open' href='${esc(d.u)}' target='_blank' rel='noopener'>Open the document ↗</a>` : `<div class='sd-nolink'>No public link is recorded for this document.</div>`)
-    + (ff.length ? `<h4>Headline finding${ff.length>1?'s':''}</h4>${ff.map(i => findingHTML(F[i], ff.length>1 && i === lead.f, false)).join('')}` : '')
-    + (f ? `<h4>Key facts</h4><ul class='sd-facts'>${f}</ul>` : '')
-    + (d.s ? `<h4>Summary</h4><p>${esc(d.s)}</p>` : '')
-    + (d.pr.length ? `<h4>Evidence on</h4>${tagsHTML(d.pr.map(p => P(p).l))}` : '')
+    + tagsHTML([...(d.cn.length ? d.cn : ['Global']), ...(d.hz ? [LD.hazard[d.hz] || LD.hazard.other] : [])].map(x => tr8(x)))
+    + (d.u ? `<a class='sd-open' href='${esc(d.u)}' target='_blank' rel='noopener'>${esc(tr8('Open the document ↗'))}</a>` : `<div class='sd-nolink'>${esc(tr8('No public link is recorded for this document.'))}</div>`)
+    + (ff.length ? `<h4>${esc(tr8(ff.length > 1 ? 'Headline findings' : 'Headline finding'))}</h4>${ff.map(i => findingHTML(F[i], ff.length>1 && i === lead.f, false)).join('')}` : '')
+    + (f ? `<h4>${esc(tr8('Key facts'))}</h4><ul class='sd-facts'>${f}</ul>` : '')
+    + (d.s ? `<h4>${esc(tr8('Summary'))}</h4><p>${esc(d.s)}</p>` : '')
+    + (d.pr.length ? `<h4>${esc(tr8('Evidence on'))}</h4>${tagsHTML(d.pr.map(p => PL(p)))}` : '')
     // a framework page that is not part of this site arrives with its link blanked ('#'): plain text then
-    + (d.fw.length ? `<h4>Framework</h4><div class='sd-fw'>${d.fw.map(([href, label]) => href && href !== '#' ? `<a href='${esc(href)}'>${esc(label)} →</a>` : `<span>${esc(label)}</span>`).join('')}</div>` : '');
+    + (d.fw.length ? `<h4>${esc(tr8('Framework'))}</h4><div class='sd-fw'>${d.fw.map(([href, label]) => href && href !== '#' ? `<a href='${esc(href)}'>${esc(tr8(label))} →</a>` : `<span>${esc(tr8(label))}</span>`).join('')}</div>` : '');
 }
 function sourceHTML(f){
-  return `<div class='sd-k'>Source not in the list below</div><h3>${esc(f.cite)}</h3>`
-    + tagsHTML(f.isos.map(iso => C[iso].n))
-    + (f.u ? `<a class='sd-open' href='${esc(f.u)}' target='_blank' rel='noopener'>Open the source ↗</a>` : '')
-    + `<h4>Headline finding</h4>${findingHTML(f, false, false)}`;
+  return `<div class='sd-k'>${esc(tr8('Source not in the list below'))}</div><h3>${esc(f.cite)}</h3>`
+    + tagsHTML(f.isos.map(CN))
+    + (f.u ? `<a class='sd-open' href='${esc(f.u)}' target='_blank' rel='noopener'>${esc(tr8('Open the source ↗'))}</a>` : '')
+    + `<h4>${esc(tr8('Headline finding'))}</h4>${findingHTML(f, false, false)}`;
 }
-const CLOSE = `<button type='button' class='sd-x' aria-label='Close'>×</button>`;
+const closeBtn = () => `<button type='button' class='sd-x' aria-label='${esc(tr8('Close'))}'>×</button>`;
 // what a panel was opened from gets the focus back when it closes: the element itself, or (the
 // list and the cards are re-rendered by sorting, filtering and pinning) the one now in its place
 let opener = null, openerKey = null;
@@ -942,7 +1045,7 @@ function openOnMap(html, from){
   openerKey = !from ? null : from.dataset.f != null ? `.hl[data-f='${+from.dataset.f}']` : from.dataset.doc ? `.hl[data-doc='${+from.dataset.doc}']` : null;
   const m = mapbox.getBoundingClientRect(), r = from ? from.getBoundingClientRect() : null;
   mpanel.classList.toggle('left', !!r && (r.left + r.right) / 2 > (m.left + m.right) / 2);
-  mpanel.innerHTML = CLOSE + html; mpanel.hidden = false; mpanel.scrollTop = 0;
+  mpanel.innerHTML = closeBtn() + html; mpanel.hidden = false; mpanel.scrollTop = 0;
   mpanel.focus({preventScroll:true});
   if(compact) mpanel.scrollIntoView({behavior:'smooth', block:'nearest'});      // it sits under the cards there
 }
@@ -956,7 +1059,7 @@ function openInList(id){
   const d = BYID.get(id); if(!d) return;
   closeMapPanel(false); closeListPanel(false);
   openerKey = `#lrows tr[data-id='${id}']`; opener = document.querySelector(openerKey);
-  state.sel = id; tpanel.innerHTML = CLOSE + docHTML(d, {}); tpanel.hidden = false; lbody.classList.add('open');
+  state.sel = id; tpanel.innerHTML = closeBtn() + docHTML(d, {}); tpanel.hidden = false; lbody.classList.add('open');
   markRow(); placeListPanel(); tpanel.focus({preventScroll:true});
 }
 function syncNarrow(){ lbody.classList.toggle('narrow', lbody.clientWidth < 760); }
@@ -982,13 +1085,24 @@ document.addEventListener('keydown', e => { if(e.key !== 'Escape') return;
 
 // relayout whenever the map's rendered size changes: the callouts are positioned in CSS px
 // (a hidden tab gets no resize observations, hence the two extra listeners)
+// (the box's width, not the map's: on a phone the map is hidden behind its two panels)
 let rto = null, laidW = 0;
+const boxW = () => mapbox.getBoundingClientRect().width;
 function relayout(){ clearTimeout(rto); rto = setTimeout(() => {
-  const w = svg.getBoundingClientRect().width; syncNarrow(); placeListPanel();
+  const w = boxW(); syncNarrow(); placeListPanel();
   if(Math.abs(w - laidW) < 1) return;
   laidW = w; runLayout(); if(pinned && !compact) placeCard(pinned); }, 120); }
-new ResizeObserver(relayout).observe(svg);
+new ResizeObserver(relayout).observe(mapbox);
 window.addEventListener('resize', relayout);
 document.addEventListener('visibilitychange', relayout);
-buildCallouts(); syncNarrow(); renderTable(); runLayout(); laidW = svg.getBoundingClientRect().width;
+buildCallouts(); syncNarrow(); renderTable(); runLayout(); laidW = boxW();
+// a language switch: the callouts are rebuilt and laid out again (their widths change), the
+// cards, the list and its count are written again; an open panel closes
+document.addEventListener('aalang', () => {
+  labels.forEach(Lb => { Lb.el.remove(); Lb.lns.forEach(ln => ln.remove()); }); labels.length = 0;
+  buildCallouts(); closeMapPanel(false); closeListPanel(false);
+  const pin = pinned; unpin();
+  renderTable(); runLayout(); laidW = boxW();
+  if(pin && C[pin]){ pinned = pin; showCountry(pin, true); }
+});
 """

@@ -28,6 +28,9 @@ os.environ.setdefault("PGSSLMODE", "require")
 
 import ocha_stratus as stratus  # noqa: E402
 
+import site_i18n as i18n  # noqa: E402  (EN / FR / ES: the team mechanism, KB D86)
+from site_i18n import ATTR, T, TB, TF  # noqa: E402
+
 from ds_aa_tracking import schema as trk_schema  # noqa: E402
 
 OUT = Path(__file__).parents[1] / "site_build"
@@ -51,7 +54,14 @@ header { background:#1f2a44; color:#fff; padding:12px 28px; display:flex; align-
 header a { color:#9ec5f0; text-decoration:none; margin-right:18px; }
 header .t { font-weight:700; font-size:17px; margin-right:26px; }
 header nav.pub a { color:#fff; font-weight:600; font-size:14px; padding:4px 0; border-bottom:2px solid transparent; }
-header nav.pub a:hover { border-bottom-color:#9ec5f0; }
+header nav.pub a:hover, header nav.pub a[aria-current=page] { border-bottom-color:#9ec5f0; }
+header a:focus-visible, header button:focus-visible { outline:2px solid #fff; outline-offset:2px; }
+/* a keyboard's first stop: past the header to the page (WCAG 2.4.1) */
+.skip { position:absolute; left:-9999px; top:0; z-index:100; background:#fff; color:#1f2a44; padding:6px 12px;
+        border-radius:4px; font-weight:600; text-decoration:none; }
+.skip:focus { left:8px; top:8px; outline:2px solid #1f2a44; }
+main:focus { outline:none; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior:auto !important; } }
 header nav.pub a.sub { color:#9ec5f0; font-weight:400; font-size:12px; margin-left:-10px; }
 header.adm { background:#3b2338; }
 header.adm .tag { background:#f0b429; color:#3b2338; font-size:10.5px; font-weight:700; letter-spacing:.06em; padding:1px 7px; border-radius:9px; margin-right:18px; }
@@ -70,6 +80,7 @@ table.data td { padding:4px 8px; border-bottom:1px solid #eee; vertical-align:to
                 max-width:420px; overflow-wrap:break-word; }
 table.data tr:hover td { background:#f2f7fc; }
 .scroll { overflow-x:auto; max-height:75vh; overflow-y:auto; border:1px solid #ddd; }
+.xscroll { overflow-x:auto; }   /* a wide table scrolls inside its box, never the page */
 input.filter { padding:6px 10px; width:340px; margin:10px 0; border:1px solid #bbb;
                border-radius:4px; font-size:13px; }
 button.dl { padding:6px 12px; border:1px solid #2a78d6; color:#1d5aa8; background:#fff;
@@ -83,7 +94,7 @@ button.dl:hover { background:#eef4fc; }
 .b-mirror { background:#fdf1dc; color:#8a5c0a; } .b-warn { background:#fde3e3; color:#a11; }
 code { background:#f0f0f0; padding:1px 5px; border-radius:3px; font-size:12px; }
 ul.tight li { margin:3px 0; }
-"""
+""" + i18n.LANG_CSS
 
 FILTER_JS = """
 function filt(inp) {
@@ -112,27 +123,36 @@ function dlcsv(id, name) {
 # the map is known. An admin page may link to the public site; a public page never links
 # to the admin site, and never carries the data service's token.
 PUBLIC_TABS = ("index.html", "pillar-model.html", "pillar-history.html", "pillar-plan.html",
-               "dash-funding.html", "dash-donors.html", "pillar-learning.html", "media.html")
+               "dash-funding.html", "pillar-learning.html", "media.html", "climate-adaptation.html",
+               "climate-coding-accuracy.html")
+# public, so behind the same password as the tabs, but deliberately NOT in NAV nor linked
+# from any listed page: reached only by their links (they may link to each other), until
+# they are ready to be tabs (user, 2026-10-19)
+UNLISTED_TABS = ("climate-adaptation.html", "climate-coding-accuracy.html")
 ROOT_ASSETS = ("chart.umd.js", "sankey.js")           # the public pages load these; admin pages through ../
 ADMIN_ASSETS = ("pdf.min.js", "pdf.worker.min.js")    # data entry only
 ADMIN_DIR = "admin"
 
-BANNER = ("<div class='devbanner' role='note'><b>OCHA internal product under development</b>, "
-          "subject to change without warning. The figures may be incorrect and should not be used.</div>")
+BANNER = ("<div class='devbanner' role='note'>"
+          + TB("<b>OCHA internal product under development</b>, subject to change without warning. "
+               "The figures may be incorrect and should not be used.") + "</div>")
 
-# public nav: the map, then the building blocks of AA (model · plan · financing, with donor
-# shares as a sub-link), learning and media
-NAV = """
+# public nav: the map, then the building blocks of AA (model · plan · financing), learning and
+# media. Donor shares left the public site on 2026-10-15 (the Financing page's money flows,
+# donors ticked, show the same): it is an admin page now
+# (French and Spanish: the toggle at the right, site_i18n; the choice is kept per browser)
+NAV = f"""
 <header>
-  <span class="t"><a href="index.html" style="color:#fff;text-decoration:none">Anticipatory action</a></span>
+  <span class="t"><a href="index.html" style="color:#fff;text-decoration:none">{T("Anticipatory action")}</a></span>
   <nav class="pub">
-   <a href="index.html">Map</a>
-   <a href="pillar-model.html">Model</a><a class="sub" href="pillar-history.html" title="simulated and real activations of the current triggers">historical activations</a>
-   <a href="pillar-plan.html">Plan</a>
-   <a href="dash-funding.html">Financing</a><a class="sub" href="dash-donors.html" title="each donor's share of the AA money">donor shares</a>
-   <a href="pillar-learning.html">Learning</a>
-   <a href="media.html">Media</a>
+   <a href="index.html">{T("Map")}</a>
+   <a href="pillar-model.html">{T("Model")}</a><a class="sub" href="pillar-history.html" {ATTR("title", "simulated and real activations of the current triggers")}>{T("historical activations")}</a>
+   <a href="pillar-plan.html">{T("Activities")}</a>
+   <a href="dash-funding.html">{T("Financing")}</a>
+   <a href="pillar-learning.html">{T("Learning")}</a>
+   <a href="media.html">{T("Media")}</a>
   </nav>
+  {i18n.TOGGLE_HTML}
 </header>
 """
 
@@ -164,7 +184,8 @@ ADMIN_HOME = [
     ("Dashboards and explorers (not on the public site)", [
         ("dashboards.html", "the hub: every framework page, with the monitoring calendar"),
         ("dash-delivery.html", "sub-grants, localisation, agencies, sectors, cash, people reached"),
-        ("dash-allocations.html", "every CERF, country and regional fund allocation since 2006; complementarity; timeliness"),
+        ("dash-allocations.html", "every CERF, Country and Regional Fund allocation since 2006; complementarity; timeliness"),
+        ("dash-donors.html", "each donor's share of AA released / pre-arranged, per donor and fund; build earmarks"),
         ("hierarchy.html", ""),
         ("questions.html", ""),
         ("pillar-model-draft.html", ""),
@@ -214,12 +235,29 @@ def public_pages():
     return {n for n in _PAGES if n in PUBLIC_TABS or n in on_map}
 
 
-def _render(name, title, body, nav, meta):
-    return f"""<!doctype html><html><head><meta charset="utf-8">
+def _render(name, title, body, nav, meta, public=False):
+    """A page. A public page follows the language toggle (site_i18n): its head applies the
+    stored language and carries the translations its scripts need; the admin site stays
+    English (its pages carry no toggle and ignore the stored choice)."""
+    lang_js, h1 = i18n.LANG_STUB_JS, html.escape(title)
+    if public:
+        h1 = T(title)
+        lang_js = (i18n.LANG_HEAD_JS
+                   + f"window.I18N = {json.dumps(i18n.js_dict(body), ensure_ascii=False)};\n"
+                   + f"window.AA_TITLES = {json.dumps(i18n.titles(title), ensure_ascii=False)};\n"
+                   + i18n.LANG_JS)
+    # the header marks the page it is on (aria-current; the tab underlined), links only
+    i = nav.find("<nav")
+    if i >= 0:
+        nav = nav[:i] + re.sub(rf'(<a\b[^>]*?)href="{re.escape(name)}"', rf'\1href="{name}" aria-current="page"',
+                               nav[i:], count=1)
+    skip = T("Skip to content") if public else "Skip to content"
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)}</title><style>{CSS}{POLICY_CSS}</style>
-<script>{FILTER_JS}</script></head><body>
-{BANNER}{nav}<main><h1>{html.escape(title)}</h1>
+<script>{lang_js}{FILTER_JS}</script></head><body>
+<a class="skip" href="#main">{skip}</a>
+{BANNER}{nav}<main id="main" tabindex="-1"><h1>{h1}</h1>
 <p class="meta">{meta}</p>
 {policy_box(name)}{body}</main></body></html>"""
 
@@ -248,6 +286,244 @@ def _admin_home(admin):
             "and has its own password.</div>" + "".join(cards))
 
 
+# ---------------------------------------------------------------- no database words, no codes
+# Owner's rule (2026-10-27): the public site never shows a table, view or column name, nor a raw
+# code (a status, hazard, event type, report, fund…) — always words. The pages map every code to
+# its words (dashboards.code_words); this is the safety net for what slips through, mostly
+# curators' notes in the data. write_site() runs it on every public page as written.
+#
+# Default (owner, 2026-10-28: "auto-remove"): the page is CLEANED and the build goes on — a table
+# or view name is removed (with what it leaves behind: an empty "()", a dangling separator), a
+# code is replaced by its words, a code with none is humanised (underscores → spaces); each page
+# cleaned gets a ::warning:: line in the publish run naming every change, so the data or the code
+# gets fixed at the source. A data fix should not have to wait for a failed nightly publish.
+# AA_SITE_GUARD=strict: the build stops instead, naming each page and hit (for local checks).
+#
+# Cleaned: the visible text (scripts, styles and comments left alone), the attributes a reader
+# sees or the language toggle swaps in (title, placeholder, aria-label, alt, data-en / -fr / -es,
+# data-<attr>-<lang>), and the French and Spanish VALUES of the page's script dictionary
+# (window.I18N; its keys never). Warned only, never rewritten: the strings the page's scripts
+# pass to tr8() / yr() — they are code, and the dictionary's keys. Not seen at all: a data value a
+# script prints as it is.
+GUARD_STRICT = os.environ.get("AA_SITE_GUARD", "").strip().lower() == "strict"
+# aa.<table>[.<column>] and v_<view>. A table name has an underscore (file extensions never do:
+# 'aa.pdf' is not one) or is one of the schema's single-word tables; a column, when given, has one
+# too ('aa.window.html' is a file). Not followed by '.<letter>' (a file name).
+_ONE_WORD_TABLES = sorted({t for names in (trk_schema.TABLES, trk_schema.DURABLE_TABLES,
+                                           trk_schema.LEGACY_TABLES, trk_schema.VIEWS)
+                           for t in names if "_" not in t} | {"activation", "cirv", "fund", "window"})
+_DB_NAME = (r"(?:aa\.(?:[a-z]+_[a-z_]+|" + "|".join(_ONE_WORD_TABLES) + r")(?:\.[a-z]+_[a-z_]+)?"
+            r"|v_[a-z]+(?:_[a-z]+)*)(?!\.?[\w/-])")
+_NOT_IN_PATH = (r"(?<![\w/.=?&-])", r"(?![\w/-])")                    # not in a file name, path or query
+_GUARD = {}
+
+
+def _code_words():
+    """{code: its words} — the site's coded values that read as codes (an underscore, or a coined
+    hyphenation), from the vocabularies the pages already map to words; None where a code has
+    none (it is then humanised)."""
+    import dashboards
+    import landing
+    vocabs = (dashboards.EVENT_TYPE_LABEL, dashboards.REPORT_CHANNEL_LABEL,
+              dashboards.VERSION_SOURCE_LABEL, dashboards.PARTNER_ROLE_LABEL, dashboards.HAZARD_WORD,
+              dashboards.FUND_TYPE_LABEL, dashboards.DOC_TYPE_LABEL, dict(dashboards.PREMISES),
+              landing.SHEET_STATUS_LABEL, dashboards._NOTE_FIELDS)      # _NOTE_FIELDS: the version record's columns
+    words = {k: w for v in vocabs for k, w in v.items() if "_" in k}
+    words |= {k: dashboards.VERSION_SOURCE_LABEL[k] for k in ("kb-frontmatter", "sheet-revision", "pa-monorepo")}
+    words |= {"adhoc aa": dashboards.EVENT_TYPE_LABEL["adhoc_aa"],
+              "framework aa": dashboards.EVENT_TYPE_LABEL["framework_aa"],
+              "non_aa_mobilised": None, "cerf_secretariat": "CERF secretariat", "rcrc_nat": None,
+              "window-unattributed": None}
+    return words
+
+
+def _guard():
+    """The guard's patterns and words, built once."""
+    if not _GUARD:
+        words = _code_words()
+        codes = "|".join(map(re.escape, sorted(words, key=len, reverse=True)))
+        lb, la = _NOT_IN_PATH
+        _GUARD["words"] = words
+        # detection: a database name, a fund code (cbpf-afg) or a known code
+        _GUARD["any"] = re.compile(lb + r"(?:" + _DB_NAME + r"|(?:cbpf|rhpf)(?:-[a-z]+)+|" + codes + r")" + la)
+        _GUARD["code"] = re.compile(lb + r"(?:(?:cbpf|rhpf)(?:-[a-z]+)+|" + codes + r")" + la)
+        db = lb + _DB_NAME + la
+        # a database name goes with what it leaves behind, the most specific shape first
+        _GUARD["drop"] = [
+            (re.compile(r"\s*\(\s*" + db + r"\s*\)"), ""),               # "x (aa.t)"        -> "x"
+            (re.compile(r"\(\s*" + db + r"\s*[,;:]\s*"), "("),            # "(aa.t, curated"  -> "(curated"
+            (re.compile(r"\s*[,;]\s*" + db + r"(?=\s*\))"), ""),          # "reached, aa.t)"  -> "reached)"
+            (re.compile(r"\s+[·—–]\s*" + db), ""),                        # "x · aa.t"        -> "x"
+            (re.compile(db + r"\s*[·,;]\s*"), ""),                        # "aa.t, x"         -> "x"
+            (re.compile(r"[ \t]+" + db), ""),                             # "in aa.t."        -> "in."
+            (re.compile(db), ""),
+        ]
+    return _GUARD
+
+
+def _words_for(code, lang):
+    """A code's words in a language (the site's own tables; English where they have none): a fund
+    code as the pages name it, a code with no words humanised — never the code."""
+    import dashboards
+    if re.fullmatch(r"(?:cbpf|rhpf)(?:-[a-z]+)+", code):
+        return dashboards.fund_label(code)
+    w = _guard()["words"].get(code) or re.sub(r"[_-]+", " ", code)
+    return i18n.TABLES[lang].get(i18n.key(w), w) if lang in i18n.TABLES else w
+
+
+def _clean_text(t, lang, esc, changes):
+    """t without database names and with codes in words; each change appended to changes as
+    (original, replacement). esc: how a replacement is escaped where it lands (text / attribute)."""
+    g = _guard()
+    if not g["any"].search(html.unescape(t)):
+        return t
+
+    def word(m):
+        w = _words_for(m.group(0), lang)
+        changes.append((m.group(0), w))
+        return esc(w)
+    t = g["code"].sub(word, t)
+    for rx, rep in g["drop"]:
+        def drop(m, rep=rep):
+            changes.append((re.search(_DB_NAME, m.group(0)).group(0), ""))
+            return rep
+        t = rx.sub(drop, t)
+    return t
+
+
+# a tag's attributes one after another (a quoted value is consumed whole, so a 'title=' inside
+# another attribute's value is never taken for an attribute); the ones a reader sees
+_TAG_ATTR = re.compile(r"""(\s+)([^\s=/>"']+)(?:(\s*=\s*)("[^"]*"|'[^']*'|[^\s>"']+))?""")
+_SHOWN_ATTR = re.compile(r"title|placeholder|aria-label|alt|data-(?:en|fr|es)|data-[a-z-]+-(?:en|fr|es)")
+# a page in pieces: scripts, styles, comments, tags (a quoted attribute value may hold a '>'), text
+_PIECES = re.compile(r"""(<script\b.*?</script>|<style\b.*?</style>|<!--.*?-->|<(?:[^>"']|"[^"]*"|'[^']*')*>)""",
+                     re.S | re.I)
+_I18N_RX = re.compile(r"window\.I18N = (\{.*?\});\n")
+_TITLES_RX = re.compile(r"window\.AA_TITLES = (\{.*?\});\n")
+
+
+def _shown_attrs(tag):
+    """[(name, value as written, quote)] of the attributes of a tag a reader sees."""
+    out = []
+    if tag.startswith("<") and not tag.startswith(("</", "<!")):
+        for m in _TAG_ATTR.finditer(tag):
+            v = m.group(4)
+            if v is not None and _SHOWN_ATTR.fullmatch(m.group(2).lower()):
+                q = v[0] if v[0] in "\"'" else ""
+                out.append((m.group(2).lower(), v[1:-1] if q else v, q))
+    return out
+
+
+def _attr_lang(name):
+    return name[-2:] if name[-3:] in ("-en", "-fr", "-es") else "en"
+
+
+def _is_code_piece(piece):
+    return re.match(r"<(?:script|style)\b|<!--", piece, re.I) is not None
+
+
+def _scripts_strings(doc):
+    """The strings a page's scripts pass to tr8() / yr() (code: warned about, never rewritten)."""
+    scripts = "\n".join(re.findall(r"<script\b[^>]*>(.*?)</script>", doc, re.S | re.I))
+    return list(i18n._call_literals(scripts))
+
+
+def _shown_identifiers(doc):
+    """[(match, context)] of the database names and raw codes a public page shows (strict mode)."""
+    g = _guard()
+    pieces = _PIECES.split(doc)
+    texts = [" ".join(pieces[0::2]), *_scripts_strings(doc)]
+    texts += [v for p in pieces[1::2] if not _is_code_piece(p) for _, v, _ in _shown_attrs(p)]
+    m = _I18N_RX.search(doc)
+    if m:
+        texts += [v for tab in json.loads(m.group(1)).values() for v in tab.values()]
+    m = _TITLES_RX.search(doc)
+    if m:
+        texts += list(json.loads(m.group(1)).values())
+    out = []
+    for t in texts:
+        t = html.unescape(t)
+        for hit in g["any"].finditer(t):
+            out.append((hit.group(0), " ".join(t[max(0, hit.start() - 60):hit.end() + 30].split())))
+    return out
+
+
+def _clean_page(doc):
+    """(doc cleaned, [(original, replacement)], [script strings showing one]) — see above."""
+    changes = []
+
+    def txt(w):
+        return html.escape(w, quote=False)
+
+    def attr(w):
+        return html.escape(w, quote=True)
+
+    def tag(t):
+        if not t.startswith("<") or t.startswith(("</", "<!")):
+            return t
+
+        def one(m):
+            name, v = m.group(2).lower(), m.group(4)
+            if v is None or not _SHOWN_ATTR.fullmatch(name):
+                return m.group(0)
+            q = v[0] if v[0] in "\"'" else ""
+            new = _clean_text(v[1:-1] if q else v, _attr_lang(name), attr, changes)
+            return m.group(1) + m.group(2) + m.group(3) + q + new + q
+        return _TAG_ATTR.sub(one, t)
+
+    def values(piece, rx, clean):
+        """A JSON object in a head script, its values cleaned (keys never); as it was when clean."""
+        m = rx.search(piece)
+        if not m:
+            return piece
+        obj = json.loads(m.group(1))
+        new = clean(obj)
+        return piece if new == obj else piece[:m.start(1)] + json.dumps(new, ensure_ascii=False) + piece[m.end(1):]
+    out = []
+    for i, piece in enumerate(_PIECES.split(doc)):
+        if i % 2 == 0:
+            out.append(_clean_text(piece, "en", txt, changes))           # text between tags
+        elif piece[:7].lower() == "<script" and _I18N_RX.search(piece):
+            # the script dictionary's values and the tab titles; keys and code never
+            piece = values(piece, _I18N_RX, lambda tabs: {
+                l: {k: _clean_text(v, l, lambda w: w, changes) for k, v in tab.items()} for l, tab in tabs.items()})
+            out.append(values(piece, _TITLES_RX, lambda t: {
+                l: _clean_text(v, l if l in i18n.TABLES else "en", lambda w: w, changes) for l, v in t.items()}))
+        elif _is_code_piece(piece):
+            out.append(piece)
+        else:
+            out.append(tag(piece))
+    g = _guard()
+    script_hits = [s for s in _scripts_strings(doc) if g["any"].search(s)]
+    return "".join(out), changes, script_hits
+
+
+def _report_cleaned(cleaned):
+    """One ::warning:: line per page the guard cleaned (visible in the publish run's summary), and
+    one summary line."""
+    if not cleaned:
+        print(f"  identifier guard ({'strict' if GUARD_STRICT else 'auto-remove'}): no database names "
+              "or raw codes on the public pages")
+        return
+    n = n_scripts = 0
+    for name, (changes, script_hits) in sorted(cleaned.items()):
+        n_scripts += len(script_hits)
+        pairs = list(dict.fromkeys(f"{a!r}→{b!r}" for a, b in changes))
+        n += len(changes)
+        bits = []
+        if changes:
+            bits.append(f"{len(changes)} database name(s) / code(s) cleaned: " + ", ".join(pairs[:8])
+                        + (f" (+{len(pairs) - 8} more)" if len(pairs) > 8 else ""))
+        if script_hits:
+            bits.append(f"{len(script_hits)} script string(s) show one, not rewritten: "
+                        + ", ".join(repr(x[:60]) for x in script_hits[:3]))
+        print(f"::warning::public page {name}: " + "; ".join(bits))
+    print(f"::warning::identifier guard (auto-remove): {n} replacement(s), {n_scripts} script string(s) "
+          f"warned, on {len(cleaned)} public page(s) "
+          "— fix them at the source (the data, or the label tables in dashboards.py); "
+          "AA_SITE_GUARD=strict fails the build instead")
+
+
 def write_site():
     """Write every registered page: the public ones at the root, the rest under admin/.
 
@@ -257,6 +533,11 @@ def write_site():
     build says so. A public page carrying the data service's token stops the build."""
     public = public_pages()
     admin = set(_PAGES) - public
+    for n in UNLISTED_TABS:     # hidden means hidden: no listed page and no header names its file
+        linked = ([m for m, (_, b) in _PAGES.items() if m not in UNLISTED_TABS and n in b]
+                  + (["the header"] if n in NAV else []))
+        if linked:
+            raise SystemExit(f"FATAL: unlisted page {n} is named on {', '.join(linked)}")
     adm_dir = OUT / ADMIN_DIR
     adm_dir.mkdir(exist_ok=True)
     stamp = date.today().isoformat()
@@ -266,7 +547,7 @@ def write_site():
     token = os.environ.get("EXTRACT_TOKEN", "").strip() or (
         (Path(__file__).parents[1] / ".extract_token").read_text().strip()
         if (Path(__file__).parents[1] / ".extract_token").exists() else "")
-    cut = {}
+    cut, leaks, cleaned = {}, {}, {}
     for name, (title, body) in _PAGES.items():
         if name in public:
             if to_admin:
@@ -279,9 +560,19 @@ def write_site():
                 for n in set(to_admin.findall(body)):
                     cut.setdefault(name, set()).add(n)
                 body = to_admin.sub("#", body)
-            doc = _render(name, title, body, NAV, f"Generated {stamp} · {DATA_STAMP}")
+            # no database wording on a public page (owner, 2026-10-27): the data date, when a snapshot
+            data = " · " + TF("data snapshot {at} UTC", at=SNAPSHOT_AT) if SNAPSHOT_AT else ""
+            doc = _render(name, title, body, NAV, TF("Generated {stamp}", stamp=stamp) + data,
+                          public=True)
             if (token and token in doc) or "x-site-token" in doc:
                 raise SystemExit(f"FATAL: public page {name} carries the data service's token")
+            if GUARD_STRICT:
+                if hits := _shown_identifiers(doc):
+                    leaks[name] = hits
+            else:
+                doc, changes, script_hits = _clean_page(doc)
+                if changes or script_hits:
+                    cleaned[name] = (changes, script_hits)
             (OUT / name).write_text(doc)
         else:
             body = to_root.sub(lambda m: "../" + m.group(1), body)
@@ -291,6 +582,13 @@ def write_site():
     (adm_dir / "index.html").write_text(_render(
         "admin/index.html", "AA tracking — admin site", _admin_home(admin), NAV_ADMIN,
         f"Generated {stamp} from the dev <code>aa</code> schema ({DATA_STAMP}) · admin site"))
+    if leaks:
+        lines = [f"  {n}: {w!r} in “…{c}…”" for n, hits in sorted(leaks.items())
+                 for w, c in dict(hits).items()]
+        raise SystemExit("FATAL (AA_SITE_GUARD=strict): public pages show database names or raw codes "
+                         "(owner's rule: words only — map the code to its words, see dashboards.code_words):\n"
+                         + "\n".join(lines[:60]) + (f"\n  … and {len(lines) - 60} more" if len(lines) > 60 else ""))
+    _report_cleaned(cleaned)
     for asset in ROOT_ASSETS:
         shutil.copy(Path(__file__).parents[1] / "site_src" / asset, OUT / asset)
     for asset in ADMIN_ASSETS:
@@ -358,6 +656,8 @@ def tbl(df, max_rows=8000, name="data"):
 # per-table reviewer notes
 NOTES = {
     "country_hazard": "The (country, hazard) pair — the identity everything hangs off: pipeline entries with no version yet, plus descriptive attributes that aren't approved per version (region, language, coordination group) the manual <code>retired</code> flag (a retired framework is hidden from the map whatever its versions say) and <code>technical_support</code> (OCHA supported the framework technically, without a funding commitment). The framework status everyone shows comes from <code>v_framework_lifecycle</code>. Hierarchy: country_hazard → framework_version → window → {window_activation, simulated_activation, window_funding}; ad hoc / early-action allocations attach to the pair (adhoc_activation).",
+    "window": "A framework version's trigger windows as BACKTESTED: analysis span (the RP denominator), all-in flag, reported RP/prob. With <code>simulated_activation</code> and <code>version_performance_reported</code> it is the version's backtest. Owned and edited here since 2026-10-05 (entries files with <code>op: replace</code>, this admin page); corrected as errors are found — <code>v_trk_backtest_check</code> lists the rows that break a rule. Written by the KB's loader until then.",
+    "simulated_activation": "The years a version's trigger WOULD have fired, per window — never a real activation of the version itself (those are <code>window_activation</code>). Should fall inside the window's analysis span: the KB-era data broke that where real activations were appended (listed by <code>v_trk_backtest_check</code>).",
     "framework_version": "The unit that actually gets approved: one row per framework version, seeded from KB page frontmatter (incl. superseded/retired versions), the historical sweep of the OCHA AA web page and the pa-anticipatory-action monorepo (<code>source='ocha-web'/'pa-monorepo'</code>, with <code>doc_url</code>/<code>analysis_ref</code>), plus sheet-reported revision dates with no KB page (<code>source='sheet-revision'</code> — a KB completeness gap). Version-specific facts (budgets, sector budgets, coverage, calendar, activations, status) carry a <code>version</code> attribution: direct from the KB for matched activations, otherwise inferred from the version in force at the fact's date (<code>version_match</code>; NULL = no version exists to attribute to). Caveat: figures reported mid-revision may belong to the upcoming version — interval inference can't see that; overrides are a curation pass.",
     "framework_status": "Operational lifecycle snapshots from every source sheet, kept side by side (PK includes <code>source</code>). Canonical <code>status</code> vocabulary; raw spelling preserved. This is deliberately distinct from the KB page-status vocabulary.",
     "framework_focal_point": "Focal points by role from the 2026 planning sheet, attributed to the version in force at the snapshot date.",
@@ -367,8 +667,8 @@ NOTES = {
     "fund": "OCHA pooled funds only (CERF, CBPFs, regional funds) — the fund dimension every funding row references. Agency co-financing is deliberately NOT here (free-text financier on commitments instead). Seeded from the CBPF mirror's fund registry.",
     "window_activation": "A framework activation is a WINDOW firing: keyed (country, hazard, version, window, date). <code>window_name</code> should be one of the version's windows — sheet-era rows carry the KB's free-text window until curated (<code>v_trk_activation_window_check</code> lists the ones not in the window registry). <code>event_date</code> is partial ISO at the source's precision.",
     "adhoc_activation": "Ad hoc AA and early-action allocations, off the (country, hazard) pair — no version, no window.",
-    "window_status": "Curated trigger state per window: <code>triggered</code> yes/no (+ date, note). The KB loader truncates <code>window</code>, so the flag lives here. A version is <i>fully triggered</i> when any window fired (all-in / exclusive rollup) or every window fired (independent windows); that, with validity, drives the framework status on the map. Seeded once from <code>window_activation</code> — a window is flagged when an activation names it, the version has a single window, or an activation is marked full.",
-    "activation_funding": "One row per activation × fund allocation — the multi-fund reality (e.g. Nigeria floods Sep 2025 = CERF $5.0M + NHF $2.0M under one activation). <code>allocation_code</code> resolves through <code>aa.v_allocation</code> (CERF application codes and country and regional fund codes alike).",
+    "window_status": "Curated trigger state per window: <code>triggered</code> yes/no (+ date, note). It lives apart from <code>window</code> because the KB loader used to truncate that table (until 2026-10-05). A version is <i>fully triggered</i> when any window fired (all-in / exclusive rollup) or every window fired (independent windows); that, with validity, drives the framework status on the map. Seeded once from <code>window_activation</code> — a window is flagged when an activation names it, the version has a single window, or an activation is marked full.",
+    "activation_funding": "One row per activation × fund allocation — the multi-fund reality (e.g. Nigeria floods Sep 2025 = CERF $5.0M + NHF $2.0M under one activation). <code>allocation_code</code> resolves through <code>aa.v_allocation</code> (CERF application codes and Country and Regional Fund codes alike).",
     "report_channel_inclusion": "Which frameworks/countries count toward which external reports per year (A-Hub, UK BCs, SG, CERF/OCHA annual reports, SF KPI, CPC), attributed to the version in force during the report year.",
     "plan_inclusion": "GHO/HNRP plan inclusion + AA feasibility flags per country-year, per source.",
     "start_network": "Start Fund anticipation alerts + Start READY membership per country (from the planning sheet).",
@@ -380,6 +680,8 @@ NOTES = {
     "cerf_project_supplement": "Project-level markers + CVA from the Agency HQ Report export: gender/GBV/disability/cash markers, people receiving cash, CVA amount, displacement-category targeting.",
     "cerf_cva_history": "CVA by country × agency × emergency × year, 2020–2026 (aggregated to the sheet's grain). Parked: no allocation codes, so it can never link to anything — kept as context, may be revived for a CVA workstream; target-state CVA is project-level.",
     "emergency_type_override": "Yakubu's re-tagged allocations: GMS emergency type vs actual shock (mostly Flood→Storm, with storm name).",
+    "cerf_climate_coding": "CERF projects coded against climate-adaptation indicators (one row per project × indicator × coder; NULL value = blank cell). Hand coding on the unlisted climate-adaptation page, model runs (coders model-*) scored against it on the unlisted climate-coding-accuracy page (public password; the two link only to each other); indicator wording in scripts/page_climate.py.",
+    "trigger_timeline": "When each trigger window of a framework version can activate, on its hazard's clock (the Model page's trigger timelines): storms in hours (<code>h</code>) and floods in days (<code>d</code>) before (−) / after (+) landfall or the flood peak, as a bar <code>lead_from</code> → <code>lead_to</code>; drought as the calendar <code>months</code> a trigger is checked, against the rainy season (<code>season_start</code>, <code>season_len</code>). A leg is a river or a season; <code>seq</code> orders the rows. Read by hand from the framework document and entered through entries files (<code>op: replace</code> per version); only the current version's rows are drawn.",
 }
 
 TABLE_ORDER = list(NOTES)
@@ -391,6 +693,12 @@ def main():
     # ---------- per-table pages + tables index
     cards = []
     for t in TABLE_ORDER:
+        # a durable table exists only after the one-off `--ensure-schema` run of the nightly
+        # job: until then the snapshot has no copy of it, which is not an error
+        if t in trk_schema.DURABLE_TABLES and pd.read_sql(
+                f"SELECT to_regclass('aa.{t}') AS r", e)["r"].iloc[0] is None:
+            print(f"::warning::aa.{t} is not in the snapshot yet (run the nightly with --ensure-schema)")
+            continue
         df = pd.read_sql(f"SELECT * FROM aa.{t}", e)
         df = df.drop(columns=[c for c in ("updated_at",) if c in df.columns])
         _tblname = t
@@ -505,12 +813,12 @@ def main():
         "<code>aa.cerf_project_sector</code>, <code>aa.cerf_project_country</code> — "
         "which the KB only partially documents (the ERD shows ~7 of 48 project columns; "
         "sector taxonomy columns and lifecycle dates are undocumented). NEW (Aug 2026): "
-        "the <b>country and regional fund mirror</b> — <code>aa.cbpf_allocation</code> (one row "
+        "the <b>Country and Regional Fund mirror</b> — <code>aa.cbpf_allocation</code> (one row "
         "per Standard/Reserve allocation envelope; a set of approved projects), "
         "<code>aa.cbpf_fund</code>, the fund-agnostic union view "
         "<code>aa.v_allocation</code>, and project-level tables: "
         "<code>aa.cbpf_project</code> (one row per project = a grant to ONE "
-        "implementing partner — unlike CERF, NGOs incl. NNGOs receive country and regional fund projects "
+        "implementing partner — unlike CERF, NGOs incl. NNGOs receive Country and Regional Fund projects "
         "directly), <code>aa.cbpf_project_cluster</code> (sector splits) and "
         "<code>aa.cbpf_project_subip</code> (sub-implementing partners) — all "
         "refreshed daily by the same workflow. Summary below; "
@@ -563,6 +871,8 @@ def main():
     _DATA["e"] = e
     import admin_page
     admin_page.build_admin(page)
+    import page_climate
+    page_climate.build(e, page)
 
     # ---------- index
     reg = pd.read_sql("SELECT * FROM aa.v_trk_framework_current ORDER BY country_name", e)
@@ -577,16 +887,16 @@ the DB becomes the single authoritative source and the sheets can be retired.
 </div>
 <div class='card'>
 <b>Ownership map</b> (single writer per table, schema <code>aa</code>):<br>
-<span class='badge b-new'>ds-aa-tracking (this repo, 22 tables + 7 views)</span>
+<span class='badge b-new'>ds-aa-tracking (this repo; since 2026-10-05 also the KB-era tables below)</span>
 country_hazard · framework_version · framework_status · framework_focal_point ·
 framework_calendar · fund ·
 window_funding · window_funding · people_covered · activation ·
 activation_funding · report_channel_inclusion · plan_inclusion · start_network · cirv · cerf_subgrant ·
 cerf_application_people · cerf_application_report · cerf_allocation_extra ·
 cerf_project_supplement · cerf_cva_history · emergency_type_override<br>
-<span class='badge b-kb'>ds-knowledge-base</span>
-window · simulated_activation · funding_breakdown · version_performance_reported (framework_version_map = compat view) ·
-actual_activation · activation_allocation<br>
+<span class='badge b-new'>ds-aa-tracking, from the KB loaders</span>
+window · simulated_activation · version_performance_reported (framework_version_map = compat view) — the backtests ·
+funding_breakdown · actual_activation · activation_allocation — frozen<br>
 <span class='badge b-mirror'>ds-cerf-supplement</span>
 cerf_allocation · cerf_project · cerf_project_sector · cerf_project_country ·
 cerf_allocation_storm · cerf_supplement
@@ -596,6 +906,7 @@ cerf_allocation_storm · cerf_supplement
 """
     page("overview.html", "AA tracking — schema & data review", idx)
     write_site()
+    i18n.report_missing()
 
 
 def _latest_status_pivot(e, since="2025-12-01"):
@@ -852,8 +1163,8 @@ TARGET_NODES = [
     ("fund", "new", "fund_code — OCHA pooled funds only"),
     ("country_hazard", "new", "country_iso3 · hazard (identity only)"),
     ("framework_version", "new", "+ version — THE unified registry"),
-    ("version_performance_reported", "kb", "gsheet_tab · excel_fv · *_reported"),
-    ("window", "kb", "+ window_name · basis · trigger_statement"),
+    ("version_performance_reported", "new", "gsheet_tab · excel_fv · *_reported"),
+    ("window", "new", "+ window_name · basis · trigger_statement"),
     ("v_version_funding", "future", "window × fund_code × agency × sector"),
     ("window_activation", "new", "+ event_date (partial ISO → datetime) · event_label"),
     ("activation_funding", "new", "+ fund_code · allocation_code · amount"),
@@ -881,13 +1192,13 @@ TARGET_FULL_NODES = [
     ("fund", "new", "fund_code — OCHA pooled funds only"),
     ("country_hazard", "new", "country_iso3 · hazard (identity only)"),
     ("framework_version", "new", "+ version = an ENDORSED doc · endorsed_by"),
-    ("version_performance_reported", "kb", "gsheet_tab · excel_fv · *_reported"),
-    ("window", "kb", "+ window_name · basis · trigger_statement"),
+    ("version_performance_reported", "new", "gsheet_tab · excel_fv · *_reported"),
+    ("window", "new", "+ window_name · basis · trigger_statement"),
     ("window_month", "future", "+ month (monitoring period)"),
     ("version_funding", "future", "window × fund × agency × sector · provenance"),
     ("prearranged_commitment", "new", "= window_funding (fund_code/financier built)"),
     ("people_covered", "new", "window-attached · as_of · source"),
-    ("simulated_activation", "kb", "+ window_name · event_year"),
+    ("simulated_activation", "new", "+ window_name · event_year"),
     ("framework_status", "new", "observed snapshots (vs v_expected_status)"),
     ("framework_focal_point", "new", "+ role · person · as_of"),
     ("report_channel_inclusion", "new", "report_year · channel"),
@@ -1064,7 +1375,6 @@ def build_roadmap_page():
           f"{_target_erd(TARGET_FULL_NODES, TARGET_FULL_EDGES, TARGET_COUNTRY_NODES, 'full')}</div></div>"
         + "<div class='card'><b>What changes (focused view)</b> — gray boxes are future objects; "
         "<span class='badge b-new'>ds-aa-tracking</span>"
-        "<span class='badge b-kb'>ds-knowledge-base</span>"
         "<span class='badge b-mirror'>mirror repo</span> as elsewhere. Full plan below "
         "(also in the repo as <code>DESIGN.md</code>)."
         f"<div class='scroll' style='max-height:none'>{erd}</div></div>"
@@ -1073,10 +1383,6 @@ def build_roadmap_page():
     page("roadmap.html", "Roadmap — unified versions & multi-fund model", body)
 
 
-KB_TABLES = [
-    "version_performance_reported", "window", "simulated_activation", "funding_breakdown",
-    "actual_activation", "activation_allocation",
-]
 MIRROR_TABLES = [
     "cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country",
     "cerf_allocation_storm", "cerf_supplement",
@@ -1117,12 +1423,12 @@ ERD_NODES = [
     ("cerf_allocation_extra", "new", "application_code"),
     ("cerf_project_supplement", "new", "project_code"),
     ("emergency_type_override", "new", "application_code"),
-    ("version_performance_reported", "kb", "country_iso3 · hazard · version (reported RP/prob + source tabs)"),
-    ("window", "kb", "country_iso3 · hazard · version · window_name"),
-    ("simulated_activation", "kb", "+ window_name · event_year"),
-    ("funding_breakdown", "kb", "+ window · fund · agency · sector"),
-    ("actual_activation", "kb", "kb_framework · event_date · window_name"),
-    ("activation_allocation", "kb", "kb_framework+event_date ⇄ app_code"),
+    ("version_performance_reported", "new", "country_iso3 · hazard · version (reported RP/prob + source tabs)"),
+    ("window", "new", "country_iso3 · hazard · version · window_name"),
+    ("simulated_activation", "new", "+ window_name · event_year"),
+    ("funding_breakdown", "new", "+ window · fund · agency · sector (frozen)"),
+    ("actual_activation", "new", "kb_framework · event_date · window_name (frozen)"),
+    ("activation_allocation", "new", "kb_framework+event_date ⇄ app_code (frozen)"),
     ("cerf_allocation", "mirror", "application_code"),
     ("cerf_project", "mirror", "project_code"),
     ("cerf_project_sector", "mirror", "project_code + sector"),
@@ -1336,8 +1642,6 @@ def build_schema_page(e):
     def owner_of(t):
         if t in trk_schema.TABLES or t in trk_schema.DURABLE_TABLES:
             return "ds-aa-tracking"
-        if t in KB_TABLES:
-            return "ds-knowledge-base"
         if t in MIRROR_TABLES:
             return "ds-cerf-supplement"
         return "other"
@@ -1348,14 +1652,12 @@ def build_schema_page(e):
         "repo that owns (i.e. is the single writer of) each table. Constraints and "
         "indexes are shown as Postgres reports them; row counts are as of generation "
         "time. The <code>v_trk_*</code> view SQL at the bottom is this repo's — the "
-        "other repos' view definitions aren't readable by the reader role but are "
-        "documented in the KB ERD.</div>"
+        "mirror repo's view definitions are documented in the KB ERD.</div>"
     ]
     sections.append("<h2>ERD</h2>" + LEGEND_CARD.format(svg=build_erd_legend()))
     sections.append(
         "<div class='card'><p class='meta'>"
         "<span class='badge b-new'>ds-aa-tracking</span>"
-        "<span class='badge b-kb'>ds-knowledge-base</span>"
         "<span class='badge b-mirror'>ds-cerf-supplement</span> · "
         "Crow's-foot notation: crow = many, double bar = exactly one, bar+circle = "
         "zero-or-one, crow+circle = zero-or-many. Solid green edges = declared "
@@ -1443,8 +1745,8 @@ def build_schema_page(e):
     ]
     if others:
         sections.append(
-            "<p class='meta'>Other views in the schema (KB-owned, documented in the "
-            "KB ERD): " + ", ".join(f"<code>aa.{v}</code>" for v in others) + "</p>"
+            "<p class='meta'>Other views in the schema (the OneGMS mirror's, documented "
+            "in the KB ERD): " + ", ".join(f"<code>aa.{v}</code>" for v in others) + "</p>"
         )
     page("schema.html", "DB schema — the full aa schema by owner", "\n".join(sections))
 

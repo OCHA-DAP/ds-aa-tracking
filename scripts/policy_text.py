@@ -7,15 +7,29 @@ Edit the wording here — every page reads this one place. Keys are page file na
 
 import html
 
+# the Grand Bargain caucus's outcome document (2024): the definition the Map's box quotes
+GB_AA_URL = ("https://interagencystandingcommittee.org/sites/default/files/2024-12/"
+             "GB%20AA%20-%20Final%20Caucus%20Outcome%20Document%20-%20New.pdf")
+
 POLICY = {
+    # the owner's wording (2026-10-28): the Grand Bargain definition, quoted and linked to its
+    # source, then what a framework agrees in advance, each element linked to its page
     "index.html": (
         "What is anticipatory action?",
-        "Anticipatory action means acting before a forecast shock hits, or before its worst "
-        "impacts unfold. A <b>framework</b> agrees three things in advance: the <b>trigger</b> "
-        "that says when to act, the <b>activities</b> agencies will carry out, and the "
-        "<b>pre-arranged financing</b> that is released the moment the trigger is met. "
-        "Because the decision and the money are agreed beforehand, help can reach people days "
-        "or weeks earlier than a response that waits for the disaster."),
+        "<blockquote class='policy-q'>“Anticipatory action is defined as acting ahead of a predicted "
+        "hazardous event to prevent or reduce impacts on lives and livelihoods and humanitarian needs "
+        "before they fully unfold. This works best when activities as well as triggers or "
+        "decision-making rules are pre-agreed, and decisions are made to guarantee the fast release of "
+        "pre-arranged funding.” <cite>— <a href='" + GB_AA_URL + "' target='_blank' rel='noopener'>"
+        "Grand Bargain caucus on anticipatory action, 2024</a></cite></blockquote>"
+        "<p class='policy-p'>A framework agrees three things in advance: the <b><a href='pillar-model.html'>"
+        "trigger model</a></b> that says when to act, the <b><a href='pillar-plan.html'>plan of "
+        "activities</a></b> to be carried out, and the <b><a href='dash-funding.html'>pre-arranged "
+        "financing</a></b> that is released the moment the trigger is met to enable the activities. "
+        "Because these elements are agreed beforehand it is cost-effective, enabling reaching people with "
+        "speed to save lives and livelihoods. A <b><a href='pillar-learning.html'>learning</a></b> "
+        "component measures against these outcomes to iteratively improve anticipatory action over "
+        "time.</p>"),
     "pillar-model.html": (
         "What is a trigger, and what makes a good one?",
         "A trigger is the pre-agreed condition, from a forecast or an observation, that "
@@ -50,7 +64,7 @@ POLICY = {
         "framework that was valid at any time in it; this year, those in place today) and never add "
         "it up across years. <b>Released</b> money is what actually went out when a framework "
         "activated; it is drawn from the pre-arranged envelopes, so the two are never added "
-        "together. CERF and the country and regional funds both pre-arrange money for "
+        "together. CERF and the Country and Regional Funds both pre-arrange money for "
         "anticipatory action."),
     "dash-donors.html": (
         "How is AA money attributed to donors?",
@@ -77,10 +91,11 @@ def policy_box(page_name):
     """The box for a page (empty string if none). Marked as draft until the text is agreed."""
     if page_name not in POLICY:
         return ""
+    from site_i18n import ATTR, T, TB
     title, body = POLICY[page_name]
-    return (f"<div class='policy'><div class='policy-h'>{html.escape(title)}"
-            f"<span class='policy-draft' title='wording under review'>draft</span></div>"
-            f"<div class='policy-b'>{body}</div></div>")
+    return (f"<div class='policy'><div class='policy-h'>{T(title)}"
+            f"<span class='policy-draft' {ATTR('title', 'wording under review')}>{T('draft')}</span></div>"
+            f"<div class='policy-b'>{TB(body)}</div></div>")
 
 
 POLICY_CSS = """
@@ -88,6 +103,10 @@ POLICY_CSS = """
           padding:12px 16px; margin:4px 0 14px; max-width:980px; }
 .policy-h { font-weight:700; font-size:15px; color:#0f2540; margin-bottom:4px; }
 .policy-b { font-size:13.5px; line-height:1.55; color:#23364d; }
+.policy-b a { color:#1f69b3; }
+.policy-q { margin:2px 0 8px; padding:0 0 0 12px; border-left:3px solid #b9cfe6; font-style:italic; color:#23364d; }
+.policy-q cite { display:block; font-style:normal; font-size:12.5px; color:#3d5168; margin-top:3px; }
+.policy-p { margin:0; }
 .policy-draft { font-weight:500; font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:#8a5c0a;
                 background:#fff4d6; border-radius:4px; padding:1px 6px; margin-left:8px; vertical-align:2px; }
 """

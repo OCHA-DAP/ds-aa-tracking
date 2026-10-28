@@ -14,7 +14,25 @@ gives (year today; day or hour once aa.simulated_activation.event_date / event_t
 The version simulated per framework follows dashboards._activation_blocks: the current
 version, else the latest version with a backtest (the row says which). `_backtest` below
 replicates its selection and year-range logic line for line, so the overview grid and the
-per-framework grids under it agree — change both together.
+framework pages' grids agree — change both together.
+
+Every view draws each framework's reference period with one rule: from the year the version
+simulated took effect, the years are the version in use (cream: real activations only, never a
+simulation — the grid's shade since 2026-10-01, the timelines' since 2026-10-27, when Bangladesh
+flood's 2025 was cream in the grid and hatched in its timeline); before it, the years its
+backtest analysed (backtest_span, capped at the year before the version took effect) are plain
+and the years outside them hatched (no simulation there, so an empty year says nothing about the
+trigger), with the span written per row ('analysed 2001–2025') — or, where there is no backtest
+or its span is not recorded, a note saying so instead of a guess (no backtest: no in-use years
+either, in every view). The cream runs open for a current framework; in the timelines it ends
+with the version (version view) or with the framework's last version (a retired framework).
+
+An earlier framework that a distinct new one replaced on the same country and hazard
+(dashboards.old_versions: Somalia drought's 2019 / 2020-06-23 food security framework, replaced by
+the 2026 one) is a retired framework: its activations are not the current framework's (not on
+its grid row, in its summary, its CSV rows or its timeline row) but on a retired row of their
+own in the portfolio timeline, and the version view keeps its versions under their own heading,
+"earlier framework, replaced by the 2026 framework".
 """
 
 import html
@@ -23,8 +41,10 @@ import re
 from datetime import date
 
 import pandas as pd
-from dashboards import (HAZARDS, backtest_span, LIFE_LABEL, PAL, _activation_blocks, _dash_page, _event_href,
-                        _event_links, _fmt_usd, _loose, haz, sim_before_start, sim_when, version_start)
+import site_i18n as i18n
+from dashboards import (HAZARDS, backtest_span, LIFE_LABEL, PAL, _dash_page, _event_href,
+                        _event_links, _fmt_usd, _loose, fund_label, haz, hazard_word, sim_before_start, sim_when, version_start)
+from site_i18n import ATTR, ATTRC, OPT, TB, TBC, TBF, TC, TF, T
 
 LIVE = ["active", "updating", "development"]
 LIFE_ON = {"active": True, "updating": True, "development": False}   # default filter state
@@ -49,19 +69,31 @@ def _str(v):
     return "" if v is None or (not isinstance(v, str) and pd.isna(v)) else str(v)
 
 
+def _fwname(iso3, country, hazard):
+    """'Niger — drought', registered in every language (the country's exonym, the hazard's
+    label) so T() and the page's tr8() show it translated."""
+    return i18n.add(f"{country} — {hazard}", "{country} — {hazard}",
+                    country=i18n.country(iso3, country), hazard=hazard)
+
+
 def _vm(a, b):
     """Version match as on the framework pages: 'YYYY' label vs a dated version."""
     return a == b or a.startswith(b) or b.startswith(a)
 
 
-def _backtest(d, c, h, version):
+def _backtest(d, c, h, version, exclude=frozenset()):
     """(shown version, its simulated rows, first year, last year, years analysed, year the
     version took effect, simulated rows dropped) — the same choice, start-year cut and range as
     dashboards._activation_blocks. Only rows dated before the version's start year are
-    simulation (sim_before_start); the kept rows carry `sim_year`."""
+    simulation (sim_before_start); the kept rows carry `sim_year`. `exclude`: versions never
+    shown — an earlier framework's that a distinct new one replaced (_old_line), so the new
+    framework's row never falls back to the old framework's backtest."""
     sim = d["sim"][(d["sim"]["country_iso3"] == c) & (d["sim"]["hazard"] == h)].copy()
     sim["version"] = sim["version"].astype(str)
     fvm = d["fv_meta"][(d["fv_meta"]["country_iso3"] == c) & (d["fv_meta"]["hazard"] == h)]
+    if exclude:
+        fv_lab = [str(x) for x in fvm["version"]]
+        sim = sim[sim["version"].map(lambda v: (_tl_match(fv_lab, v) or v) not in exclude).astype(bool)]
     order = list(fvm.assign(_vf=version_start(fvm))
                  .sort_values("_vf")["version"].astype(str))
     shown = next((sv for sv in set(sim["version"])
@@ -82,6 +114,28 @@ def _backtest(d, c, h, version):
     return shown, ss, y0, y1, n_years, vf_y, n_after
 
 
+def _cover(f):
+    """(years the backtest shown analysed as [first, last], or None; why there are none:
+    'nb' no backtest recorded, 'nr' its analysed period not recorded — backtest_span would
+    only infer one from the simulated years, which the page does not present as analysed)."""
+    if not f.get("shown") or f.get("y0") is None:
+        return None, "nb"
+    if f.get("n_years") is None:
+        return None, "nr"
+    return [f["y0"], f["y1"]], ""
+
+
+def _na_why(f, w=lambda x: x):
+    """Why a year shows no simulation although the version was not yet in use (w: one
+    language's words): outside the analysed period, or no recorded period at all."""
+    cov, why = _cover(f)
+    if why == "nb":
+        return w("no backtest recorded")
+    if why == "nr":
+        return w("analysed period not recorded")
+    return w("not in the analysed period ({a}–{b})").format(a=cov[0], b=cov[1])
+
+
 def _frameworks(d, lifecycles=LIVE):
     cur = d["current"]
     live = cur[cur["lifecycle"].isin(lifecycles)].sort_values(["country_name", "hazard"])
@@ -90,16 +144,52 @@ def _frameworks(d, lifecycles=LIVE):
         version = (r.latest_version if pd.notna(r.latest_version)          # latest version, as the map and Model page
                    else r.current_version if pd.notna(r.current_version) else None)
         kb_fw = r.kb_framework if pd.notna(r.kb_framework) else None
-        out.append(dict(c=r.country_iso3, h=r.hazard, name=f"{r.country_name} — {r.hazard}",
+        out.append(dict(c=r.country_iso3, h=r.hazard, name=_fwname(r.country_iso3, r.country_name, hazard_word(r.hazard)),
                         life=r.lifecycle, version=None if version is None else str(version),
                         kb_fw=kb_fw, slug=f"fw-{r.country_iso3.lower()}-{r.hazard}.html"))
     return out
 
 
+def _old_line(d, c, h):
+    """(the versions of the pair's earlier framework that a distinct new one replaced —
+    dashboards.old_versions, d["old"] — as labels; the label the new framework goes by: the first
+    version of the pair's current line, by start), or (empty set, None) where nothing was
+    replaced. Somalia drought: ({'2019', '2020-06-23'}, '2026')."""
+    olds = {str(v) for cc, hh, v in (d.get("old") or set()) if (cc, hh) == (c, h)}
+    if not olds:
+        return set(), None
+    fvm = d["fv_meta"][(d["fv_meta"]["country_iso3"] == c) & (d["fv_meta"]["hazard"] == h)]
+    line = fvm[~fvm["version"].astype(str).isin(olds)]
+    if not len(line):
+        return set(), None
+    return olds, str(line.assign(_vf=version_start(line)).sort_values("_vf")["version"].iloc[0])
+
+
+def _split_old(f, evs):
+    """A framework's real activations split by framework: (its own, the earlier replaced
+    framework's — f['olds']), the latter tagged with the new framework's label (ev['by'])."""
+    for ev in evs:
+        ev["by"] = f["by"] if ev["version"] in f["olds"] else ""
+    return [ev for ev in evs if not ev["by"]], [ev for ev in evs if ev["by"]]
+
+
+def _in_use(f, groups, closed, old=False):
+    """The years a portfolio row draws as the version in use — the grid's cream: from the year the
+    version simulated took effect (only with a backtest, as the grid), to the end of the
+    framework's last version when it is closed (retired, or replaced), else open. `groups`: the
+    framework's version-view groups (_tl_detail); `old`: the row is the earlier, replaced
+    framework's."""
+    if not f.get("shown") or f.get("vf_y") is None:
+        return dict(use=None, ue=None, uv=None, ul=0)
+    ends = [g["end"] for g in groups if g["v"] and bool(g.get("old")) == old]
+    ue = max(ends) if closed and ends and all(ends) else None
+    return dict(use=int(f["vf_y"]), ue=ue, uv=str(f["shown"]), ul=int(str(f["shown"]) != str(f["version"])))
+
+
 def _events(d, c, h, ref, kb_fw=None, umap=None, slug=None, adhoc=False):
     """Real framework activations of one framework, with the money released and the page
     each one links to (as the activation tables: announcement, else CERF allocation, else
-    another recorded page — else the framework page `slug`). adhoc=True: its ad hoc
+    another recorded page — else the framework page `slug`). adhoc=True: its non-framework
     allocations instead (money released without a pre-agreed trigger)."""
     act = d["act_all"]
     act = act[(act["country_iso3"] == c) & (act["hazard"] == h)
@@ -120,7 +210,7 @@ def _events(d, c, h, ref, kb_fw=None, umap=None, slug=None, adhoc=False):
         vv = "" if vv in ("nan", "None", "NaT", "<NA>") else vv
         evs.append(dict(date=ed, year=int(ed[:4]), win=wn, label=_str(r.event_label), version=vv,
                         amount=float(amt.sum()) if amt.notna().any() else None,
-                        funds="; ".join(f"{x.fund_code} {_fmt_usd(x.amount_usd)}".strip()
+                        funds="; ".join(f"{fund_label(x.fund_code)} {_fmt_usd(x.amount_usd)}".strip()
                                         for x in f.itertuples() if isinstance(x.fund_code, str)),
                         funds_csv="; ".join(f"{x.fund_code}: {x.amount_usd:.0f}" if pd.notna(x.amount_usd)
                                             else f"{x.fund_code}: not recorded"
@@ -135,9 +225,12 @@ TL_START = 2020            # the portfolio timeline opens here (first activation
 TL_RETIRED = ["retired"]
 
 
-def _tl_versions(d, c, h):
+def _tl_versions(d, c, h, olds=frozenset()):
     """One framework's versions as bands: start = valid_from; end = its own valid_until
-    (fv_meta), else the next version's start, else open."""
+    (fv_meta), else the next version's start — of the same framework: `olds`, the versions of an
+    earlier framework a distinct new one replaced (_old_line), and the others are two frameworks;
+    an earlier framework's last version with no end recorded ends where the new one starts —
+    else open."""
     v = d["versions"]
     v = v[(v["country_iso3"] == c) & (v["hazard"] == h)].copy()
     v["vf_dt"] = pd.to_datetime(v["valid_from"].astype(str), errors="coerce")
@@ -152,13 +245,19 @@ def _tl_versions(d, c, h):
     if len(cr) and _str(cr.iloc[0]["current_version"]) and _str(cr.iloc[0]["valid_until"]):
         vu.setdefault(str(cr.iloc[0]["current_version"]), _str(cr.iloc[0]["valid_until"])[:10])
     starts = sorted(x for x in v["vf_dt"] if pd.notna(x))
+    line = {o: sorted(x for x, vv in zip(v["vf_dt"], v["version"]) if pd.notna(x) and (str(vv) in olds) == o)
+            for o in (False, True)}
     out = []
     for r in v.itertuples():
         st = r.vf_dt.strftime("%Y-%m-%d") if pd.notna(r.vf_dt) else None
-        nxt = next((x for x in starts if st and x > r.vf_dt), None)
+        old = str(r.version) in olds
+        nxt = next((x for x in line[old] if st and x > r.vf_dt), None)
         end, why = vu.get(str(r.version)), "valid until (as recorded)"
         if nxt is not None and (end is None or nxt.strftime("%Y-%m-%d") < end):
             end, why = nxt.strftime("%Y-%m-%d"), "replaced by the next version"
+        new = next((x for x in starts if old and end is None and st and x > r.vf_dt), None)
+        if new is not None:
+            end, why = new.strftime("%Y-%m-%d"), "replaced by a new framework"
         out.append(dict(v=str(r.version), st=_str(r.kb_status), start=st, end=end,
                         why=why if end else "no end recorded"))
     return out
@@ -170,18 +269,22 @@ def _tl_match(labels, v):
 
 
 def _tl_ev(ev, adhoc=False):
+    # o: the new framework's label when the activation is an earlier, replaced framework's
     return dict(d=ev["date"], w=_nofire(ev["win"]), v=ev["version"], lab=_nofire(ev["label"]),
                 a=ev["amount"], fu=ev["funds"], href=ev["href"] or "", goes=ev["goes"] or "",
-                ah=1 if adhoc else 0)
+                ah=1 if adhoc else 0, o=ev.get("by") or "")
 
 
 def _tl_detail(d, f):
     """The framework view of one framework: per version, its band and one lane per window,
     with its simulated activations (only those dated before the version took effect —
-    sim_before_start) and the real activations under it."""
+    sim_before_start) and the real activations under it. The versions of an earlier framework a
+    distinct new one replaced (f['olds']) come first, flagged `old`, with that framework's
+    activations (f['events_old'])."""
     c, h = f["c"], f["h"]
-    groups = {g["v"]: dict(g, lanes={}, cover=None, n_after=0, vf_y=None, bt=False)
-              for g in _tl_versions(d, c, h)}
+    olds = f.get("olds") or set()
+    groups = {g["v"]: dict(g, lanes={}, cover=None, n_after=0, vf_y=None, bt=False, old=g["v"] in olds)
+              for g in _tl_versions(d, c, h, olds)}
     sim = d["sim"][(d["sim"]["country_iso3"] == c) & (d["sim"]["hazard"] == h)].copy()
     sim["version"] = sim["version"].astype(str)
     fvm = d["fv_meta"][(d["fv_meta"]["country_iso3"] == c) & (d["fv_meta"]["hazard"] == h)]
@@ -196,7 +299,7 @@ def _tl_detail(d, f):
         if key is None:
             key = sv
             groups[sv] = dict(v=sv, st="", start=None, end=None, why="version not on record",
-                              lanes={}, cover=None, n_after=0, vf_y=None, bt=False)
+                              lanes={}, cover=None, n_after=0, vf_y=None, bt=False, old=sv in olds)
         g = groups[key]
         fk = _tl_match(fv_lab, sv)
         vf = fvm.loc[fvm["version"].astype(str) == fk, "valid_from"] if fk else fvm["valid_from"].iloc[0:0]
@@ -204,29 +307,29 @@ def _tl_detail(d, f):
         wv = win[win["version"].astype(str) == sv]
         if not len(wv):
             wv = win[[_vm(str(x), sv) for x in win["version"]]] if len(win) else win
-        if len(ss) or n_after:   # the analysed span, as _backtest
-            y0, y1, _ = backtest_span(ss, wv, vf_y)
-            g["cover"] = [y0, y1]
+        if len(ss) or n_after:   # the analysed span, as _backtest; none drawn when not recorded
+            y0, y1, n = backtest_span(ss, wv, vf_y)
+            g["cover"] = [y0, y1] if n is not None else None
         g.update(bt=True, n_after=g["n_after"] + n_after, vf_y=vf_y, sv=sv)
         for w in sorted({_str(x) for x in wv["window_name"]} - {""}):
             lane(g, _nofire(w))
         for r in ss.sort_values("sim_year").itertuples():
             lane(g, _nofire(_str(r.window_name)) or "window not recorded")["sims"].append(
                 dict(t=sim_when(r), lab=_nofire(_str(r.event_label)), note=_nofire(_str(r.source_note))))
-    for ev in f["events"]:
+    for ev in f["events"] + f.get("events_old", []):
         key = _tl_match(list(groups), ev["version"])
         if key is None:
             key = "?"
             groups.setdefault("?", dict(v="", st="", start=None, end=None,
                                         why="version not recorded", lanes={}, cover=None,
-                                        n_after=0, vf_y=None, bt=False))
+                                        n_after=0, vf_y=None, bt=False, old=False))
         g = groups[key]
         w = _nofire(ev["win"]) or "window not recorded"
         w = w if w in g["lanes"] else next((x for x in g["lanes"] if _loose(x, w)), w)
         lane(g, w)["reals"].append(_tl_ev(ev))
     out = []
-    for g in sorted(groups.values(), key=lambda g: (g["start"] is None, g["start"] or "", g["v"])):
-        out.append(dict(g, lanes=list(g["lanes"].values())))
+    for g in sorted(groups.values(), key=lambda g: (not g["old"], g["start"] is None, g["start"] or "", g["v"])):
+        out.append(dict(g, old=int(g["old"]), lanes=list(g["lanes"].values())))
     return out
 
 
@@ -235,7 +338,8 @@ def _tl_detail(d, f):
 # date is known to (at the hour itself when an hour is given), drawn faintly behind it.
 TL_JS = r"""
 const TL = D.tl, DAY = 864e5, HOUR = 36e5, AX = 24;
-const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MON_EN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+let MON = MON_EN.map(m => tr8(m));   // the page's language (again on a switch, tlLang)
 const tlq = id => document.getElementById(id);
 const tlEsc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
   c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
@@ -253,7 +357,7 @@ const p2 = n => String(n).padStart(2, '0');
 function tlFmt(s, plainYear){
   const p = tlParse(s); if(!p) return String(s || '');
   const t = new Date(p[0]), y = t.getUTCFullYear(), m = MON[t.getUTCMonth()], d = t.getUTCDate();
-  return p[2] === 'year' ? (plainYear ? String(y) : y + ' (month not recorded)')
+  return p[2] === 'year' ? (plainYear ? String(y) : tr8('{0} (month not recorded)', y))
        : p[2] === 'month' ? m + ' ' + y : p[2] === 'day' ? d + ' ' + m + ' ' + y
        : d + ' ' + m + ' ' + y + ', ' + p2(t.getUTCHours()) + ':' + p2(t.getUTCMinutes()) + ' UTC';
 }
@@ -263,6 +367,23 @@ const tlEnd = (() => { const t = new Date(tlToday); return Date.UTC(t.getUTCFull
 const tlCol = h => TL.hz[h] || TL.other;
 let tlMaxA = 1; TL.rows.forEach(r => r.ev.forEach(e => { if(e.a > tlMaxA) tlMaxA = e.a; }));
 const tlR = a => a ? 3.5 + 8.5 * Math.sqrt(a / tlMaxA) : 4.5;
+// the reference period, one rule with the grid: hatched spans over the years outside [cov[0],
+// cov[1]], the years the backtest analysed (all of them where there is none: why 'nb', or its
+// span is not recorded: 'nr') — but never over the years the version is in use (use: {y, t1},
+// from 1 January of the year it took effect to t1), which tlUse draws in the grid's cream
+const NA0 = Date.UTC(1900, 0, 1), NA1 = Date.UTC(2200, 0, 1);
+function tlNa(cov, why, who, y, hh, use){
+  const tip = why === 'nb' ? tr8('{0}: no backtest recorded, so no analysed period', who)
+            : why === 'nr' ? tr8('{0}: analysed period not recorded', who)
+            : tr8('{0}: not in the analysed period ({1}–{2}), so no simulation is shown here', who, cov[0], cov[1]);
+  const sp = (t0, t1) => ({t0, t1, y, hh, cls: 'tlna', tip});
+  const u0 = use ? Date.UTC(use.y, 0, 1) : NA1;
+  const out = cov ? [sp(NA0, Math.min(Date.UTC(cov[0], 0, 1), u0)), sp(Date.UTC(cov[1] + 1, 0, 1), u0)] : [sp(NA0, u0)];
+  if(use && use.t1 < NA1) out.push(sp(Math.max(use.t1, cov ? Date.UTC(cov[1] + 1, 0, 1) : NA0), NA1));
+  return out.filter(p => p.t1 > p.t0);
+}
+// the version in use, as the grid's cream: real activations only, no simulation from that year on
+function tlUse(use, y, hh, tip){ return use ? [{t0: Date.UTC(use.y, 0, 1), t1: use.t1, y, hh, cls: 'tluse', tip}] : []; }
 
 function tlTicks(a, b, W){   // [t, label, major] at a step that leaves room for the labels
   const ppd = W / ((b - a) / DAY);
@@ -289,24 +410,26 @@ function tlTicks(a, b, W){   // [t, label, major] at a step that leaves room for
   return out;
 }
 
-function tlEvMark(e, r, inFw){   // a real activation (circle) or an ad hoc allocation (diamond)
+function tlEvMark(e, r, inFw){   // a real activation (circle) or a non-framework allocation (diamond)
   const p = tlParse(e.d); if(!p) return null;
-  const lines = [r.name,
-    (e.ah ? 'ad hoc allocation (no pre-agreed trigger; not a framework activation): ' : 'activated ') + tlFmt(e.d)
-      + (e.w ? ' · ' + e.w : ''),
-    (e.a ? money(e.a) + ' released' : 'amount not recorded') + (e.fu ? ' (' + e.fu + ')' : '')];
-  if(e.v) lines.push('version ' + e.v);
+  const lines = [tr8(r.name),
+    (e.ah ? tr8('non-framework allocation (no pre-agreed trigger; not a framework activation): {0}', tlFmt(e.d))
+          : tr8('activated {0}', tlFmt(e.d))) + (e.w ? ' · ' + e.w : ''),
+    (e.a ? tr8('{0} released', money(e.a)) : tr8('amount not recorded')) + (e.fu ? ' (' + e.fu + ')' : '')];
+  if(e.v) lines.push(tr8('version {0}', e.v));
+  if(e.o) lines.push(tr8('earlier framework, replaced by the {0} framework', e.o));
   if(e.lab) lines.push(e.lab);
-  lines.push(e.href ? 'click: opens ' + (e.goes || 'its page') : 'no page recorded');
+  lines.push(e.href ? tr8('click: opens {0}', tr8(e.goes || 'its page')) : tr8('no page recorded'));
   return {t0: p[0], t1: p[1], tc: tlMid(p), r: tlR(e.a), shape: e.ah ? 'd' : 'c', hollow: !e.a,
           fill: inFw ? TL.red : tlCol(r.h), href: e.href, tip: lines.join('\n'), txt: e.a ? money(e.a) : '',
           kind: e.ah ? 'adhoc' : 'real', prec: p[2]};
 }
 function tlSimMark(s, g, l, r){   // a simulated activation: a block for its year, a square on its day / hour
   const p = tlParse(s.t); if(!p) return null;
-  const lines = [r.name + ' · version ' + g.v, l.w,
-    'would have activated ' + (p[2] === 'year' || p[2] === 'month' ? 'in ' : 'on ') + tlFmt(s.t, true)
-      + ' (backtest, fixed before the version took effect)'];
+  const lines = [tr8(r.name) + ' · ' + tr8('version {0}', g.v), tlWin(l.w),
+    tr8(p[2] === 'year' || p[2] === 'month'
+        ? 'would have activated in {0} (backtest, fixed before the version took effect)'
+        : 'would have activated on {0} (backtest, fixed before the version took effect)', tlFmt(s.t, true))];
   if(s.lab) lines.push(s.lab);
   if(s.note) lines.push(s.note);
   return {t0: p[0], t1: p[1], tc: tlMid(p), r: 5, shape: p[2] === 'year' ? 'blk' : 's', fill: TL.sim,
@@ -321,7 +444,7 @@ function tlRowSvg(r, y0, X, a, b, W, labels){
     s += `<rect x='${x0.toFixed(1)}' y='${y0 + p.y}' width='${Math.max(1, x1 - x0).toFixed(1)}' height='${p.hh}' class='${p.cls}'`
        + (p.tip ? ` data-tip='${tlEsc(p.tip)}'` : '') + '/>';
     if(p.txt && x1 - x0 > p.txt.length * 5.6 + 12)
-      s += `<text x='${(Math.max(x0, 0) + 5).toFixed(1)}' y='${y0 + p.y + p.hh / 2 + 3.5}' class='tlbt'>${tlEsc(p.txt)}</text>`;
+      s += `<text x='${(Math.max(x0, 0) + 5).toFixed(1)}' y='${y0 + p.y + p.hh / 2 + 3.5}' class='tlbt${p.cls === 'tlcovt' ? ' tlnote' : ''}'>${tlEsc(p.txt)}</text>`;
   });
   (r.lines || []).forEach(t => { if(t >= a && t <= b){ const x = X(t).toFixed(1);
     s += `<line x1='${x}' x2='${x}' y1='${y0}' y2='${y0 + r.h}' class='tlvs'/>`; } });
@@ -374,8 +497,8 @@ function tlRender(v){
   rows.forEach((r, i) => { s += tlRowSvg(r, ys[i], X, a, b, W, labels); });
   if(tlToday >= a && tlToday <= b){ const x = X(tlToday).toFixed(1);
     s += `<line x1='${x}' x2='${x}' y1='${AX - 4}' y2='${H - AX + 4}' class='tltoday'/>`; }
-  s += `<rect class='tlbr' x='0' y='0' width='${W}' height='${AX}'><title>drag to zoom</title></rect>`
-     + `<rect class='tlbr' x='0' y='${H - AX}' width='${W}' height='${AX}'><title>drag to zoom</title></rect>`
+  s += `<rect class='tlbr' x='0' y='0' width='${W}' height='${AX}'><title>${tr8('drag to zoom')}</title></rect>`
+     + `<rect class='tlbr' x='0' y='${H - AX}' width='${W}' height='${AX}'><title>${tr8('drag to zoom')}</title></rect>`
      + `<rect class='tlsel' x='0' y='0' width='0' height='${H}'/>`;
   v.svg.setAttribute('width', W); v.svg.setAttribute('height', H); v.svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
   v.svg.innerHTML = s;
@@ -395,7 +518,7 @@ function tlZoom(v, a, b){
 function tlSetFull(v, a, b){
   v.full = [a, b]; v.a = a; v.b = b;
   const y0 = new Date(a).getUTCFullYear(), y1 = new Date(b - 1).getUTCFullYear();
-  v.ry.innerHTML = "<option value=''>zoom to a year…</option>"
+  v.ry.innerHTML = `<option value=''>${tlEsc(tr8('zoom to a year…'))}</option>`
     + Array.from({length: y1 - y0 + 1}, (_, i) => y1 - i).map(y => `<option>${y}</option>`).join('');
   v.ra.min = v.rb.min = tlIso(a); v.ra.max = v.rb.max = tlIso(b - 1);
 }
@@ -417,9 +540,10 @@ const tlV = {p: {id: 'tl-p'}, f: {id: 'tl-f'}};
 function tlInitView(v){
   v.el = tlq(v.id); v.sc = v.el.querySelector('.tlsc'); v.svg = v.sc.querySelector('svg'); v.lab = v.el.querySelector('.tll');
   const box = tlq(v.id + '-r');
-  box.innerHTML = "<label>from <input type='date' class='ra'></label><label>to <input type='date' class='rb'></label>"
-    + "<select class='ry' aria-label='zoom to one year'></select>"
-    + "<button type='button' class='rall'>whole period</button><span class='rhint'>or drag along the dates</span>";
+  box.innerHTML = "<label><span data-t8='from'></span> <input type='date' class='ra'></label><label><span data-t8='to'></span> <input type='date' class='rb'></label>"
+    + "<select class='ry' data-t8-aria='zoom to one year'></select>"
+    + "<button type='button' class='rall' data-t8='whole period'></button><span class='rhint' data-t8='or drag along the dates'></span>";
+  tlTexts(box);
   v.ra = box.querySelector('.ra'); v.rb = box.querySelector('.rb'); v.ry = box.querySelector('.ry');
   v.ra.addEventListener('change', () => { const p = tlParse(v.ra.value); if(p) tlZoom(v, p[0], v.b); });
   v.rb.addEventListener('change', () => { const p = tlParse(v.rb.value); if(p) tlZoom(v, v.a, p[1]); });
@@ -449,11 +573,21 @@ function tlPRows(){   // the portfolio rows the filters let through
   const {on, hz} = hstate(), ret = tlq('tlret').checked, adh = tlq('tladh').checked;
   return TL.rows.filter(r => (!hz || r.h === hz) && (r.life === '' ? adh : r.life === 'retired' ? ret : on.has(r.life)))
     .map((r, i) => {
-      const lab = (TL.fw[r.k]
-          ? `<button type='button' class='tlb' data-k='${r.k}' title='${tlEsc(r.name)}: see it version by version'>${tlEsc(r.name)}</button>`
-          : `<span class='tln' title='${tlEsc(r.name)}'>${tlEsc(r.name)}</span>`)
-        + (r.life ? `<span class='lf lf-${r.life}'>${tlEsc(TL.life[r.life] || r.life)}</span>` : "<span class='lf lf-ah'>ad hoc only</span>");
-      return {h: 28, lab, bg: i % 2 ? '#fafbfc' : '',
+      const nm = tlEsc(tr8(r.name)), fk = r.fk || r.k;   // fk: a replaced framework opens its pair's view
+      const lab = (TL.fw[fk]
+          ? `<button type='button' class='tlb' data-k='${fk}' title='${tlEsc(tr8('{0}: see it version by version', tr8(r.name)))}'>${nm}</button>`
+          : `<span class='tln' title='${nm}'>${nm}</span>`)
+        + (r.life ? `<span class='lf lf-${r.life}'>${tlEsc(tr8(TL.life[r.life] || r.life))}</span>` : `<span class='lf lf-ah'>${tlEsc(tr8('non-framework only'))}</span>`);
+      // a framework's reference period: plain over the years its backtest analysed, hatched
+      // outside them, cream from the year the version simulated took effect (the grid's rule;
+      // ad hoc-only rows have no framework, so none)
+      const use = r.use ? {y: r.use, t1: r.ue ? tlParse(r.ue)[0] : NA1} : null;
+      const utip = r.ul ? tr8('{0}: version {1} and later versions in use from {2} — real activations only', tr8(r.name), r.uv, r.use)
+                        : tr8('{0}: version {1} in use from {2} — real activations only', tr8(r.name), r.uv, r.use);
+      const spans = r.life === '' ? [] : tlNa(r.cov, r.why, tr8(r.name), 4, 20, use).concat(tlUse(use, 4, 20, utip), r.cov
+        ? [{t0: Date.UTC(r.cov[0], 0, 1), t1: Date.UTC(r.cov[1] + 1, 0, 1), y: 4, hh: 20, cls: 'tlcovt',
+            tip: tr8('{0}: analysed {1}–{2}; its simulated activations are in the views below', tr8(r.name), r.cov[0], r.cov[1])}] : []);
+      return {h: 28, lab, bg: i % 2 ? '#fafbfc' : '', spans,
               marks: r.ev.filter(e => adh || !e.ah).map(e => tlEvMark(e, r, false))};
     });
 }
@@ -462,38 +596,60 @@ function tlDraw(){
   v.rows = tlPRows(); tlRender(v);
   const ms = v.rows.flatMap(r => r.marks.filter(Boolean)), nr = ms.filter(m => m.kind === 'real').length;
   const na = ms.length - nr;
-  tlq('tl-p-n').textContent = v.rows.length + ' row' + (v.rows.length === 1 ? '' : 's') + ' · ' + nr + ' real activation'
-    + (nr === 1 ? '' : 's') + (na ? ' · ' + na + ' ad hoc allocation' + (na === 1 ? '' : 's') : '');
+  const n = v.rows.length;
+  tlq('tl-p-n').textContent = tr8(n === 1 ? '{0} row' : '{0} rows', n) + ' · '
+    + tr8(nr === 1 ? '{0} real activation' : '{0} real activations', nr)
+    + (na ? ' · ' + tr8(na === 1 ? '{0} non-framework allocation' : '{0} non-framework allocations', na) : '');
 }
 
 function tlFRows(k){   // the framework view: per version a band row, then one lane per window
-  const r = TL.rows.find(x => x.k === k), out = [];
+  const r = TL.rows.find(x => x.k === k), out = [], by = (TL.by || {})[k];
+  let sec = null;
   (TL.fw[k] || []).forEach(g => {
+    // a pair whose earlier framework a distinct new one replaced (dashboards.old_versions): a
+    // heading over each framework's versions, the earlier one's first, its bands in grey
+    if(by && sec !== !!g.old){ sec = !!g.old;
+      const head = tlEsc(g.old ? tr8('Earlier framework, replaced by the {0} framework', by) : tr8('The {0} framework', by));
+      out.push({h: g.old ? 34 : 22, lcls: 'tlsec', bg: '#eef3f8', lab: `<span class='tlw tlsect' title='${head}'>${head}</span>`}); }
     const st = g.start ? tlParse(g.start)[0] : null, en = g.end ? tlParse(g.end)[0] : tlEnd;
     const dev = /development/.test(g.st || '');
-    const vl = g.v ? 'version ' + g.v : 'version not recorded';
-    const stat = g.st === 'endorsed' ? 'endorsed' : dev ? g.st.replace('development', 'in development').replace('pre-in ', 'pre-') : (g.st || '');
-    const tip = [r.name + ' · ' + vl + (stat ? ' (' + stat + ')' : ''),
-      g.start ? 'took effect ' + tlFmt(g.start) : 'start date not recorded',
-      g.end ? 'until ' + tlFmt(g.end) + ' (' + g.why + ')' : 'no end recorded',
-      g.bt ? 'backtest' + (g.cover ? ' over ' + g.cover[0] + '–' + g.cover[1] : '') + ', simulated activations shown before ' + (g.vf_y || 'its start')
-           : 'no backtest recorded',
-      g.n_after ? g.n_after + ' simulated row(s) dated after the start are not shown' : ''].filter(Boolean).join('\n');
+    const vl = g.v ? tr8('version {0}', g.v) : tr8('version not recorded');
+    const stat = tr8(g.st === 'endorsed' ? 'endorsed' : dev ? g.st.replace('development', 'in development').replace('pre-in ', 'pre-') : (g.st || ''));
+    const tip = [tr8(r.name) + ' · ' + vl + (stat ? ' (' + stat + ')' : ''),
+      g.old ? tr8('earlier framework, replaced by the {0} framework', by) : '',
+      g.start ? tr8('took effect {0}', tlFmt(g.start)) : tr8('start date not recorded'),
+      g.end ? tr8('until {0} ({1})', tlFmt(g.end), tr8(g.why)) : tr8('no end recorded'),
+      g.bt ? (g.cover ? tr8('backtest over {0}–{1}, simulated activations shown before {2}', g.cover[0], g.cover[1], g.vf_y || tr8('its start'))
+                      : tr8('backtest, simulated activations shown before {0}', g.vf_y || tr8('its start')))
+           : tr8('no backtest recorded'),
+      g.n_after ? tr8('{0} simulated row(s) dated after the start are not shown', g.n_after) : ''].filter(Boolean).join('\n');
+    // the version's reference period, written in its row: 'analysed 2000–2022' over those years,
+    // else why there is none (before the version's start; across the row when no start is recorded)
+    const why = !g.bt ? 'nb' : g.cover ? '' : 'nr';
+    const note = g.cover ? {t0: Date.UTC(g.cover[0], 0, 1), t1: Date.UTC(g.cover[1] + 1, 0, 1),
+                            txt: tr8('analysed {0}–{1}', g.cover[0], g.cover[1])}
+               : {t0: NA0, t1: st != null ? st : NA1,
+                  txt: why === 'nb' ? tr8('no backtest recorded') : tr8('analysed period not recorded')};
     out.push({h: 26, lcls: 'tlver', bg: '#f6f8fb',
       lab: `<span class='tln' title='${tlEsc(tip)}'><b>${tlEsc(vl)}</b> <span class='tlst${dev ? ' dev' : ''}'>${tlEsc(stat)}</span></span>`,
-      spans: st != null ? [{t0: st, t1: Math.max(en, st + DAY), y: 5, hh: 16, tip,
-        cls: 'tlband' + (dev ? ' dev' : '') + (g.end ? '' : ' open'),
-        txt: tlFmt(g.start) + ' → ' + (g.end ? tlFmt(g.end) : 'no end recorded')}] : []});
+      spans: [Object.assign({y: 5, hh: 16, cls: 'tlcovt', tip}, note)].concat(st != null ? [{t0: st, t1: Math.max(en, st + DAY), y: 5, hh: 16, tip,
+        cls: 'tlband' + (g.old ? ' old' : dev ? ' dev' : '') + (g.end ? '' : ' open'),
+        txt: tlFmt(g.start) + ' → ' + (g.end ? tlFmt(g.end) : tr8('no end recorded'))}] : [])});
     const cov = g.cover ? {t0: Date.UTC(g.cover[0], 0, 1), t1: Date.UTC(g.cover[1] + 1, 0, 1), y: 3, hh: 20, cls: 'tlcov',
-      tip: vl + ': years its backtest analysed, ' + g.cover[0] + '–' + g.cover[1] + ' (no mark: would not have activated)'} : null;
+      tip: tr8('{0}: years its backtest analysed, {1}–{2} (no mark: would not have activated)', vl, g.cover[0], g.cover[1])} : null;
+    // the version in use (the grid's rule): from 1 January of the year it took effect — its
+    // backtest's start year, so only with a backtest — to its end; cream, not hatched
+    const use = g.bt && g.vf_y ? {y: g.vf_y, t1: g.end ? tlParse(g.end)[0] : NA1} : null;
+    const utip = use ? tr8('{0}: in use from {1} — real activations only', vl, g.vf_y) : '';
+    const na = tlNa(g.cover, why, vl, 3, 20, use);
     if(!g.lanes.length)
-      out.push({h: 22, lab: `<span class='tlw muted'>${g.bt ? 'no window recorded' : 'no backtest and no real activation recorded'}</span>`,
-                lines: st != null ? [st] : []});
-    g.lanes.forEach(l => out.push({h: 26, lab: `<span class='tlw' title='${tlEsc(l.w)}'>${tlEsc(l.w)}</span>`,
-      spans: cov ? [cov] : [], lines: st != null ? [st] : [],
+      out.push({h: 22, lab: `<span class='tlw muted'>${tlEsc(tr8(g.bt ? 'no window recorded' : 'no backtest and no real activation recorded'))}</span>`,
+                spans: tlNa(g.cover, why, vl, 3, 16, use).concat(tlUse(use, 3, 16, utip)), lines: st != null ? [st] : []});
+    g.lanes.forEach(l => out.push({h: 26, lab: `<span class='tlw' title='${tlEsc(tlWin(l.w))}'>${tlEsc(tlWin(l.w))}</span>`,
+      spans: (cov ? [cov] : []).concat(na, tlUse(use, 3, 20, utip)), lines: st != null ? [st] : [],
       marks: l.sims.map(s => tlSimMark(s, g, l, r)).concat(l.reals.map(e => tlEvMark(e, r, true)))}));
   });
-  if(!out.length) out.push({h: 26, lab: "<span class='tlw muted'>no version, backtest or real activation recorded</span>"});
+  if(!out.length) out.push({h: 26, lab: `<span class='tlw muted'>${tlEsc(tr8('no version, backtest or real activation recorded'))}</span>`});
   return out;
 }
 function tlFRange(k){
@@ -512,13 +668,17 @@ function tlFw(k, scroll, init){
   const v = tlV.f; if(!TL.fw[k]) return;
   v.k = k; tlq('tlfw').value = k; v.rows = tlFRows(k);
   const [a, b] = tlFRange(k); tlSetFull(v, a, b); tlRender(v);
-  const r = TL.rows.find(x => x.k === k), gs = TL.fw[k];
-  const nr = r.ev.filter(e => !e.ah).length, nb = gs.filter(g => g.bt).length;
+  // the counts are the framework's own: an earlier framework a distinct new one replaced (old
+  // groups) is counted apart, never as the current framework's versions or activations
+  const r = TL.rows.find(x => x.k === k), all = TL.fw[k], gs = all.filter(g => !g.old), go = all.filter(g => g.old);
+  const reals = G => G.reduce((s, g) => s + g.lanes.reduce((t, l) => t + l.reals.length, 0), 0);
+  const nr = reals(gs), nb = gs.filter(g => g.bt).length;
   const ns = gs.reduce((s, g) => s + g.lanes.reduce((t, l) => t + l.sims.length, 0), 0);
   const na = gs.reduce((s, g) => s + (g.n_after || 0), 0);
-  tlq('tl-f-head').innerHTML = `<a href='${tlEsc(r.slug)}'><b>${tlEsc(r.name)}</b></a> · ${tlEsc(TL.life[r.life] || r.life)} · `
-    + `${gs.filter(g => g.v).length} version(s), ${nb} with a backtest (${ns} simulated activation(s) shown) · `
-    + `${nr} real activation(s)` + (na ? ` · ${na} simulated row(s) dated after their version's start not shown` : '');
+  tlq('tl-f-head').innerHTML = `<a href='${tlEsc(r.slug)}'><b>${tlEsc(tr8(r.name))}</b></a> · ${tlEsc(tr8(TL.life[r.life] || r.life))} · `
+    + tlEsc(tr8('{0} version(s), {1} with a backtest ({2} simulated activation(s) shown)', gs.filter(g => g.v).length, nb, ns)) + ' · '
+    + tlEsc(tr8('{0} real activation(s)', nr)) + (na ? ' · ' + tlEsc(tr8("{0} simulated row(s) dated after their version's start not shown", na)) : '')
+    + (go.length ? ' · ' + tlEsc(tr8('earlier framework, replaced by the {0} framework: {1} version(s), {2} real activation(s)', (TL.by || {})[k], go.filter(g => g.v).length, reals(go))) : '');
   if(!init) try { history.replaceState(null, '', '#fw=' + k); } catch(e) {}
   if(scroll) tlq('tl-f-sec').scrollIntoView({block: 'start',
     behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
@@ -529,17 +689,36 @@ function tlInit(){
   TL.rows.forEach(r => r.ev.forEach(e => { const p = tlParse(e.d); if(p && p[0] < lo) lo = Date.UTC(new Date(p[0]).getUTCFullYear(), 0, 1); }));
   tlSetFull(tlV.p, lo, tlEnd);
   tlV.p.lab.addEventListener('click', ev => { const bt = ev.target.closest('.tlb'); if(bt) tlFw(bt.dataset.k, true); });
-  const sel = tlq('tlfw'), by = {};
-  TL.rows.filter(r => TL.fw[r.k]).forEach(r => (by[r.life] = by[r.life] || []).push(r));
-  sel.innerHTML = ['active', 'updating', 'development', 'retired'].filter(l => by[l])
-    .map(l => `<optgroup label='${tlEsc(TL.life[l] || l)}'>`
-      + by[l].map(r => `<option value='${r.k}'>${tlEsc(r.name)}</option>`).join('') + '</optgroup>').join('');
+  const sel = tlq('tlfw');
+  tlFwOptions();
   sel.addEventListener('change', () => tlFw(sel.value));
   const hk = (location.hash.match(/fw=([A-Z]{3}-[a-z_]+)/) || [])[1];
   const score = k => TL.fw[k].some(g => g.bt) * 1000 + TL.rows.find(r => r.k === k).ev.filter(e => !e.ah).length;
   const def = hk && TL.fw[hk] ? hk : Object.keys(TL.fw).sort((p, q) => score(q) - score(p))[0];
   tlDraw(); if(def) tlFw(def, false, true);
   let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { tlRender(tlV.p); tlRender(tlV.f); }, 150); });
+  document.addEventListener('aalang', tlLang);
+}
+function tlFwOptions(){   // the framework picker, grouped by status (its names follow the language)
+  const sel = tlq('tlfw'), by = {}, k = sel.value;
+  TL.rows.filter(r => TL.fw[r.k]).forEach(r => (by[r.life] = by[r.life] || []).push(r));
+  sel.innerHTML = ['active', 'updating', 'development', 'retired'].filter(l => by[l])
+    .map(l => `<optgroup label='${tlEsc(tr8(TL.life[l] || l))}'>`
+      + by[l].map(r => `<option value='${r.k}'>${tlEsc(tr8(r.name))}</option>`).join('') + '</optgroup>').join('');
+  if(k) sel.value = k;
+}
+// texts the script writes once: data-t8 (text) and data-t8-aria (aria-label), in the page's language
+function tlTexts(root){
+  root.querySelectorAll('[data-t8]').forEach(el => { el.textContent = tr8(el.dataset.t8); });
+  root.querySelectorAll('[data-t8-aria]').forEach(el => { el.setAttribute('aria-label', tr8(el.dataset.t8Aria)); });
+}
+const tlWin = w => w === 'window not recorded' ? tr8(w) : w;   // window names are the record's own
+function tlLang(){   // a language switch: month names, the controls, both views
+  MON = MON_EN.map(m => tr8(m));
+  ['tl-p-r', 'tl-f-r'].forEach(id => tlTexts(tlq(id)));
+  const P = tlV.p, pa = P.a, pb = P.b; tlSetFull(P, P.full[0], P.full[1]); P.a = pa; P.b = pb;   // its year list
+  tlFwOptions(); tlDraw();
+  const v = tlV.f; if(v.k){ const a = v.a, b = v.b; tlFw(v.k, false, true); tlZoom(v, a, b); }
 }
 tlInit();
 """
@@ -550,17 +729,20 @@ def build_history(page, d):
     this_year = date.today().year
     umap = {(r.country_iso3, r.hazard, str(r.event_date), r.window_name): r.url
             for r in d["act_url"].itertuples()}
-    # the per-framework blocks show framework activations only, like the grid (ad hoc
-    # allocations have no trigger to simulate)
+    # the grid shows framework activations only (ad hoc allocations have no trigger to simulate)
     act_all = d["act_all"]
     n_adhoc = int((act_all["event_type"] != "framework_aa").sum())
-    dd = dict(d, act_all=act_all[act_all["event_type"] == "framework_aa"])
 
     for f in fws:
+        # an earlier framework a distinct new one replaced (Somalia drought's 2019 / 2020-06-23):
+        # never this framework's backtest, and its activations (2020, 2021) are a retired
+        # framework's — not on this row, in its summary or its CSV rows (2026-10-27 ruling), but
+        # on a retired row of the timeline and in the version view
+        f["olds"], f["by"] = _old_line(d, f["c"], f["h"])
         (f["shown"], f["ss"], f["y0"], f["y1"], f["n_years"], f["vf_y"],
-         f["n_after"]) = _backtest(d, f["c"], f["h"], f["version"])
+         f["n_after"]) = _backtest(d, f["c"], f["h"], f["version"], f["olds"])
         f["ref"] = f["shown"] or f["version"]
-        f["events"] = _events(d, f["c"], f["h"], f["ref"], f["kb_fw"], umap, f["slug"])
+        f["events"], f["events_old"] = _split_old(f, _events(d, f["c"], f["h"], f["ref"], f["kb_fw"], umap, f["slug"]))
         f["hit"] = {}   # year -> windows (and labels, dates) that would have activated
         for r in f["ss"].itertuples():
             lab, when = _str(r.event_label), sim_when(r)
@@ -569,7 +751,10 @@ def build_history(page, d):
                 _str(r.window_name) + (f" ({extra})" if extra else ""))
         f["n_sim"] = (f["y1"] - f["y0"] + 1) if f["y0"] is not None else 0
         f["n_hit"] = len(f["hit"])
-    y_min = min([f["y0"] for f in fws if f["y0"] is not None] or [SPLIT_YEAR])
+    # the first year shown: a recorded span's start, else (span not recorded) the first simulated
+    # activation — never a start backtest_span only inferred
+    y_min = min([(_cover(f)[0] or [min(f["hit"])])[0] for f in fws if _cover(f)[0] or f["hit"]]
+                or [SPLIT_YEAR])
     old = y_min < SPLIT_YEAR
     years = list(range(SPLIT_YEAR if old else y_min, this_year + 1))
 
@@ -578,14 +763,44 @@ def build_history(page, d):
     # country-hazards with no such framework; and per framework the versions / window lanes
     ret = _frameworks(d, TL_RETIRED)
     for f in ret:
-        f["events"] = _events(d, f["c"], f["h"], f["version"], f["kb_fw"], umap, f["slug"])
-    tl_rows, tl_fw = [], {}
+        # a retired pair is a retired framework whichever of its frameworks activated: its row
+        # keeps them all (the map counts it once); the version view still heads them apart
+        f["olds"], f["by"] = _old_line(d, f["c"], f["h"])
+        f["events"], f["events_old"] = _split_old(f, _events(d, f["c"], f["h"], f["version"], f["kb_fw"], umap, f["slug"]))
+        f["events"] += f["events_old"]
+        f["events_old"] = []
+        (f["shown"], _, f["y0"], f["y1"], f["n_years"], f["vf_y"], _) = _backtest(d, f["c"], f["h"], f["version"], f["olds"])
+    tl_rows, tl_fw, tl_by, tl_old = [], {}, {}, []
     for f in fws + ret:
         k = f"{f['c']}-{f['h']}"
         ah = _events(d, f["c"], f["h"], None, f["kb_fw"], umap, f["slug"], adhoc=True)
-        tl_rows.append(dict(k=k, name=f["name"], h=f["h"], life=f["life"], slug=f["slug"],
-                            ev=[_tl_ev(ev) for ev in f["events"]] + [_tl_ev(ev, True) for ev in ah]))
+        cov, why = _cover(f)   # its reference period (the years its backtest analysed), hatched outside
         tl_fw[k] = _tl_detail(d, f)
+        tl_rows.append(dict(k=k, name=f["name"], h=f["h"], life=f["life"], slug=f["slug"], cov=cov, why=why,
+                            **_in_use(f, tl_fw[k], closed=f["life"] == "retired"),
+                            ev=[_tl_ev(ev) for ev in f["events"]] + [_tl_ev(ev, True) for ev in ah]))
+        if not f["by"]:
+            continue
+        tl_by[k] = f["by"]
+        if f["life"] == "retired":
+            continue
+        # the earlier framework a distinct new one replaced, on a current pair: a retired row of its
+        # own (as the map's retired layer), opening the pair's version view (fk). Its backtest: the
+        # latest of its versions that has one, else none (never the new framework's)
+        fvm = d["fv_meta"][(d["fv_meta"]["country_iso3"] == f["c"]) & (d["fv_meta"]["hazard"] == f["h"])]
+        fo = dict(f, version=[v for v in fvm.assign(_vf=version_start(fvm)).sort_values("_vf")["version"].astype(str)
+                              if v in f["olds"]][-1])
+        (fo["shown"], _, fo["y0"], fo["y1"], fo["n_years"], fo["vf_y"], _) = _backtest(d, f["c"], f["h"], fo["version"])
+        if fo["shown"] not in f["olds"]:
+            fo["shown"] = fo["y0"] = None
+        cov_o, why_o = _cover(fo)
+        tl_old.append(dict(k=f"{k}-old", fk=k, h=f["h"], life="retired", slug=f["slug"], cov=cov_o, why=why_o,
+                           name=i18n.add(f"{f['name']} (earlier framework, replaced by the {f['by']} framework)",
+                                         "{name} (earlier framework, replaced by the {by} framework)",
+                                         name=f["name"], by={l: f["by"] for l in i18n.LANGS}),
+                           **_in_use(fo, tl_fw[k], closed=True, old=True),
+                           ev=[_tl_ev(ev) for ev in f["events_old"]]))
+    tl_rows += tl_old       # after the retired frameworks
     cur = d["current"]
     on_row = {(f["c"], f["h"]) for f in fws + ret}
     ah_rows = []
@@ -598,39 +813,47 @@ def build_history(page, d):
         cn = next((x for x in list(g["country_name"]) + list(cur.loc[cur["country_iso3"] == c, "country_name"])
                    if isinstance(x, str) and x), c)
         ah = _events(d, c, h, None, kb, umap, slug, adhoc=True)
-        ah_rows.append(dict(k=f"{c}-{h}", name=f"{cn} — {h.replace('_', ' ')}", h=h, life="", slug=slug or "",
+        ah_rows.append(dict(k=f"{c}-{h}", name=_fwname(c, cn, hazard_word(h)), h=h, life="", slug=slug or "",
                           ev=[_tl_ev(ev, True) for ev in ah]))
     tl_rows += sorted(ah_rows, key=lambda r: r["name"])
-    tl = dict(rows=tl_rows, fw=tl_fw, today=date.today().isoformat(), start=TL_START,
+    tl = dict(rows=tl_rows, fw=tl_fw, by=tl_by, today=date.today().isoformat(), start=TL_START,
               hz={h: PAL[HAZARDS.index(h)] for h in HAZARDS}, other="#64748b", sim=SIM_COL,
               red=ACT_RED, life=dict(LIFE_LABEL, retired="retired"))
 
-    def rate(f):
-        if not f["shown"]:
-            return "no backtest recorded"
-        s = (f"activated in {f['n_hit']} of {f['n_sim']} simulated years "
-             f"({f['y0']}–{f['y1']})")
+    def rate(f, w=lambda x: x):
+        """The row's summary (w: one language's words)."""
+        cov, why = _cover(f)
+        if why == "nb":
+            return w("no backtest recorded")
+        # the reference period first ('analysed 2001–2025'); never a span the record does not give
+        s = (w("analysed {a}–{b}: activated in {n} of {m} simulated years").format(
+                 a=cov[0], b=cov[1], n=f["n_hit"], m=f["n_sim"]) if cov else
+             w("analysed period not recorded: would have activated in {n} simulated years").format(n=f["n_hit"]))
         if f["version"] is None:
-            s += f" · backtest of version {f['shown']}"
+            s += w(" · backtest of version {v}").format(v=f["shown"])
         elif str(f["shown"]) != str(f["version"]):
-            s += f" · backtest of version {f['shown']} (the current version has none)"
+            s += w(" · backtest of version {v} (the current version has none)").format(v=f["shown"])
         if f["n_after"]:
-            s += (f" · {f['n_after']} simulated row{'' if f['n_after'] == 1 else 's'} dated after "
-                  f"the version's start not shown")
+            s += w(" · {n} simulated row dated after the version's start not shown" if f["n_after"] == 1 else
+                   " · {n} simulated rows dated after the version's start not shown").format(n=f["n_after"])
         return s
 
-    def n_real(f):
+    def n_real(f, w=lambda x: x):
         n = len(f["events"])
-        return f"{n} real activation{'' if n == 1 else 's'}" if n else "no real activation"
+        return (w("{n} real activation" if n == 1 else "{n} real activations").format(n=n) if n
+                else w("no real activation"))
+
+    def rate_html(f):
+        return TC(lambda w: _nofire(rate(f, w) + " · " + n_real(f, w)))
 
     def life_tag(lc):
-        return f"<span class='lf lf-{lc}'>{LIFE_LABEL.get(lc, lc)}</span>"
+        return f"<span class='lf lf-{lc}'>{T(LIFE_LABEL.get(lc, lc))}</span>"
 
-    def ev_tip(ev):
-        return (f"activated {ev['date']}" + (f" · {ev['win']}" if ev["win"] else "")
+    def ev_tip(ev, w=lambda x: x):
+        return (w("activated {d}").format(d=ev["date"]) + (f" · {ev['win']}" if ev["win"] else "")
                 + (f" · {ev['label']}" if ev["label"] else "")
-                + f" · {ev['funds'] or 'amount not recorded'}"
-                + ("" if ev["same"] else f" · under version {ev['version'] or '?'}"))
+                + f" · {ev['funds'] or w('amount not recorded')}"
+                + ("" if ev["same"] else w(" · under version {v}").format(v=ev["version"] or "?")))
 
     def markers(evs):
         """Real activations as links to their most relevant page (announcement, else CERF
@@ -640,74 +863,72 @@ def build_history(page, d):
         for ev in evs:
             groups.setdefault((not ev["same"], ev["href"] or ""), []).append(ev)
         for (other, href), g in sorted(groups.items(), key=lambda kv: kv[0][0]):
-            tip = " | ".join(ev_tip(ev) for ev in g) + (f" — opens {g[0]['goes']}" if href else "")
+            tip = ATTRC("title", lambda w, g=g, href=href: _nofire(
+                " | ".join(ev_tip(ev, w) for ev in g)
+                + (w(" — opens {page}").format(page=w(g[0]["goes"])) if href else "")))
             cnt = f"<sup>{len(g)}</sup>" if len(g) > 1 else ""
             cls = "old" if other else "real"
             ext = "" if href.endswith(".html") and "://" not in href else " target='_blank' rel='noopener'"
-            out += (f"<a class='mk' href='{html.escape(href)}'{ext} title='{_esc(tip)}'><span class='dot {cls}'></span>{cnt}</a>"
-                    if href else f"<span class='mk' title='{_esc(tip)}'><span class='dot {cls}'></span>{cnt}</span>")
+            out += (f"<a class='mk' href='{html.escape(href)}'{ext} {tip}><span class='dot {cls}'></span>{cnt}</a>"
+                    if href else f"<span class='mk' {tip}><span class='dot {cls}'></span>{cnt}</span>")
         return out
 
     # ---- the overview grid
-    head = ((f"<th class='old' title='{y_min}–{SPLIT_YEAR - 1}: simulated years summarised'>"
+    head = ((f"<th class='old' {ATTR('title', '{a}–{b}: simulated years summarised', a=y_min, b=SPLIT_YEAR - 1)}>"
              f"{y_min}–<br>{SPLIT_YEAR - 1}</th>") if old else "")
     head += "".join(f"<th class='y{' dec' if y % 10 == 0 else ''}'>{y}</th>" for y in years)
     trs = []
     for f in fws:
-        sim_yrs = set(range(f["y0"], f["y1"] + 1)) if f["y0"] is not None else set()
+        # the years the backtest analysed (its reference period); a year outside them shows no
+        # simulation, so it is hatched (td.na) rather than left blank like an analysed year in
+        # which the trigger would not have activated. No recorded span: only the years with a
+        # simulated activation are known to be analysed.
+        cov, _why = _cover(f)
+        sim_yrs = set(range(cov[0], cov[1] + 1)) if cov else set(f["hit"])
         cells = ""
         if old:
             pre_ev = [ev for ev in f["events"] if ev["year"] < SPLIT_YEAR]
-            if f["y0"] is not None and f["y0"] < SPLIT_YEAR:
-                a, b = f["y0"], min(f["y1"], SPLIT_YEAR - 1)
+            if cov and cov[0] < SPLIT_YEAR:
+                a, b = cov[0], min(cov[1], SPLIT_YEAR - 1)
                 n_h = sum(1 for y in f["hit"] if y < SPLIT_YEAR)
-                tip = f"{a}–{b}: would have activated in {n_h} of {b - a + 1} simulated years"
-                cells += (f"<td class='old' title='{_esc(tip)}'><b>{n_h}</b><span class='of'>/{b - a + 1}</span>"
+                tip = ATTR("title", "{a}–{b}: would have activated in {n} of {m} simulated years",
+                           a=a, b=b, n=n_h, m=b - a + 1)
+                cells += (f"<td class='old' {tip}><b>{n_h}</b><span class='of'>/{b - a + 1}</span>"
                           f"{markers(pre_ev)}</td>")
             else:
-                cells += (f"<td class='old na' title='no simulated years before {SPLIT_YEAR}'>"
-                          f"{markers(pre_ev)}</td>")
+                n_h = sum(1 for y in f["hit"] if y < SPLIT_YEAR)   # only where the span is not recorded
+                tip = ATTRC("title", lambda w, f=f, n_h=n_h: f"{y_min}–{SPLIT_YEAR - 1}: " + (
+                    w("analysed period not recorded: would have activated in {n} simulated years").format(n=n_h)
+                    if n_h else _na_why(f, w)))
+                cnt = f"<b>{n_h}</b><span class='of'>/?</span>" if n_h else ""
+                cells += f"<td class='old na' {tip}>{cnt}{markers(pre_ev)}</td>"
         for y in years:
             evs = [ev for ev in f["events"] if ev["year"] == y]
             hit = f["hit"].get(y)
             in_use = f["vf_y"] is not None and f["shown"] and y >= f["vf_y"]
-            tips = [f"{y}"]
-            if in_use:   # never simulation from the version's start year on
-                tips.append(f"version {f['shown']} in use (took effect {f['vf_y']}): real activations only"
-                            if str(f["shown"]) == str(f["version"]) else
-                            f"from {f['vf_y']}, version {f['shown']} (took effect {f['vf_y']}) and later "
-                            "versions in use: real activations only")
-            elif hit:
-                tips.append("simulation: would have activated — " + ", ".join(sorted(set(hit))))
-            elif y in sim_yrs:
-                tips.append("simulation: would not have activated")
-            else:
-                tips.append("not covered by the simulation")
-            tips += [ev_tip(ev) for ev in evs]
+            def tips(w, y=y, evs=evs, hit=hit, in_use=in_use, sim_yrs=sim_yrs, f=f):
+                t = [f"{y}"]
+                if in_use:   # never simulation from the version's start year on
+                    t.append(w("version {v} in use (took effect {y}): real activations only"
+                               if str(f["shown"]) == str(f["version"]) else
+                               "from {y}, version {v} (took effect {y}) and later versions in use: real "
+                               "activations only").format(v=f["shown"], y=f["vf_y"]))
+                elif hit:
+                    t.append(w("simulation: would have activated — {list}").format(list=", ".join(sorted(set(hit)))))
+                elif y in sim_yrs:
+                    t.append(w("simulation: would not have activated"))
+                else:
+                    t.append(_na_why(f, w))
+                return _nofire(" · ".join(t + [ev_tip(ev, w) for ev in evs]))
             mk = ("<span class='dot sim'></span>" if hit and not in_use else "") + markers(evs)
-            cls = "use" if in_use else "" if y in sim_yrs else "na"
-            cells += (f"<td class='{cls}' title='{_esc(' · '.join(tips))}'>{mk}</td>")
+            cls = "use" if in_use else "" if y in sim_yrs else "na"   # na: hatched, outside the analysed period
+            cells += (f"<td class='{cls}' {ATTRC('title', tips)}>{mk}</td>")
         trs.append(
             f"<tr class='hrow' data-life='{f['life']}' data-haz='{_esc(f['h'])}'>"
-            f"<th class='fw'><a href='{f['slug']}'>{_esc(f['name'])}</a> {life_tag(f['life'])}"
-            f"<span class='rate'>{_esc(rate(f))} · {n_real(f)}</span></th>{cells}</tr>")
-    grid = (f"<div class='scroll hscroll'><table class='hgrid'><thead><tr><th class='fw'>framework</th>"
+            f"<th class='fw'><a href='{f['slug']}'>{T(f['name'])}</a> {life_tag(f['life'])}"
+            f"<span class='rate'>{rate_html(f)}</span></th>{cells}</tr>")
+    grid = (f"<div class='scroll hscroll'><table class='hgrid'><thead><tr><th class='fw'>{T('framework')}</th>"
             f"{head}</tr></thead><tbody>{''.join(trs)}</tbody></table></div>")
-
-    # ---- per-framework detail: the framework page's historical grid + activations table
-    det = []
-    for f in fws:
-        hist, actual = _activation_blocks(dd, f["c"], f["h"], f["kb_fw"], f["version"], umap)
-        col = PAL[HAZARDS.index(f["h"])] if f["h"] in HAZARDS else "#64748b"   # as there
-        hist = _nofire(hist.replace(f"class='dot sim' style='background:{col}'",
-                                    f"class='dot sim' style='background:{SIM_COL}'"))
-        det.append(
-            f"<details class='fwd' data-life='{f['life']}' data-haz='{_esc(f['h'])}'>"
-            f"<summary><b>{_esc(f['name'])}</b> {life_tag(f['life'])} "
-            f"<span class='rate'>{_esc(rate(f))} · {n_real(f)}</span></summary>"
-            f"<div class='fwbody'><h3 class='sub'>Historical activations</h3>{hist}"
-            f"<h3 class='sub'>Real activations</h3>{_nofire(actual)}"
-            f"<p class='meta'><a href='{f['slug']}'>Framework page →</a></p></div></details>")
 
     # ---- the rows behind the grid (CSV download, filtered client-side)
     rows = []
@@ -731,54 +952,62 @@ def build_history(page, d):
 
     no_bt = [f for f in fws if not f["shown"]]
     aft = [f for f in fws if f["n_after"]]
-    after_note = (f" {sum(f['n_after'] for f in aft)} simulated rows dated after their version's start are "
-                  f"not shown ({_esc(', '.join(f['name'] + ' ' + str(f['shown']) for f in aft))})."
-                  if aft else "")
+    after_note = (" " + TBC(lambda w: w(
+        "{n} simulated rows dated after their version's start are not shown ({list}).").format(
+            n=sum(f["n_after"] for f in aft),
+            list=_esc(", ".join(w(f["name"]) + " " + str(f["shown"]) for f in aft)))) if aft else "")
     life_boxes = "".join(
         f"<label><input type='checkbox' value='{lc}'{' checked' if LIFE_ON[lc] else ''} "
-        f"onchange='hfilt()'> {LIFE_LABEL[lc]} ({sum(f['life'] == lc for f in fws)})</label>"
+        f"onchange='hfilt()'> {T(LIFE_LABEL[lc])} ({sum(f['life'] == lc for f in fws)})</label>"
         for lc in LIVE)
-    hz_opts = "".join(f"<option value='{_esc(h)}'>{_esc(h)}</option>"
-                      for h in sorted({f["h"] for f in fws}, key=lambda h: (haz(h) == "other", h)))
+    hz_opts = "".join(OPT(h, h) for h in sorted({f["h"] for f in fws}, key=lambda h: (haz(h) == "other", h)))
     # ---- the timeline (portfolio view, then the framework view); drawn by TL_JS from D.tl
     hz_on = sorted({r["h"] for r in tl_rows}, key=lambda h: (haz(h) == "other", h))
-    hz_key = " ".join(f"<span class='tlk' style='background:{tl['hz'].get(h, tl['other'])}'></span>{_esc(h)}"
-                      for h in hz_on if h in HAZARDS) + (f" <span class='tlk' style='background:{tl['other']}'></span>other"
+    hz_key = " ".join(f"<span class='tlk' style='background:{tl['hz'].get(h, tl['other'])}'></span>{T(h)}"
+                      for h in hz_on if h in HAZARDS) + (f" <span class='tlk' style='background:{tl['other']}'></span>{T('other')}"
                                                         if any(h not in HAZARDS for h in hz_on) else "")
-    n_ret = len(ret)
+    n_ret = len(ret) + len(tl_old)   # with the replaced frameworks, as the map's retired layer
     n_ah = sum(e["ah"] for r in tl_rows for e in r["ev"])
     tl_html = f"""
-<h2 id='tl-p-sec'>When the frameworks activated</h2>
-<p class='meta'>Each mark is a real activation (the trigger was met and the pre-arranged money released), placed at
-its month, or its day when recorded, sized by the money released and coloured by hazard; hover or tab to a mark for
-the details, click it for its announcement (else its CERF allocation page, else the framework page), and click a
-framework's name to see it version by version below.</p>
+<h2 id='tl-p-sec'>{T("When the frameworks activated")}</h2>
+<p class='meta'>{TB("Each mark is a real activation (the trigger was met and the pre-arranged money released), placed at its month, or its day when recorded, sized by the money released and coloured by hazard; hover or tab to a mark for the details, click it for its announcement (else its CERF allocation page, else the framework page), and click a framework's name to see it version by version below.")}</p>
 <div class='tlbar'>
- <label><input type='checkbox' id='tlret' onchange='tlDraw()'> retired frameworks ({n_ret})</label>
- <label title='money released without a pre-agreed trigger'><input type='checkbox' id='tladh' onchange='tlDraw()'>
-  ad hoc allocations ({n_ah}), which are not framework activations</label>
+ <label><input type='checkbox' id='tlret' onchange='tlDraw()'> {TF("retired frameworks ({n})", n=n_ret)}</label>
+ <label {ATTR("title", "money released without a pre-agreed trigger")}><input type='checkbox' id='tladh' onchange='tlDraw()'>
+  {TF("non-framework allocations ({n}), which are not framework activations", n=n_ah)}</label>
  <span class='tlr' id='tl-p-r'></span><span class='cnt' id='tl-p-n'></span></div>
 <div class='tl' id='tl-p'><div class='tll'></div><div class='tlsc'><svg role='group'
- aria-label='Real activations by date, one row per framework'></svg></div></div>
-<p class='legend'>{hz_key} · size: money released (<span class='tlk ring'></span> amount not recorded) ·
-<span class='tlk dia' style='background:#8a93a0'></span> ad hoc allocation · faint bar behind a mark: the month,
-or the whole year, its date is known to · dashed red line: today. Drag along the dates (top or bottom) to zoom.</p>
-<h2 id='tl-f-sec'>One framework, version by version</h2>
-<p class='meta'>Each version is a band from the day it took effect, with one lane per window under it:
-<span class='tlk sq' style='background:{SIM_COL}'></span> the years its trigger would have activated in its
-backtest, which is fixed before the version is endorsed and so drawn only before the version's start (dotted line),
-and <span class='tlk' style='background:{ACT_RED}'></span> its real activations, which can only come after; the
-backtests give years today, and the day (for storms the hour) appears as the trigger analyses provide it.</p>
-<div class='tlbar'><label>framework <select id='tlfw'></select></label><span class='tlr' id='tl-f-r'></span></div>
+ {ATTR("aria-label", "Real activations by date, one row per framework")}></svg></div></div>
+<p class='legend'>{hz_key} · {TB("size: money released (<span class='tlk ring'></span> amount not recorded) · <span class='tlk dia' style='background:#8a93a0'></span> non-framework allocation · faint bar behind a mark: the month, or the whole year, its date is known to · <span class='tlk sq na'></span> outside the years the framework's backtest analysed, or no backtest recorded (hover a row for its years) · <span class='tlk sq use'></span> the version in use, from the year it took effect: real activations only, as in the grid below · dashed red line: today. Drag along the dates (top or bottom) to zoom.")}</p>
+<h2 id='tl-f-sec'>{T("One framework, version by version")}</h2>
+<p class='meta'>{TBF("Each version is a band from the day it took effect, with one lane per window under it: <span class='tlk sq' style='background:{sim}'></span> the years its trigger would have activated in its backtest, which is fixed before the version is endorsed and so drawn only before the version's start (dotted line), and <span class='tlk' style='background:{red}'></span> its real activations, which can only come after; the backtests give years today, and the day (for storms the hour) appears as the trigger analyses provide it.", sim=SIM_COL, red=ACT_RED)}</p>
+<div class='tlbar'><label>{T("framework")} <select id='tlfw'></select></label><span class='tlr' id='tl-f-r'></span></div>
 <p class='meta' id='tl-f-head'></p>
 <div class='tl' id='tl-f'><div class='tll'></div><div class='tlsc'><svg role='group'
- aria-label='One framework: its versions, simulated and real activations by date'></svg></div></div>
-<p class='legend'><span class='tlk sq' style='background:#dbe9f6;box-shadow:inset 0 0 0 1px #8fb2d6'></span> version
-endorsed · <span class='tlk sq' style='background:#fdf1dc;box-shadow:inset 0 0 0 1px #e0b766'></span> version in
-development · <span class='tlk sq' style='background:#eaf0f6'></span> years its backtest analysed (no mark: would not
-have activated) · <span class='tlk sq' style='background:{SIM_COL}'></span> would have activated: a block for the
-year, a square on the day or hour · <span class='tlk' style='background:{ACT_RED}'></span> real activation, sized by
-the money released.</p>"""
+ {ATTR("aria-label", "One framework: its versions, simulated and real activations by date")}></svg></div></div>
+<p class='legend'>{TBF("<span class='tlk sq' style='background:#dbe9f6;box-shadow:inset 0 0 0 1px #8fb2d6'></span> version endorsed · <span class='tlk sq' style='background:#fdf1dc;box-shadow:inset 0 0 0 1px #e0b766'></span> version in development · <span class='tlk sq' style='background:#eceff3;box-shadow:inset 0 0 0 1px #aab2bd'></span> version of an earlier framework, replaced by a new one · <span class='tlk sq' style='background:#eaf0f6'></span> years its backtest analysed, written in the version's row (no mark: would not have activated) · <span class='tlk sq na'></span> not in the analysed period, or no backtest recorded: no simulation there · <span class='tlk sq use'></span> the version in use, from the year it took effect to its end: real activations only · <span class='tlk sq' style='background:{sim}'></span> would have activated: a block for the year, a square on the day or hour · <span class='tlk' style='background:{red}'></span> real activation, sized by the money released.", sim=SIM_COL, red=ACT_RED)}</p>"""
+    grid_note = TB(
+        "The version simulated is the current one; where the current version has no recorded backtest, the "
+        "latest version that has one, as the row says. A solid red marker is an activation under the version "
+        "simulated in that row (under the current version where there is no backtest); a hollow one, under "
+        "another version, whose triggers may differ. Each real-activation marker links to its announcement, "
+        "else its CERF allocation page, else the framework page (hover for which). A version's backtest is "
+        "fixed before it is endorsed, and real activations can only come after: from the year the version "
+        "took effect, a row shows real activations only.")
+    # a current framework that replaced an earlier, distinct one (Somalia drought): where that
+    # framework's activations are now
+    repl = [f for f in fws if f["olds"]]
+    repl_note = (" " + TBC(lambda w: w(
+        "The activations of an earlier framework that a distinct new one replaced, on the same country "
+        "and hazard, are a retired framework's, not the new one's: they are not on its row here but on a "
+        "row of their own in the timeline above, with the retired frameworks ({list}).").format(
+            list=_esc(", ".join(w(f["name"]) for f in repl)))) if repl else "")
+    no_bt_note = TBC(lambda w: w(
+        "Real activations are framework activations only: the {n} non-framework allocations on record (money released "
+        "without a pre-agreed trigger) are left out, as there is no trigger to simulate them against. No "
+        "backtest recorded yet for {m} of the {t} frameworks: {list}.").format(
+            n=n_adhoc, m=len(no_bt), t=len(fws),
+            list=_esc(", ".join(w(f["name"]) for f in no_bt)) or w("none")))
     panels = f"""
 <style>
 .lf {{ display:inline-block; padding:0 8px; border-radius:9px; font-size:11px; font-weight:600; white-space:nowrap; }}
@@ -801,7 +1030,7 @@ table.hgrid th.fw a {{ font-weight:600; }}
 table.hgrid td {{ width:34px; min-width:34px; max-width:34px; height:34px; padding:0; text-align:center; line-height:1.1; }}
 table.hgrid td sup {{ font-size:9px; color:#a11; margin-left:-2px; }}
 table.hgrid td + td {{ border-left:1px solid #f4f5f7; }}
-table.hgrid td.na {{ background:#eef1f5; }}
+table.hgrid td.na, p.legend .sw.na {{ background:repeating-linear-gradient(135deg, #f3f5f8 0 3px, #d5dce5 3px 4.5px); }}
 table.hgrid td.use {{ background:#fbf6ee; }}
 table.hgrid a.mk {{ text-decoration:none; }} table.hgrid a.mk:hover .dot {{ transform:scale(1.25); }}
 table.hgrid td.old, table.hgrid th.old {{ min-width:52px; width:52px; border-right:2px solid #cbd6e2; font-size:11px; }}
@@ -811,15 +1040,8 @@ table.hgrid .dot {{ margin:0 1px; }}
 .dot.sim {{ background:{SIM_COL}; width:11px; height:11px; }}
 table.hgrid .dot.real {{ width:10px; height:10px; box-shadow:0 0 0 1.5px #fff, 0 0 0 3px {ACT_RED}; margin:0 3px; }}
 table.hgrid .dot.old {{ width:8px; height:8px; margin:0 2px; }}
-p.legend .sw {{ display:inline-block; width:14px; height:12px; background:#eef1f5; border:1px solid #dde3ea; vertical-align:middle; margin:0 2px; }}
-details.fwd {{ background:#fff; border:1px solid #e0e0e0; border-radius:6px; margin:8px 0; }}
-details.fwd > summary {{ cursor:pointer; padding:9px 14px; font-size:13.5px; }}
-details.fwd > summary .rate {{ display:inline; margin-left:6px; }}
-details.fwd[open] > summary {{ border-bottom:1px solid #eee; }}
-details.fwd .fwbody {{ padding:4px 16px 12px; }}
-details.fwd h3.sub {{ font-size:14px; margin:16px 0 6px; color:#334; }}
-@media (max-width:700px) {{ table.hgrid th.fw {{ min-width:170px; max-width:200px; }}
-  details.fwd > summary .rate {{ display:block; margin-left:0; }} }}
+p.legend .sw {{ display:inline-block; width:14px; height:12px; background:#fff; border:1px solid #dde3ea; vertical-align:middle; margin:0 2px; }}
+@media (max-width:700px) {{ table.hgrid th.fw {{ min-width:170px; max-width:200px; }} }}
 /* the interactive timeline */
 #tl-p-sec, #tl-f-sec {{ scroll-margin-top:84px; }}   /* clear of the sticky filter bar */
 .tl {{ display:flex; background:#fff; border:1px solid #e0e0e0; border-radius:6px; margin:6px 0 4px; }}
@@ -845,7 +1067,13 @@ details.fwd h3.sub {{ font-size:14px; margin:16px 0 6px; color:#334; }}
 .tl .tlamt, .tl .tlbt {{ font-size:10px; fill:#334; pointer-events:none; }}
 .tl .tlband {{ fill:#dbe9f6; stroke:#8fb2d6; }} .tl .tlband.open {{ fill-opacity:.55; }}
 .tl .tlband.dev {{ fill:#fdf1dc; stroke:#e0b766; stroke-dasharray:4 3; }}
+.tl .tlband.old {{ fill:#eceff3; stroke:#aab2bd; }}   /* an earlier framework, replaced by a new one */
+.tl .tluse {{ fill:#f8eedc; }}   /* the version in use: the grid's cream (td.use), a shade deeper on the white rows */
+.tl .tlrow.tlsec {{ background:#eef3f8; white-space:normal; line-height:1.25; }}   /* a heading may wrap: two lines */
+.tl .tlsect {{ padding-left:0; font-weight:600; color:#334; max-height:100%; }}
 .tl .tlcov {{ fill:#eaf0f6; }}
+.tl .tlna {{ fill:url(#tlhatch); }}   /* outside the analysed period: the pattern in the page's hidden svg */
+.tl .tlcovt {{ fill:#000; fill-opacity:0; }} .tl .tlnote {{ fill:#5b6573; }}
 .tl .tlvs {{ stroke:#7d8b99; stroke-dasharray:2 3; }}
 .tl .tlm {{ cursor:pointer; outline:none; }} .tl g.tlm {{ cursor:default; }}
 .tl .tlm .mk {{ transform-box:fill-box; transform-origin:center; }}
@@ -859,6 +1087,8 @@ details.fwd h3.sub {{ font-size:14px; margin:16px 0 6px; color:#334; }}
 .tlk {{ display:inline-block; width:10px; height:10px; border-radius:50%; vertical-align:-1px; margin:0 2px; }}
 .tlk.sq {{ border-radius:2px; }} .tlk.dia {{ transform:rotate(45deg) scale(.85); border-radius:1px; }}
 .tlk.ring {{ background:#fff !important; box-shadow:inset 0 0 0 1.5px #667; }}
+.tlk.na {{ background:repeating-linear-gradient(135deg, #f3f5f8 0 3px, #d5dce5 3px 4.5px); box-shadow:inset 0 0 0 1px #dde3ea; }}
+.tlk.use {{ background:#f8eedc; box-shadow:inset 0 0 0 1px #eadcc0; }}
 #tltip {{ position:fixed; z-index:60; display:none; max-width:340px; background:#1f2733; color:#fff; font-size:12px;
   line-height:1.45; padding:7px 10px; border-radius:5px; white-space:pre-line; pointer-events:none;
   box-shadow:0 2px 8px rgba(0,0,0,.2); }}
@@ -866,35 +1096,18 @@ details.fwd h3.sub {{ font-size:14px; margin:16px 0 6px; color:#334; }}
   .tlbar .rhint {{ display:none; }} }}
 </style>
 <div class='fbar' id='hbar'>{life_boxes}
- <label>hazard <select id='hhaz' onchange='hfilt()'><option value=''>all</option>{hz_opts}</select></label>
- <button class='dl' onclick='histCsv()' title='the simulated and real activations of the frameworks shown'>⬇ CSV</button>
+ <label>{T("hazard")} <select id='hhaz' onchange='hfilt()'>{OPT("", "all")}{hz_opts}</select></label>
+ <button class='dl' onclick='histCsv()' {ATTR("title", "the simulated and real activations of the frameworks shown")}>⬇ CSV</button>
  <span class='cnt' id='hn'></span></div>
+<svg width='0' height='0' style='position:absolute' aria-hidden='true' focusable='false'><defs>
+ <pattern id='tlhatch' width='4.5' height='4.5' patternUnits='userSpaceOnUse' patternTransform='rotate(45)'>
+  <rect width='4.5' height='4.5' fill='#f3f5f8'/><rect width='1.5' height='4.5' fill='#d5dce5'/></pattern></defs></svg>
 {tl_html}
-<h2>Every current framework, year by year</h2>
-<p class='meta'>One row per framework: its current trigger run over the past years (the backtest), and its
-real activations. Years before {SPLIT_YEAR} are summarised in the first column (years the trigger would have
-activated / years simulated). Hover a cell for the windows and the money; open a framework below for its
-window-by-window grid.</p>
+<h2>{T("Every current framework, year by year")}</h2>
+<p class='meta'>{TBF("One row per framework: its current trigger run over the past years (the backtest), and its real activations. Each row gives the years its backtest analysed; years outside them are hatched, as no simulation exists for them. Years before {y} are summarised in the first column (years the trigger would have activated / years simulated). Hover a cell for the windows and the money; the framework's page has its window-by-window grid.", y=SPLIT_YEAR)}</p>
 {grid}
-<p class='legend'><span class='dot sim'></span> would have activated (simulation, any window) ·
-<span class='dot real'></span> activated, money released ·
-<span class='dot old'></span> activated under a different version (hover for which) ·
-<sup style='color:#a11'>2</sup> several activations that year ·
-<span class='sw use'></span> the version in use: real activations only ·
-<span class='sw'></span> year not covered by the simulation</p>
-<p class='meta'>The version simulated is the current one; where the current version has no recorded backtest,
-the latest version that has one, as the row says. A solid red marker is an activation under the version
-simulated in that row (under the current version where there is no backtest); a hollow one, under another
-version, whose triggers may differ. Each real-activation marker links to its announcement, else its CERF
-allocation page, else the framework page (hover for which). A version's backtest is fixed before it is
-endorsed, and real activations can only come after: from the year the version took effect, a row shows real
-activations only.{after_note} Real activations are framework activations only:
-the {n_adhoc} ad hoc allocations on record (money released without a pre-agreed trigger) are left out,
-as there is no trigger to simulate them against. No backtest recorded yet for {len(no_bt)} of the
-{len(fws)} frameworks: {_esc(', '.join(f['name'] for f in no_bt)) or 'none'}.</p>
-<h2>Framework by framework</h2>
-<p class='meta'>The same backtest window by window, and each real activation with its funding and links.</p>
-{''.join(det)}"""
+<p class='legend'>{TB("<span class='dot sim'></span> would have activated (simulation, any window) · <span class='dot real'></span> activated, money released · <span class='dot old'></span> activated under a different version (hover for which) · <sup style='color:#a11'>2</sup> several activations that year · <span class='sw'></span> analysed year, would not have activated · <span class='sw na'></span> not in the analysed period, or no backtest recorded · <span class='sw use'></span> the version in use: real activations only")}</p>
+<p class='meta'>{grid_note}{after_note}{repl_note} {no_bt_note}</p>"""
     js = TL_JS + """
 function hstate(){
   const on = new Set([...document.querySelectorAll('#hbar input[type=checkbox]:checked')].map(b=>b.value));
@@ -902,11 +1115,11 @@ function hstate(){
 }
 function hfilt(){
   const {on, hz} = hstate(); let n = 0;
-  document.querySelectorAll('tr.hrow, details.fwd').forEach(el=>{
+  document.querySelectorAll('tr.hrow').forEach(el=>{
     const ok = on.has(el.dataset.life) && (!hz || el.dataset.haz === hz);
     el.style.display = ok ? '' : 'none';
-    if(ok && el.tagName === 'TR') n++; });
-  document.getElementById('hn').textContent = n + ' framework' + (n === 1 ? '' : 's') + ' shown';
+    if(ok) n++; });
+  document.getElementById('hn').textContent = tr8(n === 1 ? '{0} framework shown' : '{0} frameworks shown', n);
   if(typeof tlDraw === 'function') tlDraw();   // the timeline follows the same filters
 }
 function histCsv(){
@@ -923,9 +1136,10 @@ function histCsv(){
   a.download = 'historical-activations.csv'; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
-hfilt();"""
-    intro = ("A <b>simulated activation</b> means today's trigger would have activated in a past "
-             "year, given the historical data for that year. A <b>real activation</b> means the trigger was actually met and the "
-             "pre-arranged money was released.")
+hfilt();
+document.addEventListener('aalang', hfilt);"""
+    intro = TB("A <b>simulated activation</b> means today's trigger would have activated in a past "
+               "year, given the historical data for that year. A <b>real activation</b> means the trigger was actually met and the "
+               "pre-arranged money was released.")
     _dash_page(page, "pillar-history.html", "Historical activations", intro, panels,
                json.dumps({"rows": rows, "tl": tl}, default=str).replace("</", "<\\/"), js)

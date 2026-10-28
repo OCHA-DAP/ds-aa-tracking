@@ -4,15 +4,16 @@ Single authoritative tracking system for OCHA's anticipatory action (AA) portfol
 superseding the team-member spreadsheets it was seeded from — and, since 2026-09-28,
 the knowledge base's framework pages (see "The KB flip").
 
-This repo owns a set of tables in the dev Postgres `aa` schema, alongside (never
-overlapping with) the KB-owned trigger-performance tables (`ds-knowledge-base`) and the
-CERF OneGMS mirror (`ds-cerf-supplement`). It adds:
+This repo owns every table in the dev Postgres `aa` schema except the CERF / CBPF OneGMS
+mirrors (`ds-cerf-supplement`) — since 2026-10-05 including the backtest tables the
+knowledge base's loaders used to write (see "AA management moved here" below). It holds:
 
 - **framework lifecycle**: registry of every (country, hazard) framework incl. the
   pipeline (early conversations → active → dormant/expired), status snapshots over time,
   focal points, trigger-window calendar
 - **funding**: pre-arranged amounts per year and fund source, co-financing,
-  sector-level pre-arranged budgets; donor shares (`dash-donors.html`, `scripts/donors.py`):
+  sector-level pre-arranged budgets; donor shares (`dash-donors.html`, admin site since
+  2026-10-15, `scripts/donors.py`):
   each donor's share of a fund's income per fiscal year (`aa.v_contribution`, the
   ds-cerf-supplement contribution mirrors) × the AA that fund released / pre-arranged that
   year, plus hand-entered build earmarks (`aa.build_contribution`)
@@ -33,9 +34,17 @@ months, trigger facets, data sources, agencies, the "Trigger windows" table, the
 and are edited here; the nightly KB sweep (`scripts/sync_kb.py`) is off; the site build
 reads only the database snapshot (no KB checkout). The KB's job is now the other way
 round: read this DB (registry, versions, statuses, funding) and find the code, monitoring
-and published documents for each framework. The KB-loader tables (`window`,
-`simulated_activation`, `funding_breakdown`, `actual_activation`) stay as frozen inputs
-until their loaders are pointed at this DB.
+and published documents for each framework.
+
+**AA management moved here (2026-10-05).** The tables the KB's loaders used to write are
+owned here now (DDL and views in `schema.py`; the KB loaders, its activation-link flow and
+its KB→DB workflows are retired): the **backtests** — `window`, `simulated_activation`,
+`version_performance_reported` — are edited here, and `funding_breakdown`,
+`actual_activation`, `activation_allocation` are the frozen KB-era record (superseded by
+`window_funding`, `window_activation`, `activation_funding`). This database is the record
+of every AA table; backtests are edited freely and corrected as errors are found
+(`v_trk_backtest_check` lists the rows that break a rule). Sealing a backtest once it has
+been checked against the endorsed document is a follow-up, not yet implemented.
 
 Two more DB-first tables came with the flip: `aa.learning_document` (the AA Compendium of
 Available Resources, Sept 2026, plus the website to-add list; `scripts/import_learning.py`;
@@ -61,7 +70,7 @@ are kept forever (the year-end official state, for the map's time view).
   (staticrypt, public site) and `ADMIN_PASSWORD` (staticrypt, admin site; no default
   anywhere, the publish fails without it).
 - two sites, one build (2026-10-07): the **public site** is the tabs of its header (map,
-  model + historical activations, plan, financing + donor shares, learning, media) and the
+  model + historical activations, plan, financing, learning, media) and the
   framework pages the map opens — nothing else, and no link to anything else. Every other
   page (data admin and entry, tables, schema, reconciliation and review pages, the extra
   dashboards and explorers, the pages of pipeline frameworks the map does not show) is the
@@ -69,7 +78,14 @@ are kept forever (the year-end official state, for the map's time view).
   link to the public site, never the reverse. The builders do not say which site a page is
   on: `page()` collects the pages and `write_site()` in `scripts/build_site.py` sorts them
   (`PUBLIC_TABS`), respells the links and stops the build if a public page carries the
-  proxy token. `scripts/publish.sh` allows exactly one directory on gh-pages (`admin/`,
+  proxy token. A public page never shows a database name (`aa.<table>`, `v_<view>`) or a raw
+  code (a status, hazard, event type, report or fund code: words only, `dashboards.code_words`):
+  `write_site()` cleans what slips through (owner, 2026-10-28: auto-remove) — a name is removed, a
+  code replaced by its words — and prints a `::warning::` per page cleaned in the publish run, so it
+  gets fixed at the source; `AA_SITE_GUARD=strict` stops the build instead (local checks).
+  A public page can be **unlisted** (`UNLISTED_TABS`): same password as the
+  tabs, but no header link and no link from any page (the build stops if one appears), so
+  only people given its address find it. `scripts/publish.sh` allows exactly one directory on gh-pages (`admin/`,
   encrypted pages and the two pdf.js files only) and refuses any page that is not
   encrypted. Every page carries the "internal product under development" banner.
 - the **open layer** (2026-10-08, `scripts/llm_layer.py`, written by `write_site()`): the one
@@ -124,8 +140,43 @@ are kept forever (the year-end official state, for the map's time view).
   `/schema` `/rows` `/distinct` `/save` `/delete` for the admin page; every field change is
   audited to `aa.entry_audit`; KB-loader and OneGMS-mirror tables are read-only
 - `scripts/dashboards.py` — dashboards, per-framework pages, explorer, entry forms
-- `scripts/donors.py` — the donor-shares page (reads `dashboards.funding_series`, so its
+- `scripts/page_model.py` — the Model page. Its trigger timelines ("How much warning do the
+  triggers give?") draw `aa.trigger_timeline`: one panel per hazard on its own clock (hours to
+  landfall, days to the flood peak, drought months against the rainy season, with a
+  season / calendar switch), rows grouped by framework, current version only. The rows are
+  hand-entered from the framework documents through an entries file (`op: replace` per
+  version) — never committed here; until the nightly's one-off `--ensure-schema` run creates
+  the table, every framework reads "trigger windows not recorded yet"
+- `scripts/donors.py` — the donor-shares page, admin only (reads `dashboards.funding_series`, so its
   released / pre-arranged totals are the Funding page's)
+- `scripts/page_media.py` — the Media page: the folder "AA visuals" (OCHA-HFSA SharePoint,
+  "(08) External communication"; a Google Drive folder until that was deleted in Oct 2026) as
+  it was gathered (photos by country, the social posts of the folder's catalogue), read from
+  `site_src/media.json`. A photo is shown from two renditions published under `media/` on
+  gh-pages (public files, as the Drive renditions were); the page links to neither the
+  folder nor the originals.
+  `scripts/sync_media.py --from DIR` (DIR = the folder downloaded from SharePoint and
+  unzipped) archives every file on the dev blob (`projects/ds-aa-tracking/raw/media/`), makes
+  the renditions once (`…/processed/media/web/`) and rewrites the manifest; it is run by hand
+  and its diff is read before it is committed (not part of the nightly build). `publish.sh`
+  fetches the renditions with `--fetch`. Not curated yet: no selection, captions or credits
+- `scripts/page_climate.py` — two unlisted pages that link only to each other.
+  `climate-adaptation.html`: CERF projects coded by hand against climate-adaptation indicators
+  (a gate question on climate risk, and activity indicators in seven areas), filterable by
+  indicator. `climate-coding-accuracy.html`: how closely automated passes (coders named
+  `model-*`, listed in `RUNS`) reproduce the hand coding — kappa, precision and recall per
+  run, per indicator, and project by project with the model's evidence quotes. Codes in `aa.cerf_climate_coding`
+  (project × indicator × coder), project facts from the CERF mirror. A coder's workbook
+  becomes an entry file with `scripts/import_climate_coding.py WORKBOOK --coder NAME --out
+  FILE.json` (it checks every header before reading), then `apply_entries.py --upload` —
+  only once the nightly's one-off `--ensure-schema` run has created the table.
+  The workbooks and the proposals they were coded from never go in git
+- `scripts/mock_unocha.py` — the mock-up of the public site embedded in
+  https://www.unocha.org/anticipatory-action (unlisted, public password): `mock-unocha.html`
+  and a `mock-unocha-<page>` twin of every page reachable from the map, OCHA's page with ours
+  under its photo in place of their section tabs, our CSS scoped to `.aa-embed`. Run by
+  `publish.sh` after the build. OCHA's page is a committed snapshot (`site_src/unocha-shell.html`,
+  `site_src/unocha.css`), refreshed by hand with `scripts/snapshot_unocha.py`
 - `scripts/landing.py` — landing map (base: Natural Earth 1:50m simplified as one topology so
   borders stay shared; zoom: FieldMaps edge-matched COD-AB for every country in view): zoom
   to a country, subnational scope per framework
@@ -141,8 +192,12 @@ Since 2026-09-30 laptops cannot reach the dev DB. Two write paths remain: the ad
 (its proxy runs in Azure), and **entry files**: JSON on the private dev blob
 (`projects/ds-aa-tracking/entries/`, never in this public repo) that the nightly Databricks
 job applies once each, before the snapshot (`scripts/apply_entries.py`; format in its
-docstring; upload with `--upload FILE`, test against a restored local copy with `--dir`).
+docstring; upload with `--upload FILE`, test against a restored local copy with `--dir`;
+`--dry-run` applies each file in its transaction, lets the database check it, and rolls back).
 Every row is audited to `aa.entry_audit`; applied files are recorded in `aa.applied_entries`.
+Besides upserts, an item can `"delete"` one row by its full key or `"op": "replace"` a
+version's rows in a table (a re-run backtest). A file that fails stays pending and never
+blocks the others.
 
 ## Running
 

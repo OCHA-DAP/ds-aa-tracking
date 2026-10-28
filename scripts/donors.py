@@ -28,7 +28,7 @@ import json
 
 import pandas as pd
 
-from dashboards import FLOW_JS, _dash_page, _flow_panel, _money_flows, _records, funding_series
+from dashboards import FLOW_JS, _dash_page, _flow_panel, _money_flows, _records, country_en, funding_series
 
 
 def build_donors(page, d):
@@ -58,6 +58,17 @@ def build_donors(page, d):
     # donor flows: the Financing page's Sankey rows, donors first (framework money: the same
     # released series as the attribution above)
     flow_rows, flow_years, flow_default, flow_names = _money_flows(d, pre, act)
+    # frameworks that allow two activations a year: their pre-arranged money counts twice in the
+    # Financing series this page attributes (dashboards.prearranged_now / funding_series)
+    vf = d["vfund"]
+    cname = dict(zip(d["current"]["country_iso3"], d["current"]["country_name"]))
+    two = (sorted({f"{country_en(c, cname)} {h}"
+                   for c, h, x in zip(vf["country_iso3"], vf["hazard"], vf["activations_per_year"]) if x > 1})
+           if "activations_per_year" in vf else [])
+    two_note = ("" if not two else
+                " Frameworks that allow two activations a year count their pre-arranged money twice "
+                "(the budget per activation is half of it), here as on the Financing page: "
+                + ", ".join(two) + ".")
 
     panels = """
 <div class='fbar'>
@@ -82,7 +93,7 @@ def build_donors(page, d):
  <div class='panel'><h3 id='c1t'>Donor shares of AA released</h3><canvas id='c1' height='420'></canvas>
    <div class='note' id='c1n'>Each donor's share of the fund's income that year × the AA the fund released that year (framework activations and ad hoc allocations). Stacked by fund type.</div></div>
  <div class='panel'><h3 id='c2t'>Donor shares of AA pre-arranged</h3><canvas id='c2' height='420'></canvas>
-   <div class='note' id='c2n'>Same shares × the pre-arranged envelopes / AA-tagged country and regional fund allocations of that year (the Financing page's annual series).</div></div>
+   <div class='note' id='c2n'>Same shares × the pre-arranged envelopes / AA-tagged Country and Regional Fund allocations of that year (the Financing page's annual series).</div></div>
  <div class='panel' style='grid-column:1/-1'><h3 id='c3t'>Attributed AA released by year</h3><canvas id='c3' height='260'></canvas>
    <div class='note' id='c3n'>All years; the largest donors over the period, everyone else as "other". Ignores the year filter.</div></div>
 </div>
@@ -105,14 +116,14 @@ def build_donors(page, d):
 <div id='pview'>
 <h2 id='flows'>Donor flows</h2>
 <p class='meta'>Donors → funds → agencies (→ partner types): each donor's share of a fund's income that year, applied to the fund's AA money and followed on to the agencies and, for released money, the partners they sub-grant to. Framework money, as in the shares above; the <a href='dash-funding.html'>Financing page</a> shows the same chart starting at the funds. The fund filter applies; the year, donor-type and donor filters do not (the chart has its own year).</p>
-""" + _flow_panel(donors_on=True, donor_toggle=False) + """
+""" + _flow_panel(donors_on=True, donor_toggle=False, extra=two_note) + """
 <h2>All donors</h2>
 <section><p class='meta'>Pick a donor in the filter bar (or click a name) for that donor's view: their share of each fund, attributed AA by fund and by year, and a fund × year table — the workbook's per-donor tab.</p>
 <div style='display:flex;gap:10px;align-items:center'>
 <input class='filter' placeholder='filter rows…' oninput='filt(this)'>
 <button class='dl' onclick='dlTable()'>⬇ CSV</button></div>
 <div class='scroll'><table class='data' id='tbl'><thead><tr>
-<th>donor</th><th>type</th><th>paid to CERF</th><th>paid to country and regional funds</th><th>share of CERF</th><th>released via CERF</th><th>released via country and regional funds</th><th>released total</th><th>pre-arranged via CERF</th><th>pre-arranged via country and regional funds</th><th>build</th>
+<th>donor</th><th>type</th><th>paid to CERF</th><th>paid to Country and Regional Funds</th><th>share of CERF</th><th>released via CERF</th><th>released via Country and Regional Funds</th><th>released total</th><th>pre-arranged via CERF</th><th>pre-arranged via Country and Regional Funds</th><th>build</th>
 </tr></thead><tbody></tbody></table></div></section>
 </div>"""
     if not have_data:
@@ -211,7 +222,7 @@ function draw(){
   tP.textContent = money(sum(o=>o.preCerf+o.preCbpf+o.preReg)); tPl.textContent = y==='all' ? `AA pre-arranged, attributed to donors, as at ${PREY} (a stock: never summed across years)` : 'AA pre-arranged, attributed to donors';
   tB.textContent = money(sum(o=>o.build)); tBl.textContent = 'build earmarks (OCHA AA project)';
   c1t.textContent = 'Donor shares of AA released'; c1n.textContent = "Each donor's share of the fund's income that year × the AA the fund released that year (framework activations and ad hoc allocations). Stacked by fund type.";
-  c2t.textContent = 'Donor shares of AA pre-arranged' + (y==='all' ? ` — as at ${PREY}` : ''); c2n.textContent = "Same shares × the pre-arranged envelopes / AA-tagged country and regional fund allocations of that year (the Financing page's annual series)." + (y==='all' ? ' Pre-arranged money is in place on a date, so it is shown for the latest year rather than added up over years.' : '');
+  c2t.textContent = 'Donor shares of AA pre-arranged' + (y==='all' ? ` — as at ${PREY}` : ''); c2n.textContent = "Same shares × the pre-arranged envelopes / AA-tagged Country and Regional Fund allocations of that year (the Financing page's annual series)." + (y==='all' ? ' Pre-arranged money is in place on a date, so it is shown for the latest year rather than added up over years.' : '');
   c3t.textContent = 'Attributed AA released by year'; c3n.textContent = 'All years; the largest donors over the period, everyone else as "other". Ignores the year filter.';
   // pre-arranged is a stock: under 'all years' the unattributable part is as at PREY, not summed
   const unPre = y==='all' ? attribute(String(PREY), ft).un.pre : un.pre;

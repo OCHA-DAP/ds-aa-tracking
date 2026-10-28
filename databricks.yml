@@ -51,7 +51,7 @@ resources:
         databricks: job
         type: schema-owner
         kb: aa-tracking
-        output_schema: aa (snapshot only; no table writes since the KB flip)
+        output_schema: aa (entries files, then the snapshot)
         output_blob: projects/ds-aa-tracking/snapshot
       email_notifications:
         on_failure:
@@ -101,13 +101,12 @@ targets:
           job_clusters:
             - job_cluster_key: nightly_cluster
               new_cluster:
-                # Job Compute policy (000C79D951EAF0D6): ephemeral single-worker
-                # cluster with every dsci DB/blob secret injected as env vars.
+                # Job Compute (single node) policy (0017962FF5D1E3B9): ephemeral
+                # one-VM cluster with every dsci DB/blob secret injected as env vars.
                 # Minimal spec that validates against the policy; spark_version
-                # (latest LTS, Python 3.12) and node type come from its defaults.
-                policy_id: "000C79D951EAF0D6"
+                # (latest LTS, Python 3.12), node type and num_workers=0 come from it.
+                policy_id: "0017962FF5D1E3B9"
                 apply_policy_default_values: true
-                num_workers: 1
           tasks:
             - task_key: nightly
               job_cluster_key: nightly_cluster

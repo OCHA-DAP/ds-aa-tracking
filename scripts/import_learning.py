@@ -55,7 +55,7 @@ def main():
             else ("u", url.lower().rstrip("/"))
         if key in seen:      # keep the first (compendium order), but fill gaps from the twin
             prev = seen[key]
-            for f in ("publisher", "year", "key_stat", "summary"):
+            for f in ("publisher", "year", "month", "key_stat", "summary"):
                 if prev.get(f) in (None, "") and d.get(f):
                     prev[f] = d[f]
             if not prev.get("premises") and d.get("premises"):
@@ -66,7 +66,7 @@ def main():
         iso = [iso] if isinstance(iso, str) else (iso or None)
         row = {
             "title": d["title"].strip(), "url": url, "publisher": d.get("publisher"),
-            "year": d.get("year"), "doc_type": d.get("doc_type") or "other",
+            "year": d.get("year"), "month": d.get("month"), "doc_type": d.get("doc_type") or "other",
             "scope": d.get("scope") or ("country" if iso else "global"),
             "country_iso3": iso, "hazard": d.get("hazard"),
             "premises": d.get("premises") or [], "key_stat": d.get("key_stat"),
@@ -84,12 +84,13 @@ def main():
     with engine.begin() as conn:
         for r in rows:
             conn.execute(sa.text("""
-                INSERT INTO aa.learning_document (title, url, publisher, year, doc_type, scope,
+                INSERT INTO aa.learning_document (title, url, publisher, year, month, doc_type, scope,
                     country_iso3, hazard, premises, key_stat, summary, internal, section, source)
-                VALUES (:title, :url, :publisher, :year, :doc_type, :scope, :country_iso3, :hazard,
+                VALUES (:title, :url, :publisher, :year, :month, :doc_type, :scope, :country_iso3, :hazard,
                     :premises, :key_stat, :summary, :internal, :section, :source)
                 ON CONFLICT (url, title) DO UPDATE SET
                     publisher = EXCLUDED.publisher, year = EXCLUDED.year,
+                    month = coalesce(EXCLUDED.month, aa.learning_document.month),
                     doc_type = EXCLUDED.doc_type, scope = EXCLUDED.scope,
                     country_iso3 = EXCLUDED.country_iso3, hazard = EXCLUDED.hazard,
                     premises = EXCLUDED.premises, key_stat = EXCLUDED.key_stat,

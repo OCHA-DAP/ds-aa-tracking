@@ -1,0 +1,825 @@
+{
+ "about": "Publication months of the public learning documents (aa.learning_document.month), researched 2026-10-23 from each document's own date: the date printed on it or in its title, else its web page's publication date. The year becomes that date's year too: for 5 documents (ids 15, 31, 72, 79, 81) it replaces the year of the event or project they were recorded under (decided 2026-10-26); where no year was recorded, both are set. Applied by scripts/set_learning_months.py (id AND title must match, an existing month is never overwritten).",
+ "set": [
+  {
+   "id": 1,
+   "title": "From Pilot to Policy: How Governments are Leading Anticipatory Action (2026)",
+   "year_now": 2026,
+   "year": 2026,
+   "month": 3,
+   "evidence": "page date 9 Mar 2026"
+  },
+  {
+   "id": 2,
+   "title": "Anticipatory Action: Smart, Fast and Cost-Effective Humanitarian Assistance (September 2025)",
+   "year_now": 2025,
+   "year": 2025,
+   "month": 9,
+   "evidence": "title (September 2025); ReliefWeb posted 9 Dec 2025"
+  },
+  {
+   "id": 3,
+   "title": "Briefing Note: Acting ahead of Tropical Cyclones (January 2026)",
+   "year_now": 2026,
+   "year": 2026,
+   "month": 1,
+   "evidence": "title (January 2026)"
+  },
+  {
+   "id": 4,
+   "title": "Briefing Note: Acting ahead of Floods (January 2026)",
+   "year_now": 2026,
+   "year": 2026,
+   "month": 1,
+   "evidence": "title (January 2026)"
+  },
+  {
+   "id": 5,
+   "title": "Anticipatory action in fragile and conflict-affected settings (December 2025)",
+   "year_now": 2025,
+   "year": 2025,
+   "month": 12,
+   "evidence": "title; page 18 Dec 2025"
+  },
+  {
+   "id": 6,
+   "title": "The Earlier the Better? Cash Transfers for Drought Response in Niger (June 2025)",
+   "year_now": 2025,
+   "year": 2025,
+   "month": 6,
+   "evidence": "title (June 2025)"
+  },
+  {
+   "id": 7,
+   "title": "Fast Action for Floods: RCT Evidence on Forecast-based Cash Transfers from Bangladesh and Nepal (October 2025)",
+   "year_now": 2025,
+   "year": 2025,
+   "month": 10,
+   "evidence": "title; page 30 Oct 2025"
+  },
+  {
+   "id": 8,
+   "title": "Act Early, Act Together, Empower People – Lessons Learned from Anticipatory Cash through OCHA’s Pooled Funds (September 2025)",
+   "year_now": 2025,
+   "year": 2025,
+   "month": 9,
+   "evidence": "title; page 22 Sep 2025"
+  },
+  {
+   "id": 9,
+   "title": "Saving lives, time and money – Evidence from anticipatory action (May 2025)",
+   "year_now": 2025,
+   "year": 2025,
+   "month": 5,
+   "evidence": "title; page 6 May 2025"
+  },
+  {
+   "id": 10,
+   "title": "WFP’s evidence base on Anticipatory Action 2015–2024 (April 2025)",
+   "year_now": 2025,
+   "year": 2025,
+   "month": 4,
+   "evidence": "title; page 30 Apr 2025"
+  },
+  {
+   "id": 11,
+   "title": "Briefing Note - Anticipatory Action: An innovative tool at the intersection of disaster risk reduction and humanitarian response (October 2024)",
+   "year_now": 2024,
+   "year": 2024,
+   "month": 10,
+   "evidence": "title; page 14 Oct 2024"
+  },
+  {
+   "id": 12,
+   "title": "Anticipatory insurance with African Risk Capacity: a holistic benefit-cost analysis (August 2024)",
+   "year_now": 2024,
+   "year": 2024,
+   "month": 8,
+   "evidence": "title; page 14 Aug 2024"
+  },
+  {
+   "id": 13,
+   "title": "Five lessons on collective approaches to anticipatory action (29 July 2022)",
+   "year_now": 2022,
+   "year": 2022,
+   "month": 7,
+   "evidence": "title (July 2022)"
+  },
+  {
+   "id": 14,
+   "title": "Anticipatory action: lessons for the future (8 December 2022)",
+   "year_now": 2022,
+   "year": 2022,
+   "month": 12,
+   "evidence": "title; page 8 Dec 2022"
+  },
+  {
+   "id": 15,
+   "title": "CERF Allocation Report — Afghanistan Anticipatory Action against Drought (2025)",
+   "year_now": 2025,
+   "year": 2026,
+   "month": 1,
+   "evidence": "report dated 14 Jan 2026 (the allocation is 2025)"
+  },
+  {
+   "id": 17,
+   "title": "Bangladesh, Anticipatory Action: Impact Evaluation (WFP Office of Evaluation & World Bank DIME, 2026)",
+   "year_now": 2026,
+   "year": 2026,
+   "month": 9,
+   "evidence": "WFP page 11 Sep 2026"
+  },
+  {
+   "id": 18,
+   "title": "Impact Story: Working Against the clock: Anticipating floods in Bangladesh",
+   "year_now": 2024,
+   "year": 2024,
+   "month": 11,
+   "evidence": "ReliefWeb posted 8 Nov 2024"
+  },
+  {
+   "id": 20,
+   "title": "Cash before the storm: WFP’s early action empowers Bangladeshis",
+   "year_now": null,
+   "year": 2024,
+   "month": 11,
+   "evidence": "WFP page 18 Nov 2024"
+  },
+  {
+   "id": 21,
+   "title": "A race against floods in Bangladesh – Turning crisis into readiness through anticipatory action",
+   "year_now": 2025,
+   "year": 2025,
+   "month": 2,
+   "evidence": "page 13 Feb 2025"
+  },
+  {
+   "id": 26,
+   "title": "How Can Anticipatory Action Reach Scale and Sustainability? Learning from CERF in Bangladesh (August 2023)",
+   "year_now": 2023,
+   "year": 2023,
+   "month": 8,
+   "evidence": "title; PDF dated August 2023"
+  },
+  {
+   "id": 28,
+   "title": "Anticipatory Cash Transfers in Climate Disaster Response (April 2021)",
+   "year_now": 2021,
+   "year": 2021,
+   "month": 4,
+   "evidence": "title (April 2021); PDF created Apr 2021"
+  },
+  {
+   "id": 29,
+   "title": "Collective Anticipatory Humanitarian Action for Monsoon Flooding (February 2021)",
+   "year_now": 2021,
+   "year": 2021,
+   "month": 2,
+   "evidence": "title; PDF dated February 2021"
+  },
+  {
+   "id": 31,
+   "title": "Safeguarding Menstrual Health During Floods (2020)",
+   "year_now": 2020,
+   "year": 2021,
+   "month": 1,
+   "evidence": "UNFPA's page gives publication 10 January 2021 (the floods were 2020)"
+  },
+  {
+   "id": 32,
+   "title": "Acting Before a Flood to Protect the Most Vulnerable: An Independent Review of WFP’s Anticipatory Cash Transfers in Bangladesh (5 August 2021)",
+   "year_now": 2021,
+   "year": 2021,
+   "month": 8,
+   "evidence": "title; page 5 Aug 2021"
+  },
+  {
+   "id": 33,
+   "title": "Process Learning from UN-OCHA 2020 Monsoon Anticipatory Action Pilot in Bangladesh (September 2020)",
+   "year_now": 2020,
+   "year": 2020,
+   "month": 9,
+   "evidence": "title; PDF dated September 2020"
+  },
+  {
+   "id": 34,
+   "title": "Flood 2020, Trigger Analysis Bangladesh (11 March 2021)",
+   "year_now": 2021,
+   "year": 2021,
+   "month": 3,
+   "evidence": "title; PDF dated 11 March 2021"
+  },
+  {
+   "id": 36,
+   "title": "Model report: Drought anticipatory action trigger in Burkina Faso (December 2022)",
+   "year_now": 2022,
+   "year": 2022,
+   "month": 12,
+   "evidence": "title; PDF dated December 2022"
+  },
+  {
+   "id": 37,
+   "title": "Anticipatory Action DRC",
+   "year_now": null,
+   "year": 2023,
+   "month": 7,
+   "evidence": "page 20 Jul 2023"
+  },
+  {
+   "id": 38,
+   "title": "Anticipatory Action DRC – Full Framework",
+   "year_now": 2022,
+   "year": 2022,
+   "month": 12,
+   "evidence": "page 14 Dec 2022"
+  },
+  {
+   "id": 39,
+   "title": "Context Study",
+   "year_now": null,
+   "year": 2024,
+   "month": 9,
+   "evidence": "page 18 Sep 2024"
+  },
+  {
+   "id": 40,
+   "title": "CERF Press Release January 2023 – Allocation de 750 000 dollars US pour prévenir le choléra en République démocratique du Congo",
+   "year_now": 2023,
+   "year": 2023,
+   "month": 1,
+   "evidence": "title; page 23 Jan 2023"
+  },
+  {
+   "id": 41,
+   "title": "CERF Press Release July 2023 – CERF allocates $750,000 for anticipatory action against cholera in the Democratic Republic of the Congo",
+   "year_now": 2023,
+   "year": 2023,
+   "month": 7,
+   "evidence": "title; page 12 Jul 2023"
+  },
+  {
+   "id": 44,
+   "title": "Impact Story – How Anticipatory Action in the DRC is saving lives from Cholera",
+   "year_now": 2025,
+   "year": 2025,
+   "month": 5,
+   "evidence": "PDF dated May 2025"
+  },
+  {
+   "id": 45,
+   "title": "Anticipatory Action DRC (2025 Summary)",
+   "year_now": 2025,
+   "year": 2025,
+   "month": 4,
+   "evidence": "page 10 Apr 2025"
+  },
+  {
+   "id": 46,
+   "title": "Press Release March 2025",
+   "year_now": 2025,
+   "year": 2025,
+   "month": 3,
+   "evidence": "title; page 14 Mar 2025"
+  },
+  {
+   "id": 47,
+   "title": "Anticipatory Action Ethiopia",
+   "year_now": null,
+   "year": 2021,
+   "month": 8,
+   "evidence": "page 10 Aug 2021"
+  },
+  {
+   "id": 50,
+   "title": "Evaluation Report of OCHA’s Anticipatory Action trigger: Ethiopia (26 April 2021)",
+   "year_now": 2021,
+   "year": 2021,
+   "month": 4,
+   "evidence": "title; PDF dated 26 April 2021"
+  },
+  {
+   "id": 51,
+   "title": "Predicting Drought-Related Food Insecurity In Ethiopia (May 2021)",
+   "year_now": 2021,
+   "year": 2021,
+   "month": 5,
+   "evidence": "title (May 2021)"
+  },
+  {
+   "id": 52,
+   "title": "Ethiopia survey report by 60 Decibels",
+   "year_now": 2023,
+   "year": 2023,
+   "month": 12,
+   "evidence": "page 22 Dec 2023"
+  },
+  {
+   "id": 53,
+   "title": "Blog by Anticipation Hub on the 60_Decibels survey",
+   "year_now": null,
+   "year": 2023,
+   "month": 11,
+   "evidence": "page 13 Nov 2023"
+  },
+  {
+   "id": 54,
+   "title": "Anticipatory Action in Complex Crises: Lessons from Ethiopia",
+   "year_now": null,
+   "year": 2023,
+   "month": 12,
+   "evidence": "page 21 Dec 2023"
+  },
+  {
+   "id": 55,
+   "title": "Impact Story: Acting Early in Ethiopia when the world isn’t watching",
+   "year_now": null,
+   "year": 2024,
+   "month": 3,
+   "evidence": "page 13 Mar 2024"
+  },
+  {
+   "id": 56,
+   "title": "NEW: OCHA web version – Impact Story: Acting Early in Ethiopia when the world isn’t watching",
+   "year_now": null,
+   "year": 2024,
+   "month": 3,
+   "evidence": "ReliefWeb posted 14 Mar 2024"
+  },
+  {
+   "id": 57,
+   "title": "Anticipatory Action Framework for Tropical Cyclones in Fiji: Multi-stakeholder Evaluation Protocol (March 2025)",
+   "year_now": 2025,
+   "year": 2025,
+   "month": 3,
+   "evidence": "title; page 3 Mar 2025"
+  },
+  {
+   "id": 58,
+   "title": "Process Learning Report: Anticipatory Action Framework for Tropical Cyclones in Fiji",
+   "year_now": null,
+   "year": 2025,
+   "month": 7,
+   "evidence": "page 29 Jul 2025"
+  },
+  {
+   "id": 59,
+   "title": "WFP Case Study on AA and Social Protection Systems",
+   "year_now": 2024,
+   "year": 2024,
+   "month": 4,
+   "evidence": "page 18 Apr 2024"
+  },
+  {
+   "id": 60,
+   "title": "Press Release: UN and Government of Fiji Launch ground-breaking Anticipatory Action Framework for tropical cyclones",
+   "year_now": null,
+   "year": 2023,
+   "month": 11,
+   "evidence": "page 16 Nov 2023"
+  },
+  {
+   "id": 61,
+   "title": "Household Survey for Anticipatory Action in Malawi (8 December 2022)",
+   "year_now": 2022,
+   "year": 2022,
+   "month": 12,
+   "evidence": "title; page 8 Dec 2022"
+  },
+  {
+   "id": 62,
+   "title": "Malawi Anticipatory Action: Process Learning on Trigger Development (March 2022)",
+   "year_now": 2022,
+   "year": 2022,
+   "month": 3,
+   "evidence": "title (March 2022)"
+  },
+  {
+   "id": 63,
+   "title": "Malawi Dry Spells Anticipatory Action Trigger: Quality Assurance Review (April 2022)",
+   "year_now": 2022,
+   "year": 2022,
+   "month": 4,
+   "evidence": "title; PDF dated April 2022"
+  },
+  {
+   "id": 64,
+   "title": "Detecting Dry Spells in Malawi: Learnings from developing an anticipatory action trigger (June 2021)",
+   "year_now": 2021,
+   "year": 2021,
+   "month": 6,
+   "evidence": "title (June 2021)"
+  },
+  {
+   "id": 65,
+   "title": "Joint Post-Distribution Monitoring for Cyclone Jude Anticipatory Action (2026)",
+   "year_now": 2026,
+   "year": 2026,
+   "month": 5,
+   "evidence": "page 26 May 2026"
+  },
+  {
+   "id": 66,
+   "title": "WFP — 2025: People’s Experience of Anticipatory Action (Mozambique)",
+   "year_now": 2025,
+   "year": 2025,
+   "month": 5,
+   "evidence": "WFP page 28 May 2025"
+  },
+  {
+   "id": 67,
+   "title": "Summary – Mozambique Anticipatory action and Early Response Framework (2025)",
+   "year_now": 2025,
+   "year": 2025,
+   "month": 5,
+   "evidence": "page 23 May 2025"
+  },
+  {
+   "id": 68,
+   "title": "Press Release – Allocation of US$6 million",
+   "year_now": 2025,
+   "year": 2025,
+   "month": 3,
+   "evidence": "ReliefWeb posted 13 Mar 2025"
+  },
+  {
+   "id": 69,
+   "title": "How Can Anticipatory Action Reach Scale and Sustainability? Learning from CERF in Nepal (August 2023)",
+   "year_now": 2023,
+   "year": 2023,
+   "month": 8,
+   "evidence": "title (August 2023)"
+  },
+  {
+   "id": 71,
+   "title": "Community Perception Report: Flood, Landslide And Heavy Rain (11 January 2022)",
+   "year_now": 2022,
+   "year": 2022,
+   "month": 1,
+   "evidence": "title; page 11 Jan 2022"
+  },
+  {
+   "id": 72,
+   "title": "Joint Post-Distribution Monitoring (PDM) of Forecast-based Anticipatory Action Project (FbAA) – 2022",
+   "year_now": 2022,
+   "year": 2023,
+   "month": 5,
+   "evidence": "WFP's page is dated 12 May 2023 (the project was 2022)"
+  },
+  {
+   "id": 73,
+   "title": "Nepal, Anticipatory Action: Impact evaluation",
+   "year_now": null,
+   "year": 2025,
+   "month": 4,
+   "evidence": "WFP page 14 Apr 2025"
+  },
+  {
+   "id": 74,
+   "title": "Impact evaluation brief: Impact of Anticipatory Action for Floods in Nepal",
+   "year_now": null,
+   "year": 2025,
+   "month": 4,
+   "evidence": "PDF dated April 2025, created Apr 2025"
+  },
+  {
+   "id": 75,
+   "title": "Model report: Anticipatory Action trigger for drought in Niger (January 2023)",
+   "year_now": 2023,
+   "year": 2023,
+   "month": 1,
+   "evidence": "title; PDF dated January 2023"
+  },
+  {
+   "id": 76,
+   "title": "Impact story: Breaking the cycle of negative coping strategies – Lessons from AA in Niger",
+   "year_now": null,
+   "year": 2024,
+   "month": 6,
+   "evidence": "page 24 Jun 2024"
+  },
+  {
+   "id": 77,
+   "title": "CERF Press Statement – September 2022",
+   "year_now": 2022,
+   "year": 2022,
+   "month": 9,
+   "evidence": "title; page 16 Sep 2022"
+  },
+  {
+   "id": 79,
+   "title": "Qualitative Evaluation of Anticipatory Action Pilot in Niger – 2022",
+   "year_now": 2022,
+   "year": 2024,
+   "month": 4,
+   "evidence": "ReliefWeb published it 11 April 2024 (the pilot was 2022)"
+  },
+  {
+   "id": 81,
+   "title": "Nigeria: After Activation Review — Workshop Report (Yola, Adamawa State, 25–27 November 2025)",
+   "year_now": 2025,
+   "year": 2026,
+   "month": 2,
+   "evidence": "the report's page is dated 24 Feb 2026 (the workshop was 25-27 Nov 2025)"
+  },
+  {
+   "id": 84,
+   "title": "Before the Floods Come: Anticipatory Action Protects Communities in Nigeria",
+   "year_now": null,
+   "year": 2026,
+   "month": 4,
+   "evidence": "page 30 Apr 2026"
+  },
+  {
+   "id": 85,
+   "title": "Press Release: CERF commits US$5 million to support AA floods in Nigeria",
+   "year_now": 2025,
+   "year": 2025,
+   "month": 2,
+   "evidence": "page 12 Feb 2025"
+  },
+  {
+   "id": 86,
+   "title": "Pre-crisis survey (START Network) (22 September 2022)",
+   "year_now": 2022,
+   "year": 2022,
+   "month": 9,
+   "evidence": "title; page 22 Sep 2022"
+  },
+  {
+   "id": 87,
+   "title": "CERF Anticipatory Action Simulation Exercise (20 October 2022)",
+   "year_now": 2022,
+   "year": 2022,
+   "month": 10,
+   "evidence": "title; page 20 Oct 2022"
+  },
+  {
+   "id": 88,
+   "title": "Model report: Typhoon impact model (August 2022)",
+   "year_now": 2022,
+   "year": 2022,
+   "month": 8,
+   "evidence": "title; PDF dated August 2022"
+  },
+  {
+   "id": 89,
+   "title": "After Action Review on the CERF Anticipatory Action for Typhoons",
+   "year_now": 2022,
+   "year": 2022,
+   "month": 3,
+   "evidence": "page 31 Mar 2022"
+  },
+  {
+   "id": 91,
+   "title": "Beneficiary Assessment for Independent Evaluation of Anticipatory Action Pilot in Somalia (Axiom) (August 2021)",
+   "year_now": 2021,
+   "year": 2021,
+   "month": 8,
+   "evidence": "title; page 1 Aug 2021"
+  },
+  {
+   "id": 93,
+   "title": "Climate Change Drives Displacement of Thousands of Vulnerable People in Somalia (4 January 2021)",
+   "year_now": 2021,
+   "year": 2021,
+   "month": 1,
+   "evidence": "title; page 4 Jan 2021"
+  },
+  {
+   "id": 94,
+   "title": "Somalia: Drought (15 July 2020)",
+   "year_now": 2020,
+   "year": 2020,
+   "month": 7,
+   "evidence": "title (15 July 2020)"
+  },
+  {
+   "id": 95,
+   "title": "Lessons from the 2020 Somalia Pilot (October 2021)",
+   "year_now": 2021,
+   "year": 2021,
+   "month": 10,
+   "evidence": "title (October 2021)"
+  },
+  {
+   "id": 96,
+   "title": "Lessons from the 2020 Somalia Pilot – summary presentation",
+   "year_now": 2021,
+   "year": 2021,
+   "month": 3,
+   "evidence": "PDF dated March 2021"
+  },
+  {
+   "id": 98,
+   "title": "UN humanitarian chief to release up to $140M in CERF funds for anticipatory-action projects (25 June 2020)",
+   "year_now": 2020,
+   "year": 2020,
+   "month": 6,
+   "evidence": "title (June 2020)"
+  },
+  {
+   "id": 99,
+   "title": "Can early intervention prevent humanitarian disasters? (25 June 2020)",
+   "year_now": 2020,
+   "year": 2020,
+   "month": 6,
+   "evidence": "title (June 2020)"
+  },
+  {
+   "id": 100,
+   "title": "Anticipatory Action Plan for Drought in Somalia (23 June 2020)",
+   "year_now": 2020,
+   "year": 2020,
+   "month": 6,
+   "evidence": "title (23 June 2020)"
+  },
+  {
+   "id": 101,
+   "title": "Anticipatory action Somalia (10 August 2021)",
+   "year_now": 2021,
+   "year": 2021,
+   "month": 8,
+   "evidence": "title; page 10 Aug 2021"
+  },
+  {
+   "id": 106,
+   "title": "Somalia: Drought (26 April 2021)",
+   "year_now": 2021,
+   "year": 2021,
+   "month": 4,
+   "evidence": "title (26 April 2021)"
+  },
+  {
+   "id": 107,
+   "title": "Assessment of Drought & Anticipatory Action on Targeted Populations (November 2022)",
+   "year_now": 2022,
+   "year": 2022,
+   "month": 11,
+   "evidence": "title; PDF created Nov 2022"
+  },
+  {
+   "id": 108,
+   "title": "Listening to those in crisis: understanding perspectives on anticipatory action in Somalia",
+   "year_now": 2023,
+   "year": 2023,
+   "month": 3,
+   "evidence": "page 10 Mar 2023"
+  },
+  {
+   "id": 113,
+   "title": "UN Central Emergency Response Fund supports anticipatory action in Ethiopia and Somalia (16 April 2022)",
+   "year_now": 2022,
+   "year": 2022,
+   "month": 4,
+   "evidence": "title (April 2022)"
+  },
+  {
+   "id": 115,
+   "title": "Flood risk for South Sudan’s 2022 Rainy Season (May 6, 2022)",
+   "year_now": 2022,
+   "year": 2022,
+   "month": 5,
+   "evidence": "title (May 6, 2022)"
+  },
+  {
+   "id": 120,
+   "title": "Impact Study: Impacts of early action support on lives and livelihoods in South Sudan: The Life in Bentiu Study (October 2023)",
+   "year_now": 2023,
+   "year": 2023,
+   "month": 10,
+   "evidence": "title (October 2023)"
+  },
+  {
+   "id": 125,
+   "title": "OCHA Impact story – Lessons from the 2022 South Sudan floods on acting ahead",
+   "year_now": null,
+   "year": 2024,
+   "month": 1,
+   "evidence": "page 18 Jan 2024"
+  },
+  {
+   "id": 126,
+   "title": "OCHA web story – Lessons from the 2022 South Sudan floods on acting ahead",
+   "year_now": null,
+   "year": 2024,
+   "month": 1,
+   "evidence": "ReliefWeb posted 18 Jan 2024"
+  }
+ ],
+ "cerf_reports_left_blank": [
+  {
+   "id": 27,
+   "title": "Bangladesh Rapid Response, Anticipatory Action Pilot, Flood (2020)"
+  },
+  {
+   "id": 42,
+   "title": "Implementation Report on the CERF Allocation – North Kivu"
+  },
+  {
+   "id": 43,
+   "title": "Implementation Reports on the CERF Allocation – Tanganyika"
+  },
+  {
+   "id": 48,
+   "title": "Ethiopia, Anticipatory Action, Drought (2021)"
+  },
+  {
+   "id": 70,
+   "title": "CERF Implementation Report – Flood Rapid Response 2022"
+  },
+  {
+   "id": 78,
+   "title": "CERF AA Implementation Report – Niger drought 2022"
+  },
+  {
+   "id": 90,
+   "title": "Somalia, Anticipatory Action Against Food Insecurity (2020)"
+  },
+  {
+   "id": 102,
+   "title": "Somalia, Anticipatory Action, Drought (2021)"
+  }
+ ],
+ "no_date_found": [
+  {
+   "id": 16,
+   "title": "FAO — Forecast-Based Early Actions to Mitigate Drought Impacts on Food Security (Afghanistan, 2025)",
+   "url": "https://openknowledge.fao.org/bitstreams/1dd7f3fb-80d8-462e-9016-5b0ce237bf23/download"
+  },
+  {
+   "id": 19,
+   "title": "Impact Story – In Bangladesh’s Jamuna Basin, WFP’s anticipatory action response breaks ground in the fight against climate change",
+   "url": "https://medium.com/@WFP_Asia_Pacific/in-bangladeshs-jamuna-basin-wfp-s-anticipatory-action-response-breaks-ground-in-the-fight-against-a19be6209204"
+  },
+  {
+   "id": 30,
+   "title": "Bangladesh: Impact of Anticipatory Action (2021)",
+   "url": "http://www.fao.org/3/cb4113en/cb4113en.pdf"
+  },
+  {
+   "id": 35,
+   "title": "Anticipatory Action in Bangladesh Before Peak Monsoon Flooding (2020)",
+   "url": "https://centre.humdata.org/anticipatory-action-in-bangladesh-before-peak-monsoon-flooding/"
+  },
+  {
+   "id": 49,
+   "title": "Anticipatory Action Pilot in Ethiopia: Process learning on partnership and design (2021)",
+   "url": "https://static1.squarespace.com/static/61542ee0a87a394f7bc17b3a/t/61f8ef7bd50e4c3cad0e054e/1643704188537/CDP_AA+Ethiopia+Pilot+Learning_Engagement+%26+Design+-+final+310122.pdf"
+  },
+  {
+   "id": 82,
+   "title": "From Triggers to Outcomes: An Evidence-Based Assessment of Anticipatory Action in Adamawa, Nigeria (2026)",
+   "url": "https://www.anticipation-hub.org/download/file-5951"
+  },
+  {
+   "id": 83,
+   "title": "Snapshot overview of the Nigeria After-Activation Review results (2025)",
+   "url": "https://www.anticipation-hub.org/download/file-5679"
+  },
+  {
+   "id": 92,
+   "title": "Life-saving disease prevention and mitigation efforts continue in Somalia under anticipatory action framework (2020)",
+   "url": "http://www.emro.who.int/somalia/news/life-saving-disease-prevention-and-mitigation-efforts-continue-in-somalia-under-anticipatory-action-framework.html"
+  },
+  {
+   "id": 97,
+   "title": "Anticipatory Action in Somalia: Learning from 2020",
+   "url": "https://www.unocha.org/our-work/humanitarian-financing/anticipatory-action/anticipatory-action-somalia-learning-2020"
+  },
+  {
+   "id": 103,
+   "title": "Cash Assistance for Mitigation of Gender-Based Violence in Somalia (2021)",
+   "url": "https://somalia.unfpa.org/sites/default/files/pub-pdf/gbv_learning_brief_0.pdf"
+  },
+  {
+   "id": 109,
+   "title": "Summary Learning Somalia 2021 Allocation",
+   "url": "https://www.unocha.org/summary-learning-somalia-2021-allocation"
+  },
+  {
+   "id": 110,
+   "title": "FAO Somalia: Supporting Rural Households",
+   "url": "https://www.flickr.com/photos/faoemergencies/sets/72177720295394754/"
+  },
+  {
+   "id": 114,
+   "title": "CERF Early Action Monitoring Framework (2022)",
+   "url": "https://data.humdata.org/dataset/cerf-early-action-monitoring-framework-2022"
+  },
+  {
+   "id": 118,
+   "title": "CERF Press Release for 2022 South Sudan Flood allocation (2022)",
+   "url": "https://documentcloud.adobe.com/spodintegration/index.html?locale=en-us"
+  },
+  {
+   "id": 121,
+   "title": "Annex to The Life in Bentiu Study",
+   "url": "https://documentcloud.adobe.com/spodintegration/index.html?locale=en-us"
+  },
+  {
+   "id": 122,
+   "title": "Acting in Advance of Flooding: Early Action in South Sudan (2023)",
+   "url": "https://documentcloud.adobe.com/spodintegration/index.html?locale=en-us"
+  }
+ ]
+}
