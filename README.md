@@ -26,6 +26,8 @@ knowledge base's loaders used to write (see "AA management moved here" below). I
   and markers, application-level beneficiary demographics, final-report narratives,
   emergency-type retags, CIRV
 
+Decisions about the site (who made them, when, why, and whether they still stand) are logged in [`docs/DECISIONS.md`](docs/DECISIONS.md).
+
 ## The KB flip (2026-09-28)
 
 This system is **authoritative**. The knowledge base (`ds-knowledge-base`) is no longer a
