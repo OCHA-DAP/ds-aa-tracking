@@ -139,8 +139,10 @@ table.data.acts { min-width:560px; } table.data.acts td:first-child { white-spac
 .panel { background:#fff; border:1px solid #e0e0e0; border-radius:6px; padding:14px 16px; min-width:0; overflow:hidden; }
 .panel h3 { margin:2px 0 10px; font-size:14.5px; }
 .panel .note { color:#666; font-size:11.5px; margin-top:6px; }
-.tiles { display:flex; gap:14px; flex-wrap:wrap; margin:12px 0; }
-.tile { background:#fff; border:1px solid #e0e0e0; border-radius:6px; padding:12px 18px; min-width:150px; }
+/* tiles in even rows, as on the Map (owner, 2026-10-28): as many equal columns as fit */
+.tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:14px; margin:12px 0; }
+.tile { background:#fff; border:1px solid #e0e0e0; border-radius:6px; padding:12px 18px; min-width:0; }
+@media (max-width:759px) { .tiles { grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; } .tile { padding:10px 12px; } }
 .tile .v { font-size:22px; font-weight:700; }
 .tile .l { font-size:12px; color:#666; }
 .fbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; background:#fff;

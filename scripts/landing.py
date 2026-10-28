@@ -2049,6 +2049,7 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
 /* the activations tile: '$39M released in 14 activations', the two figures in bold (owner, 2026-10-28) */
 .gtiles .tile .v.vs { font-size:13.5px; font-weight:400; line-height:1.3; color:#0f2540; }
 .gtiles .tile .v.vs b { font-size:22px; font-weight:700; }
+.gtiles .tile .v.vs b:nth-of-type(2)::before { content:"\A"; white-space:pre; }   /* the count on its own line */
 @media (max-width:759px){ .gtiles .tile .v.vs b { font-size:18px; } }
 .gtiles .gcap { grid-column:1 / -1; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#64748b; margin:-2px 0 -6px 2px; }
 @media (max-width:1199px){ .gtiles { grid-template-columns:repeat(3, minmax(0, 1fr)); } }
