@@ -256,7 +256,7 @@ CC_CSS = """
 .cc-gate .cc-th { max-width:600px; margin-bottom:12px; }
 .cc-i { display:grid; grid-template-columns:auto 1fr 56px 42px; gap:6px; align-items:center; font-size:12.5px;
         padding:3px 0; cursor:pointer; }
-.cc-i.zero { color:#999; }
+.cc-i.zero { color:#707070; }
 .cc-i .bar { display:block; height:8px; background:#eef1f5; border-radius:4px; position:relative; overflow:hidden; }
 .cc-i .bar i { position:absolute; left:0; top:0; bottom:0; background:var(--accent); }
 .cc-i .cnt { font-size:11.5px; color:#333; text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
@@ -267,7 +267,7 @@ CC_CSS = """
           background:#eaf4ff; color:#0b4f8a; white-space:nowrap; cursor:help; }
 .cc-tag.gate { background:#fff4d6; color:#7a5200; }
 .cc-note { color:#555; font-size:11.5px; margin-top:3px; }
-.cc-none { color:#999; font-size:12px; }
+.cc-none { color:#707070; font-size:12px; }
 /* funding meters: one ratio each, a filled track */
 .cc-fund { background:#fff; border:1px solid #e0e0e0; border-radius:6px; padding:12px 16px; max-width:980px; }
 .cc-fund .hero { font-size:22px; font-weight:700; } .cc-fund .hero span { font-size:13px; font-weight:400; color:var(--muted); }
@@ -615,7 +615,7 @@ ACC_CSS = """
 .acc-runs td, .acc-ind td { vertical-align:top; }
 .acc-d { color:var(--muted); font-size:11.5px; max-width:460px; margin-top:2px; }
 td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
-.acc-ind tr.zero td { color:#aaa; }
+.acc-ind tr.zero td { color:#707070; }
 .acc-proj tr.p { cursor:pointer; }
 .acc-proj tr.p.open td { background:#eef4fb; }
 .acc-proj td.sel { font-weight:700; }

@@ -610,7 +610,7 @@ def build_model(page, d):
 .lf {{ display:inline-block; padding:0 8px; border-radius:9px; font-size:11px; font-weight:600; white-space:nowrap; }}
 .lf-active {{ background:#dbe9f6; color:#17548a; }} .lf-updating {{ background:#e6f1f8; color:#2b6d99; }}
 .lf-development {{ background:#fdf1dc; color:#8a5c0a; }}
-td.small, .small {{ font-size:11.5px; }} .muted {{ color:#888; }} .nw {{ white-space:nowrap; }}
+td.small, .small {{ font-size:11.5px; }} .muted {{ color:#666; }} .nw {{ white-space:nowrap; }}
 span.act {{ color:#b3261e; font-weight:600; }}
 .lfbar {{ display:flex; gap:14px; flex-wrap:wrap; align-items:center; margin:10px 0; font-size:12.5px; }}
 .lfbar .sw {{ display:inline-block; width:11px; height:11px; border-radius:2px; margin:0 4px 0 2px; vertical-align:-1px; }}

@@ -176,7 +176,7 @@ table.data.acts { min-width:560px; } table.data.acts td:first-child { white-spac
 .fwlist label.off { opacity:.45; }
 .fwlist .nm { flex:1; min-width:0; } .fwlist .st { color:#667; font-size:11.5px; white-space:nowrap; }
 .fwlist .amt { min-width:92px; text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
-.fwlist .cap { text-align:right; font-size:11px; color:#778; padding-top:5px; }
+.fwlist .cap { text-align:right; font-size:11px; color:#5f6470; padding-top:5px; }
 .fwsum { padding:9px 12px; border-top:1px solid #e6e9ee; font-size:12.5px; background:#f7f9fc; border-radius:0 0 8px 8px; }
 .fwnote { font-size:12.5px; color:#0b4f8a; background:#eaf4ff; border:1px solid #c5def5; border-radius:6px;
           padding:7px 12px; margin:0 0 8px; }
@@ -218,12 +218,12 @@ table.acts td { white-space:normal; overflow-wrap:anywhere; vertical-align:top; 
 .vchg { background:#fff; border:1px solid #e0e0e0; border-radius:6px; padding:8px 14px; margin:8px 0; }
 .vchg h4 { margin:2px 0 4px; font-size:13px; } .vchg ul { margin:4px 0; padding-left:20px; }
 .vchg li { font-size:13px; margin:2px 0; } .vnote { font-size:12px; color:#555; margin:4px 0; }
-.empty { color:#777; font-size:13px; font-style:italic; padding:8px 0; }
+.empty { color:#666; font-size:13px; font-style:italic; padding:8px 0; }
 .blk { margin-top:30px; } .blk > h2 { margin-top:0; padding-bottom:6px; border-bottom:2px solid #e3e8ef; }
 .blk h3.sub { font-size:14px; margin:18px 0 6px; color:#334; }
 .partners { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
 .partners .pg { background:#fff; border:1px solid #e0e0e0; border-radius:6px; padding:10px 14px; }
-.partners .pg h4 { margin:0 0 6px; font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:#778; }
+.partners .pg h4 { margin:0 0 6px; font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:#5f6470; }
 .partners .pg li { font-size:12.5px; margin:2px 0; }
 """
 
@@ -3496,7 +3496,7 @@ HIER_CSS = """
 .muted { color:#667; font-size:12px; } .num { font-size:12.5px; color:#334; }
 .st { display:inline-block; padding:0 8px; border-radius:9px; font-size:11px;
   font-weight:600; }
-.st-on { background:#e3f1e6; color:#1c6b31; } .st-off { background:#ededed; color:#777; }
+.st-on { background:#e3f1e6; color:#1c6b31; } .st-off { background:#ededed; color:#666; }
 .st-dev { background:#fdf1dc; color:#8a5c0a; }
 table.mini { border-collapse:collapse; font-size:12px; margin:6px 0 10px; background:#fff; }
 table.mini th { text-align:left; font-weight:600; color:#556; background:#f4f6f9;
@@ -3508,7 +3508,7 @@ table.mini a { color:#1d5aa8; }
 .hier-tools button { padding:5px 12px; border:1px solid #bbb; border-radius:5px;
   background:#fff; cursor:pointer; font-size:12.5px; }
 h4.sect { font-size:11.5px; text-transform:uppercase; letter-spacing:.04em;
-  color:#778; margin:10px 0 2px; }
+  color:#5f6470; margin:10px 0 2px; }
 """
 
 

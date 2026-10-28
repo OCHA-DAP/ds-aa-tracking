@@ -360,7 +360,7 @@ def _matrix(counts, cols, row_note, title_unit, freq=None):
         for c in cols:
             v = counts.get((h, c), 0)
             a = 0.10 + 0.8 * v / mx if v else 0
-            fg = "#fff" if a > 0.55 else "#1a1a1a"
+            fg = "#1a1a1a"   # dark on every shade: white never reaches 4.5:1 on this blue (WCAG 1.4.3)
             tip = ATTRC("title", lambda w, h=h, c=c, v=v: f"{w(h)} · {w(c)}: {v} {w(title_unit)}")
             cells += (f"<td class='mx' style='background:rgba({r0},{g0},{b0},{a:.2f});color:{fg}'"
                       f" {tip}>{v or ''}</td>")
@@ -377,10 +377,10 @@ table.mxt th.sx { vertical-align:bottom; height:182px; padding:4px 2px 0; font-w
 table.mxt th.sx span { writing-mode:vertical-rl; transform:rotate(180deg); white-space:normal;
   max-height:175px; display:inline-block; color:#444; line-height:1.15; text-align:left; }
 table.mxt th.rh { text-align:left; padding:4px 10px 4px 4px; white-space:nowrap; font-weight:600; }
-table.mxt th.rh .muted { font-weight:400; color:#888; font-size:11px; }
+table.mxt th.rh .muted { font-weight:400; color:#666; font-size:11px; }
 table.mxt td.mx { width:34px; min-width:34px; height:28px; text-align:center; border:1px solid #fff;
   font-weight:600; }
-.muted { color:#888; }
+.muted { color:#666; }
 ul.nm { margin:4px 0 10px; padding-left:18px; font-size:12.5px; }
 ul.nm li { margin:2px 0; }
 .notyet { background:#fbfaf6; border:1px dashed #d8d2bf; border-radius:6px; padding:10px 16px; margin:18px 0; }
