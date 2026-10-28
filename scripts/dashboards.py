@@ -1432,6 +1432,7 @@ def _flow_panel(donors_on, donor_toggle=True, extra=""):
   <label {ATTR('title', 'a column of the countries between the funds and the agencies: the ones receiving the most named, the rest grouped')}><input type='checkbox' id='flC'> {T('countries')}</label>
   <label {ATTR('title', 'a last column that groups the recipients by type (UN agencies, NGOs, Red Cross / Red Crescent, government, other)')}><input type='checkbox' id='flK' checked> {T('recipient types')}</label>
   <label id='flPw'><input type='checkbox' id='flP' checked> {T('final recipients')}</label>
+  <label>{T('Find')} <input type='search' id='flS' list='flSL' {ATTR('placeholder', 'a donor, country or organisation')} {ATTR('aria-label', 'Find a donor, country or organisation in the flows')} style='width:230px;max-width:100%;font-size:12.5px;padding:3px 6px'></label><datalist id='flSL'></datalist>
   <span id='flTot' class='muted'></span>
  </div>
  <div id='flow'></div><div id='flLeg' class='note' style='display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center'></div><script src="sankey.js"></script>
@@ -1464,7 +1465,9 @@ function flowRegroup(L, f){ const g = {};
   L.forEach(l=>{ const s = f(l.s, l), t = f(l.t, l), k = l.lv+'\\u0001'+s+'\\u0001'+t;
     if(g[k]) g[k].v += l.v; else g[k] = {lv:l.lv, s, t, v:l.v}; });
   return Object.values(g); }
-function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, showK, showC){
+// pick (2026-10-28): a donor ('d:…'), country ('c:…') or organisation name the search box chose,
+// kept out of the 'other' boxes so it has a box of its own to focus
+function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, showK, showC, pick){
   let R = rows.filter(r=>r.m===mode && (year==='all' || r.y===+year) && keep(r));
   // countries (2026-10-28): each fund -> agency / grantee link split at the country its row carries
   // (c; '' none recorded: 'c:*', multi-country / regional) — fund -> country ('f', so the total is
@@ -1476,11 +1479,13 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
   if(showC){ const ct = {}; L.forEach(l=>{ if(l.lv==='f' && l.t!=='c:*') ct[l.t] = (ct[l.t]||0) + l.v; });
     const ids = Object.keys(ct).sort((a,b)=>ct[b]-ct[a]);
     const topC = new Set(ids.length > FLOW_TOP_COUNTRIES + 1 ? ids.slice(0, FLOW_TOP_COUNTRIES) : ids);
+    if(pick && pick.startsWith('c:')) topC.add(pick);
     L = flowRegroup(L, x=>x.startsWith('c:') && x!=='c:*' && !topC.has(x) ? 'c:+' : x); }
   // top donors; the rest grouped
   const dt = {}; L.filter(l=>l.lv==='d').forEach(l=>dt[l.s]=(dt[l.s]||0)+l.v);
   const top = new Set(Object.keys(dt).filter(k=>k!=='d:(donors not recorded)').sort((a,b)=>dt[b]-dt[a]).slice(0,topN||12));
   top.add('d:(donors not recorded)');
+  if(pick && pick.startsWith('d:')) top.add(pick);
   L = flowRegroup(L, (x, l)=>l.lv==='d' && x===l.s && !top.has(x) ? 'd:Other donors' : x);
   // organisations: the top ones of THIS view named, by what they receive (sub-grants and CBPF
   // grants; a grantee's own pass-through to the final column not counted twice), the rest
@@ -1489,6 +1494,7 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
   L.forEach(l=>{ const t = flowNode(l.t), s = flowNode(l.s); if(!t || !t.org || t.cat==='nr' || (s && s.org && s.name===t.name)) return;
     recv[t.name] = (recv[t.name]||0) + l.v; });
   const named = new Set(Object.keys(recv).sort((a,b)=>recv[b]-recv[a]).slice(0, topOrgs||FLOW_TOP_ORGS));
+  if(pick && pick.startsWith('o:')) named.add(pick.slice(2));
   L = flowRegroup(L, x=>{ const n = flowNode(x); return n && n.org && !named.has(n.name) ? `${n.p}:${n.cat}|${CAT_OTHER[n.cat]}` : x; });
   if(!showD) L = L.filter(l=>l.lv!=='d');
   if(!showP) L = L.filter(l=>l.lv!=='a');
@@ -1527,9 +1533,27 @@ function mountFlow(cfg){
   if(!window.sankeySVG) return ()=>{};
   const keep = cfg.keep || (()=>true), yLab = cfg.yLab || (y=>String(y)), cy = cfg.cy || new Date().getFullYear();
   const modeOf = () => document.querySelector("input[name='flM']:checked").value;
+  // the search box (owner, 2026-10-28): every donor, country and organisation of the view, so a
+  // small one grouped under 'other' can be picked, named and focused like a large one
+  let pick = '', choices = new Map();
+  function fillChoices(mode){
+    choices = new Map();
+    D.flow.filter(r=>r.m===mode && (flY.value==='all' || r.y===+flY.value) && keep(r)).forEach(r=>{
+      // each name says what it is: a donor and a country can share one ('Zimbabwe')
+      if(r.lv==='d' && r.s!=='d:(donors not recorded)') choices.set(`${tr8(r.s.slice(2))} (${tr8('donor')})`, r.s);
+      if(r.lv==='f' && r.c) choices.set(`${tr8(D.fundNames['c:'+r.c] || r.c)} (${tr8('country')})`, 'c:'+r.c);
+      [r.s, r.t].forEach(x=>{ const n = flowNode(x); if(n && n.org) choices.set(`${n.name} (${tr8(CAT_LABEL[n.cat])})`, 'o:'+n.name); });
+    });
+    document.getElementById('flSL').innerHTML = [...choices.keys()].sort((a,b)=>a.localeCompare(b)).map(k=>`<option value="${k.replace(/"/g,'&quot;')}">`).join('');
+  }
   function drawFlow(){
     const mode = modeOf();
-    const F = buildFlow(D.flow, mode, flY.value, flD.checked, mode==='r' && flP.checked, D.fundNames, 12, keep, cfg.topOrgs, flK.checked, flC.checked);
+    fillChoices(mode);
+    const want = (document.getElementById('flS').value || '').trim();
+    pick = choices.get(want) || '';
+    if(pick.startsWith('c:') && !flC.checked) flC.checked = true;     // a country needs the country column
+    if(pick.startsWith('d:') && !flD.checked) flD.checked = true;     // a donor, the donor column
+    const F = buildFlow(D.flow, mode, flY.value, flD.checked, mode==='r' && flP.checked, D.fundNames, 12, keep, cfg.topOrgs, flK.checked, flC.checked, pick);
     const el = document.getElementById('flow'), leg = document.getElementById('flLeg');
     if(!F.links.length){ el.innerHTML = "<p class='empty'>" + tr8('no AA money in this selection for this year') + "</p>"; flTot.textContent=''; if(leg) leg.innerHTML=''; return; }
     const n = Math.max(...F.columns.map(c=>c.length));
@@ -1541,6 +1565,9 @@ function mountFlow(cfg){
       nodeColor: nd => { const r = flowNode(nd.id); return r ? CAT_COLOR[r.cat] : null; }});
     el.insertAdjacentHTML('beforeend', "<div class='note'>" + tr8('Hover a band or a box to follow the money; click a box to keep it in focus, click again to clear. Funds in their own colour (CERF blue, pooled funds orange, regional funds green); every agency, grantee and recipient in the colour of its category; a band takes the colour of the box it leaves.') + "</div>");
     if(leg) leg.innerHTML = '<b>' + tr8('Recipients') + '</b>' + F.cats.map(c=>`<span style='display:inline-flex;align-items:center;gap:5px'><span style='width:11px;height:11px;border-radius:2px;background:${CAT_COLOR[c]};display:inline-block${c==='nr' ? ';box-shadow:inset 0 0 0 1px #aab2bd' : ''}'></span>${tr8(CAT_LABEL[c])}</span>`).join('');
+    if(pick){ const nd = [...el.querySelectorAll('.sk-n')].find(n=>{ const r = flowNode(n.dataset.id);
+        return pick.startsWith('o:') ? r && r.name===pick.slice(2) : n.dataset.id===pick; });
+      if(nd) nd.dispatchEvent(new MouseEvent('click', {bubbles:true})); }
     flTot.textContent = mode==='p' ? (+flY.value===cy ? tr8('Pre-arranged, in place in {0}: {1} (today)', yLab(flY.value), money(F.total)) : tr8('Pre-arranged, in place in {0}: {1}', yLab(flY.value), money(F.total)))
                                     : flY.value==='all' ? tr8('Released in all years: {0}', money(F.total)) : tr8('Released in {0}: {1}', yLab(flY.value), money(F.total));
   }
@@ -1557,6 +1584,7 @@ function mountFlow(cfg){
   document.querySelectorAll("input[name='flM']").forEach(el=>el.addEventListener('change', ()=>{ fillYears(); drawFlow(); }));
   fillYears();
   [flY, flD, flP, flK, flC].forEach(el=>el.addEventListener('change', drawFlow));
+  document.getElementById('flS').addEventListener('change', drawFlow);
   document.addEventListener('aalang', ()=>{ fillYears(); drawFlow(); });
   drawFlow();
   return drawFlow;
