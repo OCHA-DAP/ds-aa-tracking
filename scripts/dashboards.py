@@ -505,24 +505,39 @@ def prearranged_now(e):
     now = (env.merge(pick, on=["country_iso3", "hazard", "version"])
            .drop(columns="valid_from").sort_values(["country_iso3", "hazard", "fund_code"])
            .reset_index(drop=True))
-    # an envelope recorded as "CBPF, fund not named" belongs to the country's own pooled fund,
-    # or its regional fund where it has no country fund (Burkina Faso -> RhPF-WCA)
     reg = pd.read_sql("SELECT fund_code, fund_type, country_iso3 FROM aa.fund WHERE country_iso3 IS NOT NULL", e)
-    own = {r.country_iso3: r.fund_code for r in reg.itertuples() if r.fund_type == "cbpf"}
-    regional = {r.country_iso3: r.fund_code for r in reg.itertuples() if r.fund_type == "regional_fund"}
-    un = now["fund_code"] == "cbpf-unspecified"
-    now.loc[un, "fund_code"] = [own.get(c) or regional.get(c) or "cbpf-unspecified"
-                                for c in now.loc[un, "country_iso3"]]
-    # a version with both an unnamed-CBPF row and its fund's own row states the same money
-    # twice (Nigeria 2026: a sheet's "CBPF" $1M and the NHF's $1M): the larger, not the sum
-    out = (now.groupby(["country_iso3", "hazard", "version", "fund_code", "lifecycle", "latest_version"],
-                       as_index=False, dropna=False)["total_usd"].max())
+    out = envelope_by_fund(now, reg)
     # two activations a year: the envelope counted twice (activation_factors)
     fac = activation_factors(e)
     out["activations_per_year"] = [fac.get((c, h, str(v)), 1)
                                    for c, h, v in zip(out["country_iso3"], out["hazard"], out["version"])]
     out["total_usd"] = out["total_usd"].astype(float) * out["activations_per_year"]
     return out
+
+
+def envelope_by_fund(rows, reg):
+    """A version's pre-arranged envelope by fund, by the one rule (prearranged_now; the framework
+    pages' version envelope and the map's per-version envelope use it too, 2026-10-28): an 'all'
+    total only where the version has no per-fund row; an envelope recorded as "CBPF, fund not
+    named" belongs to the country's own pooled fund, or its regional fund where it has no country
+    fund (Burkina Faso -> RhPF-WCA); a version with both an unnamed-CBPF row and its fund's own row
+    states the same money twice (Nigeria 2026: a sheet's "CBPF" $1M and the NHF's $1M): the larger,
+    not the sum. rows: v_version_funding rows (country_iso3, hazard, version, fund_code, total_usd,
+    any other columns kept as keys); reg: aa.fund rows (fund_code, fund_type, country_iso3)."""
+    if not len(rows):
+        return rows.copy()
+    keys = ["country_iso3", "hazard", "version"]
+    comp = set(map(tuple, rows.loc[rows["fund_code"] != "all", keys].astype(str).values))
+    dup = pd.Series([tuple(k) in comp for k in rows[keys].astype(str).values], index=rows.index, dtype=bool)
+    rows = rows[~((rows["fund_code"] == "all") & dup)].copy()
+    reg = reg[reg["country_iso3"].notna()]
+    own = {r.country_iso3: r.fund_code for r in reg.itertuples() if r.fund_type == "cbpf"}
+    regional = {r.country_iso3: r.fund_code for r in reg.itertuples() if r.fund_type == "regional_fund"}
+    un = rows["fund_code"] == "cbpf-unspecified"
+    rows.loc[un, "fund_code"] = [own.get(c) or regional.get(c) or "cbpf-unspecified"
+                                 for c in rows.loc[un, "country_iso3"]]
+    return (rows.groupby([c for c in rows.columns if c != "total_usd"], as_index=False, dropna=False)
+            ["total_usd"].max())
 
 
 def envelope_gaps(d):
@@ -773,7 +788,8 @@ def _fetch(e):
     # (NER 2022, NPL 2021, MDG 2023, TLS 2024: $4.0M; 2026-10-28)
     d["subgrant_aa"] = pd.read_sql(
         """SELECT g.project_code, g.application_code, g.agency, coalesce(c.year, g.year) AS year,
-                  g.country_iso3, g.partner_name, g.partner_type, g.localization, g.subgrant_usd
+                  g.country_iso3, g.partner_name, g.partner_acronym, g.partner_type, g.localization,
+                  g.subgrant_usd
            FROM aa.cerf_subgrant g
            LEFT JOIN aa.cerf_allocation c ON c.application_code = g.application_code
            WHERE g.application_code IN (""" + _CERF_AA_CODES_SQL + """)
@@ -2023,12 +2039,12 @@ def build_funding(page, d):
 <div id='unBox'>
 <div class='tiles'>
  <div class='tile'><div class='v' id='uS'>{sub_share:.0f}%</div><div class='l' id='uSl'>{T("of the CERF AA money released, sub-granted to partners")}</div></div>
- <div class='tile'><div class='v' id='uL'>{local_share:.0f}%</div><div class='l'>{T("localisation share — sub-grants to local / national actors (NNGO, government, Red Cross / Red Crescent)")}</div></div>
+ <div class='tile'><div class='v' id='uL'>{local_share:.0f}%</div><div class='l'>{T("localisation share — of all the money passed to partners (partners not yet typed included), the part to local / national actors (NNGO, government, Red Cross / Red Crescent)")}</div></div>
  <div class='tile'><div class='v' id='uT'>${sub_total/1e6:,.1f}M</div><div class='l' id='uTl'>{TF("sub-granted in total · {n} partners", n=n_un_partners)}</div></div>
 </div>
 <div class='grid'>
  <div class='panel'><h3>{T("CERF AA allocations by year — direct UN spend vs sub-granted to partners")}</h3><canvas id='c9' height='280'></canvas>
-   {how("The CERF part of <i>AA released by year, by fund</i>, split in two: each bar is the CERF money released that year, the same figure as the CERF bar of that chart and the map's CERF figure, and follows the same filters. Each allocation's money is split by the share its agencies passed on to partners: the sub-grants CERF's records report for the allocation, divided by the allocation's project budgets (at most all of it). Project budgets can be larger than the money released, so the share carries over, not the budget. A sub-grant counts in the year the allocation's money is counted, whatever year its record carries. The rest is direct UN spend, which includes sub-grants not reported yet, so recent years show more direct spend. <i>Split not known</i>: money whose CERF allocation is not recorded, or has no project budgets; it is left out of the share sub-granted. Partner groups from the sub-grant partner type; 'other' includes partners not yet typed. 2023 looks low because the only framework activations that year were DRC cholera ($1.5M): the CERF early-action allocations reported to the Anticipation Hub for 2023 are not counted as anticipatory action here, following the definition the Grand Bargain adopted at the end of 2024.")}</div>
+   {how("The CERF part of <i>AA released by year, by fund</i>, split in two: each bar is the CERF money released that year, the same figure as the CERF bar of that chart and the map's CERF figure for the same layers and year, and follows the same filters. Each allocation's money is split by the share its agencies passed on to partners: the sub-grants CERF's records report for the allocation, divided by the allocation's project budgets (at most all of it). Project budgets can be larger than the money released, so the share carries over, not the budget. A sub-grant counts in the year the allocation's money is counted, whatever year its record carries. The rest is direct UN spend, which includes sub-grants not reported yet, so recent years show more direct spend. <i>Split not known</i>: money whose CERF allocation is not recorded, or has no project budgets; it is left out of the share sub-granted. Partner groups from the sub-grant partner type; 'other' includes partners not yet typed. 2023 looks low because the only framework activations that year were DRC cholera ($1.5M): the CERF early-action allocations reported to the Anticipation Hub for 2023 are not counted as anticipatory action here, following the definition the Grand Bargain adopted at the end of 2024.")}</div>
  <div class='panel'><h3>{T("Share of CERF AA sub-grants to local and national actors, by year")}</h3><canvas id='c10' height='280'></canvas>
    {how("Each bar is the part of one year's CERF money released that went to partners, the partner part of the chart on the left (100%): to local and national actors (national / local NGOs, government, national Red Cross / Red Crescent societies), to international NGOs, and to partners not yet typed in the reports. The label is the local and national share; the recent years fill in as partners are typed. Follows the same filters as the chart on the left.")}</div>
 </div>
@@ -3433,7 +3449,10 @@ def _report_list(r):
 
 def build_framework_pages(page, tbl, d, e=None):
     cur, ver, act = d["current"], d["versions"], d["activation"]
-    pre, cov = d["prearranged"], d["covered"]
+    # the pre-arranged series of the Financing page (funding_series): the current year is
+    # pre-arranged now (prearranged_now, two activations a year counted twice), past years as
+    # reported — the sheets' June figure showed Cuba's 2026 as $4M against the map's $9M (2026-10-28)
+    pre, cov = funding_series(d)[0], d["covered"]
     rep, cal = d["report"], d["calendar"]
     split, env, win = d["split_all"], d["env_all"], d["windows"]
     docs, pt, sg = d["learning"], d["partners"], d["subgrant_aa"]
@@ -3505,8 +3524,9 @@ def build_framework_pages(page, tbl, d, e=None):
         ev = (env[(env["country_iso3"] == c) & (env["hazard"] == h)
                   & (env["version"].astype(str) == str(split_version))]
               if split_version else env.iloc[0:0])
-        comp = ev[ev["fund_code"] != "all"]
-        envelope = float(comp["total_usd"].sum()) if len(comp) else float(ev["total_usd"].sum())
+        # by the one envelope rule (envelope_by_fund): Nigeria's 2026 "CBPF" and NHF rows are one $1M
+        envelope = float(envelope_by_fund(ev, d["fund_names"])["total_usd"].sum())
+        n_apy = (d.get("act_factors") or {}).get((c, h, str(split_version)), 1)
         split_total = float(sv["amount_usd"].sum())
         over = envelope > 0 and split_total > envelope * 1.01
         agencies = sorted(set(sv.loc[sv["agency"].notna(), "agency"]))
@@ -3518,7 +3538,9 @@ def build_framework_pages(page, tbl, d, e=None):
             f"<tr><th colspan=4>{T('split total')}</th><th class='num'>${split_total:,.0f}</th></tr>"
             f"<tr><th colspan=4>{T('version envelope (pre-arranged)')}</th><th class='num'>"
             f"{f'${envelope:,.0f}' if envelope else '—'}"
-            f"{'<span class=' + chr(39) + 'warn-tag' + chr(39) + '>' + TF('split exceeds envelope by {p}%', p=f'{(split_total/envelope - 1)*100:.0f}') + '</span>' if over else ''}</th></tr>")
+            f"{'<span class=' + chr(39) + 'warn-tag' + chr(39) + '>' + TF('split exceeds envelope by {p}%', p=f'{(split_total/envelope - 1)*100:.0f}') + '</span>' if over else ''}"
+            # a version that allows two activations a year: the map and the Financing page count it twice
+            f"{' <span class=' + chr(39) + 'muted' + chr(39) + ' style=' + chr(39) + 'font-weight:400;font-size:11px' + chr(39) + '>' + TF('the budget of one activation: this version allows {n} activations a year, so the map and the Financing page count it {n} times', n=n_apy) + '</span>' if envelope and n_apy > 1 else ''}</th></tr>")
         # budget by agency / by sector (bars) and agency -> sector (Sankey), same split rows
         split_js = [{"a": x.agency if isinstance(x.agency, str) and x.agency else "(agency not stated)",
                      "s": x.sector if isinstance(x.sector, str) and x.sector else "(sector not stated)",

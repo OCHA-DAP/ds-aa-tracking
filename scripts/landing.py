@@ -1187,18 +1187,20 @@ def assemble(d, e):
                   amount_usd FROM aa.framework_partner ORDER BY org_type, name""",
         ["country_iso3", "hazard", "version", "name", "acronym", "org_type", "roles",
          "agency_parent", "amount_usd"])
-    subg = _try(
-        """SELECT country_iso3, agency, partner_name, partner_acronym, partner_type,
-                  sum(subgrant_usd) AS usd
-           FROM aa.cerf_subgrant WHERE is_aa AND country_iso3 IS NOT NULL
-           GROUP BY 1, 2, 3, 4, 5 ORDER BY 1, 2, 6 DESC NULLS LAST""",
-        ["country_iso3", "agency", "partner_name", "partner_acronym", "partner_type", "usd"])
+    # the CERF AA sub-grants of the framework pages and the Financing page (d["subgrant_aa"]: the
+    # allocations the activation record draws on, agency names merged) — the sheet's own AA flag
+    # missed four allocations and spelled UN Women two ways (2026-10-28)
+    subg = (d["subgrant_aa"][d["subgrant_aa"]["country_iso3"].notna()]
+            .groupby(["country_iso3", "agency", "partner_name", "partner_acronym", "partner_type"],
+                     as_index=False, dropna=False)["subgrant_usd"].sum().rename(columns={"subgrant_usd": "usd"})
+            .sort_values(["country_iso3", "agency", "usd"], ascending=[True, True, False], na_position="last"))
     # every version's pre-arranged envelope (all funds; an 'all' total is dropped where the
     # per-fund split exists — the dashboards' rule) for the budget sanity check
     vfa = pd.read_sql(
         """SELECT country_iso3, hazard, version, fund_code, total_usd
            FROM aa.v_version_funding WHERE kind = 'prearranged' AND total_usd IS NOT NULL""", e)
-    envelope = _envelopes(vfa)
+    from dashboards import envelope_by_fund
+    envelope = _envelopes(envelope_by_fund(vfa, d["fund_names"]))   # the one envelope rule
     pre_parts = {}                        # pair -> pre-arranged now by fund, and the version it comes from
     for (c_, h_, v_), parts in _envelope_parts(d["vfund"]).items():
         p = pre_parts.setdefault((c_, h_), {"version": v_})
@@ -2808,6 +2810,8 @@ function updateTiles(){
        note: [tr8(F.nAd
          ? 'Money released when a framework activated, or allocated for anticipatory action outside a framework, from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.'
          : 'Money released when a framework activated, from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.'),
+         // a past year shows the frameworks as they stood at its end; the Financing page's layers are today's
+         past ? tr8('For a past year the map shows the frameworks as they stood at its end: a framework retired since counts here under current frameworks, on the Financing page under retired. Tick both layers there to compare.') : '',
          F.noUsd ? tr8('{0} of the {1} have no amount recorded.', F.noUsd, F.n) : '',
          notShown((lab, G) => G.n ? (G.nAd ? tr8(G.n === 1 ? '{0} non-framework allocation' : '{0} non-framework allocations', G.n)
                                           : tr8(lab === 'retired frameworks' ? '{0} on retired frameworks' : '{0} on current frameworks', G.n))
@@ -3124,11 +3128,12 @@ function renderSide(){
     (f.page && f.page!=='#' ? `<p class='small' style='margin-top:12px'><a href='${f.page}'>${esc(tr8('full framework page →'))}</a></p>` : '');
   annotate(side, side);
 }
-// a version's pre-arranged money: the document's figure, else its envelope. A version that allows
-// N activations a year shows N times its envelope — the figure the tiles and the table count (the
-// document's own figure may already be a yearly total). The budget check (fundingBlock) keeps the envelope.
-const verPre = v => v.apy > 1 ? ((v.envelope ?? v.prearranged_doc) == null ? null : (v.envelope ?? v.prearranged_doc) * v.apy)
-  : (v.prearranged_doc ?? v.envelope);
+// a version's pre-arranged money: its envelope (dashboards.envelope_by_fund, the one rule), the
+// figure the tiles, the table and the Financing page count — not the document's figure first
+// (2026-10-28: Fiji read $3.94M here against the table's $2.75M); the document's own figure, where
+// it differs, is a row of its own (pillarBody). A version that allows N activations a year shows N
+// times its envelope, as the tiles count it. The budget check (fundingBlock) keeps the envelope.
+const verPre = v => v.envelope > 0 ? v.envelope * (v.apy > 1 ? v.apy : 1) : null;   // > 0: prearranged_now's rule
 // ---------- the building blocks of AA: model · plan · funding · learning (always shown)
 const PILLARS = ['model', 'plan', 'funding', 'learning'];
 function pillarsBar(f, v){
@@ -3144,7 +3149,8 @@ function pillarsBar(f, v){
      esc([v.basis && tr8(v.basis), v.months.length ? tr8('{0} months monitored', v.months.length) : null, nA ? tr8(nA > 1 ? '{0} activations' : '{0} activation', nA) : tr8('never activated')].filter(Boolean).join(' · '))],
     ['plan', tr8('Activities'), nUN ? esc(tr8(nUN > 1 ? '{0} UN agencies funded' : '{0} UN agency funded', nUN)) : '—',
      [v.target_people ? esc(tr8('{0} people targeted', num(v.target_people))) : (f.covered ? esc(tr8('{0} people covered', num(f.covered))) : null), nPart ? esc(tr8(nPart > 1 ? '{0} partners in total' : '{0} partner in total', nPart)) : null].filter(Boolean).join('<br>')],
-    ['funding', tr8('Financing'), verPre(v) == null ? '—' : money(verPre(v)) + apyMark(v.apy > 1 && v.apy), esc((v.prearranged_doc ?? v.envelope) ? tr8('pre-arranged') + (funds.length?' · '+funds.map(fundName).join(', '):'') : tr8(f.tech ? 'technical support only' : 'no figure yet'))],
+    ['funding', tr8('Financing'), verPre(v) == null ? '—' : money(verPre(v)) + apyMark(v.apy > 1 && v.apy), esc(v.envelope > 0 ? tr8('pre-arranged') + (funds.length?' · '+funds.map(fundName).join(', '):'')
+       : v.prearranged_doc != null ? tr8('no envelope recorded; the document states {0}', money(v.prearranged_doc)) : tr8(f.tech ? 'technical support only' : 'no figure yet'))],
     ['learning', tr8('Learning'), esc(nDocs ? tr8(nDocs > 1 ? '{0} documents' : '{0} document', nDocs) : tr8('no documents yet')), esc(tr8('evaluations, reviews, reports'))],
   ];
   if(!PILLARS.includes(state.pillar)) state.pillar = 'model';
@@ -3158,8 +3164,9 @@ function pillarBody(f, v){
   const rows = [];
   const c = L[state.iso];
   if(state.pillar==='funding'){
-    rows.push([tr8('Pre-arranged'), `${money(verPre(v))}${v.apy > 1 && verPre(v) != null ? apyMark(v.apy) + ` <span class='muted'>· ${esc(apyNote(v.apy))}</span>` : ''}${v.regional?` <span class='muted'>· ${esc(tr8('regional document total (all countries)'))}</span>`:''}${v.all_in===false?` <span class='muted'>· ${esc(tr8('split budget per window'))}</span>`:v.all_in===true?` <span class='muted'>· ${esc(tr8('all-in'))}</span>`:''}`]);
-    if(v.envelope!=null && v.prearranged_doc!=null && Math.abs(v.envelope - v.prearranged_doc) > 0.01*Math.max(v.envelope, v.prearranged_doc)) rows.push([tr8('Envelope (registry)'), `${money(v.envelope)} <span class='muted'>${esc(tr8("from the version's window funding; the document says {0}", money(v.prearranged_doc)))}</span>`]);
+    rows.push([tr8('Pre-arranged'), `${money(verPre(v))}${v.apy > 1 && verPre(v) != null ? apyMark(v.apy) + ` <span class='muted'>· ${esc(apyNote(v.apy))}</span>` : ''}${v.all_in===false?` <span class='muted'>· ${esc(tr8('split budget per window'))}</span>`:v.all_in===true?` <span class='muted'>· ${esc(tr8('all-in'))}</span>`:''}`]);
+    // the document's own figure, where it differs from the envelope counted (or there is none)
+    if(v.prearranged_doc!=null && (!(v.envelope > 0) || Math.abs(v.envelope - v.prearranged_doc) > 0.01*Math.max(v.envelope, v.prearranged_doc))) rows.push([tr8('In the framework document'), `${money(v.prearranged_doc)} <span class='muted'>${esc(tr8("the figure the document states; the tiles, the table and the Financing page count the envelope recorded for the version"))}${v.regional?' · '+esc(tr8('regional document total (all countries)')):''}</span>`]);
     if(v.cofin) rows.push([tr8('Co-financing'), `${money(v.cofin)}${v.cofin_sources.length?` <span class='muted'>${esc(v.cofin_sources.join(', '))}</span>`:''}`]);
     if(f.tech) rows.push([tr8('OCHA role'), `<span class='badge b-tech'>${esc(tr8('technical support'))}</span> <span class='muted'>${esc(tr8('no funding commitment'))}</span>`]);
     return miniTable(rows) + fundingBlock(v);
