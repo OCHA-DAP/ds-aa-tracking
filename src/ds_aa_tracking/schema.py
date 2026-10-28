@@ -835,6 +835,12 @@ ADDITIVE_MIGRATIONS = [
     # repository lists documents newest first by month and shows "Mar 2025"; NULL = unknown
     "ALTER TABLE IF EXISTS aa.learning_document ADD COLUMN IF NOT EXISTS month smallint "
     "CHECK (month BETWEEN 1 AND 12)",
+    # 2026-10-28: how many activations a year the version's document allows (some tropical-
+    # cyclone frameworks allow two). NULL or 1 = one; 2 = two. The site reports the version's
+    # pre-arranged envelope multiplied by it, with a note (the budget per activation is the
+    # envelope as recorded): dashboards.activation_factors / prearranged_now
+    "ALTER TABLE IF EXISTS aa.framework_version ADD COLUMN IF NOT EXISTS activations_per_year integer "
+    "CHECK (activations_per_year BETWEEN 1 AND 4)",
 ]
 
 INDEXES = [
