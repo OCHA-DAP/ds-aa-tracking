@@ -351,8 +351,11 @@ html[data-lang="fr"] .lv-en,html[data-lang="es"] .lv-en{display:none}
 .aa-lang button.on{background:#fff;color:#1f2a44;opacity:1}
 """
 
+# each button names its language in that language (lang=, aria-label: "EN" alone reads as letters)
+# and says which one is on (aria-pressed, kept in step by aaSetLang)
 TOGGLE_HTML = ('<span class="aa-lang" role="group" aria-label="Language / Langue / Idioma">'
-               + "".join(f'<button type="button" data-l="{l}" lang="{l}" title="{NAMES[l]}"'
+               + "".join(f'<button type="button" data-l="{l}" lang="{l}" title="{NAMES[l]}" aria-label="{NAMES[l]}"'
+                         f' aria-pressed="{"true" if l == "en" else "false"}"'
                          f'{" class=" + chr(34) + "on" + chr(34) if l == "en" else ""} onclick="aaSetLang(\'{l}\')">{l.upper()}</button>'
                          for l in ("en",) + LANGS) + "</span>")
 
@@ -391,7 +394,8 @@ function aaSetLang(l){
     document.querySelectorAll('[data-' + a + '-en]').forEach(function(el){
       var v = el.getAttribute('data-' + a + '-' + l); if (v !== null) el.setAttribute(a, v); }); });
   document.querySelectorAll('.aa-lang button').forEach(function(b){
-    b.classList.toggle('on', b.getAttribute('data-l') === l); });
+    var on = b.getAttribute('data-l') === l;
+    b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
   if (window.AA_TITLES && window.AA_TITLES[l]) document.title = window.AA_TITLES[l];
   try{document.dispatchEvent(new CustomEvent('aalang', {detail: l}));}catch(e){}
 }

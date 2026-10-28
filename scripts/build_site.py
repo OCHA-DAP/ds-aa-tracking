@@ -51,7 +51,14 @@ header { background:#1f2a44; color:#fff; padding:12px 28px; display:flex; align-
 header a { color:#9ec5f0; text-decoration:none; margin-right:18px; }
 header .t { font-weight:700; font-size:17px; margin-right:26px; }
 header nav.pub a { color:#fff; font-weight:600; font-size:14px; padding:4px 0; border-bottom:2px solid transparent; }
-header nav.pub a:hover { border-bottom-color:#9ec5f0; }
+header nav.pub a:hover, header nav.pub a[aria-current=page] { border-bottom-color:#9ec5f0; }
+header a:focus-visible, header button:focus-visible { outline:2px solid #fff; outline-offset:2px; }
+/* a keyboard's first stop: past the header to the page (WCAG 2.4.1) */
+.skip { position:absolute; left:-9999px; top:0; z-index:100; background:#fff; color:#1f2a44; padding:6px 12px;
+        border-radius:4px; font-weight:600; text-decoration:none; }
+.skip:focus { left:8px; top:8px; outline:2px solid #1f2a44; }
+main:focus { outline:none; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior:auto !important; } }
 header nav.pub a.sub { color:#9ec5f0; font-weight:400; font-size:12px; margin-left:-10px; }
 header.adm { background:#3b2338; }
 header.adm .tag { background:#f0b429; color:#3b2338; font-size:10.5px; font-weight:700; letter-spacing:.06em; padding:1px 7px; border-radius:9px; margin-right:18px; }
@@ -235,11 +242,18 @@ def _render(name, title, body, nav, meta, public=False):
                    + f"window.I18N = {json.dumps(i18n.js_dict(body), ensure_ascii=False)};\n"
                    + f"window.AA_TITLES = {json.dumps(i18n.titles(title), ensure_ascii=False)};\n"
                    + i18n.LANG_JS)
+    # the header marks the page it is on (aria-current; the tab underlined), links only
+    i = nav.find("<nav")
+    if i >= 0:
+        nav = nav[:i] + re.sub(rf'(<a\b[^>]*?)href="{re.escape(name)}"', rf'\1href="{name}" aria-current="page"',
+                               nav[i:], count=1)
+    skip = T("Skip to content") if public else "Skip to content"
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)}</title><style>{CSS}{POLICY_CSS}</style>
 <script>{lang_js}{FILTER_JS}</script></head><body>
-{BANNER}{nav}<main><h1>{h1}</h1>
+<a class="skip" href="#main">{skip}</a>
+{BANNER}{nav}<main id="main" tabindex="-1"><h1>{h1}</h1>
 <p class="meta">{meta}</p>
 {policy_box(name)}{body}</main></body></html>"""
 
