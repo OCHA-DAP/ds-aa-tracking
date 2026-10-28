@@ -1089,7 +1089,8 @@ def assemble(d, e):
            FROM aa.activation a WHERE a.event_type NOT IN ({excl}) ORDER BY a.event_date DESC""", e)
     actf = pd.read_sql(
         """SELECT f.country_iso3, f.hazard, f.event_date, f.window_name, f.event_label,
-                  f.event_type, f.fund_code, f.allocation_code, f.amount_usd, c.year AS alloc_year
+                  f.event_type, f.fund_code, f.allocation_code, f.amount_usd, f.people_targeted,
+                  c.year AS alloc_year
            FROM aa.activation_funding f
            LEFT JOIN (SELECT DISTINCT ON (application_code) application_code, year
                       FROM aa.cerf_allocation ORDER BY application_code, year) c
@@ -1497,12 +1498,13 @@ def assemble(d, e):
 
 
 def _reach_fields(x, reach, reach_row):
-    """The people-reached fields of one activation funding row (CERF rows only): the
-    allocation's figure on the row that carries it (`interim` when summed over projects;
-    `planned`, the people it planned to reach, when there is no figure yet — the estimate's
-    stand-in), `shared` on a later activation drawing on the same allocation."""
+    """The people-reached fields of one activation funding row. CERF: the allocation's figure
+    on the row that carries it (`interim` when summed over projects; `planned`, the people it
+    planned to reach, when there is no figure yet — the estimate's stand-in), `shared` on a
+    later activation drawing on the same allocation. A Country or Regional Fund allocation
+    reports too late to count, so the people it targets stand in (`planned`; owner, 2026-10-28)."""
     if x.fund_code != "cerf":
-        return {}
+        return {"planned": _num(x.people_targeted)} if pd.notna(x.people_targeted) else {}
     code = _s(x.allocation_code)
     if code and reach_row.get(code) != x.Index:
         return {"reached": None, "shared": True}
@@ -1639,6 +1641,13 @@ def tile_figures(countries, layers, year=None):
     # has no figure yet, the allocation's planned people stand in (the estimate)
     cerf = [x for x in rows if x["fund"] == "cerf" and not x.get("shared")]
     tgt = [x for x in cerf if x.get("reached") is None and x.get("planned")]
+    # Country and Regional Fund allocations: the people they target (owner, 2026-10-28), each
+    # allocation once
+    seen, pool = set(), []
+    for x in rows:
+        if x["fund"] != "cerf" and not (x["code"] and x["code"] in seen):
+            seen.add(x["code"]); pool.append(x)
+    ptgt = [x for x in pool if x.get("planned")]
     part = lambda k: sum(((f["pre_parts"] or {}).get(k) or 0) for f in fw)
     return {"n_fw": len(fw),
             "n_active": sum(1 for f in fw if f["disp"] == "active"),
@@ -1655,6 +1664,7 @@ def tile_figures(countries, layers, year=None):
             "n_interim": sum(1 for x in cerf if x.get("reached") is not None and x.get("interim")),
             "targeted": sum(x["planned"] for x in tgt), "n_tgt": len(tgt),
             "n_cerf": len(cerf),
+            "ptargeted": sum(x["planned"] for x in ptgt), "n_ptgt": len(ptgt), "n_pool": len(pool),
             "n_nousd": sum(1 for a in acts if not any(x["usd"] or x.get("shared") for x in a["funding"])),
             "pre_cerf": part("cerf"), "pre_pooled": part("pooled"), "pre_all": part("all"),
             # frameworks whose pre-arranged money counts N activations a year (apy: assemble)
@@ -1717,13 +1727,13 @@ def build_landing(page, d, e):
         return f"Not shown: {', '.join(xs)}." if xs else ""
 
     def est(g):   # people reached, with the targeted stand-ins: '~' marks an estimate
-        return ("~" if g["n_tgt"] else "") + _people(g["reached"] + g["targeted"])
+        return ("~" if g["n_tgt"] or g["n_ptgt"] else "") + _people(g["reached"] + g["targeted"] + g["ptargeted"])
     def usd(g):   # ' ($17M)' after a count of activations the layers switched off would add
         return f" ({_money(g['released'])})" if g["released"] >= 5e4 else ""
     ns_act = not_shown(ad["n_act"] and f"{ad['n_act']} non-framework allocation{'s' if ad['n_act'] > 1 else ''}{usd(ad)}",
                        ret["n_act"] and f"{ret['n_act']} on retired frameworks{usd(ret)}")
-    ns_reach = not_shown((ad["n_rep"] or ad["n_tgt"]) and f"non-framework allocations {est(ad)}",
-                         (ret["n_rep"] or ret["n_tgt"]) and f"retired frameworks {est(ret)}")
+    ns_reach = not_shown((ad["n_rep"] or ad["n_tgt"] or ad["n_ptgt"]) and f"non-framework allocations {est(ad)}",
+                         (ret["n_rep"] or ret["n_tgt"] or ret["n_ptgt"]) and f"retired frameworks {est(ret)}")
 
     def funds(cerf, pooled, other=0):   # fundBullets() in LANDING_JS
         return [x for x in (cerf >= 5e4 and f"CERF {_money(cerf)}",
@@ -1740,17 +1750,21 @@ def build_landing(page, d, e):
     def act_sentence(usd, n):   # actSentence() in LANDING_JS
         return f"<b>{_money(usd)}</b> released in <b>{n}</b> activation{'' if n == 1 else 's'}" if n else "0"
     n_cerf, n_rep, n_tgt = t["n_cerf"], t["n_rep"], t["n_tgt"]
-    n_none = n_cerf - n_rep - n_tgt
+    n_pool, n_ptgt = t["n_pool"], t["n_ptgt"]
+    n_none, n_pnone = n_cerf - n_rep - n_tgt, n_pool - n_ptgt
     reach_note = " ".join(x for x in (
         (f"Estimate = {_people(t['reached'])} reported by CERF ({n_rep} of {n_cerf} allocations) + "
          f"{_people(t['targeted'])} targeted where there is no report yet ({n_tgt} of {n_cerf}).") if n_tgt
         else f"{n_rep} of the {n_cerf} CERF allocations have a figure." if n_rep else "",
         (f"{n_none} CERF allocation has neither a reported nor a targeted figure: left out." if n_none == 1
          else f"{n_none} CERF allocations have neither a reported nor a targeted figure: left out." if n_none else ""),
+        (f"+ {_people(t['ptargeted'])} targeted by Country and Regional Fund allocations ({n_ptgt} of {n_pool})." if n_ptgt else ""),
+        (f"{n_pnone} Country or Regional Fund allocation has no targeted figure: left out." if n_pnone == 1
+         else f"{n_pnone} Country and Regional Fund allocations have no targeted figure: left out." if n_pnone else ""),
         "Summed over CERF allocations: CERF's own de-duplicated figure for each one, from its final report"
         + (f", or the sum over its projects where the allocation has none yet ({t['n_interim']} interim)" if t["n_interim"] else "")
         + ". A person reached under two allocations counts twice. Reports come about nine months after an allocation, so recent years are incomplete."
-        + " Country and Regional Funds report no figure here. Not people covered: that is what the plans cover now.",
+        + " Country and Regional Funds report too late to count here, so their allocations count with the people they target. Not people covered: that is what the plans cover now.",
         ns_reach) if x)
     # each tile opens with an icon and its name in large type (2026-10-27 review comments)
     def tile_key(icon, name):
@@ -1786,9 +1800,9 @@ def build_landing(page, d, e):
                                   "page gives the same figure for the same layers. Early action allocations are not counted.",
                                   t["n_nousd"] and f"{t['n_nousd']} of the {t['n_act']} have no amount recorded.", ns_act) if x),
              vs=bool(t["n_act"])),
-        tile("t-reach", "people", "Reached", est(t) if n_rep or n_tgt else "—",
-             f"people reached: no CERF allocation in {Y} on the layers shown" if not n_cerf
-             else f"people reached with the {Y} releases — CERF allocations, estimate" if n_tgt
+        tile("t-reach", "people", "Reached or targeted by activations", est(t) if n_rep or n_tgt or n_ptgt else "—",
+             f"people reached or targeted: no allocation in {Y} on the layers shown" if not n_cerf and not n_pool
+             else f"people reached or targeted with the {Y} releases — estimate" if n_tgt or n_ptgt
              else f"people reached with the {Y} releases — CERF allocations" if n_rep
              else f"people reached with the {Y} releases: no report yet for the CERF allocation" if n_cerf == 1
              else f"people reached with the {Y} releases: no report yet for the {n_cerf} CERF allocations",
@@ -2237,16 +2251,20 @@ function flowActs(f, LY){
 function flowFigures(fs, LY){
   const acts = fs.flatMap(f => flowActs(f, LY)), rows = acts.flatMap(a => a.funding || []);
   const sum = (xs, k) => xs.reduce((t, x) => t + (x[k] || 0), 0);
-  // people reached: CERF allocations only (the mirror has no figure for the pooled funds); an
-  // allocation drawn by two activations is counted once, on the first (the others: shared)
-  // where CERF has no figure yet, the allocation's planned people stand in (the estimate)
+  // people reached: CERF's figures; an allocation drawn by two activations is counted once, on
+  // the first (the others: shared); where CERF has no figure yet, the allocation's planned people
+  // stand in (the estimate). Country and Regional Fund allocations report too late, so the people
+  // they target count (owner, 2026-10-28), each allocation once — tile_figures() in Python
   const cerf = rows.filter(x => x.fund === 'cerf' && !x.shared), rep = cerf.filter(x => x.reached != null),
         tgt = cerf.filter(x => x.reached == null && x.planned);
+  const seen = new Set(), pool = rows.filter(x => x.fund !== 'cerf' && !(x.code && seen.has(x.code)) && (seen.add(x.code), true)),
+        ptgt = pool.filter(x => x.planned);
   return { n: acts.length, nAd: acts.filter(a => a.type === 'adhoc_aa').length,
            usd: sum(rows, 'usd'), usdCerf: sum(rows.filter(x => x.fund === 'cerf'), 'usd'),
            noUsd: acts.filter(a => !(a.funding || []).some(x => x.usd || x.shared)).length,
            reached: sum(rep, 'reached'), nRep: rep.length, nCerf: cerf.length, nInterim: rep.filter(x => x.interim).length,
-           targeted: sum(tgt, 'planned'), nTgt: tgt.length };
+           targeted: sum(tgt, 'planned'), nTgt: tgt.length,
+           ptargeted: sum(ptgt, 'planned'), nPtgt: ptgt.length, nPool: pool.length };
 }
 // what the flow figures count under the layers shown, in words
 function flowWhat(F){ return F.nAd === 0 ? 'framework activations' : F.nAd === F.n ? 'non-framework allocations' : 'framework activations and non-framework allocations'; }
@@ -2778,21 +2796,24 @@ function updateTiles(){
                                     + (G.usd >= 5e4 ? ` (${money(G.usd)})` : '') : null)]});
   // people reached: CERF's figures, and where it has none yet the allocation's planned people —
   // an estimate, marked '~' (owner's request, 2026-10-27)
-  const est = G => (G.nTgt ? '~' : '') + people(G.reached + G.targeted), nNone = F.nCerf - F.nRep - F.nTgt;
-  set('t-reach', F.nRep || F.nTgt ? est(F) : '—',
-      !F.nCerf ? yr('people reached: no CERF allocation on the layers shown', 'people reached: no CERF allocation in {0} on the layers shown')
-      : F.nTgt ? yr('people reached to date — CERF allocations, estimate', 'people reached with the {0} releases — CERF allocations, estimate')
+  const est = G => (G.nTgt || G.nPtgt ? '~' : '') + people(G.reached + G.targeted + G.ptargeted),
+        nNone = F.nCerf - F.nRep - F.nTgt, nPnone = F.nPool - F.nPtgt;
+  set('t-reach', F.nRep || F.nTgt || F.nPtgt ? est(F) : '—',
+      !F.nCerf && !F.nPool ? yr('people reached or targeted: no allocation on the layers shown', 'people reached or targeted: no allocation in {0} on the layers shown')
+      : F.nTgt || F.nPtgt ? yr('people reached or targeted to date — estimate', 'people reached or targeted with the {0} releases — estimate')
       : F.nRep ? yr('people reached to date — CERF allocations', 'people reached with the {0} releases — CERF allocations')
       : F.nCerf === 1 ? yr('people reached to date: no report yet for the CERF allocation', 'people reached with the {0} releases: no report yet for the CERF allocation')
       : tr8(YEAR != null ? 'people reached with the {1} releases: no report yet for the {0} CERF allocations' : 'people reached to date: no report yet for the {0} CERF allocations', F.nCerf, YEAR),
       {note: [F.nTgt ? tr8('Estimate = {0} reported by CERF ({1} of {2} allocations) + {3} targeted where there is no report yet ({4} of {2}).', people(F.reached), F.nRep, F.nCerf, people(F.targeted), F.nTgt)
                      : F.nRep ? tr8('{0} of the {1} CERF allocations have a figure.', F.nRep, F.nCerf) : '',
               nNone ? tr8(nNone === 1 ? '{0} CERF allocation has neither a reported nor a targeted figure: left out.' : '{0} CERF allocations have neither a reported nor a targeted figure: left out.', nNone) : '',
+              F.nPtgt ? tr8('+ {0} targeted by Country and Regional Fund allocations ({1} of {2}).', people(F.ptargeted), F.nPtgt, F.nPool) : '',
+              nPnone ? tr8(nPnone === 1 ? '{0} Country or Regional Fund allocation has no targeted figure: left out.' : '{0} Country and Regional Fund allocations have no targeted figure: left out.', nPnone) : '',
               tr8("Summed over CERF allocations: CERF's own de-duplicated figure for each one, from its final report")
                 + (F.nInterim ? tr8(', or the sum over its projects where the allocation has none yet ({0} interim)', F.nInterim) : '')
                 + tr8('. A person reached under two allocations counts twice. Reports come about nine months after an allocation, so recent years are incomplete.')
-                + ' ' + tr8('Country and Regional Funds report no figure here. Not people covered: that is what the plans cover now.'),
-              notShown((lab, G) => G.nRep || G.nTgt ? `${tr8(lab)} ${est(G)}` : null)]});
+                + ' ' + tr8('Country and Regional Funds report too late to count here, so their allocations count with the people they target. Not people covered: that is what the plans cover now.'),
+              notShown((lab, G) => G.nRep || G.nTgt || G.nPtgt ? `${tr8(lab)} ${est(G)}` : null)]});
   const g = document.getElementById('gtiles'); if(g) g.classList.toggle('global', !!state.iso);
   const cap = document.getElementById('gcap'); if(cap) cap.textContent = (state.iso ? tr8('Global portfolio — not {0}: its own figures are in the panel', tr8(L[state.iso].name)) : tr8('Global portfolio — all layers currently shown on the map'))
     + (past ? ' · ' + tr8('as at 31 December {0}', YEAR) : YEAR != null ? ' · ' + tr8('{0}, as of today', YEAR) : '');
