@@ -156,6 +156,10 @@ def _extra():
                       JOIN aa.cerf_project p USING (project_code)
                       WHERE p.application_code IN """ + fw + " AND s.sector_amount > 0",
                    ["application_code", "sector", "iasc", "sector_amount"]),
+        # the agencies CERF funded directly through those allocations (the partners tile)
+        "recip": ("""SELECT DISTINCT application_code, country_iso3, agency_short_name AS agency
+                     FROM aa.cerf_project WHERE application_code IN """ + fw,
+                  ["application_code", "country_iso3", "agency"]),
         # d["subgrant_aa"] without the partner acronym, which the name matching uses
         "subgrant": ("""SELECT project_code, application_code, agency, year, country_iso3,
                                partner_name, partner_acronym, partner_type, localization,
@@ -406,7 +410,26 @@ def build_plan(page, d):
     n_ingo = int(n_by.get("ingo", 0))
     n_fw_pt = int(fw["version"].notna().sum()) if len(fw) else 0
     sgd = sg[~sg["tbd"]]
-    n_funded_all = sgd["skey"].nunique()
+    # partners that received or are pre-arranged to receive funding (owner, 2026-10-28): the
+    # agencies CERF funded directly through framework activations or that hold a pre-arranged share
+    # of a current framework's budget, each once, and every sub-grantee, once per country (an agency
+    # that is also a sub-grantee counts once). The pooled funds keep no record per partner here.
+    lv_ = live[["country_iso3", "hazard", "latest_version"]].rename(columns={"latest_version": "version"})
+    pre_ag = d["split_all"].merge(lv_, on=["country_iso3", "hazard", "version"])["agency"].dropna()
+    agencies = {_n(a) for a in pre_ag} | ({_n(a) for a in ex["recip"]["agency"].dropna()} if len(ex["recip"]) else set())
+    subs = sgd.drop_duplicates("skey")
+    subs = subs[~subs["partner_acronym"].fillna("").map(_n).isin(agencies)]
+    sub_kind = subs["partner_type"].fillna("").str.lower().map(
+        lambda t: "government" if t == "gov" else "nngo" if t in ("nngo", "national partners")
+        else "ingo" if t in ("ingo", "ngos") else "rcrc" if t == "redc" else "other")
+    n_recip = len(agencies) + len(subs)
+    recip_mix = "<ul class='tb'>" + "".join(
+        f"<li>{T(label)} {n}</li>" for label, n in (
+            ("agencies funded directly or pre-arranged", len(agencies)),
+            *((lab, int((sub_kind == k).sum())) for k, lab in (
+                ("government", "Government"), ("nngo", "National / local NGOs"),
+                ("ingo", "International NGOs"), ("rcrc", "Red Cross / Red Crescent"), ("other", "Other"))))
+        if n) + "</ul>"
     cmp_ = fw[fw["has_sub"]] if len(fw) else fw
     n_named = int(cmp_["funded"].str.len().sum() + cmp_["unfunded"].str.len().sum()) if len(cmp_) else 0
     n_named_f = int(cmp_["funded"].str.len().sum()) if len(cmp_) else 0
@@ -798,7 +821,7 @@ def build_plan(page, d):
  <div class='tile'><div class='v'>{n_nat} <span style='font-size:14px;font-weight:400'>{TF("of {n}", n=n_orgs)}</span></div><div class='l'>{TBF("named organisations are national / local actors: {g} government,<br>{n} national NGOs, {r} national RC/RC societies", g=int(n_by.get('government', 0)), n=int(n_by.get('nngo', 0)), r=int(n_by.get('rcrc_nat', 0)))}</div></div>
  <div class='tile'><div class='v'>{n_un}</div><div class='l'>{T("UN agencies named as implementers")}</div></div>
  <div class='tile'><div class='v'>{n_ingo}</div><div class='l'>{T("international NGOs")}</div></div>
- <div class='tile'><div class='v'>{n_funded_all}</div><div class='l'>{TF("non-UN recipients of CERF funding (Red Cross, NGOs, government) through sub-grants of framework activations, {years}", years=sg_years)}</div></div>
+ <div class='tile'><div class='v'>{n_recip}</div><div class='l'>{TF("partners that received or are pre-arranged to receive funding, sub-grantees included ({years})", years=sg_years)}{recip_mix}</div></div>
 </div>
 <div class='grid'>
  <div class='panel'><h3>{T("CERF sub-grants of framework activations by recipient, per year")}</h3>
