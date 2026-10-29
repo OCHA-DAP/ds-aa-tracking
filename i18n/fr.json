@@ -1322,7 +1322,7 @@
  "private": "privé",
  "project_finalization": "finalisation du projet",
  "pulsing": "clignotant",
- "put every filter in this bar back to how the page opens: current frameworks and non-framework allocations, both funds, every hazard, region and framework": "remettre tous les filtres de cette barre comme à l’ouverture de la page : cadres actuels et allocations hors cadre, les deux fonds, tous les aléas, régions et cadres",
+ "put every filter in this bar back to how the page opens: current frameworks only, both funds, every hazard, region and framework": "remettre tous les filtres de cette barre comme à l’ouverture de la page : cadres actuels seulement, les deux fonds, tous les aléas, régions et cadres",
  "rainfall": "précipitations",
  "rainy season": "saison des pluies",
  "reached": "atteintes",

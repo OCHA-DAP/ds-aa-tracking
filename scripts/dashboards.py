@@ -2016,9 +2016,9 @@ def build_funding(page, d):
         un_split[ac] = {"g": {g: v * k for g, v in x.groupby("grp")["subgrant_usd"].sum().items() if v > 0},
                         "l": {g: v * k for g, v in x.groupby("lk")["subgrant_usd"].sum().items() if v > 0},
                         "p": sorted({pid[n] for n in x["partner_name"].dropna().astype(str)})}
-    # the tiles as the page opens (current frameworks and non-framework allocations, both funds);
-    # drawUN repaints them for every filter. Shares of the money whose split is known.
-    cr = act[(act["fund_code"] == "cerf") & act["g"].isin(["c", "a"])]
+    # the tiles as the page opens (current frameworks, both funds: D142); drawUN repaints them
+    # for every filter. Shares of the money whose split is known.
+    cr = act[(act["fund_code"] == "cerf") & act["g"].isin(["c"])]
     sp = [(float(v), un_split[ac]) for ac, v in zip(cr["allocation_code"], cr["amount_usd"].fillna(0)) if ac in un_split]
     known = sum(v for v, _ in sp)
     sub_total = sum(v * sum(x["g"].values()) for v, x in sp)
@@ -2102,7 +2102,7 @@ def build_funding(page, d):
  <label>{T("Region")} <select id='fReg'>{OPT("", "all")}</select></label>
  <label>{T("GHO")} <select id='fGho'>{OPT("", "all")}{OPT("1", "GHO contexts only")}</select></label>
  <label {ATTR("title", "released money only: pre-arranged money is a stock, in place on a date, so it never accumulates")}><input type='checkbox' id='fCum'> {T("cumulative (released)")}</label>
- <button type='button' id='fReset' class='freset' {ATTR("title", "put every filter in this bar back to how the page opens: current frameworks and non-framework allocations, both funds, every hazard, region and framework")}>{T("Reset all filters")}</button>
+ <button type='button' id='fReset' class='freset' {ATTR("title", "put every filter in this bar back to how the page opens: current frameworks only, both funds, every hazard, region and framework")}>{T("Reset all filters")}</button>
 </div>
 <div class='tiles'>
  <div class='tile'><div class='v' id='tFw'>{n_active + n_upd + n_dev}</div><div class='l' id='tFwl'>{TF("frameworks — {a} active · {u} being updated · {d} in development", a=n_active, u=n_upd, d=n_dev)}</div></div>
@@ -2466,8 +2466,8 @@ fwQ.addEventListener('input', ()=>{ const q = fwQ.value.toLowerCase().split(' ')
   fwAll.textContent = q.length ? tr8('tick shown') : tr8('tick all'); fwNone.textContent = q.length ? tr8('untick shown') : tr8('untick all'); });
 fwNote.addEventListener('click', ev=>{ if(ev.target.tagName==='BUTTON'){ fwSel = null; fwToDom(); fwCommit(); } });
 // 'Reset all filters' (2026-10-09 meeting): every control of the bar back to how the page opens —
-// the layers and cumulative as the page writes them (defaultChecked: current frameworks and ad hoc
-// on, retired and cumulative off), the fund, hazard, region and GHO selects on their first
+// the layers and cumulative as the page writes them (defaultChecked: current frameworks on;
+// non-framework, retired and cumulative off), the fund, hazard, region and GHO selects on their first
 // option ('' = all), every framework ticked with the list's search cleared, and no #fw= in the
 // address (fwCommit). The money-flow chart's own controls are views of that chart, not filters.
 fReset.addEventListener('click', ()=>{

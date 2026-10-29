@@ -39,6 +39,9 @@ REF_LABEL = "the hand coder"  # how the pages name them (no staff names on the s
 def _by_role(df):
     """The hand coder's rows carry the role, not the name: the pages' data is on the site."""
     df["coded_by"] = df["coded_by"].replace({REF_CODER: REF_LABEL})
+    others = sorted(set(df["coded_by"]) - {REF_LABEL} - {c for c in df["coded_by"] if str(c).startswith("model-")})
+    if others:   # another person's coding would reach the page under their name
+        print(f"::warning::{PAGE}: {len(others)} hand coder(s) other than the reference are named in the data; map them to a role")
     return df
 
 # the automated passes the accuracy page knows, in the order it shows them: coded_by, name,
@@ -521,7 +524,7 @@ def build_accuracy(df, page):
         ref_coder = REF_LABEL
     else:
         ref_coder = max(humans, key=lambda c: int(((df["coded_by"] == c) & df["value"].notna()).sum()))
-        print(f"::warning::{ACC_PAGE}: reference coder {REF_LABEL!r} not found; scoring against {ref_coder!r}")
+        print(f"::warning::{ACC_PAGE}: reference coder {REF_CODER!r} not found; scoring against {ref_coder!r}")
     known = [k for k, _, _ in RUNS]
     runs = [(k, n, d) for k, n, d in RUNS if k in models] + [(m, m, "") for m in models if m not in known]
     rows = _rows(df)
