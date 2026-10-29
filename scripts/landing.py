@@ -796,13 +796,13 @@ def _svg_tr(svg):
     return re.sub(r"<text([^>]*)>([^<]*)</text>", one, svg)
 
 
-# Kept for the planned definitions page (owner, 2026-10-27: off the Map page); nothing calls it yet.
-def status_help_html():
+# Off the Map page (owner, 2026-10-27); the Definitions page shows it (page_definitions.py).
+def status_help_html(open_=False):
     """The 'How statuses work' block: the version lifecycle and framework status diagram (its
     SVG text follows the language switch) and the map layers, with its CSS."""
-    body = f"""<details id='statushelp' class='statushelp'><summary>{T("How statuses work — version lifecycle and the framework status inferred from it")}</summary>
+    body = f"""<details id='statushelp' class='statushelp'{' open' if open_ else ''}><summary>{T("How statuses work — version lifecycle and the framework status inferred from it")}</summary>
  <div class='sh-grid'>
-  <svg viewBox='0 0 780 362' class='sh-svg' role='img' {ATTR("aria-label", "Status diagram")}>
+  <svg viewBox='0 0 960 362' class='sh-svg' role='img' {ATTR("aria-label", "Status diagram")}>
    <defs><linearGradient id='shsplit' x1='0' y1='0' x2='1' y2='1'><stop offset='50%' stop-color='#dbeafe'/><stop offset='50%' stop-color='#e8f1f8'/></linearGradient><marker id='arr' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' markerHeight='7' orient='auto-start-reverse'><path d='M0,0 L10,5 L0,10 z' fill='#64748b'/></marker></defs>
    <text x='10' y='22' class='sh-h'>Framework VERSION status (stored: one of three, recorded by the team)</text>
    <g class='sh-box'><rect x='10' y='40' width='120' height='40' rx='8'/><text x='70' y='65'>pre-development</text></g>
@@ -838,7 +838,7 @@ def status_help_html():
  </div>
 </details>
 """
-    a = body.index("<svg viewBox='0 0 780 362'")
+    a = body.index("<svg viewBox='0 0 960 362'")
     b = body.index("</svg>", a) + len("</svg>")
     return body[:a] + _svg_tr(body[a:b]) + body[b:] + "<style>" + STATUS_HELP_CSS + "</style>"
 
@@ -846,7 +846,7 @@ def status_help_html():
 STATUS_HELP_CSS = r"""
 .statushelp { margin-top:14px; background:#fff; border:1px solid #e6eaef; border-radius:12px; padding:8px 16px; }
 .statushelp summary { cursor:pointer; color:var(--ocha); font-size:13px; }
-.sh-grid { overflow-x:auto; padding:8px 0 4px; } .sh-svg { width:100%; max-width:820px; height:auto; display:block; font-family:-apple-system,'Segoe UI',Roboto,sans-serif; }
+.sh-grid { overflow-x:auto; padding:8px 0 4px; } .sh-svg { width:100%; max-width:960px; height:auto; display:block; font-family:-apple-system,'Segoe UI',Roboto,sans-serif; }
 .sh-h { font-size:12px; font-weight:700; fill:#0f2540; } .sh-note { font-size:10.5px; fill:#475569; }
 .sh-box rect { fill:#f1f5f9; stroke:#cbd5e1; } .sh-box text { font-size:11px; fill:#1e293b; text-anchor:middle; font-weight:600; }
 .sh-box.sh-on rect { fill:#dbeafe; stroke:#2171b5; } .sh-box.sh-dev rect { fill:#e8f1f8; stroke:#9ecae1; }
@@ -993,6 +993,67 @@ def _cerf_reached(codes, _try):
 
 
 PRE_SERIES = {}   # year -> the whole annual pre-arranged series (assemble fills it; the tile label quotes it)
+
+
+def status_at(versions, hist, D):
+    """The Map's statusAt(), in Python: a framework's status as at day D (ISO date), from its
+    versions and its year-selector history. Mirrors the script in LANDING_JS so the Financing
+    page's chart of frameworks by year says what the Map's year bar says. Returns the status
+    (active · updating · development · retired) or None (did not exist yet)."""
+    H = hist or {}
+    d10 = lambda x: str(x or "")[:10]   # noqa: E731
+    since = lambda v: min([d10(x) for x in (v.get("valid_from"), v.get("dev_since")) if x] or [""])  # noqa: E731
+    dated = [v for v in versions if v.get("status") != "retired" and since(v) and since(v) <= D]
+    S = D[:4] + "-01-01"
+    if H.get("retired") and H.get("ret_on") and H["ret_on"] <= S:
+        return "retired"
+    if dated:
+        endorsed = [v for v in dated if v.get("status") == "endorsed" and v.get("valid_from") and d10(v["valid_from"]) <= D]
+        if any(not v.get("valid_until") or d10(v["valid_until"]) >= S for v in endorsed):
+            return "active"
+        return "updating" if endorsed else "development"
+    sc = None
+    for a, cat in H.get("sh") or []:
+        if a <= D:
+            sc = cat
+        else:
+            break
+    if not sc or sc in ("pipeline", "retired"):
+        return None
+    return "development" if versions else sc
+
+
+def framework_status_by_year(d, e):
+    """For the Financing page: every framework's status at the end of each year since
+    YEAR_FIRST (the current year: its status today, as the Map and the Financing tiles count
+    it), with the keys the page filters on. Past years follow status_at(), the Map's rule."""
+    from dashboards import EXCLUDED_EVENT_TYPES, haz
+    cy = TODAY.year
+    excl = ", ".join(f"'{t}'" for t in EXCLUDED_EVENT_TYPES)
+    hist = _year_history(d, e, excl, lambda sql, cols: pd.read_sql(sql, e))["pair"]
+    fv = pd.read_sql("""SELECT country_iso3, hazard, version, kb_status, valid_from, valid_until,
+                               development_since FROM aa.framework_version
+                        ORDER BY country_iso3, hazard, valid_from NULLS LAST, version""", e)
+    vers = {}
+    for x in fv.itertuples():
+        vers.setdefault((x.country_iso3, x.hazard), []).append(
+            {"v": x.version, "status": _s(x.kb_status), "valid_from": _s(x.valid_from),
+             "valid_until": _s(x.valid_until), "dev_since": _s(x.development_since)})
+    gho = {(c, int(y)): bool(g) for c, y, g in zip(d["gho"]["country_iso3"], d["gho"]["year"], d["gho"]["in_gho"])}
+    rows = []
+    for r in d["current"].itertuples():
+        c, h, lc = r.country_iso3, r.hazard, _s(r.lifecycle)
+        if lc not in ("active", "updating", "development", "retired"):
+            continue                      # a pipeline pair is not a framework (yet)
+        by = {}
+        for y in range(YEAR_FIRST, cy):
+            st = status_at(vers.get((c, h), []), hist.get((c, h)), f"{y}-12-31")
+            if st:
+                by[str(y)] = st
+        by[str(cy)] = lc
+        rows.append({"k": f"{c}|{h}", "hz": haz(h), "region": _s(r.region) or "?", "g": "c",
+                     "gho": {str(y): gho.get((c, y), False) for y in range(YEAR_FIRST, cy + 1)}, "y": by})
+    return rows
 
 
 def _year_history(d, e, excl, _try):
@@ -2142,6 +2203,7 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
   color:#fff; font-size:11.5px; font-weight:400; line-height:1.35; padding:6px 9px; border-radius:6px; white-space:normal; text-align:left;
   box-shadow:0 4px 12px -4px rgba(0,0,0,.35); display:none; z-index:6; }
 .hasdef:hover::after, .hasdef:focus::after { display:block; }
+.maplegend .deflink { display:block; margin-top:6px; font-size:12px; color:var(--ocha); text-decoration:none; } .maplegend .deflink:hover { text-decoration:underline; }
 .sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; }
 .gtiles.global { opacity:.72; } .gtiles.global .tile { background:#f6f8fa; border-style:dashed; box-shadow:none; }
 .gtiles.global .tile .v { font-size:18px; color:#475569; } .gtiles.global .tile .k { color:#475569; } .gtiles.global .tile .k svg { stroke:#64748b; } .gtiles.global .gcap { color:#b45309; font-weight:700; }
@@ -2677,7 +2739,8 @@ function worldLegend(){
   legend.innerHTML = `<div class='layerctl' role='group' aria-label='${esc(tr8('Map layers'))}'>` + row('framework') + st + row('adhoc') + row('retired') + row('tech') + `</div>`
     + `<div class='lsub'><span><span class='dot' style='background:#e3322d'></span>${esc(YEAR != null ? tr8('Activations in {0}', YEAR) : tr8('Activations'))} <span class='cnt'>${nAct}</span></span>`
     + (pastY() ? '' : `<span><span class='dot' style='background:#fff;border:3px solid #e3322d;box-sizing:border-box'></span>${esc(tr8('Activated in the last {0} days', RECENT_DAYS))} <span class='cnt'>${nRec}</span></span>`
-      + `<span><span class='dot' style='background:#fff;border:2px solid #f5a300;box-sizing:border-box'></span>${esc(tr8('In monitoring season'))} <span class='cnt'>${nNow}</span></span>`) + `</div>`;
+      + `<span><span class='dot' style='background:#fff;border:2px solid #f5a300;box-sizing:border-box'></span>${esc(tr8('In monitoring season'))} <span class='cnt'>${nNow}</span></span>`) + `</div>`
+    + `<a class='deflink' href='definitions.html'>${esc(tr8('Definitions'))} →</a>`;
 }
 // what a list of map entries is called: frameworks, unless some are ad hoc allocations or technical support
 function nounCount(fs){

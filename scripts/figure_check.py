@@ -74,6 +74,10 @@ def check() -> None:
     for lc, k in (("active", "n_active"), ("updating", "n_upd"), ("development", "n_dev")):
         cmp(f"frameworks {lc}", "Map ↔ Financing", t[k], sum(r["lifecycle"] == lc for r in fw_c), "n")
         cmp(f"frameworks {lc}", "Map ↔ History", t[k], sum(r["life"] == lc for r in H["rows"]), "n")
+    # the Financing page's chart of frameworks by status each year: its current-year bar is today
+    fwy_cy = [r["y"].get(str(cy)) for r in F.get("fwy", [])]
+    for lc, k in (("active", "n_active"), ("updating", "n_upd"), ("development", "n_dev")):
+        cmp(f"frameworks {lc}", "Map ↔ Financing by-year chart", t[k], sum(x == lc for x in fwy_cy), "n")
     cmp("retired frameworks", "Map ↔ Financing", m_ret, sum(r["lifecycle"] == "retired" for r in F["fw"]), "n")
     cmp("retired frameworks", "Map ↔ History", m_ret, sum(r["life"] == "retired" for r in H["rows"]), "n")
     cmp("current frameworks", "Map ↔ Activities", t["n_fw"], A["n_live"], "n")

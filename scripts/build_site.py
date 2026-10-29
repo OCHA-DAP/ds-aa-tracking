@@ -131,8 +131,8 @@ function dlcsv(id, name) {
 # the map is known. An admin page may link to the public site; a public page never links
 # to the admin site, and never carries the data service's token.
 PUBLIC_TABS = ("index.html", "pillar-model.html", "pillar-history.html", "pillar-plan.html",
-               "dash-funding.html", "pillar-learning.html", "media.html", "climate-adaptation.html",
-               "climate-coding-accuracy.html")
+               "dash-funding.html", "pillar-learning.html", "media.html", "definitions.html",
+               "climate-adaptation.html", "climate-coding-accuracy.html")   # definitions: public, linked, not a tab
 # public, so behind the same password as the tabs, but deliberately NOT in NAV nor linked
 # from any listed page: reached only by their links (they may link to each other), until
 # they are ready to be tabs (user, 2026-10-19)
