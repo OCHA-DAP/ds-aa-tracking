@@ -3049,7 +3049,7 @@ async function selectCountry(iso, hz, ver){
   const changed = state.iso !== iso;
   // a deep link to a pair whose layer is off: switch that layer on so the map and the panel agree
   const want = hz ? c.fws.find(f=>f.hazard===hz) : null;
-  if(want && want.layer && !visLayer(want)){ LAYERS[want.layer] = true; syncOn(); }
+  if(want && want.layer && !visLayer(want)){ LAYERS[want.layer] = true; syncOn(); buildFwTable(); }   // the table follows the layer the link turned on
   const fws = vis(c);
   state = { iso, hz: hz || (fws.length===1 ? fws[0].hazard : null), ver: ver || null, pillar: state.pillar };
   buildOverview();   // a phone: the map itself shows the country
