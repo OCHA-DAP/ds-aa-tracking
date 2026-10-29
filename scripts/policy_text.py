@@ -29,7 +29,10 @@ POLICY = {
         "Because these elements are agreed beforehand it is cost-effective, enabling reaching people with "
         "speed to save lives and livelihoods. A <b><a href='pillar-learning.html'>learning</a></b> "
         "component measures against these outcomes to iteratively improve anticipatory action over "
-        "time.</p>"),
+        "time.</p>"
+        "<p class='policy-p'>The terms used across the site — statuses, trigger windows, pre-arranged "
+        "and released money, people covered and reached — are defined on the "
+        "<a href='definitions.html'>Definitions</a> page.</p>"),
     "pillar-model.html": (
         "What is a trigger, and what makes a good one?",
         "A trigger is the pre-agreed condition, from a forecast or an observation, that "
