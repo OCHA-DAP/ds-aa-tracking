@@ -1869,9 +1869,10 @@ def build_landing(page, d, e):
   <div class='muted' style='padding:20px 6px'>{T("Select a country or a pin to see its frameworks — status, funding, monitoring window, triggers, versions and activations.")}</div>
  </div>
 </div>
+<p class='mapdisc'>{T("The boundaries and names shown and the designations used on this map do not imply official endorsement or acceptance by the United Nations.")}</p>
 <p class='maphelp'>{TB("<b>Reading the map.</b> Published triggers, windows, pre-arranged financing and activations across the AA portfolio — CERF, country-based and regional pooled funds. Pin colour = framework status, inferred from the most recent version; each red dot = one past activation; a red ring = activated in the last 30 days; an amber ring = in its monitoring season this month. <b>Click a country or a pin</b> to zoom in and see the areas each framework covers; the <b>layer toggles</b> in the map legend choose what is drawn, and the figures above follow them.")}</p>
 <section class='fwt' id='fwt'>
- <div class='fwt-head'><h2>{T("Frameworks on the map")}</h2>
+ <div class='fwt-head'><h2>{T("Frameworks and allocations on the map")}</h2>
   <button type='button' class='dl' onclick='fwCSV()'>{T("Download CSV")}</button></div>
  <p class='fwt-cap' id='fwtcap'></p>
  <div class='fwt-scroll'><table class='fwtab' id='fwtab'></table></div>
@@ -2198,6 +2199,8 @@ table.fwtab tfoot td { font-weight:700; background:#f8fafc; border-top:2px solid
 table.fwtab tfoot tr.x td { font-weight:400; color:#475569; border-top:1px solid #e2e8f0; }
 table.fwtab .mstrip, table.fwtab td.nw { white-space:nowrap; }
 table.fwtab .mm { width:14px; height:15px; font-size:8.5px; }
+/* the standard UN map disclaimer, under the map (owner, 2026-10-29) */
+.mapdisc { font-size:11.5px; color:#5f6470; margin:6px 0 2px; font-style:italic; }
 """
 
 LANDING_JS = r"""
@@ -3500,21 +3503,29 @@ function annotate(root, scope){
 // current-frameworks layer, in the year shown), so its pre-arranged and people-covered totals
 // are the tiles' figures; activations and released count the framework activations listed
 const FWT = {k: 'country', dir: 1};
-const ST_ORDER = {active: 0, updating: 1, development: 2};
+const ST_ORDER = {active: 0, updating: 1, development: 2, retired: 3, adhoc: 4, tech: 5};
+// one row per pair the map draws, by the tiles' rules (owner, 2026-10-29: the map, the table and
+// the totals locked together): a pair is listed when one of its layers is switched on (visLayer);
+// the stock figures (pre-arranged, people covered, co-financing) count only a pair shown on the
+// current-frameworks layer, as the tiles do (updateTiles: fw); the flow figures (activations,
+// released) are flowActs, the tiles' own — so every total equals its tile, whatever the layers and year
 function fwRows(){
   const R = [];
   Object.entries(L).forEach(([iso, c]) => c.fws.forEach(f => {
-    if(!(LAYERS.framework && f.layers.includes('framework'))) return;
-    // the current framework's activations: a replaced framework's (isOld) are not listed here
-    const v = f.versions.find(x => x.v === f.current), acts = dotActs(f).filter(a => !isOld(a)), P = f.pre_parts || {};
+    const lay = visLayer(f); if(!lay) return;
+    const stock = LAYERS.framework && f.layers.includes('framework');
+    const v = f.versions.find(x => x.v === f.current), acts = flowActs(f), P = stock ? (f.pre_parts || {}) : {};
     const rows = acts.flatMap(a => a.funding || []);
-    R.push({iso, c, f, v, country: tr8(c.name), hazard: tr8(f.hz_label), status: ST_ORDER[f.disp] ?? 9,
-            version: f.current || '', pre: f.pre_now, cerf: P.cerf, pooled: P.pooled, all: P.all, pre_v: P.version,
-            covered: f.covered, n: acts.length, apy: apyOf(f),
+    // the status the map shows for the pair: its framework status on the current-frameworks layer,
+    // else the layer it is drawn on (retired, non-framework allocation, technical support)
+    const st = lay === 'framework' ? f.disp : lay;
+    R.push({iso, c, f, v, lay, st, country: tr8(c.name), hazard: tr8(f.hz_label), status: ST_ORDER[st] ?? 9,
+            version: f.current || '', pre: stock ? f.pre_now : null, cerf: P.cerf, pooled: P.pooled, all: P.all, pre_v: P.version,
+            covered: stock ? f.covered : null, n: acts.length, apy: stock ? apyOf(f) : null,
             // the overall return period of the version shown (the latest; a past year: the one at its end)
             rp: v && v.rp != null ? v.rp : null,
             // co-financing pre-arranged as reported for the year (this year: today's figure)
-            cofin: (f.cofin_y || {})[String(YEAR != null ? YEAR : YEARS.now)] ?? null,
+            cofin: stock ? (f.cofin_y || {})[String(YEAR != null ? YEAR : YEARS.now)] ?? null : null,
             // no amount recorded for any of them: '—', not $0
             released: rows.some(x => x.usd != null) ? rows.reduce((s, x) => s + (x.usd || 0), 0) : null,
             months: (v && v.months) || []});
@@ -3529,7 +3540,7 @@ function fwRows(){
 // a past year: the pooled-fund money of no single framework, as the pre-arranged tile counts it
 function fwPreX(R){
   if(!pastY()) return 0;
-  const fs = new Set(R.map(r => r.f)); let x = 0;
+  const fs = new Set(R.filter(r => LAYERS.framework && r.f.layers.includes('framework')).map(r => r.f)); let x = 0;   // the tile's frameworks (updateTiles: fw)
   Object.values(L).forEach(c => { const p = (c.pre_x || {})[String(YEAR)]; if(p && c.fws.some(f => fs.has(f))) x += p[0]; });
   return x;
 }
@@ -3565,7 +3576,8 @@ function buildFwTable(){
     const drvPre = past && f.pre_drv ? DRV(tr8('Inferred from the envelope of the version valid during the year (no reported figure for that framework-year)')) : '';
     const cell = {
       country: f.page ? `<a href='${esc(f.page)}'>${esc(r.country)}</a>` : esc(r.country), hazard: esc(r.hazard),
-      status: badge(f.disp) + (past ? DRV(statusNote(f).slice(3)) : actChip(f)),
+      status: r.lay === 'tech' ? `<span class='badge b-tech'>${esc(tr8('technical support'))}</span>`
+        : r.lay === 'framework' ? badge(f.disp) + (past ? DRV(statusNote(f).slice(3)) : actChip(f)) : badge(r.st),
       rp: r.rp == null ? '—' : `<span title='${esc(rpTitle(r.v))}'>${esc(rpText(r.rp))}</span>`,
       n: r.n || '—', covered: num(r.covered),
       pre: usd(r.pre) + mk + drvPre + notes, cerf: usd(r.cerf) + (r.cerf != null ? mk : ''), pooled: usd(r.pooled) + (r.pooled != null ? mk : ''),
@@ -3582,17 +3594,16 @@ function buildFwTable(){
   const iPre = cols.findIndex(c => c[0] === 'pre');
   const xrow = preX ? `<tr class='x'><td colspan='${iPre}'>${esc(tr8('Country and Regional Fund allocations in {0} not tied to one framework', YEAR))}</td>`
       + `<td class='num'>${usd(preX)}</td><td colspan='${cols.length - iPre - 1}'></td></tr>` : '';
-  const foot = n ? `<tfoot>${xrow}<tr><td colspan='${lead}'>${esc(tr8(n === 1 ? 'Total, {0} framework' : 'Total, {0} frameworks', n))}</td>`
+  const foot = n ? `<tfoot>${xrow}<tr><td colspan='${lead}'>${esc(tr8(n === 1 ? 'Total, {0} shown on the map' : 'Total, {0} shown on the map', n))}</td>`
       + cols.slice(lead).map(([k]) => `<td class='num'>${k === 'rp' ? '' : tot[k]}</td>`).join('') + `</tr></tfoot>` : '';
   tab.innerHTML = head + body + foot;
   // the asterisk's footnote: one line per number of activations a year among the rows
   if(foot0){ const ns = [...new Set(R.map(r => r.apy).filter(Boolean))].sort((a, b) => a - b);
     foot0.hidden = !ns.length; foot0.textContent = ns.map(k => '† ' + apyNote(k)).join(' '); }
-  if(cap) cap.textContent = !LAYERS.framework ? tr8('The current-frameworks layer is switched off in the map legend: switch it on to list the frameworks.')
-    : past ? tr8(n === 1 ? '{0} framework at the end of {1}, as counted at the top of the page (same pre-arranged and people-covered totals). Status and figures for past years are reconstructed from the framework records.'
-                         : '{0} frameworks at the end of {1}, as counted at the top of the page (same pre-arranged and people-covered totals). Status and figures for past years are reconstructed from the framework records.', n, YEAR)
-    : tr8(n === 1 ? '{0} framework, as counted at the top of the page (same pre-arranged and people-covered totals). Pick a year above the map to see an earlier year.'
-                  : '{0} frameworks, as counted at the top of the page (same pre-arranged and people-covered totals). Pick a year above the map to see an earlier year.', n);
+  if(cap) cap.textContent = !n ? tr8('Nothing is shown on the map: switch on a layer in the map legend to list what it shows.')
+    : (past ? tr8('Everything shown on the map at the end of {0} ({1}); the totals are the figures at the top of the page. Status and figures for past years are reconstructed from the framework records.', YEAR, n)
+            : tr8('Everything shown on the map ({0}); the totals are the figures at the top of the page. The table follows the map legend and the year above the map.', n))
+      + (LAYERS.framework ? '' : ' ' + tr8('Pre-arranged money and people covered count the current frameworks only: switch that layer on to see them.'));
 }
 function fwSort(k){ FWT.dir = FWT.k === k ? -FWT.dir : (['country', 'hazard', 'status', 'rp'].includes(k) ? 1 : -1); FWT.k = k; buildFwTable(); }
 (function(){ const tab = document.getElementById('fwtab'); if(!tab) return;
@@ -3613,7 +3624,8 @@ function fwCSV(){
                 `released_from_ocha_${yr}_usd`, 'activations_per_year', 'prearranged_from_version', 'version',
                 'framework_document', 'framework_page'];
   const RPB = {backtest: 'historical simulation', stated: 'stated in the framework'};
-  const lines = [cols.join(',')].concat(R.map(r => [r.c.name, r.iso, r.f.hz_label, r.f.disp_label,
+  const ST_EN = {retired: 'retired', adhoc: 'non-framework allocation', tech: 'technical support'};   // the status as drawn (fwRows: st)
+  const lines = [cols.join(',')].concat(R.map(r => [r.c.name, r.iso, r.f.hz_label, r.lay === 'framework' ? r.f.disp_label : ST_EN[r.lay],
       r.months.map(m => MON[m - 1]).join(' '), r.rp == null ? null : +r.rp.toFixed(2), r.rp == null ? null : RPB[r.v.rp_src],
       r.n, r0(r.covered), r0(r.pre), split ? r0(r.cerf) : null, split ? r0(r.pooled) : null, r0(r.cofin), r0(r.released),
       r.apy || 1, split ? r.pre_v : null, r.f.current, r.v && r.v.doc_url,
