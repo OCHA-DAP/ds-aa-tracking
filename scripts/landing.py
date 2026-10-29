@@ -1025,35 +1025,56 @@ def status_at(versions, hist, D):
     return "development" if versions else sc
 
 
+def _try_sql(e, sql, cols):
+    """Read a table or column that may not exist yet on this DB: an empty frame, never a crash."""
+    try:
+        return pd.read_sql(sql, e)
+    except Exception as ex:  # noqa: BLE001
+        print(f"  ! {sql.split('FROM')[1].split()[0] if 'FROM' in sql else sql}: {ex}")
+        return pd.DataFrame(columns=cols)
+
+
 def framework_status_by_year(d, e):
-    """For the Financing page: every framework's status at the end of each year since
-    YEAR_FIRST (the current year: its status today, as the Map and the Financing tiles count
-    it), with the keys the page filters on. Past years follow status_at(), the Map's rule."""
+    """For the Financing page: the status of every pair the Map draws at the end of each year
+    since YEAR_FIRST, with the keys the page filters on. Past years follow status_at(), the
+    Map's rule (a year the pair had nothing in is left out, as the Map leaves it off the
+    layers); the current year is today's status, as the Map and the Financing tiles count it.
+    The year-selector history it reads is kept on d for assemble(), which needs the same."""
     from dashboards import EXCLUDED_EVENT_TYPES, haz
     cy = TODAY.year
     excl = ", ".join(f"'{t}'" for t in EXCLUDED_EVENT_TYPES)
-    hist = _year_history(d, e, excl, lambda sql, cols: pd.read_sql(sql, e))["pair"]
-    fv = pd.read_sql("""SELECT country_iso3, hazard, version, kb_status, valid_from, valid_until,
+    d["_hist"] = _year_history(d, e, excl, lambda sql, cols: _try_sql(e, sql, cols))
+    hist = d["_hist"]["pair"]
+    fv = _try_sql(e, """SELECT country_iso3, hazard, version, kb_status, valid_from, valid_until,
                                development_since FROM aa.framework_version
-                        ORDER BY country_iso3, hazard, valid_from NULLS LAST, version""", e)
+                        ORDER BY country_iso3, hazard, valid_from NULLS LAST, version""",
+                  ["country_iso3", "hazard", "version", "kb_status", "valid_from", "valid_until", "development_since"])
     vers = {}
     for x in fv.itertuples():
         vers.setdefault((x.country_iso3, x.hazard), []).append(
             {"v": x.version, "status": _s(x.kb_status), "valid_from": _s(x.valid_from),
              "valid_until": _s(x.valid_until), "dev_since": _s(x.development_since)})
+    # the pairs the Map draws: a framework (any status, retired included), one hosting a
+    # replaced framework, one with non-framework allocations, or one OCHA supported technically
+    ad = _try_sql(e, f"SELECT country_iso3, hazard, count(*) AS n FROM aa.adhoc_activation "
+                     f"WHERE event_type NOT IN ({excl}) GROUP BY 1, 2", ["country_iso3", "hazard", "n"])
+    n_adhoc = {(a.country_iso3, a.hazard): int(a.n) for a in ad.itertuples()}
+    old_pairs = {(c, h) for c, h, _ in (d.get("old") or set())}
     gho = {(c, int(y)): bool(g) for c, y, g in zip(d["gho"]["country_iso3"], d["gho"]["year"], d["gho"]["in_gho"])}
     rows = []
     for r in d["current"].itertuples():
         c, h, lc = r.country_iso3, r.hazard, _s(r.lifecycle)
-        if lc not in ("active", "updating", "development", "retired"):
-            continue                      # a pipeline pair is not a framework (yet)
+        is_fw = lc in ("active", "updating", "development", "retired")
+        if not (is_fw or (c, h) in old_pairs or n_adhoc.get((c, h)) or bool(_f(r.technical_support) or False)):
+            continue
         by = {}
         for y in range(YEAR_FIRST, cy):
             st = status_at(vers.get((c, h), []), hist.get((c, h)), f"{y}-12-31")
             if st:
                 by[str(y)] = st
-        by[str(cy)] = lc
-        rows.append({"k": f"{c}|{h}", "hz": haz(h), "region": _s(r.region) or "?", "g": "c",
+        if is_fw:
+            by[str(cy)] = lc
+        rows.append({"k": f"{c}|{h}", "hz": haz(h), "region": _s(r.region) or "?",
                      "gho": {str(y): gho.get((c, y), False) for y in range(YEAR_FIRST, cy + 1)}, "y": by})
     return rows
 
@@ -1237,7 +1258,7 @@ def assemble(d, e):
     reach_row = {code: g.sort_values(["event_date", "window_name"]).index[0]
                  for code, g in cerf_f.groupby("allocation_code")}
     n_adhoc = {(a.country_iso3, a.hazard): int(a.n) for a in adhoc.itertuples()}
-    hist = _year_history(d, e, excl, _try)        # the year selector's dated records, per pair
+    hist = d.get("_hist") or _year_history(d, e, excl, _try)   # the year selector's dated records, per pair (read once per build)
     from dashboards import NOT_SOCIAL_SQL
     learn = _try(
         f"""SELECT id, title, url, publisher, year, doc_type, country_iso3, hazard, key_stat
@@ -1940,7 +1961,7 @@ def build_landing(page, d, e):
  <p class='fwt-cap' id='fwtcap'></p>
  <div class='fwt-scroll'><table class='fwtab' id='fwtab'></table></div>
  <p class='fwt-note' id='fwtfoot' hidden></p>
- <p class='fwt-note'>{TB("<b>Return period</b>: how often the framework's latest version would activate (any of its trigger windows, in a year), from its historical simulation where one is recorded, otherwise as the framework states it. <b>Pre-arranged (OCHA-managed funds)</b>: for each framework, the envelope of its most recent version that has one, from CERF and the Country and Regional Funds; a framework being updated keeps its last envelope, and one in development shows the envelope recorded for it so far. <b>Co-financing</b>: money from outside the OCHA-managed funds pre-arranged for the framework, as reported for the year (the Financing page's figure). <b>Activations</b> and <b>released from OCHA</b> count the framework activations of the frameworks listed; non-framework allocations and retired frameworks are not listed. Click a column heading to sort.")}</p>
+ <p class='fwt-note'>{TB("<b>Return period</b>: how often the framework's latest version would activate (any of its trigger windows, in a year), as the framework states it where it does, otherwise from its historical simulation. <b>Pre-arranged (OCHA-managed funds)</b>: for each framework, the envelope of its most recent version that has one, from CERF and the Country and Regional Funds; a framework being updated keeps its last envelope, and one in development shows the envelope recorded for it so far. <b>Co-financing</b>: money from outside the OCHA-managed funds pre-arranged for the framework, as reported for the year (the Financing page's figure). <b>Activations</b> and <b>released from OCHA</b> count the framework activations of the frameworks listed; non-framework allocations and retired frameworks are not listed. Click a column heading to sort.")}</p>
 </section>
 <!-- 2026-10-02 meeting: the internal links that sat here (dashboards, explorer, data entry,
      data & schema review) were easy to miss below the map; they all live in the Internal menu -->

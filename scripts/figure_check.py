@@ -78,6 +78,16 @@ def check() -> None:
     fwy_cy = [r["y"].get(str(cy)) for r in F.get("fwy", [])]
     for lc, k in (("active", "n_active"), ("updating", "n_upd"), ("development", "n_dev")):
         cmp(f"frameworks {lc}", "Map ↔ Financing by-year chart", t[k], sum(x == lc for x in fwy_cy), "n")
+    # ... and its bar for last year is what the Map's year bar shows (statusAt, per pair)
+    fwy = {r["k"]: r for r in F.get("fwy", [])}
+    y1 = f"{cy - 1}-12-31"
+    off = 0
+    for iso, cd in M.items():
+        for f in cd["fws"]:
+            k = f"{iso}|{f['hazard']}"
+            if k in fwy and landing.status_at(f["versions"], f.get("hist"), y1) != fwy[k]["y"].get(str(cy - 1)):
+                off += 1
+    cmp(f"frameworks by status, {cy - 1}, pairs that differ", "Map ↔ Financing by-year chart", 0, off, "n")
     cmp("retired frameworks", "Map ↔ Financing", m_ret, sum(r["lifecycle"] == "retired" for r in F["fw"]), "n")
     cmp("retired frameworks", "Map ↔ History", m_ret, sum(r["life"] == "retired" for r in H["rows"]), "n")
     cmp("current frameworks", "Map ↔ Activities", t["n_fw"], A["n_live"], "n")

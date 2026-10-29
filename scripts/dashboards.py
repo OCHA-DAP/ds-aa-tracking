@@ -2128,7 +2128,7 @@ def build_funding(page, d):
 {_flow_panel(donors_on=True, extra=two_how)}
 <div class='grid' style='margin-top:16px'>
  <div class='panel'><h3>{T("Frameworks each year, by status")}</h3><canvas id='c0' height='260'></canvas>
-   {how("Each framework's status at the end of the year, reconstructed as the Map's year bar does it: active if an endorsed version was in force at any time in the year; being updated once its last version expired or fully triggered, or its next version is in development; in development before the first endorsed version; retired from its retirement date. The current year is today's status, the Map's figure. Follows the layers, the framework selection and the hazard, region and GHO filters; the fund switch does not apply (a count, not money).")}</div>
+   {how("Each framework's status at the end of the year: active while an endorsed version was valid at any time in the year; being updated when none was and its next version is in development or its last one had expired; in development before its first endorsed version; retired from the first full year after its retirement date. The current year is today's status, the Map's figure. Follows the layers, the framework selection and the hazard and region filters; the GHO filter applies year by year; the fund switch does not apply (a count, not money).")}</div>
  <div class='panel'><h3>{T("Pre-arranged funding in place each year, by fund")}</h3><canvas id='c1' height='260'></canvas>
    {how("A stock: what was committed in each year (a framework counts for a year if it was valid at any time in it), so the bars are not added up (the cumulative switch applies to released money only). CERF: the framework envelopes per year (sheets, framework pages, entries; 'all'-totals excluded where the fund split exists); the current year is pre-arranged now. Country and Regional Funds: AA-tagged allocations in the OneGMS mirror, in the year allocated. Co-financing is shown separately.", two=True)}</div>
  <div class='panel'><h3>{T("AA released by year, by fund")}</h3><canvas id='c2' height='260'></canvas>
@@ -2194,7 +2194,7 @@ def build_funding(page, d):
 // the fund switch, the tiles and the notes name them (2026-10-28 owner comment: the agency chart
 // said 'Country funds' and 'Regional funds'). The money-flow chart keeps each fund apart.
 const FG = [['cerf','CERF',FUND_COLORS.cerf], ['pooled','Country and Regional Funds',FUND_COLORS.cbpf]];
-// the Map's status colours; 'being updated' as its split pin: a pattern, half of each blue
+// the Map's status colours; 'being updated' hatched in the two blues of its split pin
 const FWC = (()=>{ const c = document.createElement('canvas'); c.width = c.height = 8; const x = c.getContext('2d');
   x.fillStyle = '#2171b5'; x.fillRect(0, 0, 8, 8); x.fillStyle = '#9ecae1';
   x.beginPath(); x.moveTo(8, 0); x.lineTo(8, 8); x.lineTo(0, 8); x.closePath(); x.fill();
@@ -2354,8 +2354,8 @@ function draw(){
   }
   // frameworks each year, by status (D.fwy: each framework's status at year end, the current
   // year as the tiles count it): the current frameworks' statuses while that layer is on, the
-  // retired ones while theirs is. Not the fund switch: a count. 'Being updated' is drawn as on
-  // the Map, half active blue and half development blue
+  // retired ones while theirs is. Not the fund switch: a count. 'Being updated' is hatched in
+  // the two blues of the Map's split pin
   { const W = D.fwy.filter(r=>(!s.hz||r.hz===s.hz) && (!s.rg||r.region===s.rg) && fwOK(r, s));
     const ys = [...new Set(years.map(String).concat(W.flatMap(r=>Object.keys(r.y))))].sort();
     const ST = [['active','Active',FWC.active], ['updating','Being updated',FWC.updating],

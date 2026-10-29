@@ -6,12 +6,13 @@ definitions, the Financing page's method notes, the plain-language boxes, the fr
 table's footnote — repeated so the pages agree. Nothing is defined here that no page says.
 """
 
+import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from site_i18n import T, TB  # noqa: E402
+from site_i18n import T, TB, TF  # noqa: E402
 
 PAGE = "definitions.html"
 TITLE = "Definitions"
@@ -24,18 +25,20 @@ GLOSSARY = [
          "of activities to be carried out, and the pre-arranged financing that is released the moment "
          "the trigger is met. One framework covers one country and one hazard."),
         ("Version",
-         "An endorsed framework document. A framework has a new version each time its document is "
-         "revised and endorsed again; the most recent version decides the framework's status."),
+         "A framework document, recorded with its status: pre-development, in development or "
+         "endorsed; superseded is inferred once a newer endorsed version exists. The most recent "
+         "endorsed version decides the framework's status."),
         ("Trigger",
          "The pre-agreed condition, from a forecast or an observation, that activates the framework. "
          "A trigger mechanism can hold several specific triggers with their own windows."),
-        ("Trigger window — readiness, action, observational",
+        ("Trigger window — readiness, action",
          "For sudden-onset hazards, typically a readiness trigger with a long lead time followed by an "
-         "action trigger closer to the shock; an observational trigger acts on observed conditions "
-         "rather than a forecast."),
+         "action trigger closer to the shock."),
+        ("Trigger basis — forecast, observed",
+         "Whether the triggers use forecast or observed data, or both (windows of both kinds, or one "
+         "window that combines the two)."),
         ("Monitoring season",
-         "The months in which a framework's triggers are watched. On the Map, an amber ring marks a "
-         "framework in its monitoring season this month."),
+         "A static amber ring marks a framework in its monitoring season this month."),
         ("Return period",
          "How often the framework's latest version would activate (any of its trigger windows, in a "
          "year), as the framework document states it, otherwise from its historical simulation."),
@@ -51,8 +54,10 @@ GLOSSARY = [
          "The most recent version is endorsed, still valid and has not fully triggered (a partial "
          "trigger of independent windows keeps it active)."),
         ("Being updated",
-         "A framework that is currently being improved, including based on learning or the need to "
-         "reconfirm pre-arranged financing."),
+         "How it is derived: an endorsed framework whose most recent version fully triggered or reached "
+         "the end of its validity, or whose next version is already in development — the framework "
+         "stands, a new version is coming. What it means: a framework that is currently being improved, "
+         "including based on learning or the need to reconfirm pre-arranged financing."),
         ("In development",
          "No endorsed version yet: the framework is being built for the first time."),
         ("Retired",
@@ -60,20 +65,15 @@ GLOSSARY = [
          "today's. A framework that a distinct new one replaced, rather than revised, counts as retired."),
         ("Current frameworks",
          "Every framework whose status is active, being updated or in development."),
-        ("Activated in the last 30 days",
-         "A red ring on the Map marks a framework that activated in the last 30 days."),
+        ("Activated in the last {n} days",
+         "A red ring on the Map marks a framework that activated in the last {n} days."),
     ]),
     ("Activations and allocations", [
         ("Activation (framework activation)",
-         "A trigger of a framework version was met and its pre-arranged money was released. Money "
-         "released by framework activations is counted on every page."),
+         "A trigger of a framework version was met and its pre-arranged money was released."),
         ("Non-framework allocation",
-         "Anticipatory-action money allocated to a country and hazard without a framework version "
-         "(no pre-agreed trigger; not a framework activation). Released money only: nothing is "
-         "pre-arranged for it."),
-        ("Early-action allocation",
-         "An allocation CERF labelled early action rather than anticipatory action; it is left out of "
-         "the figures."),
+         "Countries and hazards that received anticipatory-action money without a framework version. "
+         "Released money only: nothing is pre-arranged for it."),
         ("Two activations a year",
          "Frameworks marked * allow two activations a year: their CERF envelope is counted twice, and "
          "the CERF budget per activation is half of it. Country and Regional Fund envelopes count once."),
@@ -109,8 +109,6 @@ GLOSSARY = [
          "The people CERF reports reached by the allocations an activation drew on. Where no report "
          "has come in yet, the people the allocation planned to reach stand in, and Country and "
          "Regional Fund allocations count the people they target: the headline is an estimate."),
-        ("GHO contexts",
-         "Countries with a humanitarian plan in the Global Humanitarian Overview for the year."),
     ]),
 ]
 
@@ -126,11 +124,16 @@ CSS = r"""
 
 def build_definitions(page, d):
     import landing
+    # the recent-activation ring's window, from the Map's own constant
+    n_days = re.search(r"const RECENT_DAYS = (\d+);", landing.LANDING_JS).group(1)
+    def t(x):
+        return TF(x, n=n_days) if "{n}" in x else (TB(x) if "<" in x else T(x))
     sections = "".join(
         f"<h2>{T(head)}</h2><dl>"
-        + "".join(f"<dt>{T(term)}</dt><dd>{TB(text)}</dd>" for term, text in terms) + "</dl>"
+        + "".join(f"<dt>{t(term)}</dt><dd>{t(text)}</dd>" for term, text in terms) + "</dl>"
         for head, terms in GLOSSARY)
-    meta = TB("The terms used on the Map and the other pages, with the same wording each page uses.")
+    meta = TB("The terms used on the Map and the other pages, in the words the pages use where they "
+              "define a term; the rest follows the decision log.")
     body = (f"<div class='defs'><p class='meta'>{meta}</p>"
             f"<h2>{T('How statuses work')}</h2>{landing.status_help_html(open_=True)}"
             f"{sections}</div><style>{CSS}</style>")
