@@ -259,9 +259,18 @@ def _render(name, title, body, nav, meta, public=False):
         nav = nav[:i] + re.sub(rf'(<a\b[^>]*?)href="{re.escape(name)}"', rf'\1href="{name}" aria-current="page"',
                                nav[i:], count=1)
     skip = T("Skip to content") if public else "Skip to content"
+    # a page's own styles go in the head, in order: left in the body they are parsed only
+    # after the page data and scripts (1.6 MB on the Map), so the browser paints what the
+    # scripts drew unstyled first — the world map black, the tile icons full-width — for a
+    # moment on every load (staticrypt rewrites the page on each visit, so also on the way
+    # back from another tab)
+    styles = re.findall(r"<style>.*?</style>", body, flags=re.S)
+    body = re.sub(r"<style>.*?</style>", "", body, flags=re.S)
+    if "<style" in body:  # a styled tag, or one inside a script: the hoist would have missed it
+        raise SystemExit(f"FATAL: {name}: a <style> the head hoist did not take")
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{html.escape(title)}</title><style>{CSS}{POLICY_CSS}</style>
+<title>{html.escape(title)}</title><style>{CSS}{POLICY_CSS}</style>{"".join(styles)}
 <script>{lang_js}{FILTER_JS}</script></head><body>
 <a class="skip" href="#main">{skip}</a>
 {BANNER}{nav}<main id="main" tabindex="-1"><h1>{h1}</h1>
