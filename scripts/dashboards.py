@@ -2046,8 +2046,8 @@ def build_funding(page, d):
     cname = dict(zip(cur["country_iso3"], cur["country_name"]))
     nonaa = pre[pre["kind"] == "non_aa_mobilised"]
     nonaa_html = ("" if not len(nonaa) else
-                  TB("Not in this chart — <b>Non-AA emergency funds mobilised on the forecast (to confirm "
-                     "with the source)</b>:") + " " + "; ".join(
+                  TB("Not in this chart — <b>emergency funds mobilised on the forecast, outside the "
+                     "anticipatory action framework</b>:") + " " + "; ".join(
                       f"{T(str(cname.get(r.country_iso3) or r.country_iso3))} "
                       f"{T(str(r.hazard))} {int(r.year)}, ${r.amount_usd / 1e6:,.1f}M"
                       for r in nonaa.itertuples()) + ".")
@@ -2089,7 +2089,7 @@ def build_funding(page, d):
  <span style='display:inline-flex;gap:10px;align-items:center;padding-right:10px;border-right:1px solid #9db2c9'>
   <label {ATTR("title", "frameworks active, being updated or in development: their money in every year")}><input type='checkbox' id='fCur' checked> {T("Current frameworks")}</label>
   <label {ATTR("title", "frameworks since retired: their money in the years they were live")}><input type='checkbox' id='fRet'> {T("Retired")}</label>
-  <label {ATTR("title", "AA money allocated without a framework: released money only")}><input type='checkbox' id='fAdh' checked> {T("Non-framework allocations")}</label></span>
+  <label {ATTR("title", "AA money allocated without a framework: released money only")}><input type='checkbox' id='fAdh'> {T("Non-framework allocations")}</label></span>
  <details class='fwpick' id='fwPick'><summary id='fwLab' {ATTR("title", "the full list of frameworks: tick the ones to count")}>{T("Frameworks: all ▾")}</summary>
   <div class='fwpanel'>
    <div class='fwhead'><input type='search' id='fwQ' {ATTR("placeholder", "find a country, hazard, region or status…")} {ATTR("aria-label", "find frameworks in the list")}>
