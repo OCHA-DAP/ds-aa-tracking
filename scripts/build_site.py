@@ -582,6 +582,9 @@ def write_site():
                           public=True)
             if (token and token in doc) or "x-site-token" in doc:
                 raise SystemExit(f"FATAL: public page {name} carries the data service's token")
+            # the version notes under "What changed" are the curators' bookkeeping (what a sheet
+            # said, what is not entered yet): admin site only (owner, 2026-10-29)
+            doc = re.sub(r"<p class=['\"]vnote['\"]>.*?</p>", "", doc, flags=re.S)
             if GUARD_STRICT:
                 if hits := _shown_identifiers(doc):
                     leaks[name] = hits

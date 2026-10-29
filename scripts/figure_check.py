@@ -8,8 +8,8 @@ check() recomputes each shared figure from every page's data, under the same set
 one ::warning:: line per mismatch (the identifier guard's and the i18n check's way: the build goes
 on, the publish run's summary shows it).
 
-Compared like with like (the pages open on different defaults — the map on current frameworks
-(D80), Financing with non-framework allocations too (D84)):
+Compared like with like (both pages open on current frameworks, D80 and D142; the comparisons
+name their layers explicitly either way):
   * frameworks by status, retired frameworks: Map ↔ Financing ↔ History (↔ Activities' count)
   * pre-arranged now — total, CERF, Country and Regional Funds — and per framework: Map ↔
     Financing ↔ the framework page (its chart's current-year bar; its version envelope when it is

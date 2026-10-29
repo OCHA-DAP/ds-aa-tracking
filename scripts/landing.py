@@ -163,7 +163,7 @@ CENTROID = {   # iso3 -> (lat, lon) for the callout anchor dot
     "PHL": (12.9, 121.8), "PLW": (7.5, 134.6), "SLV": (13.8, -88.9), "SOM": (5.2, 46.2),
     "SSD": (7.3, 30.3), "TCD": (15.5, 18.7), "VUT": (-16.5, 168.0), "YEM": (15.6, 48.0),
     "CMR": (5.7, 12.4), "MLI": (17.6, -4.0), "PAK": (30.4, 69.3), "SDN": (15.6, 30.2),
-    "SYR": (35.0, 38.5), "TON": (-21.2, -175.2), "ZWE": (-19.0, 29.9),
+    "SYR": (35.0, 38.5), "TON": (-21.2, -175.2), "TUV": (-8.5, 179.1), "ZWE": (-19.0, 29.9),
 }
 DIRECTIONS = {   # preferred callout direction (screen vector, +y down)
     "AFG": (0.2, -1), "BFA": (-1, 0.2), "BGD": (0.7, -0.8), "COD": (-0.6, 1),
@@ -173,6 +173,7 @@ DIRECTIONS = {   # preferred callout direction (screen vector, +y down)
     "NER": (-0.2, -1), "NGA": (-0.6, 0.85), "NIC": (0.9, 0.6), "NPL": (0.1, -1),
     "PHL": (1, -0.1), "SLV": (-0.8, 0.7), "SOM": (1, 0.2), "SSD": (-0.5, -0.8),
     "TCD": (0.5, -1), "VUT": (-0.7, -0.5), "YEM": (1, -0.1), "CMR": (-0.9, 0.6),
+    "TUV": (0.9, -0.5),
     "MLI": (-0.3, -1), "PAK": (-0.6, -0.8), "SDN": (0.3, -1), "SYR": (0.9, -0.5),
 }
 # tracking-sheet statuses for frameworks without a KB version -> KB lifecycle bucket;
