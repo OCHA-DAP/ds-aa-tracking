@@ -802,7 +802,7 @@ def status_help_html(open_=False):
     SVG text follows the language switch) and the map layers, with its CSS."""
     body = f"""<details id='statushelp' class='statushelp'{' open' if open_ else ''}><summary>{T("How statuses work — version lifecycle and the framework status inferred from it")}</summary>
  <div class='sh-grid'>
-  <svg viewBox='0 0 960 362' class='sh-svg' role='img' {ATTR("aria-label", "Status diagram")}>
+  <svg viewBox='0 0 960 392' class='sh-svg' role='img' {ATTR("aria-label", "Status diagram")}>
    <defs><linearGradient id='shsplit' x1='0' y1='0' x2='1' y2='1'><stop offset='50%' stop-color='#dbeafe'/><stop offset='50%' stop-color='#e8f1f8'/></linearGradient><marker id='arr' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' markerHeight='7' orient='auto-start-reverse'><path d='M0,0 L10,5 L0,10 z' fill='#64748b'/></marker></defs>
    <text x='10' y='22' class='sh-h'>Framework VERSION status (stored: one of three, recorded by the team)</text>
    <g class='sh-box'><rect x='10' y='40' width='120' height='40' rx='8'/><text x='70' y='65'>pre-development</text></g>
@@ -814,20 +814,22 @@ def status_help_html(open_=False):
    <line x1='130' y1='60' x2='168' y2='60' class='sh-arr'/><line x1='290' y1='60' x2='328' y2='60' class='sh-arr'/>
    <line x1='450' y1='55' x2='498' y2='40' class='sh-arr'/><line x1='450' y1='65' x2='498' y2='80' class='sh-arr'/>
    <line x1='630' y1='45' x2='668' y2='56' class='sh-arr'/><line x1='630' y1='78' x2='668' y2='66' class='sh-arr'/>
-   <text x='500' y='118' class='sh-note'>inferred, not stored: each window is marked triggered / not triggered; the version is</text>
-   <text x='500' y='132' class='sh-note'>fully triggered when every window activated (any window if all-in). Superseded = a newer</text>
-   <text x='500' y='146' class='sh-note'>endorsed version exists. The next version starts in development.</text>
-   <text x='10' y='176' class='sh-h'>FRAMEWORK status (inferred from the most recent version)</text>
-   <g class='sh-box sh-on'><rect x='10' y='192' width='220' height='34' rx='8'/><text x='120' y='214'>Active</text></g>
-   <text x='240' y='206' class='sh-note'>most recent version is endorsed, in validity and has not fully triggered</text>
-   <text x='240' y='220' class='sh-note'>(partial triggers of independent windows keep it active) · amber ring = in its monitoring season this month</text>
-   <g class='sh-box sh-upd'><rect x='10' y='234' width='220' height='34' rx='8'/><text x='120' y='256'>Being updated</text></g>
-   <text x='240' y='248' class='sh-note'>an endorsed framework whose most recent version fully triggered or reached the end of its</text>
-   <text x='240' y='262' class='sh-note'>validity, or whose next version is already in development — the framework stands, a new version is coming</text>
-   <g class='sh-box sh-dev'><rect x='10' y='276' width='220' height='34' rx='8'/><text x='120' y='298'>In development</text></g>
-   <text x='240' y='290' class='sh-note'>no endorsed version yet — the framework is being built for the first time</text>
-   <g class='sh-box sh-off'><rect x='10' y='318' width='220' height='34' rx='8'/><text x='120' y='340'>Retired (layer off by default)</text></g>
-   <text x='240' y='332' class='sh-note'>a manual flag on the framework (country × hazard) — overrides everything above</text>
+   <text x='500' y='118' class='sh-note'>inferred, not stored: each window is marked</text>
+   <text x='500' y='132' class='sh-note'>triggered / not triggered; the version is fully</text>
+   <text x='500' y='146' class='sh-note'>triggered when every window activated (any window</text>
+   <text x='500' y='160' class='sh-note'>if all-in). Superseded = a newer endorsed version</text>
+   <text x='500' y='174' class='sh-note'>exists. The next version starts in development.</text>
+   <text x='10' y='206' class='sh-h'>FRAMEWORK status (inferred from the most recent version)</text>
+   <g class='sh-box sh-on'><rect x='10' y='222' width='220' height='34' rx='8'/><text x='120' y='244'>Active</text></g>
+   <text x='240' y='236' class='sh-note'>most recent version is endorsed, in validity and has not fully triggered</text>
+   <text x='240' y='250' class='sh-note'>(partial triggers of independent windows keep it active) · amber ring = in its monitoring season this month</text>
+   <g class='sh-box sh-upd'><rect x='10' y='264' width='220' height='34' rx='8'/><text x='120' y='286'>Being updated</text></g>
+   <text x='240' y='278' class='sh-note'>an endorsed framework whose most recent version fully triggered or reached the end of its</text>
+   <text x='240' y='292' class='sh-note'>validity, or whose next version is already in development — the framework stands, a new version is coming</text>
+   <g class='sh-box sh-dev'><rect x='10' y='306' width='220' height='34' rx='8'/><text x='120' y='328'>In development</text></g>
+   <text x='240' y='320' class='sh-note'>no endorsed version yet — the framework is being built for the first time</text>
+   <g class='sh-box sh-off'><rect x='10' y='348' width='220' height='34' rx='8'/><text x='120' y='370'>Retired (layer off by default)</text></g>
+   <text x='240' y='362' class='sh-note'>a manual flag on the framework (country × hazard) — overrides everything above</text>
   </svg>
   <div class='sh-layers'>
    {TB("<b>Map layers.</b>")} <span class='dot' style='background:{KB_COLOR["active"]}'></span>{TB("<b>Current frameworks</b> — every framework whose status is active, being updated or in development (the default view; the headline figures follow whatever is shown).")}
@@ -838,7 +840,7 @@ def status_help_html(open_=False):
  </div>
 </details>
 """
-    a = body.index("<svg viewBox='0 0 960 362'")
+    a = body.index("<svg viewBox='0 0 960 392'")
     b = body.index("</svg>", a) + len("</svg>")
     return body[:a] + _svg_tr(body[a:b]) + body[b:] + "<style>" + STATUS_HELP_CSS + "</style>"
 
