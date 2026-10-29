@@ -29,7 +29,7 @@ TITLE = "Anticipatory action | OCHA"
 
 # a page as build_site._render writes it
 DOC = re.compile(r'<!doctype html><html lang="en"><head>(?P<head>.*?)</head><body>\n'
-                 r'(?P<top>.*?)<main>(?P<main>.*)</main></body></html>\s*', re.S)
+                 r'(?P<top>.*?)<main[^>]*>(?P<main>.*)</main></body></html>\s*', re.S)   # <main id=… tabindex=…> since the skip link (PR #56)
 
 # our block in their page: full width like the photo, their tab row, their font
 EMBED_CSS = """
