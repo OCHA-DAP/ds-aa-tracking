@@ -2120,12 +2120,15 @@ def build_funding(page, d):
 <p>{TB(FUND_NOTE_PRE_A)}{stale_html}{two_how} {TB(FUND_NOTE_PRE_B)}</p>
 <p>{TB(FUND_NOTE_3)}</p>
 <p>{TB(FUND_NOTE_4)}</p>
+<p>{TB("The terms used on this page are defined on the <a href='definitions.html'>Definitions</a> page.")}</p>
 </details>
 <h2>{T("Where the money flows")}</h2>
 <p class='meta'>{TB("Funds → agencies and grantees → the organisations that implement, <b>pre-arranged</b> (the envelopes in place on a date) or <b>released</b> (what went out in a year) — two views never added together. Follows the layers and the fund switch. It opens on the money released in the last complete year, from each fund's donors; untick <i>donors</i> to start at the funds.")}</p>
 <p class='fwnote' id='fwFlowNote' style='display:none'>{T("This chart shows every framework of the layers above: it does not follow the framework selection (nor the hazard and region filters).")}</p>
 {_flow_panel(donors_on=True, extra=two_how)}
 <div class='grid' style='margin-top:16px'>
+ <div class='panel'><h3>{T("Frameworks each year, by status")}</h3><canvas id='c0' height='260'></canvas>
+   {how("Each framework's status at the end of the year: active while an endorsed version was valid at any time in the year; being updated when none was and its next version is in development or its last one had expired; in development before its first endorsed version; retired from the first full year after its retirement date. The current year is today's status, the Map's figure. Follows the layers, the framework selection and the hazard and region filters; the GHO filter applies year by year; the fund switch does not apply (a count, not money).")}</div>
  <div class='panel'><h3>{T("Pre-arranged funding in place each year, by fund")}</h3><canvas id='c1' height='260'></canvas>
    {how("A stock: what was committed in each year (a framework counts for a year if it was valid at any time in it), so the bars are not added up (the cumulative switch applies to released money only). CERF: the framework envelopes per year (sheets, framework pages, entries; 'all'-totals excluded where the fund split exists); the current year is pre-arranged now. Country and Regional Funds: AA-tagged allocations in the OneGMS mirror, in the year allocated. Co-financing is shown separately.", two=True)}</div>
  <div class='panel'><h3>{T("AA released by year, by fund")}</h3><canvas id='c2' height='260'></canvas>
@@ -2181,6 +2184,7 @@ def build_funding(page, d):
         "cof": json.loads(_records(cof, ["k", "hz", "region", "year", "in_gho", "g", "amount_usd"])),
         "cofNow": json.loads(_records(cof_now, ["k", "hz", "region", "g", "in_gho", "who", "amount_usd", "detail"])),
         "fwList": fw_list,
+        "fwy": d.get("fwy") or [],
         "unSplit": un_split,
         "flow": flow_rows, "flowYears": flow_years, "flowDefault": flow_default,
         "fundNames": fund_names, "cy": cy,
@@ -2190,6 +2194,11 @@ def build_funding(page, d):
 // the fund switch, the tiles and the notes name them (2026-10-28 owner comment: the agency chart
 // said 'Country funds' and 'Regional funds'). The money-flow chart keeps each fund apart.
 const FG = [['cerf','CERF',FUND_COLORS.cerf], ['pooled','Country and Regional Funds',FUND_COLORS.cbpf]];
+// the Map's status colours; 'being updated' hatched in the two blues of its split pin
+const FWC = (()=>{ const c = document.createElement('canvas'); c.width = c.height = 8; const x = c.getContext('2d');
+  x.fillStyle = '#2171b5'; x.fillRect(0, 0, 8, 8); x.fillStyle = '#9ecae1';
+  x.beginPath(); x.moveTo(8, 0); x.lineTo(8, 8); x.lineTo(0, 8); x.closePath(); x.fill();
+  return {active:'#2171b5', updating:x.createPattern(c, 'repeat'), development:'#9ecae1', retired:'#9e9e9e'}; })();
 const fgOf = ft => ft==='cerf' ? 'cerf' : 'pooled';
 // the current year as of the build: its figures update daily until it closes, so it is labelled
 // '2026*' (indicative; the footnote under the tiles) on every chart axis, selector and tile
@@ -2343,6 +2352,17 @@ function draw(){
       return {label:lab, data:vals, backgroundColor:col};}).filter(d=>d.data.some(v=>v));
     mkChart(id,'bar',years.map(yLab),ds,{stacked:true, totals:true});
   }
+  // frameworks each year, by status (D.fwy: each framework's status at year end, the current
+  // year as the tiles count it): the current frameworks' statuses while that layer is on, the
+  // retired ones while theirs is. Not the fund switch: a count. 'Being updated' is hatched in
+  // the two blues of the Map's split pin
+  { const W = D.fwy.filter(r=>(!s.hz||r.hz===s.hz) && (!s.rg||r.region===s.rg) && fwOK(r, s));
+    const ys = [...new Set(years.map(String).concat(W.flatMap(r=>Object.keys(r.y))))].sort();
+    const ST = [['active','Active',FWC.active], ['updating','Being updated',FWC.updating],
+                ['development','In development',FWC.development], ['retired','Retired',FWC.retired]];
+    const ds = ST.filter(([k])=>k==='retired' ? s.ret : s.cur).map(([k,lab,col])=>({label:lab,
+      data:ys.map(y=>W.filter(r=>r.y[y]===k && (!gho||r.gho[y])).length), backgroundColor:col})).filter(d=>d.data.some(v=>v));
+    mkChart('c0','bar',ys.map(yLab),ds,{stacked:true, totals:true, count:true}); }
   const N = D.now.filter(r=>geo(r) && layerOK(r.g,s) && ftOK(r.ft,s));
   stackedBy('c3', N, r=>r.hz, r=>r.total_usd); stackedBy('c4', N, r=>r.region, r=>r.total_usd);
   // co-financing PRE-ARRANGED: money from outside the pooled funds, so the fund switch cannot
@@ -4761,10 +4781,14 @@ fwSel();
 def build_all(e, page, tbl):
     d = _fetch(e)
     i18n.register_countries(zip(d["current"]["country_iso3"], d["current"]["country_name"]))
+    import landing
+    d["fwy"] = landing.framework_status_by_year(d, e)   # the Financing chart of frameworks by year
     build_funding(page, d)
     build_model(page, d)
     build_plan(page, d)
     build_learning(page, d)
+    import page_definitions
+    page_definitions.build_definitions(page, d)
     import page_history
     page_history.build_history(page, d)
     import page_model_draft          # mock-ups of alternative visuals, internal (for comparison)
