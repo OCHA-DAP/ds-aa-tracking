@@ -57,7 +57,7 @@ header a:focus-visible, header button:focus-visible { outline:2px solid #fff; ou
 .skip { position:absolute; left:-9999px; top:0; z-index:100; background:#fff; color:#1f2a44; padding:6px 12px;
         border-radius:4px; font-weight:600; text-decoration:none; }
 .skip:focus { left:8px; top:8px; outline:2px solid #1f2a44; }
-.foot { max-width:1400px; margin:8px auto 18px; padding:0 28px; font-size:12px; color:#64748b; } .foot a { color:#475569; }
+.foot { max-width:1500px; margin:8px auto 18px; padding:0 28px; font-size:12px; color:#64748b; } .foot a { color:#475569; }
 main:focus { outline:none; }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior:auto !important; } }
 header nav.pub a.sub { color:#9ec5f0; font-weight:400; font-size:12px; margin-left:-10px; }

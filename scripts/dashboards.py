@@ -241,6 +241,7 @@ Chart.defaults.font.family = "-apple-system,'Segoe UI',Roboto,sans-serif";
 Chart.defaults.color = '#52514e';
 Chart.defaults.borderColor = '#ececec';
 Chart.defaults.plugins.legend.labels.boxWidth = 12;
+if(matchMedia('(prefers-reduced-motion: reduce)').matches) Chart.defaults.animation = false;   // charts draw at once for readers who asked for less motion
 function money(v){ if(v==null) return '';
   return v>=1e9 ? '$'+(v/1e9).toFixed(1)+'B' : v>=1e6 ? '$'+(v/1e6).toFixed(1)+'M'
        : v>=1e3 ? '$'+(v/1e3).toFixed(0)+'k' : '$'+Math.round(v); }

@@ -2162,6 +2162,7 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
 .maplegend .lsub.off { opacity:.35; }
 .maplegend .lsub .dot { width:9px; height:9px; margin-right:4px; }
 .maplegend .dot-dev { border:1.5px dashed #0f2540; box-sizing:border-box; }
+.maplegend .lsub .dot-dev { width:12px; height:12px; }   /* at 9 px the dashes read as dots */
 .layerctl label { display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap; }
 .layerctl input { margin:0; accent-color:#2171b5; }
 .layerctl .cnt { color:#64748b; }
@@ -2201,7 +2202,7 @@ table.fwtab th { text-align:left; font-weight:600; color:#334155; background:#f4
 table.fwtab th.num { max-width:110px; } table.fwtab th.nosort { cursor:default; }
 table.fwtab .sortbtn { background:none; border:0; padding:0; margin:0; font:inherit; color:inherit; text-align:inherit; cursor:pointer; }
 table.fwtab th:hover { color:var(--ocha); }
-table.fwtab th .ar { color:#94a3b8; font-size:10px; margin-left:3px; }
+table.fwtab th .ar { color:#64748b; font-size:10px; margin-left:3px; }
 table.fwtab th.sub { font-weight:500; font-size:11.5px; }
 table.fwtab td { padding:5px 8px; border-bottom:1px solid #eef1f5; vertical-align:middle; }
 table.fwtab tbody tr:hover td { background:#f5f9fd; }
@@ -2458,7 +2459,7 @@ function fixHeight(){
 // phones: callouts are unusable at 350 px, so the panel lists the countries instead
 function renderWorldList(){
   const rows = Object.entries(L).filter(([iso,c]) => vis(c).length).sort((a,b)=>tr8(a[1].name).localeCompare(tr8(b[1].name))).map(([iso,c]) =>
-    `<div class='fcardx wl' style='--hz:${hzColor(vis(c)[0].hazard)}' onclick='selectCountry("${iso}")'>
+    `<div class='fcardx wl' data-iso='${iso}' role='button' tabindex='0' style='--hz:${hzColor(vis(c)[0].hazard)}' onclick='selectCountry("${iso}", null, null, {focus: true})'>
       <div class='fhead'><b>${esc(tr8(c.name))}</b><span class='muted'>${nounCount(vis(c))}</span></div>
       <div class='wl-pins'>${vis(c).map(f=>`<span class='wl-pin'>${iconHTML(f)}<span class='hlab'>${esc(tr8(f.hz_label))}</span> ${badge(f.disp)}${actChip(f)}</span>`).join('')}</div>
     </div>`).join('');
@@ -2504,7 +2505,7 @@ function buildOverview(){
   }).join('');
 }
 ov.addEventListener('click', ev => { const t = ev.target.closest('[data-iso]'), c = t && L[t.dataset.iso];
-  if(c && vis(c).length) selectCountry(t.dataset.iso); });
+  if(c && vis(c).length) selectCountry(t.dataset.iso, null, null, {focus: true}); });
 let P = worldProj;                                    // projection the country layers use
 function ringsD(rings, proj=P){ let d=''; for(const r of rings){ let first=true; for(const [x,y] of r){ const q=proj(x,y); d += (first?'M':'L') + q[0].toFixed(1) + ',' + q[1].toFixed(1); first=false; } d+='Z'; } return d; }
 function kpx(){ return svg.getBoundingClientRect().width / VB.w; }
@@ -2740,7 +2741,7 @@ function buildNews(){
     if(pastY()) setYear(YEARS.now);   // the news is today's: a past year may not have the framework
     // an ad hoc allocation of last December read in January: only all years still shows that pair
     if(!c_has(b.dataset.iso, b.dataset.hz)) setYear('');
-    selectCountry(b.dataset.iso, b.dataset.hz); }); })();
+    selectCountry(b.dataset.iso, b.dataset.hz, null, {focus: true}); }); })();
 // a split by fund as bullet lines (Pre-arranged, Released): a fund under $50k is not named — funds() in Python
 function fundBullets(cerf, pooled, other = 0){
   return [cerf >= 5e4 && `CERF ${money(cerf)}`, pooled >= 5e4 && `${tr8('Country and Regional Funds')} ${money(pooled)}`,
@@ -2879,9 +2880,9 @@ function buildCallouts(){
     el.innerHTML = `<span class='cname' data-iso='${iso}'>${esc(tr8(c.name))}</span>` +
       fws.map(f => { const extra = Math.ceil(Math.min(f.n_act||0,16)/4) - 1;   // stacked activation-dot rows need head room
         return `<span class='hrow'${extra>0?` style='margin-top:${extra*11}px'`:''}>${iconHTML(f)}<span class='hlab'>${esc(tr8(f.hz_label))}</span></span>`; }).join('');
-    const cn = el.querySelector('.cname'); cn.onclick = e => { e.stopPropagation(); selectCountry(iso); };
+    const cn = el.querySelector('.cname'); cn.onclick = e => { e.stopPropagation(); selectCountry(iso, null, null, {focus: true}); };
     cn.setAttribute('role', 'button'); cn.tabIndex = 0;
-    el.querySelectorAll('.iconbox').forEach(ib => { ib.onclick = e => { e.stopPropagation(); selectCountry(iso, ib.dataset.hz); };
+    el.querySelectorAll('.iconbox').forEach(ib => { ib.onclick = e => { e.stopPropagation(); selectCountry(iso, ib.dataset.hz, null, {focus: true}); };
       const fb = c.fws.find(x => x.hazard === ib.dataset.hz);
       ib.setAttribute('role', 'button'); ib.tabIndex = 0;
       ib.setAttribute('aria-label', `${tr8(c.name)} — ${tr8(fb.hz_label)}: ${tr8(fb.disp_label)}`);
@@ -3017,6 +3018,7 @@ let rto = null;
 let lastLayoutW = 0;
 function scheduleLayout(){ clearTimeout(rto); rto = setTimeout(() => { if(!state.iso){ if(!isMobile()) maprow.classList.remove('open');   // a phone turned to landscape: the world view's own layout
   fixHeight(); runLayout(); lpane.classList.remove('hide'); buildOverview(); if(isMobile()){ maprow.classList.add('open'); if(!side.querySelector('.wl')) renderWorldList(); }
+  if(pendingFocus !== undefined && !state.iso){ focusWorld(pendingFocus); pendingFocus = undefined; }   // not if a country was opened during the zoom-out
   lastLayoutW = svg.getBoundingClientRect().width;
   // a resize can land while this tab is throttled: re-check once the dust settles
   setTimeout(() => { if(!state.iso && Math.abs(svg.getBoundingClientRect().width - lastLayoutW) > 1) scheduleLayout(); }, 600); } }, 120); }
@@ -3038,7 +3040,7 @@ svg.addEventListener('mouseleave', ()=> tip.hidden = true);
 // ---------- selection
 svg.addEventListener('click', ev => {
   const t = ev.target;
-  if(t.classList.contains('cty') && t.classList.contains('on') && L[t.dataset.iso]) selectCountry(t.dataset.iso);
+  if(t.classList.contains('cty') && t.classList.contains('on') && L[t.dataset.iso]) selectCountry(t.dataset.iso, null, null, {focus: true});
   else if(t.id === 'sea' && state.iso) goWorld();
 });
 back.addEventListener('click', goWorld);
@@ -3054,10 +3056,11 @@ function goWorld(){
   adm.classList.remove('show'); back.hidden = true; worldLegend(); updateTiles();
   if(isMobile()){ renderWorldList(); fixHeight(); } else { side.innerHTML = `<div class='muted' style='padding:20px 6px'>${esc(tr8('Select a country or a pin on the map.'))}</div>`; side.style.opacity = '0'; setTimeout(()=>{ side.style.opacity=''; }, 900); }
   setTimeout(()=>{ adm.innerHTML=''; }, 300);
-  zoomOut(() => { scheduleLayout(); setTimeout(() => focusWorld(prev), 300); });   // after the callouts are rebuilt (scheduleLayout, 120 ms)
+  pendingFocus = prev;   // focus returns to the country's callout once the layout pass has rebuilt it
+  zoomOut(() => scheduleLayout());
   const h = hashFor([]); history.replaceState(null, '', location.pathname + (h ? '#' + h : ''));
 }
-async function selectCountry(iso, hz, ver){
+async function selectCountry(iso, hz, ver, opts={}){
   const c = L[iso]; if(!c) return;
   const changed = state.iso !== iso;
   // a deep link to a pair whose layer is off: switch that layer on so the map and the panel agree
@@ -3070,7 +3073,7 @@ async function selectCountry(iso, hz, ver){
   svg.querySelectorAll(`.cty[data-iso='${iso}']`).forEach(el => el.classList.add('sel'));
   back.hidden = false; lpane.classList.add('hide'); tip.hidden = true; maprow.classList.add('open');
   renderSide(); updateTiles(); buildNews(); if(want && !changed) worldLegend();
-  focusSide();
+  if(opts.focus) focusSide();   // the reader chose it (a click, Enter): not a deep link at boot
   if(isMobile()){ fixHeight(); setTimeout(() => window.scrollTo({top: side.getBoundingClientRect().top + window.scrollY - 8, behavior: RM.matches ? 'auto' : 'smooth'}), 1150); }
   location.hash = hashFor([iso, state.hz, state.ver]);
   if(changed){
@@ -3085,12 +3088,17 @@ async function selectCountry(iso, hz, ver){
     if(state.iso === iso) drawAdmin(iso, false);
   }
 }
-function selectFramework(hz){ selectCountry(state.iso, hz, null); }
+function selectFramework(hz){ selectCountry(state.iso, hz, null, {focus: true}); }
 // keyboard and screen-reader readers follow the selection: focus moves to the panel's heading
 // when a country or framework opens, and back to the country's callout (else the map) on '← world'
-function focusSide(){ const h = side.querySelector('h3, .fhead, .crumb'); if(!h) return;
+let pendingFocus;   // the country whose callout gets focus back after '← world', once the layout pass has rebuilt it
+function focusSide(){ const h = side.querySelector('h3') || side.querySelector('.fhead') || side.querySelector('.crumb'); if(!h) return;
   h.setAttribute('tabindex', '-1'); h.focus({preventScroll: true}); }
-function focusWorld(iso){ const t = (iso && lpane.querySelector(`.cname[data-iso='${iso}']`)) || svg; t.focus({preventScroll: true}); }
+// phones hide the map and its callouts in the world view: the country's card in the world list is the target there
+function focusWorld(iso){
+  const t = (iso && (isMobile() ? side.querySelector(`.wl[data-iso='${iso}']`) : lpane.querySelector(`.cname[data-iso='${iso}']`))) || svg;
+  t.focus({preventScroll: true});
+  if(document.activeElement !== t) svg.focus({preventScroll: true}); }
 function selectVersion(v){ state.ver = v; renderSide(); drawAdmin(state.iso, false); location.hash = hashFor([state.iso, state.hz, v]); }
 
 // ---------- sidebar
@@ -3121,7 +3129,7 @@ function hiddenNote(c){
 function renderSide(){
   const c = L[state.iso];
   const crumb = `<div class='crumb'><a onclick='goWorld()'>${esc(tr8('World'))}</a> › ` +
-    (state.hz ? `<a onclick='selectCountry("${state.iso}", null)'>${esc(tr8(c.name))}</a> › ${esc(tr8(c.fws.find(f=>f.hazard===state.hz)?.hz_label||state.hz))}` : `<b>${esc(tr8(c.name))}</b>`) + `</div>`;
+    (state.hz ? `<a onclick='selectCountry("${state.iso}", null, null, {focus: true})'>${esc(tr8(c.name))}</a> › ${esc(tr8(c.fws.find(f=>f.hazard===state.hz)?.hz_label||state.hz))}` : `<b>${esc(tr8(c.name))}</b>`) + `</div>`;
   if(!state.hz){
     const fws = vis(c);
     side.innerHTML = crumb + `<h3>${esc(tr8(c.name))}</h3><div class='muted'>${esc(tr8(c.region||''))} · ${esc(tr8('{0} — select one', nounCount(fws)))}</div>` + countryTiles(c) + hiddenNote(c) +
