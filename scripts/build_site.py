@@ -57,6 +57,7 @@ header a:focus-visible, header button:focus-visible { outline:2px solid #fff; ou
 .skip { position:absolute; left:-9999px; top:0; z-index:100; background:#fff; color:#1f2a44; padding:6px 12px;
         border-radius:4px; font-weight:600; text-decoration:none; }
 .skip:focus { left:8px; top:8px; outline:2px solid #1f2a44; }
+.foot { max-width:1400px; margin:8px auto 18px; padding:0 28px; font-size:12px; color:#64748b; } .foot a { color:#475569; }
 main:focus { outline:none; }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior:auto !important; } }
 header nav.pub a.sub { color:#9ec5f0; font-weight:400; font-size:12px; margin-left:-10px; }
@@ -132,7 +133,7 @@ function dlcsv(id, name) {
 # to the admin site, and never carries the data service's token.
 PUBLIC_TABS = ("index.html", "pillar-model.html", "pillar-history.html", "pillar-plan.html",
                "dash-funding.html", "pillar-learning.html", "media.html", "climate-adaptation.html",
-               "climate-coding-accuracy.html")
+               "climate-coding-accuracy.html", "accessibility.html")   # the last: linked from every page's foot, not a tab
 # public, so behind the same password as the tabs, but deliberately NOT in NAV nor linked
 # from any listed page: reached only by their links (they may link to each other), until
 # they are ready to be tabs (user, 2026-10-19)
@@ -259,6 +260,8 @@ def _render(name, title, body, nav, meta, public=False):
         nav = nav[:i] + re.sub(rf'(<a\b[^>]*?)href="{re.escape(name)}"', rf'\1href="{name}" aria-current="page"',
                                nav[i:], count=1)
     skip = T("Skip to content") if public else "Skip to content"
+    # the accessibility statement, from the foot of every public page (owner, 2026-10-29)
+    foot = f"<footer class='foot'><a href='accessibility.html'>{T('Accessibility')}</a></footer>" if public else ""
     # a page's own styles go in the head, in order: left in the body they are parsed only
     # after the page data and scripts (1.6 MB on the Map), so the browser paints what the
     # scripts drew unstyled first — the world map black, the tile icons full-width — for a
@@ -275,7 +278,7 @@ def _render(name, title, body, nav, meta, public=False):
 <a class="skip" href="#main">{skip}</a>
 {BANNER}{nav}<main id="main" tabindex="-1"><h1>{h1}</h1>
 <p class="meta">{meta}</p>
-{policy_box(name)}{body}</main></body></html>"""
+{policy_box(name)}{body}</main>{foot}</body></html>"""
 
 
 def _admin_home(admin):
@@ -872,6 +875,8 @@ def main():
     admin_page.build_admin(page)
     import page_climate
     page_climate.build(e, page)
+    import page_accessibility
+    page_accessibility.build(page)
 
     # ---------- index
     reg = pd.read_sql("SELECT * FROM aa.v_trk_framework_current ORDER BY country_name", e)

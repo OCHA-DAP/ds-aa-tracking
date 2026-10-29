@@ -253,7 +253,7 @@ def world_data(shown_iso, country_names):
         bboxes[iso] = [float(x) for x in big.bounds]
     # the map is a picture for assistive technology: the country names and pins over it (the
     # callouts) are the buttons a keyboard reaches, and the frameworks table lists the same
-    svg = (f"<svg id='map' viewBox='0 0 {VB_W:.1f} {VB_H:.1f}' preserveAspectRatio='xMidYMid meet' role='img' "
+    svg = (f"<svg id='map' viewBox='0 0 {VB_W:.1f} {VB_H:.1f}' preserveAspectRatio='xMidYMid meet' role='img' tabindex='-1' "
            f"{ATTR('aria-label', 'World map of the anticipatory action frameworks. Select a country by its name or a framework by its pin; the table below the map lists the same frameworks.')}>"
            f"<rect id='sea' x='{-VB_W}' y='{-VB_H}' width='{3*VB_W}' height='{3*VB_H}' fill='transparent'/>"
            f"<g id='world'></g><g id='adm'></g></svg>")
@@ -1870,7 +1870,8 @@ def build_landing(page, d, e):
  </div>
 </div>
 <p class='mapdisc'>{T("The boundaries and names shown and the designations used on this map do not imply official endorsement or acceptance by the United Nations.")}</p>
-<p class='maphelp'>{TB("<b>Reading the map.</b> Published triggers, windows, pre-arranged financing and activations across the AA portfolio — CERF, country-based and regional pooled funds. Pin colour = framework status, inferred from the most recent version; each red dot = one past activation; a red ring = activated in the last 30 days; an amber ring = in its monitoring season this month. <b>Click a country or a pin</b> to zoom in and see the areas each framework covers; the <b>layer toggles</b> in the map legend choose what is drawn, and the figures above follow them.")}</p>
+<p class='maphelp'>{TB("<b>Reading the map.</b> Published triggers, windows, pre-arranged financing and activations across the AA portfolio — CERF, country-based and regional pooled funds. Pin colour = framework status, inferred from the most recent version; each red dot = one past activation; a red ring = activated in the last 30 days; an amber ring = in its monitoring season this month. <b>Click a country or a pin</b> to zoom in and see the areas each framework covers; the <b>layer toggles</b> in the map legend choose what is drawn, and the figures above follow them.")}
+ {TB("<b>Keyboard.</b> Tab to a country name or a pin, Enter opens it, Escape goes back to the world; the table under the map lists the same frameworks. A dashed pin border = in development, a two-tone pin = being updated. <a href='accessibility.html'>Accessibility statement</a>.")}</p>
 <section class='fwt' id='fwt'>
  <div class='fwt-head'><h2>{T("Frameworks and allocations on the map")}</h2>
   <button type='button' class='dl' onclick='fwCSV()'>{T("Download CSV")}</button></div>
@@ -1945,7 +1946,7 @@ LANDING_CSS = r"""
 /* keyboard: the pins, country names, framework cards, pillars and the panel's links are buttons
    (kbd() in the script); their focus ring */
 .cname:focus-visible, .iconbox:focus-visible, .fcardx:focus-visible, .pillar:focus-visible, .side [role=button]:focus-visible,
-.yearbar button:focus-visible, .backbtn:focus-visible, table.fwtab th[data-k]:focus-visible { outline:2px solid var(--ocha); outline-offset:2px; }
+.yearbar button:focus-visible, .backbtn:focus-visible, table.fwtab .sortbtn:focus-visible { outline:2px solid var(--ocha); outline-offset:2px; }
 /* reduced motion (WCAG 2.3.3): no zoom morph (animate()), no sliding panel, no fades */
 @media (prefers-reduced-motion: reduce) {
   .maprow, .maprow .side, .maprow.open .side, .cty, #adm, .labelpane, .gtiles, .maplegend, .iconbox, .fcardx, .pillar { transition:none !important; }
@@ -1984,7 +1985,9 @@ LANDING_CSS = r"""
 .iconbox { position:relative; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;
   border-radius:7px; border:1.5px solid #fff; box-shadow:0 1px 2px rgba(15,23,42,.28), 0 2px 6px rgba(15,23,42,.14); cursor:pointer; flex:none; transition: transform .15s; }
 .iconbox svg.hz { width:15px; height:15px; display:block; }
-/* 'being updated': a diagonal two-tone fill (active on one half, development on the other) */
+/* 'being updated': a diagonal two-tone fill (active on one half, development on the other);
+   'in development': a dashed border — so the three statuses are not told apart by shade alone */
+.iconbox.dev { border:1.5px dashed #0f2540; }
 .iconbox:hover { transform:scale(1.12); filter:brightness(1.06); }
 /* in its monitoring season: a calm, static amber ring — no animation (2026-10-01: the pulse
    read as false urgency and is a problem for motion-sensitive readers) */
@@ -2158,6 +2161,7 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
 .layerctl .lsub { margin:0 0 2px 22px; }
 .maplegend .lsub.off { opacity:.35; }
 .maplegend .lsub .dot { width:9px; height:9px; margin-right:4px; }
+.maplegend .dot-dev { border:1.5px dashed #0f2540; box-sizing:border-box; }
 .layerctl label { display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap; }
 .layerctl input { margin:0; accent-color:#2171b5; }
 .layerctl .cnt { color:#64748b; }
@@ -2195,6 +2199,7 @@ table.fwtab { border-collapse:collapse; width:100%; font-size:12.5px; }
 table.fwtab th { text-align:left; font-weight:600; color:#334155; background:#f4f6f9; border-bottom:2px solid #cbd6e2;
   padding:6px 8px; line-height:1.25; white-space:normal; cursor:pointer; user-select:none; vertical-align:bottom; }
 table.fwtab th.num { max-width:110px; } table.fwtab th.nosort { cursor:default; }
+table.fwtab .sortbtn { background:none; border:0; padding:0; margin:0; font:inherit; color:inherit; text-align:inherit; cursor:pointer; }
 table.fwtab th:hover { color:var(--ocha); }
 table.fwtab th .ar { color:#94a3b8; font-size:10px; margin-left:3px; }
 table.fwtab th.sub { font-weight:500; font-size:11.5px; }
@@ -2401,7 +2406,7 @@ const SPLIT = `linear-gradient(135deg,${'#2171b5'} 0 50%,${'#9ecae1'} 50% 100%)`
 function bgFor(st){ return st==='updating' ? SPLIT : (COLOR[st] || COLOR.development); }
 // pin background for a pair given the layer it is drawn on
 function pinStyle(f){ const l = visLayer(f) || f.layer;
-  if(l==='framework') return {bg: bgFor(f.disp), cls: f.disp==='updating' ? 'upd' : ''};
+  if(l==='framework') return {bg: bgFor(f.disp), cls: f.disp==='updating' ? 'upd' : f.disp==='development' ? 'dev' : ''};
   if(l==='tech') return {bg: '#fff', cls: 'tech'};
   return {bg: LAYER_COLOR[l], cls: l}; }
 function badge(st, label){ st = st || 'development';
@@ -2673,7 +2678,7 @@ function worldLegend(){
   const st = `<div class='lsub${LAYERS.framework?'':' off'}'>`
     + defSpan('active', `<span class='dot' style='background:${COLOR.active}'></span>${esc(tr8('Active'))} <span class='cnt'>${n('active')}</span>`)
     + defSpan('updating', `<span class='dot' style='background:${SPLIT}'></span>${esc(tr8('Being updated'))} <span class='cnt'>${n('updating')}</span>`)
-    + defSpan('development', `<span class='dot' style='background:${COLOR.development}'></span>${esc(tr8('In development'))} <span class='cnt'>${n('development')}</span>`) + `</div>`;
+    + defSpan('development', `<span class='dot dot-dev' style='background:${COLOR.development}'></span>${esc(tr8('In development'))} <span class='cnt'>${n('development')}</span>`) + `</div>`;
   legend.innerHTML = `<div class='layerctl' role='group' aria-label='${esc(tr8('Map layers'))}'>` + row('framework') + st + row('adhoc') + row('retired') + row('tech') + `</div>`
     + `<div class='lsub'><span><span class='dot' style='background:#e3322d'></span>${esc(YEAR != null ? tr8('Activations in {0}', YEAR) : tr8('Activations'))} <span class='cnt'>${nAct}</span></span>`
     + (pastY() ? '' : `<span><span class='dot' style='background:#fff;border:3px solid #e3322d;box-sizing:border-box'></span>${esc(tr8('Activated in the last {0} days', RECENT_DAYS))} <span class='cnt'>${nRec}</span></span>`
@@ -3043,12 +3048,13 @@ document.addEventListener('keydown', e => { if(e.key !== 'Escape' || !state.iso)
   goWorld(); });
 
 function goWorld(){
+  const prev = state.iso;
   state = { iso:null, hz:null, ver:null, pillar: state.pillar };
   document.querySelectorAll('.cty.sel').forEach(x=>x.classList.remove('sel'));
   adm.classList.remove('show'); back.hidden = true; worldLegend(); updateTiles();
   if(isMobile()){ renderWorldList(); fixHeight(); } else { side.innerHTML = `<div class='muted' style='padding:20px 6px'>${esc(tr8('Select a country or a pin on the map.'))}</div>`; side.style.opacity = '0'; setTimeout(()=>{ side.style.opacity=''; }, 900); }
   setTimeout(()=>{ adm.innerHTML=''; }, 300);
-  zoomOut(() => scheduleLayout());
+  zoomOut(() => { scheduleLayout(); setTimeout(() => focusWorld(prev), 300); });   // after the callouts are rebuilt (scheduleLayout, 120 ms)
   const h = hashFor([]); history.replaceState(null, '', location.pathname + (h ? '#' + h : ''));
 }
 async function selectCountry(iso, hz, ver){
@@ -3064,6 +3070,7 @@ async function selectCountry(iso, hz, ver){
   svg.querySelectorAll(`.cty[data-iso='${iso}']`).forEach(el => el.classList.add('sel'));
   back.hidden = false; lpane.classList.add('hide'); tip.hidden = true; maprow.classList.add('open');
   renderSide(); updateTiles(); buildNews(); if(want && !changed) worldLegend();
+  focusSide();
   if(isMobile()){ fixHeight(); setTimeout(() => window.scrollTo({top: side.getBoundingClientRect().top + window.scrollY - 8, behavior: RM.matches ? 'auto' : 'smooth'}), 1150); }
   location.hash = hashFor([iso, state.hz, state.ver]);
   if(changed){
@@ -3079,6 +3086,11 @@ async function selectCountry(iso, hz, ver){
   }
 }
 function selectFramework(hz){ selectCountry(state.iso, hz, null); }
+// keyboard and screen-reader readers follow the selection: focus moves to the panel's heading
+// when a country or framework opens, and back to the country's callout (else the map) on '← world'
+function focusSide(){ const h = side.querySelector('h3, .fhead, .crumb'); if(!h) return;
+  h.setAttribute('tabindex', '-1'); h.focus({preventScroll: true}); }
+function focusWorld(iso){ const t = (iso && lpane.querySelector(`.cname[data-iso='${iso}']`)) || svg; t.focus({preventScroll: true}); }
 function selectVersion(v){ state.ver = v; renderSide(); drawAdmin(state.iso, false); location.hash = hashFor([state.iso, state.hz, v]); }
 
 // ---------- sidebar
@@ -3575,7 +3587,7 @@ function buildFwTable(){
              ['released', YEAR != null ? tr8('Released from OCHA in {0}', YEAR) : tr8('Released from OCHA to date'), 1]]);
   const on = k => FWT.k === k;
   const head = '<thead><tr>' + cols.map(([k, lab, isNum, cls]) => k
-      ? `<th data-k='${k}' tabindex='0' aria-sort='${on(k) ? (FWT.dir > 0 ? 'ascending' : 'descending') : 'none'}' class='${isNum ? 'num' : ''} ${cls || ''}'>${esc(lab)}<span class='ar' aria-hidden='true'>${on(k) ? (FWT.dir > 0 ? '▲' : '▼') : ''}</span></th>`
+      ? `<th data-k='${k}' aria-sort='${on(k) ? (FWT.dir > 0 ? 'ascending' : 'descending') : 'none'}' class='${isNum ? 'num' : ''} ${cls || ''}'><button type='button' class='sortbtn'>${esc(lab)}<span class='ar' aria-hidden='true'>${on(k) ? (FWT.dir > 0 ? '▲' : '▼') : ''}</span></button></th>`
       : `<th class='nosort'>${esc(lab)}</th>`).join('') + '</tr></thead>';
   const body = '<tbody>' + R.map(r => { const f = r.f, mk = apyMark(r.apy);
     const notes = [r.pre_v && r.pre_v !== f.current ? tr8('envelope of version {0}', r.pre_v) : null,
@@ -3614,9 +3626,10 @@ function buildFwTable(){
 }
 function fwSort(k){ FWT.dir = FWT.k === k ? -FWT.dir : (['country', 'hazard', 'status', 'rp'].includes(k) ? 1 : -1); FWT.k = k; buildFwTable(); }
 (function(){ const tab = document.getElementById('fwtab'); if(!tab) return;
-  tab.addEventListener('click', e => { const h = e.target.closest('th[data-k]'); if(h) fwSort(h.dataset.k); });
-  tab.addEventListener('keydown', e => { const h = e.target.closest('th[data-k]');
-    if(h && (e.key === 'Enter' || e.key === ' ')){ e.preventDefault(); fwSort(h.dataset.k); tab.querySelector(`th[data-k='${h.dataset.k}']`)?.focus(); } }); })();
+  // the header's button is a real button (Enter and Space come free); the table is rebuilt
+  // on a sort, so focus is put back on the same column's button
+  tab.addEventListener('click', e => { const h = e.target.closest('th[data-k]'); if(!h) return;
+    fwSort(h.dataset.k); tab.querySelector(`th[data-k='${h.dataset.k}'] .sortbtn`)?.focus(); }); })();
 // the table as a CSV file: English labels and whole dollars (data files are not translated)
 function fwCSV(){
   const R = fwRows(), split = !pastY(), MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
