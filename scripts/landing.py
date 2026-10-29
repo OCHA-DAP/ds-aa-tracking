@@ -1915,6 +1915,10 @@ LANDING_CSS = r"""
   transition: grid-template-columns .9s cubic-bezier(.22,.8,.2,1), gap .9s; }
 .maprow.open { grid-template-columns: var(--maph) minmax(0,1fr); gap:16px; }
 .maprow .side { opacity:0; visibility:hidden; transition: opacity .3s; height:var(--maph); }
+/* closed, the sidebar sits in a 0 px column: its own box (the scrollbar gutter) still poked
+   6 px past the page edge and gave the Map a sideways scroll. Desktop only: on phones the
+   sidebar is the world list and stays open */
+@media (min-width: 761px) { .maprow:not(.open) .side { width:0; padding:0; border:0; overflow:hidden; } }
 .maprow.open .side { opacity:1; visibility:visible; transition: opacity .4s .5s; }
 @media (max-width: 760px) {
   .maprow, .maprow.open { grid-template-columns: 1fr; gap:12px; }
@@ -2118,7 +2122,10 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
    before it (five tiles in two columns would leave a hole) */
 .gtiles .news { display:flex; flex-direction:column; }
 .gtiles .news .k { flex-wrap:wrap; row-gap:0; } .gtiles .news .news-w { font-size:11.5px; font-weight:400; color:#64748b; }
-.news-l { list-style:none; margin:2px 0 0; padding:0; font-size:12px; line-height:1.35; flex:1 1 auto; height:0; overflow-y:auto; }
+/* the list scrolls inside the tile; a fade at the foot shows there is more, instead of a line cut in half
+   (the bottom padding keeps the last entry clear of the fade when everything fits) */
+.news-l { list-style:none; margin:2px 0 0; padding:0 0 14px; font-size:12px; line-height:1.35; flex:1 1 auto; height:0; overflow-y:auto;
+  -webkit-mask-image:linear-gradient(#000 calc(100% - 14px), transparent); mask-image:linear-gradient(#000 calc(100% - 14px), transparent); }
 .news-l li { padding:2px 0; }
 .news-l button { background:none; border:0; padding:0; font:inherit; color:#334155; text-align:left; cursor:pointer; }
 .news-l button:hover, .news-l button:focus-visible { color:var(--ocha); text-decoration:underline; }

@@ -533,6 +533,7 @@
  "No activation recorded.": "Aucune activation enregistrée.",
  "No backtest and no activation recorded for this framework.": "Aucun backtest ni aucune activation enregistrés pour ce cadre.",
  "No backtest recorded for this framework — real activations only.": "Aucun backtest enregistré pour ce cadre — activations réelles seulement.",
+ "No data in this selection": "Aucune donnée dans cette sélection",
  "No dated version by the end of {0} (in development by the status reports); showing the latest version.": "Aucune version datée à la fin de {0} (en développement selon les rapports de statut) ; la dernière version est affichée.",
  "No dated version by the end of {0}; showing the latest version.": "Aucune version datée à la fin de {0} ; la dernière version est affichée.",
  "No document matches these filters.": "Aucun document ne correspond à ces filtres.",

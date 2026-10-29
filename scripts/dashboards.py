@@ -258,6 +258,13 @@ const stackTotals = { id:'stackTotals', afterDatasetsDraw(chart, args, o){
     else { ctx.textAlign='center'; ctx.textBaseline='bottom';
       ctx.fillText(o.fmt(tot), x.getPixelForValue(i), y.getPixelForValue(tot)-3); } }
   ctx.restore(); } };
+// a chart whose selection holds no money (a hazard in a region with nothing recorded) says so,
+// instead of drawing empty axes with $0 / $1 ticks
+const emptyNote = { id:'emptyNote', afterDraw(chart){
+  const {ctx, chartArea:a} = chart; if(!a) return;
+  ctx.save(); ctx.font = '13px ' + Chart.defaults.font.family; ctx.fillStyle = '#64748b';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(tr8('No data in this selection'), (a.left+a.right)/2, (a.top+a.bottom)/2); ctx.restore(); } };
 function mkChart(id, type, labels, datasets, opts={}){
   // what a chart shows is translated here (tr8: the page's language, site_i18n), the keys
   // the page filters on are not; pages redraw on the 'aalang' event
@@ -269,6 +276,7 @@ function mkChart(id, type, labels, datasets, opts={}){
   const el = document.getElementById(id);
   if(el._chart) el._chart.destroy();
   const horiz = opts.extra && opts.extra.indexAxis === 'y';
+  const empty = !datasets.some(d=>(d.data||[]).some(v=>v!=null && (typeof v==='object' ? (v.y||v.x) : v)));
   const fmt = v=>opts.count?v:money(v);
   const valAxis = {stacked:!!opts.stacked, ticks:{callback:fmt}, grid:{color:'#f0f0f0'},
     ...(opts.totals ? {grace:'10%%'} : {})};
@@ -276,12 +284,12 @@ function mkChart(id, type, labels, datasets, opts={}){
   const cb = {label:c=>{const v=horiz?c.parsed.x:(c.parsed.y??c.parsed);return ` ${c.dataset.label??''}: ${fmt(v)}`;}};
   if(opts.totals && datasets.length>1) cb.footer = items=>tr8('total: {0}', fmt(items.reduce((s,c)=>s+((horiz?c.parsed.x:c.parsed.y)||0),0)));
   el._chart = new Chart(el, { type, data:{labels, datasets},
-    plugins: opts.totals ? [stackTotals] : [],
+    plugins: [...(opts.totals ? [stackTotals] : []), ...(empty ? [emptyNote] : [])],
     options:{
     // a horizontal chart's tooltip follows the row under the pointer (the value axis is x)
     responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false,axis:horiz?'y':'x'},
-    scales: opts.noscale?{}:(horiz ? {x:valAxis, y:catAxis} : {x:catAxis, y:valAxis}),
-    plugins:{ legend:{display:datasets.length>1},
+    scales: opts.noscale ? {} : empty ? {x:{display:false}, y:{display:false}} : (horiz ? {x:valAxis, y:catAxis} : {x:catAxis, y:valAxis}),
+    plugins:{ legend:{display:datasets.length>1 && !empty},
       tooltip:{callbacks:cb},
       ...(opts.totals ? {stackTotals:{fmt, horiz}} : {}),
       ...(opts.plugins||{}) },
@@ -292,6 +300,38 @@ function groupSum(rows, keyFn, valFn){ const m={};
 function uniqSorted(rows, f){ return [...new Set(rows.map(f).filter(x=>x!=null))].sort(); }
 function cumulate(arr){ let s=0; return arr.map(v=>s+=(v||0)); }
 """ % (json.dumps(PAL), json.dumps(FUND_COLORS), json.dumps(FUND_TYPE_LABEL))
+
+
+def clean_org_name(s):
+    """An organisation's name as CERF's sub-grant reports give it, fit to print: HTML entities
+    decoded, however many times the name was escaped ("D&#233;veloppement", "&amp;amp;")."""
+    import html as _html
+    if not isinstance(s, str):
+        return s
+    t = s.strip()
+    for _ in range(3):
+        u = _html.unescape(t)
+        if u == t:
+            break
+        t = u
+    return t
+
+
+def clean_org_names(df, col="partner_name"):
+    """Decode the names, and drop a numbering suffix where the same name also appears without
+    it ("World Vision 1" next to "World Vision"). A number that is part of the name stays:
+    DRC's numbered education offices ("Ituri 1", "Ituri 3") are different partners."""
+    import re as _re
+    names = df[col].map(clean_org_name)
+    stems = set(names.dropna())
+    def unnumber(n):
+        if isinstance(n, str):
+            stem = _re.sub(r"\s+\d$", "", n)
+            if stem != n and stem in stems:
+                return stem
+        return n
+    df[col] = names.map(unnumber)
+    return df
 
 
 def haz(h):
@@ -646,10 +686,10 @@ def _fetch(e):
                                   AND split_part(v.allocation_code, '-', 2) ~ '^[0-9]+$'
                             THEN split_part(v.allocation_code, '-', 2)::int END)
            WHERE v.year >= 2006""", e)
-    d["subgrant"] = pd.read_sql(
+    d["subgrant"] = clean_org_names(pd.read_sql(
         """SELECT year, country_iso3, emergency_type, partner_type, localization,
                   partner_name, subgrant_usd, is_aa
-           FROM aa.cerf_subgrant WHERE subgrant_usd IS NOT NULL""", e)
+           FROM aa.cerf_subgrant WHERE subgrant_usd IS NOT NULL""", e))
     d["cbpf_proj"] = pd.read_sql(
         """SELECT p.allocation_year AS year, p.org_type, p.org_name, p.budget,
                   a.aa_keyword, f.country_code_iso2
@@ -831,14 +871,14 @@ def _fetch(e):
     # The AA sub-grants are those of the AA allocations the site counts (_CERF_AA_CODES_SQL), as
     # the Activities page reads them — not the sheet's is_aa flag, which misses four of them
     # (NER 2022, NPL 2021, MDG 2023, TLS 2024: $4.0M; 2026-10-28)
-    d["subgrant_aa"] = pd.read_sql(
+    d["subgrant_aa"] = clean_org_names(pd.read_sql(
         """SELECT g.project_code, g.application_code, g.agency, coalesce(c.year, g.year) AS year,
                   g.country_iso3, g.partner_name, g.partner_acronym, g.partner_type, g.localization,
                   g.subgrant_usd
            FROM aa.cerf_subgrant g
            LEFT JOIN aa.cerf_allocation c ON c.application_code = g.application_code
            WHERE g.application_code IN (""" + _CERF_AA_CODES_SQL + """)
-             AND g.subgrant_usd IS NOT NULL""", e)
+             AND g.subgrant_usd IS NOT NULL""", e))
     # the agency × sector split of EVERY version (the framework pages show the current
     # version's split next to its envelope; plan_rows above keeps only the live ones)
     d["split_all"] = pd.read_sql(
@@ -2348,7 +2388,7 @@ function draw(){
   const S = D.split.filter(r=>geo(r) && layerOK(r.g,s) && ftOK(r.ft,s));
   const SA = S.filter(r=>r.agency), SS = S.filter(r=>r.sector);
   stackedBy('c7', SA, r=>r.agency, r=>r.amount_usd, {keys:topKeys(SA,r=>r.agency,r=>r.amount_usd,18), extra:{indexAxis:'y'}});
-  stackedBy('c8', SS, r=>r.sector, r=>r.amount_usd, {keys:topKeys(SS,r=>r.sector,r=>r.amount_usd,18), extra:{indexAxis:'y'}});
+  stackedBy('c8', SS, r=>r.sector, r=>r.amount_usd, {keys:topKeys(SS,r=>r.sector,r=>r.amount_usd,18), allLabels:true, extra:{indexAxis:'y'}});
   tiles(s, geo, A, N);
   fwPaint(s, N);
   // UN agencies and partners: the CERF part of c2 (A), split by the sub-grant reports
@@ -3679,7 +3719,6 @@ def build_framework_pages(page, tbl, d, e=None):
 <div class='card'><b>{fw_name}</b> ·
 {f"<span class='badge b-new'>{T(_status_words(st_raw))}</span>" if _status_words(st_raw) else ''}{derived_note}
 {T('current version:')} <code>{cur_v}</code>
-{('· KB: <code>' + fw['kb_framework'] + '</code>') if pd.notna(fw['kb_framework']) else '· ' + T('not in KB')}
 · {T('people covered:')} <b>{covered_txt}</b><br>
 {T('Monitoring window:')} {_cal_strip(cal, c, h)}</div>
 {changes_html}

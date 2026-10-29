@@ -19,6 +19,7 @@ from dashboards import (
     PAL,
     _dash_page,
     _st,
+    clean_org_names,
     haz,
     hazard_word,
 )
@@ -189,6 +190,8 @@ def _extra():
     for key, (sql, cols) in q.items():
         try:
             out[key] = pd.read_sql(sql, e)
+            if "partner_name" in out[key]:
+                clean_org_names(out[key])
         except Exception as exc:  # noqa: BLE001 — an older snapshot lacks the table
             print(f"  plan: {key} unavailable ({exc.__class__.__name__})")
             out[key] = pd.DataFrame(columns=cols)
