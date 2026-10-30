@@ -19,6 +19,8 @@ Steps
      here is reported but never blocks the snapshot.
   2b. scripts/stamp_development.py: a development version without development_since gets
      today's date (in-development frameworks count toward pre-arranged money from then on)
+  2c. scripts/resolve_provisional.py: a CERF amount entered as provisional (before OneGMS
+     recorded the allocation) takes OneGMS's code and amount once the mirror has it
   3. scripts/export_snapshot.py: consistent snapshot of schema aa -> dev blob
      projects/ds-aa-tracking/snapshot/{latest,YYYY-MM-DD}/ (dated copies kept 30 days,
      31-December copies forever)
@@ -107,6 +109,10 @@ def main():
         run("scripts/stamp_development.py")
     except subprocess.CalledProcessError as ex:
         print(f"!! stamp_development failed ({ex}); continuing to the snapshot", flush=True)
+    try:   # provisional CERF amounts give way to OneGMS's once the allocation is recorded there
+        run("scripts/resolve_provisional.py")
+    except subprocess.CalledProcessError as ex:
+        print(f"!! resolve_provisional failed ({ex}); continuing to the snapshot", flush=True)
     run("scripts/export_snapshot.py", *(["--no-prune"] if a.no_prune else []))
 
 

@@ -210,7 +210,7 @@ def _events(d, c, h, ref, kb_fw=None, umap=None, slug=None, adhoc=False):
         vv = "" if vv in ("nan", "None", "NaT", "<NA>") else vv
         evs.append(dict(date=ed, year=int(ed[:4]), win=wn, label=_str(r.event_label), version=vv,
                         amount=float(amt.sum()) if amt.notna().any() else None,
-                        funds="; ".join(f"{fund_label(x.fund_code)} {_fmt_usd(x.amount_usd)}".strip()
+                        funds="; ".join(f"{fund_label(x.fund_code)} {_fmt_usd(x.amount_usd)}{_fund_note(x)}".strip()
                                         for x in f.itertuples() if isinstance(x.fund_code, str)),
                         funds_csv="; ".join(f"{x.fund_code}: {x.amount_usd:.0f}" if pd.notna(x.amount_usd)
                                             else f"{x.fund_code}: not recorded"
@@ -218,6 +218,16 @@ def _events(d, c, h, ref, kb_fw=None, umap=None, slug=None, adhoc=False):
                         same=(not vv) or (ref is not None and _vm(vv, str(ref))),
                         href=href, goes=goes))
     return evs
+
+
+def _fund_note(x):
+    """Beside a funding line's amount: the money refunded after the activation was stopped (the
+    amount is net of it), or 'provisional' for a CERF amount OneGMS has not recorded yet
+    (dashboards.funding_sql)."""
+    ref = pd.to_numeric(getattr(x, "refund_usd", None), errors="coerce")
+    notes = ([f"net of {_fmt_usd(ref)} refunded"] if pd.notna(ref) and ref > 0 else []) \
+        + (["provisional"] if getattr(x, "provisional", None) in (True,) else [])
+    return f" ({'; '.join(notes)})" if notes else ""
 
 
 # ---------------- the interactive timeline (top of the page), data for its JS

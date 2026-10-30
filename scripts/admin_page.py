@@ -29,7 +29,7 @@ GROUPS = [
         "framework_calendar", "fund", "build_contribution", "window_status", "window_funding",
         "window_activation",
         "adhoc_activation",
-        "activation_funding", "people_covered", "plan_inclusion", "report_channel_inclusion",
+        "activation_funding", "activation_refund", "people_covered", "plan_inclusion", "report_channel_inclusion",
         "start_network", "cirv", "emergency_type_override",
         "cerf_allocation_extra", "cerf_application_people", "cerf_application_report",
         "cerf_project_supplement", "cerf_subgrant", "cerf_cva_history"]),
