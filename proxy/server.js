@@ -757,6 +757,7 @@ async function gh(path, opts = {}) {
   return r.status === 204 ? null : r.json();
 }
 let publishSeen = { at: 0, body: null };   // every open admin page polls: ask GitHub at most every 8 s
+let publishAsked = 0;                       // GitHub lists a dispatched run a few seconds late
 async function publishRuns() {
   if (Date.now() - publishSeen.at < 8000) return publishSeen.body;
   const { workflow_runs } = await gh("/workflows/publish.yml/runs?per_page=10");
@@ -787,10 +788,10 @@ async function publishStart(req, res) {
     // a fresh run still waiting to start will copy the database after this edit anyway
     publishSeen.at = 0;
     const waiting = (await publishRuns()).runs.find((x) => x.fresh && x.status !== "completed" && x.status !== "in_progress");
-    if (waiting) return send(res, 200, { ok: true, started: false, waiting: true });
+    if (waiting || Date.now() - publishAsked < 30000) return send(res, 200, { ok: true, started: false, waiting: true });
     await gh("/workflows/publish.yml/dispatches", { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ ref: "main", inputs: { fresh_snapshot: "true" } }) });
-    publishSeen.at = 0;
+    publishAsked = Date.now(); publishSeen.at = 0;
     send(res, 200, { ok: true, started: true });
   } catch (e) { send(res, 502, { error: String(e.message || e) }); }
 }

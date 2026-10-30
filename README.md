@@ -76,7 +76,9 @@ are kept forever (the year-end official state, for the map's time view).
   site shows; its button (editors) has the proxy start `publish.yml` with `fresh_snapshot`,
   which runs the Databricks job first (`scripts/fresh_snapshot.py`) — about 15 minutes to the
   live site. Needs the proxy app setting `GITHUB_TOKEN` (fine-grained, this repo only,
-  Actions read and write; unset hides the button), and for the workflow the repo variables
+  Actions read and write: it can start, read and cancel this repo's workflow runs; it expires
+  within a year, after which the bar shows a GitHub error until it is replaced; unset hides
+  the button), and for the workflow the repo variables
   `DATABRICKS_HOST` + `DATABRICKS_CLIENT_ID` and secret `DATABRICKS_CLIENT_SECRET` of the
   service principal `ds-aa-tracking-publish`, which `databricks.yml` lets run the job.
 - two sites, one build (2026-10-07): the **public site** is the tabs of its header (map,

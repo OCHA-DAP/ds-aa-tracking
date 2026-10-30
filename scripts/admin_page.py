@@ -181,13 +181,14 @@ function loginEditor(){ const et = prompt('Editor token (ask Tristan). Saved in 
 function logoutEditor(){ localStorage.removeItem('editorToken'); boot(); }
 
 // ---------- publish (D164): which copy of the database the site shows; editors can publish now
-let PUB = null, pubTimer = null;
+let PUB = null, pubTimer = null, pubAsked = 0;
 const when = s => new Date(s).toLocaleString([], {weekday:'short', hour:'2-digit', minute:'2-digit', timeZoneName:'short'});
 async function loadPublish(){
   clearTimeout(pubTimer);
-  try { PUB = await getJSON('/publish'); } catch(e){ PUB = {error: e.message}; }
+  try { PUB = await getJSON('/publish'); }
+  catch(e){ PUB = e.message==='not found' ? {configured: false} : {error: e.message}; }   // an older proxy
   renderPublish();
-  pubTimer = setTimeout(loadPublish, (PUB.runs||[]).some(r=>r.status!=='completed') ? 15000 : 120000);
+  pubTimer = setTimeout(loadPublish, (PUB.runs||[]).some(r=>r.status!=='completed') ? 15000 : Date.now()-pubAsked < 60000 ? 5000 : 120000);
 }
 function renderPublish(){
   const el = document.getElementById('pub');
@@ -197,7 +198,13 @@ function renderPublish(){
   if(PUB.configured===false){ el.innerHTML = `Publishing from this page is not set up yet: edits reach the site after the nightly copy of the database.`; return; }
   const runs = PUB.runs || [];
   const running = runs.find(r=>r.status==='in_progress');
-  const waiting = runs.find(r=>r.fresh && r.status!=='completed' && r.status!=='in_progress');
+  // a run just asked for that GitHub does not list yet counts as waiting
+  const waiting = runs.find(r=>r.fresh && r.status!=='completed' && r.status!=='in_progress') ||
+    (Date.now()-pubAsked < 60000 && !runs.some(r=>r.fresh && new Date(r.queued_at) > pubAsked-15000) ? {fresh: true} : null);
+  // GitHub keeps one waiting publish: a code change or the nightly arriving meanwhile replaces a
+  // waiting Publish changes, and builds from the copy before it
+  const lastFresh = runs.find(r=>r.fresh), replaced = lastFresh && lastFresh.conclusion==='cancelled' &&
+    !runs.some(r=>r.event==='schedule' && r.conclusion==='success' && new Date(r.started_at) > new Date(lastFresh.queued_at));
   const done = runs.find(r=>r.status==='completed' && !['cancelled','skipped'].includes(r.conclusion));
   const STEP = {starting: 'starting', copying: 'copying the database (step 1 of 2)', building: 'building the site (step 2 of 2)'};
   let line;
@@ -210,6 +217,7 @@ function renderPublish(){
   else if(done.event==='schedule') line = `Site last rebuilt ${when(done.finished_at)}, from the nightly copy of the database.`;
   else line = `Site last rebuilt ${when(done.finished_at)}, from the last copy of the database.`;
   if(running && waiting) line += ` Another publish is queued: it starts when this one ends and includes everything saved until then.`;
+  if(replaced && !waiting && !(running && running.fresh)) line += ` <span class='dj-warn'>A Publish changes asked for at ${when(lastFresh.queued_at)} was replaced by another rebuild that used the earlier copy of the database; press Publish changes again to put recent edits on the site.</span>`;
   const btn = ROLE!=='editor' ? '' : waiting
     ? `<button disabled title='A publish is queued; it will include your changes'>Publish queued</button>`
     : `<button onclick='publishNow(this)' title='Copies the database and rebuilds the site: about 15 minutes'>Publish changes</button>`;
@@ -217,7 +225,7 @@ function renderPublish(){
 }
 async function publishNow(btn){
   btn.disabled = true; btn.textContent = 'Starting…';
-  try { const j = await postJSON('/publish', {});
+  try { const j = await postJSON('/publish', {}); pubAsked = Date.now();
     msg(j.waiting ? 'A publish is already queued; it will include your changes.' : 'Publishing: your changes will be on the site in about 15 minutes.'); }
   catch(e){ msg(e.message, 'err'); }
   setTimeout(loadPublish, 4000);
