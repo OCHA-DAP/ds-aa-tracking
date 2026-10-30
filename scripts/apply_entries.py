@@ -33,7 +33,9 @@ whole, like a delete) and the rows are inserted (each must sit inside the scope)
 that dropped out of the re-run go too. The scope must name one version.
 
 A file that fails (a bad key, an unknown column, a constraint) fails as a whole, stays
-pending, and never blocks the files after it. --dry-run applies each file in its
+pending, and never blocks the files after it. So does a file with any item on a mirror
+table (D154, proxy/mirror_tables.json): those are copied in every day by ds-cerf-supplement
+and never written here. --dry-run applies each file in its
 transaction, lets the database check it, and rolls back.
 
 Usage:
@@ -47,6 +49,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -57,7 +60,10 @@ os.environ.setdefault("PGSSLMODE", "require")
 
 import ocha_stratus as stratus  # noqa: E402
 
+from ds_aa_tracking.mirrors import refusal  # noqa: E402
+
 CONTAINER, PREFIX = "projects", "ds-aa-tracking/entries"
+IDENT = re.compile(r"[a-z_][a-z0-9_]*")   # a bare table name in aa, as the proxy checks
 TRACK_DDL = """
     CREATE TABLE IF NOT EXISTS aa.applied_entries (
         name text PRIMARY KEY,
@@ -141,6 +147,11 @@ def apply_file(conn, name, payload, dry=False):
     by = f"entries:{name}" + (f" ({payload['entered_by']})" if payload.get("entered_by") else "")
     n = 0
     for item in payload["rows"]:
+        table = item.get("table")
+        if not isinstance(table, str) or not IDENT.fullmatch(table):
+            raise SystemExit(f"{name}: {table!r} is not a table name (lower case, no schema)")
+        if why := refusal(table):   # a mirror (D154): the whole file fails
+            raise SystemExit(f"{name}: {why}")
         if "delete" in item:
             _delete(conn, name, by, item["table"], item["delete"], dry)
             n += 1

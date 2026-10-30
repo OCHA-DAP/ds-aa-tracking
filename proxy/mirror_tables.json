@@ -1,0 +1,28 @@
+{
+  "_about": "The tables and views in schema aa that another repo writes from an outside source (D154). The ONE list: proxy/server.js refuses writes to them and labels them, scripts/admin_page.py groups and labels them, scripts/apply_entries.py refuses entries files that touch them (all three through src/ds_aa_tracking/mirrors.py or the same reading of this file), and the publish run warns about any aa table that neither schema.py nor this file describes. A table whose name starts with one of the prefixes is a mirror too, listed or not.",
+  "repo": "ds-cerf-supplement",
+  "refresh": "every day from 05:30 UTC (Databricks job \"CERF Supplement Daily\")",
+  "fix": "Wrong values are fixed at the source, or in ds-cerf-supplement for the storm and drought matches: a change made here would be overwritten on the next refresh.",
+  "tables": {
+    "cerf_allocation": "CERF allocations, copied from the CERF OneGMS allocations feed",
+    "cerf_project": "CERF projects, copied from the CERF OneGMS project feed",
+    "cerf_project_sector": "CERF project amounts by sector, copied from the CERF OneGMS project feed",
+    "cerf_project_country": "CERF project budgets by country (regional projects), copied from the CERF OneGMS project feed",
+    "cerf_contribution": "Donor contributions to CERF, copied from the CERF OneGMS contributions feed",
+    "cerf_supplement": "Storm and drought dating of CERF allocations, written by the ds-cerf-supplement matchers (not a copy of a feed)",
+    "cerf_allocation_storm": "Links from CERF allocations to the storms they responded to, written by the ds-cerf-supplement storm matcher (not a copy of a feed)",
+    "cbpf_allocation": "Pooled-fund (CBPF and regional fund) allocations, copied from the CBPF OData API",
+    "cbpf_fund": "The pooled funds (CBPFs and regional funds), copied from the CBPF OData API",
+    "cbpf_project": "Pooled-fund projects, copied from the CBPF OData API",
+    "cbpf_project_cluster": "Pooled-fund project budgets by cluster, copied from the CBPF OData API",
+    "cbpf_project_subip": "Sub-implementing partners of pooled-fund projects, copied from the CBPF OData API",
+    "cbpf_contribution": "Donor contributions to the pooled funds by fiscal year, copied from the CBPF OData API"
+  },
+  "prefixes": {
+    "cbpf_": "A pooled-fund (CBPF) table that this list does not describe yet"
+  },
+  "views": {
+    "v_allocation": "CERF and pooled-fund allocations in one list, made by ds-cerf-supplement over its allocation mirrors",
+    "v_contribution": "CERF and pooled-fund donor contributions in one list, made by ds-cerf-supplement over its contribution mirrors"
+  }
+}

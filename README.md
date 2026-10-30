@@ -110,7 +110,16 @@ are kept forever (the year-end official state, for the map's time view).
   token prompted for in the browser (never embedded). Supersedes the tracking-tables tab.
 - `proxy/server.js` — the one server: PDF extraction, framework entry, and generic
   `/schema` `/rows` `/distinct` `/save` `/delete` for the admin page; every field change is
-  audited to `aa.entry_audit`; KB-loader and OneGMS-mirror tables are read-only
+  audited to `aa.entry_audit`; the frozen KB-era tables and the mirrors are read-only
+- `proxy/mirror_tables.json` — the mirrors (D154): every table and view ds-cerf-supplement
+  copies into `aa` every day (CERF OneGMS feeds, CBPF OData API, its storm and drought
+  matches), each with what it is copied from. The one list: the proxy refuses writes to them,
+  the admin page labels them "Mirror — read-only" and never offers to edit them,
+  `scripts/apply_entries.py` fails a file that touches one, and the publish run warns
+  (`::warning::`) about any `aa` table neither `schema.py` defines nor this file lists. Any
+  `cbpf_` table counts as a mirror before it is listed. Python reads it through
+  `src/ds_aa_tracking/mirrors.py`; it ships in the proxy's zip, so a change to it needs a
+  proxy redeploy (the admin page's labels follow at the next publish)
 - `scripts/dashboards.py` — dashboards, per-framework pages, explorer, entry forms
 - `scripts/page_model.py` — the Model page. Its trigger timelines ("How much warning do the
   triggers give?") draw `aa.trigger_timeline`: one panel per hazard on its own clock (hours to
@@ -202,4 +211,5 @@ Deploy or run the Databricks job with `databricks bundle deploy -t prod -p DEFAU
 
 The proxy (`proxy/`) runs as Azure Web App `chd-ds-aa-extract`; app settings hold the
 Anthropic key, the DB write login, `SITE_TOKEN` (viewer) and `EDITOR_TOKEN` (editor).
-Redeploy with `az webapp deploy --type zip` from a zip of `proxy/`.
+Redeploy with `az webapp deploy --type zip` from a zip of `proxy/` (`server.js`, `package.json`
+and `mirror_tables.json`: the proxy will not start without the mirror list).

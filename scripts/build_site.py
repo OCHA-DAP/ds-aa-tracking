@@ -29,6 +29,7 @@ import site_i18n as i18n  # noqa: E402  (EN / FR / ES: the team mechanism, KB D8
 from site_i18n import ATTR, T, TB, TF  # noqa: E402
 
 from ds_aa_tracking import schema as trk_schema  # noqa: E402
+from ds_aa_tracking.mirrors import undescribed  # noqa: E402  (D154)
 
 OUT = Path(__file__).parents[1] / "site_build"
 OUT.mkdir(exist_ok=True)
@@ -876,6 +877,10 @@ def main():
     import dashboards
     dashboards.build_all(e, page, tbl)
     import admin_page
+    for t in undescribed(e):   # D154: another writer's new table is editable until it is listed
+        print(f"::warning::aa.{t} is neither defined in schema.py nor listed in "
+              "proxy/mirror_tables.json: if another repo writes it, list it there so the "
+              "admin page stops offering to edit it")
     admin_page.build_admin(page)
     import page_climate
     page_climate.build(e, page)

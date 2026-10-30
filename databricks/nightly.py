@@ -70,6 +70,9 @@ ROOT = Path("/local_disk0" if Path("/local_disk0").is_dir() else tempfile.gettem
 for _sub in ("src", "scripts"):
     shutil.copytree(_SRC / _sub, ROOT / _sub, dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+# the mirror list (D154) sits beside the proxy, whose zip ships it; the scripts read it too
+(ROOT / "proxy").mkdir(exist_ok=True)
+shutil.copy2(_SRC / "proxy" / "mirror_tables.json", ROOT / "proxy" / "mirror_tables.json")
 
 
 def run(*args, **env):
