@@ -646,7 +646,7 @@ def pooled_spent(e):
     committed — Burkina Faso floods' regional-fund $1M after the September 2025 activation."""
     r = pd.read_sql(
         """SELECT DISTINCT f.country_iso3, f.hazard, a.version
-           FROM aa.activation_funding f
+           FROM """ + funding_sql(e) + """ f   -- net of refunds: money sent back is not spent
            JOIN aa.activation a ON a.country_iso3 = f.country_iso3 AND a.hazard = f.hazard
             AND a.event_date = f.event_date AND a.event_type = f.event_type
             AND a.window_name IS NOT DISTINCT FROM f.window_name
@@ -4026,8 +4026,8 @@ def _fmt_usd(v):
         return ""
     from decimal import ROUND_HALF_UP, Decimal
     v = float(v)
-    def r(x, q):
-        return Decimal(repr(x)).quantize(Decimal(q), ROUND_HALF_UP)
+    def r(x, q):   # the float's exact binary value, as toFixed() reads it: 1.15 -> 1.1, 2.25 -> 2.3
+        return Decimal(x).quantize(Decimal(q), ROUND_HALF_UP)
     return f"${r(v / 1e6, '0.1')}M" if v >= 1e6 else f"${r(v / 1e3, '1')}k" if v >= 1e3 else f"${r(v, '1')}"
 
 

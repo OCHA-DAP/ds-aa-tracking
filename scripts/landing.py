@@ -2276,7 +2276,7 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
 .news-l .nd { color:#b3261e; font-weight:650; margin-right:2px; }
 .news-0 { color:#64748b; }
 .gtiles .tile .l .tsub { color:#334155; font-weight:600; margin-top:2px; }
-@media (max-width:759px){ .gtiles #t-reach { grid-column:1 / -1; } .news-l { height:auto; max-height:150px; }
+@media (max-width:759px){ .news-l { height:auto; max-height:150px; }
   .toprow { flex-direction:column; gap:10px; } .toprow > .news { flex:none; contain:none; min-height:0; } }
 /* the legend's definitions (they replace the status diagram, 2026-10-27) */
 .layerctl .lrow { display:flex; align-items:center; gap:2px; }
@@ -2855,12 +2855,13 @@ function placeLegend(){
   const m = mapbox.getBoundingClientRect(), r = legend.getBoundingClientRect(), w = r.width + 12, h = r.height + 12;
   const bb = back.hidden ? 0 : back.getBoundingClientRect().bottom - m.top;
   // how much of the map a box would cover: the country's own areas and its pins, sampled on a grid
-  const shapes = [...adm.querySelectorAll('path:not(.nb)')], pins = [...mapbox.querySelectorAll('.iconbox')].filter(e => !e.closest('.hide')).map(e => e.getBoundingClientRect());   // the world's callouts stay in the page, hidden
+  // each shape's screen-to-map transform once (an admin-2 country has hundreds of shapes)
+  const shapes = [...adm.querySelectorAll('path:not(.nb)')].map(p => [p, p.getScreenCTM()]).filter(([, M]) => M).map(([p, M]) => [p, M.inverse()]), pins = [...mapbox.querySelectorAll('.iconbox')].filter(e => !e.closest('.hide')).map(e => e.getBoundingClientRect());   // the world's callouts stay in the page, hidden
   const cover = (x0, y0) => { let n = 0;
     for(let i = 0; i < 16; i++) for(let j = 0; j < 8; j++){
       const x = x0 + (i + .5) * w / 16, y = y0 + (j + .5) * h / 8;
       if(pins.some(p => x >= p.left && x <= p.right && y >= p.top && y <= p.bottom)){ n += 3; continue; }
-      if(shapes.some(p => { const M = p.getScreenCTM(); return M && p.isPointInFill(new DOMPoint(x, y).matrixTransform(M.inverse())); })) n++;
+      if(shapes.some(([p, I]) => p.isPointInFill(new DOMPoint(x, y).matrixTransform(I)))) n++;
     }
     return n; };
   // the bottom left, where it always was, unless another corner covers less of the country
@@ -3661,9 +3662,10 @@ function actLinks(a){
   (a.funding||[]).forEach(x => { if(x.cerf_url) out.push(`<a href='${esc(x.cerf_url)}' target='_blank' rel='noopener'>${esc(tr8('CERF allocation↗'))}</a>`); });
   return [...new Set(out)];
 }
-// what a funding line carries beside its amount: money refunded after the activation was
-// stopped (the amount is net of it), an amount entered before OneGMS recorded the allocation
-const fundNote = x => [x.refund ? tr8('net of {0} refunded', money(x.refund)) : null,
+// what a funding line carries beside its amount: the allocation it is net of and the money
+// refunded after the activation was stopped ('$2.3M (of $4.5M; $2.3M refunded)'), an amount
+// entered before OneGMS recorded the allocation
+const fundNote = x => [x.refund ? tr8('of {0}; {1} refunded', money(x.usd + x.refund), money(x.refund)) : null,
                        x.prov ? tr8('provisional until OneGMS records it') : null].filter(Boolean).join('; ');
 const withNote = x => fundNote(x) ? ` (${esc(fundNote(x))})` : '';
 function actMoney(a){ return (a.funding||[]).filter(x=>x.usd!=null).map(x=>`${esc(a.type === 'adhoc_aa' && state.iso ? fundTitle(x, L[state.iso]) : fundName(String(x.fund)))} ${money(x.usd)}${withNote(x)}`).join(' + ') || (a.released ? money(a.released) : ''); }

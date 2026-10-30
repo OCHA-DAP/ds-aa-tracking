@@ -221,11 +221,13 @@ def _events(d, c, h, ref, kb_fw=None, umap=None, slug=None, adhoc=False):
 
 
 def _fund_note(x):
-    """Beside a funding line's amount: the money refunded after the activation was stopped (the
-    amount is net of it), or 'provisional' for a CERF amount OneGMS has not recorded yet
-    (dashboards.funding_sql)."""
+    """Beside a funding line's amount: the allocation it is net of and the money refunded after
+    the activation was stopped ('of $4.5M; $2.3M refunded'), or 'provisional' for an amount
+    OneGMS does not show yet (dashboards.funding_sql)."""
     ref = pd.to_numeric(getattr(x, "refund_usd", None), errors="coerce")
-    notes = ([f"net of {_fmt_usd(ref)} refunded"] if pd.notna(ref) and ref > 0 else []) \
+    net = pd.to_numeric(getattr(x, "amount_usd", None), errors="coerce")
+    notes = ([f"of {_fmt_usd((net if pd.notna(net) else 0) + ref)}; {_fmt_usd(ref)} refunded"]
+             if pd.notna(ref) and ref > 0 else []) \
         + (["provisional"] if getattr(x, "provisional", None) in (True,) else [])
     return f" ({'; '.join(notes)})" if notes else ""
 
