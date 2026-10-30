@@ -1803,7 +1803,7 @@ function mountFlow(cfg){
 
 # ---------------------------------------------------------------- financing
 # the Financing page's method note, one translatable paragraph each (site_i18n TB)
-FUND_NOTE_0 = "<b>Layers</b>, as on the map: <b>current frameworks</b> (active, being updated, in development) and <b>retired</b> frameworks bring their pre-arranged money in every year — a framework's layer is its status today, so the past years' pre-arranged money needs the retired ones to be complete (an AA-tagged country or regional fund allocation in a country with no retired framework counts as current). <b>Released money stays released</b>: what a framework since retired released counts while either framework layer is ticked, so the total released to date is complete on the page's opening view; the tile says how much of it comes from retired frameworks. <b>Non-framework allocations</b> add the AA money allocated without a framework: released money only, nothing is pre-arranged for it. The <b>fund</b> switch applies to every figure but co-financing; framework counts, people covered and versions then keep the frameworks with money recorded on that fund. There is no technical-support layer here: technical support carries no money. The tiles and the charts follow the layers, the fund, the framework selection and the hazard and region filters (the GHO filter: the annual series and co-financing); the money-flow chart and the sections further down say what they follow."
+FUND_NOTE_0 = "<b>Layers</b>, as on the map: <b>current frameworks</b> (active, being updated, in development) and <b>retired</b> frameworks. <b>Money stays counted</b>: what a framework since retired pre-arranged in the years it was in place, and what it released, counts while either framework layer is ticked, whatever its status today, so the past years are complete on the page's opening view (the released tile says how much comes from retired frameworks). The retired layer adds the retired frameworks to the framework count and the by-status chart; on its own it shows their money only. An AA-tagged country or regional fund allocation in a country with no retired framework counts as current. <b>Non-framework allocations</b> add the AA money allocated without a framework: released money only, nothing is pre-arranged for it. The <b>fund</b> switch applies to every figure but co-financing; framework counts, people covered and versions then keep the frameworks with money recorded on that fund. There is no technical-support layer here: technical support carries no money. The tiles and the charts follow the layers, the fund, the framework selection and the hazard and region filters (the GHO filter: the annual series and co-financing); the money-flow chart and the sections further down say what they follow."
 # a replaced framework (dashboards.old_versions) is on the retired layer: said under the layers note
 FUND_NOTE_REPLACED = "A framework that a distinct new one replaced, rather than revised, counts as <b>retired</b>, its activations and money with it, even though the new one has the same country and hazard (Somalia drought: the 2019–2021 food security framework, replaced by the 2026 one)."
 FUND_NOTE_1 = '<b>Frameworks</b> (in the filter bar) lists every current and retired framework with its pre-arranged money now: tick the ones to count — a sub-region, a few countries, any subset — and the tiles and the charts count only those, within the other filters. Money that belongs to no framework (a non-framework allocation, a country-level allocation of a country or regional fund) follows its country: it counts while at least one line of that country is ticked, and the countries whose only AA money is of that kind have a line of their own at the end of the list. A subset changes which frameworks are counted, not how: its pre-arranged money is still a stock, in place today or in a given year, never added over years. The selection is kept in the page address, so a subset can be bookmarked or shared. The money-flow chart and the UN agencies and partners section do not follow it.'
@@ -2089,7 +2089,7 @@ def build_funding(page, d):
  <span class='fbar-t'>{T("Filter every figure on this page:")}</span>
  <span style='display:inline-flex;gap:10px;align-items:center;padding-right:10px;border-right:1px solid #9db2c9'>
   <label {ATTR("title", "frameworks active, being updated or in development: their money in every year")}><input type='checkbox' id='fCur' checked> {T("Current frameworks")}</label>
-  <label {ATTR("title", "frameworks since retired: their pre-arranged money in the years they were live (the money they released counts with current frameworks too)")}><input type='checkbox' id='fRet'> {T("Retired")}</label>
+  <label {ATTR("title", "frameworks since retired: adds them to the framework count and the by-status chart; their money (pre-arranged in the years they were live, and released) counts with current frameworks too")}><input type='checkbox' id='fRet'> {T("Retired")}</label>
   <label {ATTR("title", "AA money allocated without a framework: released money only")}><input type='checkbox' id='fAdh'> {T("Non-framework allocations")}</label></span>
  <details class='fwpick' id='fwPick'><summary id='fwLab' {ATTR("title", "the full list of frameworks: tick the ones to count")}>{T("Frameworks: all ▾")}</summary>
   <div class='fwpanel'>
@@ -2131,7 +2131,7 @@ def build_funding(page, d):
  <div class='panel'><h3>{T("Frameworks each year, by status")}</h3><canvas id='c0' height='260'></canvas>
    {how("Each framework's status at the end of the year: active while an endorsed version was valid at any time in the year; being updated when none was and its next version is in development or its last one had expired; in development before its first endorsed version; retired from the first full year after its retirement date. The current year is today's status, the Map's figure. Follows the layers, the framework selection and the hazard and region filters; the GHO filter applies year by year; the fund switch does not apply (a count, not money).")}</div>
  <div class='panel'><h3>{T("Pre-arranged funding in place each year, by fund")}</h3><canvas id='c1' height='260'></canvas>
-   {how("A stock: what was committed in each year (a framework counts for a year if it was valid at any time in it), so the bars are not added up (the cumulative switch applies to released money only). CERF: the framework envelopes per year (sheets, framework pages, entries; 'all'-totals excluded where the fund split exists); the current year is pre-arranged now. Country and Regional Funds: AA-tagged allocations in the OneGMS mirror, in the year allocated. Co-financing is shown separately.", two=True)}</div>
+   {how("A stock: what was committed in each year (a framework counts for a year if it was valid at any time in it), so the bars are not added up (the cumulative switch applies to released money only). CERF: the framework envelopes per year (sheets, framework pages, entries; 'all'-totals excluded where the fund split exists); the current year is pre-arranged now. Country and Regional Funds: AA-tagged allocations in the OneGMS mirror, in the year allocated. Co-financing is shown separately. A framework since retired counts in the years it was in place, whatever its status today.", two=True)}</div>
  <div class='panel'><h3>{T("AA released by year, by fund")}</h3><canvas id='c2' height='260'></canvas>
    {how("Allocations drawn by a framework activation, all pooled funds — plus the non-framework AA allocations when that layer is on. A country or regional fund allocation moves here only once an activation is recorded against it.")}</div>
  <div class='panel'><h3>{T("Pre-arranged now, by hazard")}</h3><canvas id='c3' height='260'></canvas>
@@ -2213,10 +2213,13 @@ function sel(){ return {hz:fHaz.value, rg:fReg.value, gho:fGho.value, cum:fCum.c
   cur:fCur.checked, ret:fRet.checked, adh:fAdh.checked, fund:fFund.value,
   fws:fwSel, fwC:fwSel && new Set([...fwSel].map(cOf))}; }
 const layerOK = (g, s) => g==='a' ? s.adh : g==='r' ? s.ret : s.cur;
-// RELEASED money stays released (owner, 2026-10-30: "the retired frameworks disbursed funding
-// should STILL show up in the total disbursed to date"): a retired framework's releases count
-// while either framework layer is ticked — the map's flowActs(). Pre-arranged money, counts and
-// people covered keep layerOK.
+// Money stays counted (owner, 2026-10-30: "the retired frameworks disbursed funding should STILL
+// show up in the total disbursed to date"; "if the money was prearranged, it was prearranged,
+// regardless of whether the framework has since been retired"): a retired framework's money —
+// released, and pre-arranged in the years it was in place — counts while either framework layer
+// is ticked (the map's flowActs(); the map's past years already count a framework by its status
+// then). The framework counts and the figures of today (pre-arranged now, people covered, the
+// agency split) keep layerOK: a retired framework has none of those now.
 const relOK = (g, s) => g==='a' ? s.adh : g==='r' ? (s.ret || s.cur) : s.cur;
 // ---- the framework picker: any subset of frameworks, for every tile and chart that follows the
 // hazard and region filters. D.fwList: the frameworks (lc: lifecycle), then the countries whose AA
@@ -2350,7 +2353,7 @@ function draw(){
   const s = sel(), gho = s.gho;
   const geo = r => (!s.hz||r.hz===s.hz) && (!s.rg||r.region===s.rg) && fwOK(r, s);
   const P = D.pre.filter(r=>r.kind==='prearranged' && r.fund_code!=='all' && geo(r) && (!gho||r.in_gho)
-      && layerOK(r.g,s) && fundOK(r.fund_code,s));
+      && relOK(r.g,s) && fundOK(r.fund_code,s));
   const A = D.act.filter(r=>geo(r) && (!gho||r.in_gho) && relOK(r.g,s) && fundOK(r.fund_code,s));
   const years = uniqSorted(P.concat(A), r=>r.year);
   for(const [id, rows] of [['c1',P],['c2',A]]){
@@ -2378,7 +2381,7 @@ function draw(){
   // the current year being D.cofNow: each framework's figure now, which the second chart splits
   // by co-financer — the two agree on the current year by construction.
   {
-    const keep = r => geo(r) && (!gho||r.in_gho) && layerOK(r.g,s);
+    const keep = r => geo(r) && (!gho||r.in_gho) && relOK(r.g,s);   // co-financing pre-arranged: a retired framework's too
     const Y = D.cof.filter(r=>+r.year!==CY && keep(r)), W = D.cofNow.filter(keep);
     const why = s.fund ? tr8('Co-financing is money from outside CERF and the Country and Regional Funds: the fund switch does not apply to it — select both funds to see it.')
       : !(s.cur||s.ret) ? tr8('Co-financing belongs to frameworks: select current or retired frameworks (non-framework allocations carry none).')
@@ -2478,7 +2481,7 @@ document.addEventListener('aalang', ()=>{
   fwBuild(); fwToDom(); draw(); });
 // the flow chart: the layers and the fund switch filter its rows (donors off: it starts at the funds)
 window._flowDraw = mountFlow({label:'AA money through funds and agencies to partners', yLab, cy:CY,
-  keep: r=>{ const s = sel(); return (r.m==='r' ? relOK : layerOK)(r.g, s) && (!s.fund || (s.fund==='cerf') === (r.fu==='c'))
+  keep: r=>{ const s = sel(); return relOK(r.g, s) && (!s.fund || (s.fund==='cerf') === (r.fu==='c'))
                                 && (!s.rg || r.rg===s.rg); }});
 // the framework picker: a group line ticks its lines; with a search typed, the buttons and the
 // group lines act on the lines shown
