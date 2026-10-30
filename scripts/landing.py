@@ -1931,6 +1931,9 @@ def build_landing(page, d, e):
              funds(t["pre_cerf"], t["pre_pooled"], t["pre_all"]),
              " ".join(["All current frameworks shown, including those in development."] + apy_notes(t["apy"])),
              dag=bool(t["apy"])),
+        # co-financing beside pre-arranged (owner, 2026-10-30)
+        tile("t-cof", "cofin", "Co-financing", f"${_jsround(t['cofin'] / 1e6)}M" if t["n_cofin"] else "—",
+             "co-financing pre-arranged now", note=" ".join((COF_NOTE, f"{t['n_cofin']} of the {t['n_fw']} frameworks shown have co-financing recorded."))),
         tile("t-cov", "people", "People covered", _tofixed(t["covered"] / 1e6, 1) + "M" if t["n_fw"] else "—",
              "people covered now by the frameworks shown" if t["n_fw"] else "people covered now: no framework shown",
              note=f"{t['n_cov']} of the {t['n_fw']} frameworks shown have a figure." if t["n_fw"] else ""),
@@ -1948,11 +1951,7 @@ def build_landing(page, d, e):
              else f"people reached with the {Y} releases — CERF allocations" if n_rep
              else f"people reached with the {Y} releases: no report yet for the CERF allocation" if n_cerf == 1
              else f"people reached with the {Y} releases: no report yet for the {n_cerf} CERF allocations",
-             note=reach_note),
-        # co-financing, in the place the What's new box had (owner, 2026-10-30)
-        tile("t-cof", "cofin", "Co-financing", f"${_jsround(t['cofin'] / 1e6)}M" if t["n_cofin"] else "—",
-             "co-financing pre-arranged now", note=" ".join((COF_NOTE, f"{t['n_cofin']} of the {t['n_fw']} frameworks shown have co-financing recorded."))),
-    ))
+             note=reach_note)))
 
     # What's new sits beside the definition box (owner, 2026-10-30); build_site puts the box at
     # the placeholder
