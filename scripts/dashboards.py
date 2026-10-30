@@ -1668,11 +1668,10 @@ FLOW_NOTE = " ".join(TB(x) for x in (
     "pool. Top 12 donors, the rest grouped."))
 
 
-def _flow_panel(donors_on, donor_toggle=True, extra="", note=""):
+def _flow_panel(donors_on, donor_toggle=True, extra=""):
     """The 'Where the money flows' panel: pre-arranged / released switch, year, levels
     (FLOW_JS mounts it). Used by the Financing page (donors off) and the donor-shares page
-    (donors on, no toggle: the donor-flows view). extra: HTML appended to the method note;
-    note: a line shown above the chart."""
+    (donors on, no toggle: the donor-flows view). extra: HTML appended to the method note."""
     chk = " checked" if donors_on else ""
     dctl = (f"<label><input type='checkbox' id='flD'{chk}> {T('donors')}</label>" if donor_toggle
             else f"<input type='checkbox' id='flD'{chk} hidden>")
@@ -1689,7 +1688,7 @@ def _flow_panel(donors_on, donor_toggle=True, extra="", note=""):
   <label>{T('Find')} <input type='search' id='flS' list='flSL' {ATTR('placeholder', 'a donor, country or organisation')} {ATTR('aria-label', 'Find a donor, country or organisation in the flows')} style='width:230px;max-width:100%;font-size:12.5px;padding:3px 6px'></label><datalist id='flSL'></datalist>
   <span id='flTot' class='muted'></span>
  </div>
- {f"<p class='note' style='margin:0 0 6px'>{note}</p>" if note else ""}<div id='flow'></div><div id='flLeg' class='note' style='display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center'></div><script src="sankey.js"></script>
+ <div id='flow'></div><div id='flLeg' class='note' style='display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center'></div><script src="sankey.js"></script>
  <details class='note'><summary style='cursor:pointer'>{T('How the flows are counted')}</summary>{FLOW_NOTE}{extra}</details>
 </div>"""
 
@@ -1785,7 +1784,7 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
 // to call when its own filters change.
 // cfg.noYear: a year the chart never shows, in any view, 'all years' included — the Financing
 // page's current year, until the donors' contributions for it are final (owner, 2026-10-30; the
-// rows stay in the page data)
+// rows stay in the page data, and the page says nothing about it)
 function mountFlow(cfg){
   if(!window.sankeySVG) return ()=>{};
   const noY = cfg.noYear == null ? null : +cfg.noYear, keep0 = cfg.keep || (()=>true);
@@ -2182,7 +2181,7 @@ def build_funding(page, d):
 <h2>{T("Where the money flows")}</h2>
 <p class='meta'>{TB("Funds → agencies and grantees → the organisations that implement, <b>pre-arranged</b> (the envelopes in place on a date) or <b>released</b> (what went out in a year) — two views never added together. Follows the layers and the fund switch. It opens on the money released in the last complete year, from each fund's donors; untick <i>donors</i> to start at the funds.")}</p>
 <p class='fwnote' id='fwFlowNote' style='display:none'>{T("This chart shows every framework of the layers above: it does not follow the framework selection (nor the hazard and region filters).")}</p>
-{_flow_panel(donors_on=True, extra=two_how, note=TF("{y} is not shown in this chart until the donors' contributions for the year are final.", y=cy))}
+{_flow_panel(donors_on=True, extra=two_how)}
 <h2>{T("Co-financing")}</h2>
 <p class='meta'>{T("Money from outside CERF and the Country and Regional Funds — agencies' own funds, donors, governments — pre-arranged for the frameworks. Not in the chart above, which follows the OCHA-managed funds.")}</p>
 <div class='grid'>

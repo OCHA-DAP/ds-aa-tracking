@@ -1617,7 +1617,6 @@
  "{x} dropped (was {v})": "{x} eliminado (era {v})",
  "{x} kept": "{x} conservados",
  "{y} is not covered by the historical simulation": "{y} no está cubierto por la simulación histórica",
- "{y} is not shown in this chart until the donors' contributions for the year are final.": "{y} no se muestra en este gráfico hasta que las contribuciones de los donantes para el año sean definitivas.",
  "{y} yes · {l} limited": "{y} sí · {l} limitado",
  "· backtest of version {v}": " · análisis histórico de la versión {v}",
  "· backtest of version {v} (the current version has none)": " · análisis histórico de la versión {v} (la versión actual no tiene)",
