@@ -597,6 +597,10 @@ LEARNING_CSS = r"""
 .llegend b { font-size:11px; color:#0f2540; }
 .lg-i { display:flex; align-items:center; gap:6px; } .lg-d { width:9px; height:9px; border-radius:50%; flex:none; }
 .lg-h { color:#56657a; font-size:10.5px; line-height:1.3; margin-top:2px; }
+/* under the map when the map is too narrow to hold it beside the callouts (runLayout) */
+.llegend.below { position:static; max-width:none; margin-top:8px; flex-direction:row; flex-wrap:wrap; gap:3px 18px; align-items:center; }
+.llegend.below .lg-h { flex-basis:100%; margin-top:0; }
+.lmapbox.compact ~ .llegend { display:none; }
 /* narrow screens: the callouts do not fit on the map, the findings are listed under it */
 .hlstack { display:none; scroll-margin-top:35vh; }
 .lmapbox.compact .lpane, .lmapbox.compact .hcard, .lmapbox.compact .llegend { display:none; }
@@ -841,12 +845,19 @@ function runLayout(){
   const k = W / VB.w, was = compact;
   compact = W < 1100;                                     // the cards no longer fit on the map: list them under it
   mapbox.classList.toggle('compact', compact); mapbox.classList.toggle('tight', W < 1300);
+  // a map too narrow for the legend beside the callouts: the legend goes under the map (owner,
+  // 2026-10-30: zoomed in, it covered the findings); by the map's width only, so nothing moves
+  // on a click
+  const below = W < 1300;
+  if(below && legend.parentNode === mapbox) stack.after(legend);
+  else if(!below && legend.parentNode !== mapbox) mapbox.appendChild(legend);
+  legend.classList.toggle('below', below);
   if(compact !== was || !stack.dataset.init){ stack.dataset.init = '1'; unpin(); }
   if(compact || !labels.length) return;
   const feat = new Set(labels.flatMap(Lb => Lb.isos));
   const shaded = Object.entries(C).map(([iso, c]) => ({iso, feat:feat.has(iso), r:rectPx(c, k), x:c.x*k, y:c.y*k}));
   const lr = legend.getBoundingClientRect(), mr = mapbox.getBoundingClientRect();
-  const keepOut = lr.width ? [{x1:lr.left-mr.left-6, y1:lr.top-mr.top-6, x2:lr.right-mr.left+6, y2:lr.bottom-mr.top+6}] : [];
+  const keepOut = lr.width && !below ? [{x1:lr.left-mr.left-6, y1:lr.top-mr.top-6, x2:lr.right-mr.left+6, y2:lr.bottom-mr.top+6}] : [];
   labels.forEach(Lb => { Lb.ps = Lb.isos.map(iso => [C[iso].x*k, C[iso].y*k]);
     Lb.dots = Lb.ps.map(p => grow({x1:p[0], y1:p[1], x2:p[0], y2:p[1]}, 7));
     Lb.w = Lb.el.offsetWidth; Lb.h = Lb.el.offsetHeight; });

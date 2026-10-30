@@ -239,7 +239,11 @@ TABLES = {
             amount_usd numeric,
             people_targeted bigint,        -- as reported per allocation
             reported_to_ahub text,
-            match_method text,
+            match_method text,             -- how allocation_code was found; 'provisional' = an
+                                           -- amount entered before OneGMS records the CERF
+                                           -- allocation: scripts/resolve_provisional.py (nightly)
+                                           -- swaps in OneGMS's code and amount once it appears
+                                           -- ('onegms-auto')
             source text NOT NULL,
             updated_at timestamptz NOT NULL DEFAULT now(),
             UNIQUE NULLS NOT DISTINCT
@@ -676,6 +680,32 @@ DURABLE_TABLES = {
                    OR (months IS NOT NULL AND lead_from IS NULL AND lead_to IS NULL)),
             CHECK (months IS NULL OR season_start IS NOT NULL),
             CHECK (unit = 'mo' OR (season_start IS NULL AND season_len IS NULL))
+        )""",
+    # money an activation sent back (owner, 2026-10-30): the allocation went out, then the
+    # activation was paused or stopped and the money was refunded to the fund (CERF, mostly).
+    # OneGMS shows a refund months later, so it is recorded here, against the activation's
+    # funding row (aa.activation_funding: the same key, plus the fund and, when known, the
+    # allocation). The pages count released money NET of these rows (dashboards.funding_sql).
+    "activation_refund": """
+        CREATE TABLE IF NOT EXISTS aa.activation_refund (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            event_date text NOT NULL,      -- the activation (aa.activation, by convention)
+            window_name text,
+            event_label text NOT NULL DEFAULT '',
+            event_type text NOT NULL,
+            fund_code text NOT NULL DEFAULT 'cerf',
+            allocation_code text,          -- the allocation refunded; NULL = the activation's
+                                           -- only allocation from that fund
+            amount_usd numeric NOT NULL CHECK (amount_usd > 0),
+            refund_date text,              -- partial ISO: when the money went back
+            reason text,                   -- e.g. the activation was stopped
+            source text NOT NULL,
+            note text,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            UNIQUE NULLS NOT DISTINCT
+                (country_iso3, hazard, event_date, window_name, event_label, event_type,
+                 fund_code, allocation_code)
         )""",
     "entry_audit": """
         CREATE TABLE IF NOT EXISTS aa.entry_audit (

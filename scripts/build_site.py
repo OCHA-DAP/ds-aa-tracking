@@ -66,6 +66,7 @@ header.adm { background:#3b2338; }
 header.adm .tag { background:#f0b429; color:#3b2338; font-size:10.5px; font-weight:700; letter-spacing:.06em; padding:1px 7px; border-radius:9px; margin-right:18px; }
 header .tosite { margin-left:auto; margin-right:0; font-size:13px; }
 .devbanner { background:#fff3cd; color:#5c4400; border-bottom:1px solid #e6cf85; padding:7px 28px; font-size:13px; line-height:1.4; text-align:center; }
+.devbanner a { color:#5c4400; text-decoration:underline; }
 ul.adm-list { list-style:none; padding:0; margin:6px 0 0; columns:2 320px; }
 ul.adm-list li { margin:4px 0; font-size:13.5px; break-inside:avoid; } ul.adm-list .d { color:var(--muted); font-size:12px; }
 @media (max-width:759px){ header { padding:10px 16px; } header .t { margin-right:14px; } header nav.pub a { margin-right:12px; } }
@@ -146,7 +147,8 @@ ADMIN_DIR = "admin"
 
 BANNER = ("<div class='devbanner' role='note'>"
           + TB("<b>OCHA internal product under development</b>, subject to change without warning. "
-               "The figures may be incorrect and should not be used.") + "</div>")
+               "The figures may be incorrect and should not be used. Questions and corrections: "
+               "<a href='mailto:ocha-datascience@un.org'>ocha-datascience@un.org</a>.") + "</div>")
 
 # public nav: the map, then the building blocks of AA (model · plan · financing), learning and
 # media. Donor shares left the public site on 2026-10-15 (the Financing page's money flows,
@@ -264,6 +266,10 @@ def _render(name, title, body, nav, meta, public=False):
     skip = T("Skip to content") if public else "Skip to content"
     # the accessibility statement, from the foot of every public page (owner, 2026-10-29)
     foot = f"<footer class='foot'><a href='accessibility.html'>{T('Accessibility')}</a></footer>" if public else ""
+    # the page's definition box: at the top, or where the page puts its placeholder (the Map:
+    # beside What's new)
+    pb = policy_box(name)
+    body = body.replace("<!--POLICY-->", pb, 1) if "<!--POLICY-->" in body else pb + body
     # a page's own styles go in the head, in order: left in the body they are parsed only
     # after the page data and scripts (1.6 MB on the Map), so the browser paints what the
     # scripts drew unstyled first — the world map black, the tile icons full-width — for a
@@ -280,7 +286,7 @@ def _render(name, title, body, nav, meta, public=False):
 <a class="skip" href="#main">{skip}</a>
 {BANNER}{nav}<main id="main" tabindex="-1"><h1>{h1}</h1>
 <p class="meta">{meta}</p>
-{policy_box(name)}{body}</main>{foot}</body></html>"""
+{body}</main>{foot}</body></html>"""
 
 
 def _admin_home(admin):
@@ -677,6 +683,7 @@ NOTES = {
     "adhoc_activation": "Ad hoc AA and early-action allocations, off the (country, hazard) pair — no version, no window.",
     "window_status": "Curated trigger state per window: <code>triggered</code> yes/no (+ date, note). It lives apart from <code>window</code> because the KB loader used to truncate that table (until 2026-10-05). A version is <i>fully triggered</i> when any window fired (all-in / exclusive rollup) or every window fired (independent windows); that, with validity, drives the framework status on the map. Seeded once from <code>window_activation</code> — a window is flagged when an activation names it, the version has a single window, or an activation is marked full.",
     "activation_funding": "One row per activation × fund allocation — the multi-fund reality (e.g. Nigeria floods Sep 2025 = CERF $5.0M + NHF $2.0M under one activation). <code>allocation_code</code> resolves through <code>aa.v_allocation</code> (CERF application codes and Country and Regional Fund codes alike).",
+    "activation_refund": "Money an activation sent back to its fund after it was paused or stopped (CERF, mostly), keyed like the activation's funding row (fund, and the allocation when known; NULL = the activation's only allocation from that fund). Every page counts released money net of these rows. OneGMS shows a refund months later, so it is recorded here first. A funding row with <code>match_method</code> 'provisional' is an amount entered before OneGMS recorded the CERF allocation; the nightly job gives it OneGMS's code and amount once the allocation appears.",
     "report_channel_inclusion": "Which frameworks/countries count toward which external reports per year (A-Hub, UK BCs, SG, CERF/OCHA annual reports, SF KPI, CPC), attributed to the version in force during the report year.",
     "plan_inclusion": "GHO/HNRP plan inclusion + AA feasibility flags per country-year, per source.",
     "start_network": "Start Fund anticipation alerts + Start READY membership per country (from the planning sheet).",
