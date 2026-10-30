@@ -9,7 +9,13 @@
 # snapshots the whole `aa` schema to the dev blob; this workflow restores that snapshot
 # into a throwaway Postgres service container and builds against localhost. The build
 # scripts are unchanged — the stratus env vars just point at the container.
+#
+# "Publish changes" on the admin page (D164) starts this by hand with fresh_snapshot: the
+# Databricks job then copies the database first (scripts/fresh_snapshot.py), so an edit made
+# minutes ago is on the site about 15 minutes later instead of the next morning.
 name: Publish site
+# the proxy's GET /publish tells a button run by this name; other runs keep GitHub's default
+run-name: ${{ inputs.fresh_snapshot && 'Publish changes (a fresh copy of the database)' || '' }}
 
 on:
   schedule:
@@ -19,6 +25,10 @@ on:
       snapshot:
         description: "Snapshot to build from: latest or YYYY-MM-DD"
         default: latest
+      fresh_snapshot:
+        description: "Have Databricks copy the database first (the admin page's Publish changes)"
+        type: boolean
+        default: false
   repository_dispatch:
     types: [kb-updated, data-updated]
   push:
@@ -57,6 +67,18 @@ jobs:
         with:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
+      # the copy runs on Databricks while the steps below set up; "Wait for…" joins it
+      - name: Start a fresh copy of the database (Databricks)
+        id: copy
+        if: inputs.fresh_snapshot
+        env:
+          # a service principal with CAN_MANAGE_RUN on the snapshot job (databricks.yml)
+          DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: |
+          test -n "$DATABRICKS_CLIENT_SECRET" || { echo "::error::DATABRICKS_CLIENT_SECRET is not set (see README: Publish changes)"; exit 1; }
+          uv run --no-project --with databricks-sdk python scripts/fresh_snapshot.py start
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -77,6 +99,13 @@ jobs:
       - run: uv sync
       - name: Install graphviz (schema ERD)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz >/dev/null
+      - name: Wait for the fresh copy of the database
+        if: inputs.fresh_snapshot
+        env:
+          DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: uv run --no-project --with databricks-sdk python scripts/fresh_snapshot.py wait "${{ steps.copy.outputs.run_id }}"
       - name: Restore the aa schema from the blob snapshot
         env:
           DSCI_AZ_BLOB_DEV_SAS: ${{ secrets.DSCI_AZ_BLOB_DEV_SAS }}
