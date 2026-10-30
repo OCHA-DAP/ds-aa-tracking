@@ -88,7 +88,7 @@ LAYER_COLOR = {"adhoc": "#74c476", "retired": "#9e9e9e", "tech": "#2a9d8f"}
 LAYER_LABEL = {"framework": "Current frameworks", "adhoc": "Non-framework allocations", "retired": "Retired",
                "tech": "Technical support"}
 DISP_LABEL = {**KB_LABEL, "retired": "Retired", "pipeline": "No framework version yet",
-              "adhoc": "Non-framework allocations only"}
+              "adhoc": "Non-framework allocation"}   # owner, 2026-10-30: not "... allocations only"
 # year selector: the first year it offers (the annual pre-arranged series starts here —
 # dashboards._backfill_years) and the status-report -> lifecycle mapping, the CASE that
 # aa.v_framework_lifecycle applies to a framework with no version (anything else: not shown)
@@ -1998,7 +1998,7 @@ def build_landing(page, d, e):
  <p class='fwt-cap' id='fwtcap'></p>
  <div class='fwt-scroll'><table class='fwtab' id='fwtab'></table></div>
  <p class='fwt-note' id='fwtfoot' hidden></p>
- <p class='fwt-note'>{TB("<b>Return period</b>: how often the framework's latest version would activate (any of its trigger windows, in a year), as the framework states it where it does, otherwise from its historical simulation. <b>Pre-arranged (OCHA-managed funds)</b>: for each framework, the envelope of its most recent version that has one, from CERF and the Country and Regional Funds; a framework being updated keeps its last envelope, and one in development shows the envelope recorded for it so far. <b>Co-financing</b>: money from outside the OCHA-managed funds pre-arranged for the framework, as reported for the year (the Financing page's figure). <b>Activations</b> and <b>released from OCHA</b> count the framework activations of the frameworks listed; non-framework allocations and retired frameworks are not listed. Released money is split by fund as pre-arranged money is, and is net of money refunded after an activation was stopped; a CERF amount that OneGMS has not recorded yet is provisional. Click a column heading to sort.")}</p>
+ <p class='fwt-note'>{TB("<b>Return period</b>: how often the framework's latest version would activate (any of its trigger windows, in a year), as the framework states it where it does, otherwise from its historical simulation. <b>Pre-arranged (OCHA-managed funds)</b>: for each framework, the envelope of its most recent version that has one, from CERF and the Country and Regional Funds; a framework being updated keeps its last envelope, and one in development shows the envelope recorded for it so far. <b>Co-financing</b>: money from outside the OCHA-managed funds pre-arranged for the framework, as reported for the year (the Financing page's figure). <b>Activations</b> and <b>released from OCHA</b> count the framework activations of the frameworks listed; non-framework allocations and retired frameworks are not listed. Released money is split by fund as pre-arranged money is, and is net of money refunded after an activation was stopped; a CERF amount that OneGMS has not recorded yet is provisional. Click a country to open it on the map; click a column heading to sort.")}</p>
 </section>
 <!-- 2026-10-02 meeting: the internal links that sat here (dashboards, explorer, data entry,
      data & schema review) were easy to miss below the map; they all live in the Internal menu -->
@@ -3859,7 +3859,8 @@ function buildFwTable(){
                    r.all ? tr8('not split by fund') : null].filter(Boolean).map(t => `<span class='sm'>${esc(t)}</span>`).join('');
     const drvPre = past && f.pre_drv ? DRV(tr8('Inferred from the envelope of the version valid during the year (no reported figure for that framework-year)')) : '';
     const cell = {
-      country: f.page ? `<a href='${esc(f.page)}'>${esc(r.country)}</a>` : esc(r.country), hazard: esc(r.hazard),
+      // the country opens the framework on the map above, not its framework page (owner, 2026-10-30)
+      country: `<a class='fwopen' href='#${esc(hashFor([r.iso, f.hazard]))}' data-iso='${esc(r.iso)}' data-hz='${esc(f.hazard)}'>${esc(r.country)}</a>`, hazard: esc(r.hazard),
       status: r.lay === 'tech' ? `<span class='badge b-tech'>${esc(tr8('technical support'))}</span>`
         : r.lay === 'framework' ? badge(f.disp) + (past ? DRV(statusNote(f).slice(3)) : actChip(f)) : badge(r.st),
       rp: r.rp == null ? '—' : `<span title='${esc(rpTitle(r.v))}'>${esc(rpText(r.rp))}</span>`,
@@ -3896,7 +3897,13 @@ function fwSort(k){ FWT.dir = FWT.k === k ? -FWT.dir : (['country', 'hazard', 's
   // the header's button is a real button (Enter and Space come free); the table is rebuilt
   // on a sort, so focus is put back on the same column's button
   tab.addEventListener('click', e => { const h = e.target.closest('th[data-k]'); if(!h) return;
-    fwSort(h.dataset.k); tab.querySelector(`th[data-k='${h.dataset.k}'] .sortbtn`)?.focus(); }); })();
+    fwSort(h.dataset.k); tab.querySelector(`th[data-k='${h.dataset.k}'] .sortbtn`)?.focus(); });
+  // a country in the table: that framework opens on the map, which scrolls into view (the link's
+  // address is the same deep link, so a new tab opens it too)
+  tab.addEventListener('click', e => { const a = e.target.closest('a.fwopen'); if(!a || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    e.preventDefault();
+    maprow.scrollIntoView({behavior: RM.matches ? 'auto' : 'smooth', block: 'start'});
+    selectCountry(a.dataset.iso, a.dataset.hz, null, {focus: true}); }); })();
 // the table as a CSV file: English labels and whole dollars (data files are not translated)
 function fwCSV(){
   const R = fwRows(), split = !pastY(), MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
