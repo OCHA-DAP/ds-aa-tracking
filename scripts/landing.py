@@ -1714,17 +1714,20 @@ def geo_pass(countries, bboxes):
 def _flow_acts(f, layers, year=None):
     """The activation records a pair contributes to the flow tiles (activations, money released,
     people reached) — mirrors flowActs() in LANDING_JS: those of `year` (None: all years, to
-    today), its framework activations while its own
-    framework layer is on (current frameworks; retired for a retired framework), its non-framework
-    allocations while the non-framework layer is on, and the activations of an earlier framework it
-    replaced (`old`) while the retired layer is on — never under the current-frameworks layer.
-    A current pair that hosts a replaced framework is on both layers: its own activations stay
-    current. The Financing page's layer rule: same layers, same total on both pages."""
+    today), its framework activations while its own framework layer is on, and its non-framework
+    allocations while the non-framework layer is on. Money released stays released (owner,
+    2026-10-30: "the retired frameworks disbursed funding should STILL show up in the total
+    disbursed to date"): the activations of a framework since retired — a retired pair's, or
+    those of an earlier framework a pair replaced (`old`) — count while EITHER framework layer is
+    on; the retired layer alone draws the retired pins. A current pair that hosts a replaced
+    framework is on both layers: its own activations stay current. The Financing page's rule:
+    same layers, same total on both pages."""
     own = next((k for k in ("framework", "retired") if k in f["layers"]), None)
+    fw_any = "framework" in layers or "retired" in layers
     return [a for a in f["activations"]
             if (year is None or str(a["date"])[:4] == str(year))
             and ("adhoc" in layers if a["type"] == "adhoc_aa"
-                 else "retired" in layers if a["old"] else own in layers)]
+                 else fw_any if (a["old"] or own == "retired") else own in layers)]
 
 
 # headline tile icons (24x24 strokes; coloured by CSS)
@@ -1745,10 +1748,12 @@ def tile_figures(countries, layers, year=None):
     A pair is shown when any of its layers is enabled; the stock figures (count, pre-arranged
     now, people covered now) count pairs shown ON the framework layer; the flow figures
     (activations, released, people reached) count _flow_acts(): to date, or of `year` — the
-    current year only: the stock figures are today's (a past year is reconstructed in JS)."""
+    current year only: the stock figures are today's (a past year is reconstructed in JS).
+    The flows are taken over every pair, shown or not: a retired framework's releases count under
+    the current-frameworks layer although its pin is drawn only on the retired one."""
     shown = [f for cd in countries.values() for f in cd["fws"] if set(f["layers"]) & set(layers)]
     fw = [f for f in shown if "framework" in layers and "framework" in f["layers"]]
-    acts = [a for f in shown for a in _flow_acts(f, layers, year)]
+    acts = [a for cd in countries.values() for f in cd["fws"] for a in _flow_acts(f, layers, year)]
     rows = [x for a in acts for x in a["funding"]]
     # people reached: CERF allocations only, each counted once (see _reach_fields); where CERF
     # has no figure yet, the allocation's planned people stand in (the estimate)
@@ -1834,8 +1839,17 @@ def build_landing(page, d, e):
     Y = TODAY.year
     t = tile_figures(countries, {"framework"}, Y)
     n_shown = t["n_fw"]
-    # the flow tiles name what the layers switched off would add (updateTiles: notShown)
-    ad, ret = tile_figures(countries, {"adhoc"}, Y), tile_figures(countries, {"retired"}, Y)
+    # the flow tiles name what the layers switched off would add (updateTiles: notShown): the
+    # non-framework allocations — a retired framework's releases already count under current
+    # frameworks (_flow_acts), and the note says so
+    ad = tile_figures(countries, {"adhoc"}, Y)
+    ret_in = [(cd, f, a) for cd in countries.values() for f in cd["fws"] for a in _flow_acts(f, {"framework"}, Y)
+              if a["type"] != "adhoc_aa" and (a["old"] or "framework" not in f["layers"])]
+    ret_usd = sum(x["usd"] or 0 for _, _, a in ret_in for x in a["funding"])
+    ret_names = list(dict.fromkeys(f"{cd['name']} {f['hz_label'].lower()} {str(a['date'])[:4]}" for cd, f, a in ret_in))
+    ret_note = (f"Includes {_money(ret_usd)} released by {'a framework' if len(ret_in) == 1 else 'frameworks'} since retired "
+                f"({', '.join(ret_names)}): money released stays counted, whatever the framework's status today."
+                if ret_in else "")
 
     def not_shown(*xs):
         xs = [x for x in xs if x]
@@ -1845,10 +1859,8 @@ def build_landing(page, d, e):
         return ("~" if g["n_tgt"] or g["n_ptgt"] else "") + _people(g["reached"] + g["targeted"] + g["ptargeted"])
     def usd(g):   # ' ($17M)' after a count of activations the layers switched off would add
         return f" ({_money(g['released'])})" if g["released"] >= 5e4 else ""
-    ns_act = not_shown(ad["n_act"] and f"{ad['n_act']} non-framework allocation{'s' if ad['n_act'] > 1 else ''}{usd(ad)}",
-                       ret["n_act"] and f"{ret['n_act']} on retired frameworks{usd(ret)}")
-    ns_reach = not_shown((ad["n_rep"] or ad["n_tgt"] or ad["n_ptgt"]) and f"non-framework allocations {est(ad)}",
-                         (ret["n_rep"] or ret["n_tgt"] or ret["n_ptgt"]) and f"retired frameworks {est(ret)}")
+    ns_act = not_shown(ad["n_act"] and f"{ad['n_act']} non-framework allocation{'s' if ad['n_act'] > 1 else ''}{usd(ad)}")
+    ns_reach = not_shown((ad["n_rep"] or ad["n_tgt"] or ad["n_ptgt"]) and f"non-framework allocations {est(ad)}")
 
     def funds(cerf, pooled, other=0):   # fundBullets() in LANDING_JS
         return [x for x in (cerf >= 5e4 and f"CERF {_money(cerf)}",
@@ -1913,7 +1925,7 @@ def build_landing(page, d, e):
              funds(t["released_cerf"], t["released"] - t["released_cerf"]) if t["n_act"] else [],
              " ".join(x for x in ("Money released when a framework activated, from the activation record: the Financing "
                                   "page gives the same figure for the same layers. Early action allocations are not counted.",
-                                  t["n_nousd"] and f"{t['n_nousd']} of the {t['n_act']} have no amount recorded.", ns_act) if x),
+                                  ret_note, t["n_nousd"] and f"{t['n_nousd']} of the {t['n_act']} have no amount recorded.", ns_act) if x),
              vs=bool(t["n_act"])),
         tile("t-reach", "people", "Reached or targeted by activations", est(t) if n_rep or n_tgt or n_ptgt else "—",
              f"people reached or targeted: no allocation in {Y} on the layers shown" if not n_cerf and not n_pool
@@ -1930,8 +1942,9 @@ def build_landing(page, d, e):
       f"<button type='button' data-y='{y}'{' class=' + chr(39) + 'on' + chr(39) if y == Y else ''} aria-pressed='{str(y == Y).lower()}'>{y}{' ' + T('(today)') if y == Y else ''}</button>"
       for y in range(TODAY.year, YEAR_FIRST - 1, -1))}
   <button type='button' data-y='' aria-pressed='false'>{T("All years, to today")}</button>
+  <!-- beside the years, its room kept while hidden: showing it moves nothing (owner, 2026-10-30) -->
+  <span class='yearnote off' id='yearnote' aria-hidden='true'>{T("Past years are reconstructed")}<span class='info down' id='yearnote-i' role='note' {ATTR("aria-label", "Past years are reconstructed from the framework records (version dates and status history): a framework counts for a year if a version was valid at any time during it. They will be replaced by the official year-end figures once those are loaded.")}>i</span></span>
  </div>
- <p class='yearnote' id='yearnote' hidden>{TB("Past years are reconstructed from the framework records (version dates and status history): a framework counts for a year if a version was valid at any time during it. They will be replaced by the official year-end figures once those are loaded.")}</p>
  <div class='tiles gtiles' id='gtiles'>
   <div class='gcap' id='gcap'>Global portfolio — all layers currently shown on the map · {Y}, as of today</div>
   {tiles}
@@ -2174,7 +2187,11 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
 .yearbar button { font:inherit; padding:2px 9px; border:1px solid #d5dbe3; border-radius:12px; background:#fff; color:#334155; cursor:pointer; }
 .yearbar button:hover { border-color:#2171b5; }
 .yearbar button.on { background:#2171b5; border-color:#2171b5; color:#fff; font-weight:600; }
-.yearnote { margin:0 0 8px; font-size:12px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:5px 10px; }
+.yearnote { margin-left:6px; font-size:11.5px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:12px; padding:1px 4px 1px 9px; white-space:nowrap; }
+.yearnote.off { visibility:hidden; }
+.info.down::after { bottom:auto; top:calc(100% + 6px); left:auto; right:-4px; transform:none; max-width:300px; }
+/* lockTiles(): natural heights while measuring */
+.gtiles.measuring { align-items:start; } .gtiles.measuring > * { min-height:0 !important; }
 .drv { display:inline-block; margin-left:5px; padding:0 5px; border:1px dashed #b45309; border-radius:6px; font-size:10px; font-weight:600; color:#b45309; vertical-align:1px; cursor:help; }
 /* six figures in one row: three as at now (frameworks, pre-arranged, people covered), then three
    to date (activations, released, people reached); the labels wrap inside equal columns */
@@ -2368,20 +2385,27 @@ const isOld = a => !!a.old && !pastY();
 function dotActs(f){ return f.activations.filter(a => a.type === 'framework_aa' && (!isOld(a) || LAYERS.retired)
   && (YEAR == null || String(a.date).slice(0, 4) === String(YEAR))); }
 // ---------- flow figures: activations, money released, people reached (all 'to date', or in the year shown)
-// What a pair contributes: its framework activations while its own framework layer is on
-// (current frameworks; retired for a retired framework), its ad hoc allocations while the ad hoc
-// layer is on, and a replaced framework's activations (isOld) while the retired layer is on — a
-// current pair that hosts a replaced framework is on both layers, its own activations stay
-// current. The Financing page's layer rule, so both pages give the same total for the same
-// layers. Mirrored by _flow_acts() / tile_figures() in Python. LY: a layer set other than the one shown.
+// What a pair contributes: its framework activations while its own framework layer is on, its
+// ad hoc allocations while the ad hoc layer is on. Money released stays released (owner,
+// 2026-10-30): the activations of a framework since retired — a retired pair's, or a replaced
+// framework's (isOld) — count while EITHER framework layer is on; the retired layer alone draws
+// the retired pins. A current pair that hosts a replaced framework is on both layers, its own
+// activations stay current. The Financing page's rule, so both pages give the same total for
+// the same layers. Mirrored by _flow_acts() / tile_figures() in Python. LY: a layer set other
+// than the one shown. Callers pass every pair, shown or not (a retired pin is not drawn while
+// its money counts).
 function flowActs(f, LY){
   LY = LY || LAYERS;
   const own = ['framework', 'retired'].find(k => f.layers.includes(k)), fwOn = !!(own && LY[own]);
+  const anyFw = !!(LY.framework || LY.retired);
   return f.activations.filter(a => (YEAR == null || String(a.date).slice(0, 4) === String(YEAR))
-    && (a.type === 'adhoc_aa' ? !!LY.adhoc : isOld(a) ? !!LY.retired : fwOn));
+    && (a.type === 'adhoc_aa' ? !!LY.adhoc : (isOld(a) || own === 'retired') ? anyFw : fwOn));
 }
-function flowFigures(fs, LY){
-  const acts = fs.flatMap(f => flowActs(f, LY)), rows = acts.flatMap(a => a.funding || []);
+// a framework activation counted for a framework since retired (see flowActs)
+const retAct = (f, a) => a.type !== 'adhoc_aa' && (isOld(a) || !f.layers.includes('framework'));
+function flowFigures(fs, LY){ return flowFiguresOf(fs.flatMap(f => flowActs(f, LY))); }
+function flowFiguresOf(acts){
+  const rows = acts.flatMap(a => a.funding || []);
   const sum = (xs, k) => xs.reduce((t, x) => t + (x[k] || 0), 0);
   // people reached: CERF's figures; an allocation drawn by two activations is counted once, on
   // the first (the others: shared); where CERF has no figure yet, the allocation's planned people
@@ -2469,8 +2493,38 @@ function hashFor(parts){ const p = parts.filter(Boolean).join('/'), y = yearTag(
 function syncYearUI(){
   document.querySelectorAll('#yearbar button').forEach(b => { const on = b.dataset.y === (YEAR == null ? '' : String(YEAR));
     b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
-  const n = document.getElementById('yearnote'); if(n) n.hidden = !pastY();
+  const n = document.getElementById('yearnote'), ni = document.getElementById('yearnote-i');
+  if(n){ n.classList.toggle('off', !pastY()); n.setAttribute('aria-hidden', pastY() ? 'false' : 'true'); }
+  // the tip is the aria-label, which the language switch translates
+  if(ni){ ni.dataset.tip = ni.getAttribute('aria-label'); if(pastY()) ni.tabIndex = 0; else ni.removeAttribute('tabindex'); }
 }
+// ---------- the tiles keep one height (owner, 2026-10-30: "I just don't like the map jumping"):
+// each tile, and the caption, gets the tallest height it takes over every layer set and every
+// year, measured in one go before the browser paints (nothing flickers) — and again after a
+// resize, a language switch or the fonts arriving. Switching a layer or a year then moves nothing.
+function lockTiles(){
+  const g = document.getElementById('gtiles'); if(!g || !g.offsetParent) return;
+  const kids = [...g.children], mx = new Map(kids.map(k => [k, 0]));
+  const L0 = {...LAYERS}, Y0 = YEAR, I0 = state.iso;
+  const long = Object.keys(L).sort((a, b) => tr8(L[b].name).length - tr8(L[a].name).length)[0];
+  const take = () => kids.forEach(k => mx.set(k, Math.max(mx.get(k), k.offsetHeight)));
+  g.classList.add('measuring');
+  try {
+    for(let y = YEARS.first; y <= YEARS.now + 1; y++){
+      YEAR = y > YEARS.now ? null : y; applyYear();
+      for(let m = 0; m < 8; m++){
+        LAYERS.framework = !!(m & 1); LAYERS.adhoc = !!(m & 2); LAYERS.retired = !!(m & 4);
+        state.iso = null; updateTiles(); take(); }
+      Object.assign(LAYERS, L0); state.iso = long; updateTiles(); take();   // the caption naming a country
+    }
+  } finally {
+    Object.assign(LAYERS, L0); YEAR = Y0; state.iso = I0; applyYear(); updateTiles();
+    g.classList.remove('measuring');
+  }
+  kids.forEach(k => { k.style.minHeight = mx.get(k) + 'px'; });
+}
+let lockT = null;
+window.addEventListener('resize', () => { clearTimeout(lockT); lockT = setTimeout(lockTiles, 200); });
 function setYear(y){
   YEAR = (y === '' || y == null) ? null : +y; applyYear(); syncYearUI();
   if(state.iso){ state.ver = null; if(state.hz && !c_has(state.iso, state.hz)) state.hz = null; }
@@ -2755,7 +2809,7 @@ function worldLegend(){
   const all = Object.values(L).flatMap(c=>c.fws), shown = all.filter(f=>visLayer(f));
   const onLayer = k => all.filter(f=>f.layers.includes(k));
   const n = k => onLayer('framework').filter(f=>f.disp===k).length;
-  const nAct = flowFigures(shown).n, nNow = shown.filter(f=>f.ring==='now').length;
+  const nAct = flowFigures(all).n, nNow = shown.filter(f=>f.ring==='now').length;
   const nRec = shown.filter(f => recentAct(f)).length;   // frameworks with the red ring
   const swatch = { framework: `<span class='dot' style='background:${COLOR.active}'></span>`, adhoc: `<span class='dot' style='background:${LAYER_COLOR.adhoc}'></span>`,
                    retired: `<span class='dot' style='background:${LAYER_COLOR.retired}'></span>`, tech: `<span class='dot dot-hollow'></span>` };
@@ -2906,12 +2960,19 @@ function updateTiles(){
       {mark: past && cov > 0 && nCov < fw.length,
        note: !fw.length ? [] : !past ? [hasFig] : !cov ? [] : [(nCov < fw.length ? '* ' : '') + hasFig,
              tr8('Each framework counts with the latest figure it reported by the end of {0}.', YEAR)]});
-  // the flows: every activation to date (or of the year shown) on the layers shown
-  const F = flowFigures(shown), what = flowWhat(F);
-  // what the layers switched off would add: named in each tile's note, so no figure is taken for the whole
+  // the flows: every activation to date (or of the year shown) on the layers shown — over every
+  // pair: a framework since retired brings its releases while either framework layer is on
   const all = Object.values(L).flatMap(c=>c.fws);
+  const F = flowFigures(all), what = flowWhat(F);
+  // the releases of frameworks since retired counted while the retired layer is off: said in the note
+  const RA = LAYERS.retired ? [] : Object.values(L).flatMap(c => c.fws.flatMap(f => flowActs(f).filter(a => retAct(f, a)).map(a => [c, f, a])));
+  const RF = flowFiguresOf(RA.map(([, , a]) => a));
+  const raNames = [...new Set(RA.map(([c, f, a]) => `${tr8(c.name)} ${tr8(f.hz_label).toLowerCase()} ${String(a.date).slice(0, 4)}`))];
+  // what the layers switched off would ADD: named in each tile's note, so no figure is taken for
+  // the whole (switching the retired layer on adds nothing while current frameworks are on)
+  const cur = new Set(all.flatMap(f => flowActs(f)));
   const offs = [['adhoc','non-framework allocations'],['retired','retired frameworks'],['framework','current frameworks']]
-    .filter(([k]) => !LAYERS[k]).map(([k, lab]) => [lab, flowFigures(all, {[k]: true})]);
+    .filter(([k]) => !LAYERS[k]).map(([k, lab]) => [lab, flowFiguresOf(all.flatMap(f => flowActs(f, {...LAYERS, [k]: true})).filter(a => !cur.has(a)))]);
   const notShown = fn => { const xs = offs.map(([lab, G]) => fn(lab, G)).filter(Boolean); return xs.length ? tr8('Not shown: {0}.', xs.join(', ')) : ''; };
   // activations and the money they released, in one tile (owner, 2026-10-27): the count, then the
   // amount and its split by fund; the note names what the layers switched off would add
@@ -2923,8 +2984,8 @@ function updateTiles(){
        note: [tr8(F.nAd
          ? 'Money released when a framework activated, or allocated for anticipatory action outside a framework, from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.'
          : 'Money released when a framework activated, from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.'),
-         // a past year shows the frameworks as they stood at its end; the Financing page's layers are today's
-         past ? tr8('For a past year the map shows the frameworks as they stood at its end: a framework retired since counts here under current frameworks, on the Financing page under retired. Tick both layers there to compare.') : '',
+         RF.n ? tr8(RF.n === 1 ? 'Includes {0} released by a framework since retired ({1}): money released stays counted, whatever the framework\'s status today.'
+                               : 'Includes {0} released by frameworks since retired ({1}): money released stays counted, whatever the framework\'s status today.', money(RF.usd), raNames.join(', ')) : '',
          F.noUsd ? tr8('{0} of the {1} have no amount recorded.', F.noUsd, F.n) : '',
          notShown((lab, G) => G.n ? (G.nAd ? tr8(G.n === 1 ? '{0} non-framework allocation' : '{0} non-framework allocations', G.n)
                                           : tr8(lab === 'retired frameworks' ? '{0} on retired frameworks' : '{0} on current frameworks', G.n))
@@ -3194,7 +3255,7 @@ function monthStrip(months){ months = months||[]; return [...MONL()].map((m,i)=>
 function countryTiles(c){
   const fws = vis(c), fw = fws.filter(f=>visLayer(f)==='framework');
   const pre = fw.reduce((s,f)=>s+(f.pre_now||0),0), cov = fw.reduce((s,f)=>s+(f.covered||0),0);
-  const F = flowFigures(fws);   // the global tiles' rule, this country
+  const F = flowFigures(c.fws);   // the global tiles' rule, this country (a retired pin's releases too)
   const kind = F.nAd && F.nAd === F.n ? 'non-framework allocation' : F.nAd ? 'activation' : 'framework activation', one = F.n === 1;
   const ACT = {'non-framework allocation': one ? ['non-framework allocation to date', 'non-framework allocation in {0}'] : ['non-framework allocations to date', 'non-framework allocations in {0}'],
                'activation': one ? ['activation to date', 'activation in {0}'] : ['activations to date', 'activations in {0}'],
@@ -3241,7 +3302,10 @@ function renderSide(){
               : f.layer==='tech' ? (st ? esc(tr8('OCHA technical support — no framework version in the registry yet (tracking sheets: {0}).', st)) : esc(tr8('OCHA technical support — no framework version in the registry yet.')))
               : st ? esc(tr8('No framework version in the registry yet — status comes from the tracking sheets ({0}).', st)) : esc(tr8('No framework version in the registry yet.'));
     side.innerHTML = crumb + fwHeader(c, f) + countryTiles(c) + `<p class='muted'>${why}</p>` + adhocBlock(f) +
-      learningBlock(f, null) + partnersBlock(c, f, null) + (f.page ? `<p><a href='${f.page}'>${esc(tr8('framework page →'))}</a></p>` : '');
+      learningBlock(f, null) + partnersBlock(c, f, null)
+      // no framework: its page lists the non-framework allocations (owner, 2026-10-30: not a
+      // framework page); a pair with none (technical support only) has nothing more to show
+      + (f.page && f.activations.some(a => a.type === 'adhoc_aa') ? `<p><a href='${f.page}'>${esc(tr8('every non-framework allocation →'))}</a></p>` : '');
     annotate(side, side);
     return;
   }
@@ -3784,9 +3848,11 @@ YEAR = HASH0.year; applyYear(); syncYearUI();
 fixHeight(); buildWorld(); syncOn(); worldLegend(); updateTiles(); buildNews(); buildFwTable(); buildCallouts(); runLayout();
 if(isMobile()){ maprow.classList.add('open'); renderWorldList(); }
 buildOverview();
+lockTiles();
+if(document.fonts && document.fonts.ready) document.fonts.ready.then(lockTiles);
 setTimeout(runLayout, 300);   // once fonts have settled
 // a language switch: everything the script wrote is written again (legend, tiles, callouts —
 // laid out anew, their widths change — or the open country's panel and area legend)
-document.addEventListener('aalang', () => { applyLayers(); syncYearUI(); });
+document.addEventListener('aalang', () => { applyLayers(); syncYearUI(); lockTiles(); });
 (function(){ const h = HASH0.path; if(h[0] && L[h[0]]) selectCountry(h[0], h[1]||null, h[2]||null); })();
 """
