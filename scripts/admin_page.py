@@ -13,16 +13,22 @@ the page never carries a data snapshot. Two roles:
   delete on the tables this repo owns; every field change is audited to
   aa.entry_audit under the editor's name.
 
-Tables owned by other writers (OneGMS mirrors), the frozen KB-era record and the audit table are
-read-only regardless of role — the proxy enforces it, the page just says so.
+The mirrors (D154: tables and views ds-cerf-supplement copies in every day from OneGMS, the
+CBPF OData API and its storm and drought matchers), the frozen KB-era record and the audit
+table are read-only regardless of role — the proxy enforces it, the page says so. A mirror
+says what it is copied from, by whom, how often and where a wrong value is fixed; a view
+built on one names the mirror tables under it. The mirror list (proxy/mirror_tables.json) is
+built into the page, so the labels are right even before the proxy is redeployed.
 """
 
 import os
 from pathlib import Path
 
+from ds_aa_tracking.mirrors import MIRRORS
+
 PROXY_URL = "https://chd-ds-aa-extract.azurewebsites.net"
 
-# grouping for the index page, Django-admin "app" style
+# grouping for the index page, Django-admin "app" style: (heading, owner, tables[, note])
 GROUPS = [
     ("Frameworks & tracking", "ds-aa-tracking", [
         "country_hazard", "framework_version", "framework_status", "framework_focal_point",
@@ -41,11 +47,10 @@ GROUPS = [
      "ds-aa-tracking", ["window", "simulated_activation", "version_performance_reported"]),
     ("KB-era record (read-only, frozen 2026-10-05)", "ds-aa-tracking", [
         "funding_breakdown", "actual_activation", "activation_allocation"]),
-    ("OneGMS mirrors (read-only)", "ds-cerf-supplement", [
-        "cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country",
-        "cerf_allocation_storm", "cerf_supplement", "cbpf_fund", "cbpf_allocation",
-        "cbpf_project", "cbpf_project_cluster", "cbpf_project_subip",
-        "cerf_contribution", "cbpf_contribution"]),
+    ("Mirrors — copied in every day, read-only", MIRRORS["repo"],
+     [*MIRRORS["tables"], *MIRRORS["views"]],
+     (f"Copied in {MIRRORS['refresh']} by {MIRRORS['repo']}: the CERF OneGMS feeds, the CBPF "
+      f"OData API and its storm and drought matches. {MIRRORS['fix']}")),
     ("Legacy — pre window-first (read-only history)", "retired", [
         "zz_legacy_activation", "zz_legacy_prearranged_funding",
         "zz_legacy_prearranged_sector_budget", "zz_legacy_entered_version_funding"]),
@@ -67,6 +72,7 @@ def build_admin(page):
             .replace("__PROXY__", PROXY_URL)
             .replace("__TOKEN__", site_token)
             .replace("__GROUPS__", json.dumps(GROUPS))
+            .replace("__MIRRORS__", json.dumps(MIRRORS).replace("</", "<\\/"))
             .replace("__LONGTEXT__", json.dumps(LONG_TEXT)))
     page("admin.html", "Administration", body)
 
@@ -84,7 +90,7 @@ ADMIN_HTML = r"""
 <script>
 window.PROXY = new URLSearchParams(location.search).get('proxy') || '__PROXY__';
 window.SITE_TOKEN = '__TOKEN__';
-const GROUPS = __GROUPS__, LONG_TEXT = __LONGTEXT__;
+const GROUPS = __GROUPS__, LONG_TEXT = __LONGTEXT__, MIRRORS = __MIRRORS__;
 const PAGE = 100;
 // controlled vocabularies: rendered as dropdowns in the change form
 const VOCAB = {
@@ -137,6 +143,25 @@ function editorName(){ let n = localStorage.getItem('editorName'); if(!n){ n = p
 function keyOf(t, row){ return Object.fromEntries((t.key||[]).map(k=>[k, row[k]])); }
 function keyQS(t, row){ return (t.key||[]).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(row[k]==null?'∅':row[k])).join('&'); }
 function groupOf(name){ for(const [g] of GROUPS){ const grp = GROUPS.find(x=>x[0]===g); if(grp[2].includes(name)) return g; } return null; }
+// mirrors (D154): the proxy says so in /schema; the list built into the page covers an older proxy
+function mirrorOf(t){
+  if(t.mirror) return t.mirror;
+  const own = (o, k) => Object.hasOwn(o, k) ? o[k] : null;
+  const source = own(MIRRORS.tables, t.name) || own(MIRRORS.views, t.name) || (Object.entries(MIRRORS.prefixes).find(([p])=>t.name.startsWith(p))||[])[1];
+  return source ? {source, repo: MIRRORS.repo, refresh: MIRRORS.refresh, fix: MIRRORS.fix} : null;
+}
+const canWrite = t => t.writable && !mirrorOf(t);   // never offer to edit a mirror
+// a table of ours named like a mirror one (cerf_subgrant beside cerf_project)
+const looksMirror = t => t.kind==='table' && !mirrorOf(t) && t.owner==='ds-aa-tracking' && /^(cerf|cbpf)_/.test(t.name);
+function ownerLine(t){ return esc(t.owner) + (t.kind==='view'?' · view':'') + (mirrorOf(t)?' · mirror':'') + (looksMirror(t)?' · kept here, not a mirror':''); }
+// why this table (or row) cannot be changed here
+function roNote(t, what){
+  const m = mirrorOf(t), under = t.reads_mirror || [];
+  if(m) return `<div class='dj-ro dj-mirror'><b>Mirror — read-only.</b> ${esc(m.source)}. Refreshed ${esc(m.refresh)} by <b>${esc(m.repo)}</b>. ${esc(m.fix)}</div>`;
+  if(t.kind==='view') return `<div class='dj-ro'>Database view — read-only.${under.length ? ` Built on the mirror table${under.length>1?'s':''} ${under.map(n=>`<a href='#${esc(n)}'>${esc(n)}</a>`).join(', ')}, refreshed ${esc(MIRRORS.refresh)} by <b>${esc(MIRRORS.repo)}</b>.` : ''}</div>`;
+  if(!t.writable) return `<div class='dj-ro'>Read-only here: owned by <b>${esc(t.owner)}</b>${t.name==='entry_audit'?' (append-only audit trail)':''}.</div>`;
+  return `<div class='dj-ro'>Viewing. Log in as editor to change ${what}.</div>`;
+}
 
 // ---------- header / role
 async function refreshRole(){
@@ -167,28 +192,32 @@ function renderIndex(){
   crumbs([]);
   const used = new Set();
   let html = `<div class='dj-cols'><div class='dj-main'>`;
-  for(const [g, owner, names] of GROUPS){
+  for(const [g, owner, names, note] of GROUPS){
     const ts = names.map(n=>BY_TABLE[n]).filter(Boolean); ts.forEach(t=>used.add(t.name));
     if(!ts.length) continue;
-    html += module(g, owner, ts);
+    html += module(g, owner, ts, note);
   }
   const rest = Object.values(SCHEMA).filter(t=>!used.has(t.name) && t.kind==='table');
   if(rest.length) html += module('Other tables', '', rest);
-  const views = Object.values(SCHEMA).filter(t=>t.kind==='view');
+  const views = Object.values(SCHEMA).filter(t=>!used.has(t.name) && t.kind==='view');
   if(views.length) html += module('Views (read-only)', 'derived', views);
   html += `</div><div class='dj-side'><div class='dj-module'><h2>Recent actions</h2><div id='recent' class='dj-recent'>…</div></div>
     <div class='dj-module'><h2>About</h2><div class='dj-about'>Every table in the <code>aa</code> schema, straight from the database.
     ${ROLE==='editor' ? 'You can add, change and delete rows on the tables this repo owns; each field change is written to the audit trail under your name.' : 'You are viewing. Log in as editor (top right) to change data.'}
-    Tables owned by other writers are read-only here.</div></div></div></div>`;
+    The mirrors (copied in every day by ${esc(MIRRORS.repo)}) and the frozen records are read-only here.</div></div></div></div>`;
   document.getElementById('view').innerHTML = html;
   loadRecent();
 }
-function module(g, owner, ts){
-  return `<div class='dj-module'><h2>${esc(g)} ${owner?`<span class='dj-owner'>${esc(owner)}</span>`:''}</h2><table class='dj-modtbl'>` +
-    ts.map(t=>`<tr><th><a href='#${t.name}'>${esc(title(t.name))}</a>${t.kind==='view'?" <span class='dj-tag'>view</span>":''}</th>
+function module(g, owner, ts, note){
+  const tags = t => (t.kind==='view'?" <span class='dj-tag'>view</span>":'') +
+    (mirrorOf(t) ? " <span class='dj-tag dj-tag-mirror'>mirror</span>" : '') +
+    ((t.reads_mirror||[]).length ? " <span class='dj-tag'>built on a mirror</span>" : '') +
+    (looksMirror(t) ? " <span class='dj-tag'>kept here, not a mirror</span>" : '');
+  return `<div class='dj-module'><h2>${esc(g)} ${owner?`<span class='dj-owner'>${esc(owner)}</span>`:''}</h2>${note?`<div class='dj-modnote'>${esc(note)}</div>`:''}<table class='dj-modtbl'>` +
+    ts.map(t=>`<tr><th><a href='#${t.name}'>${esc(title(t.name))}</a>${tags(t)}</th>
       <td class='dj-n'>${t.n_rows!=null?Number(t.n_rows).toLocaleString():''}</td>
-      <td class='dj-act'>${t.writable && ROLE==='editor' ? `<a class='dj-add' href='#${t.name}/add'>+ Add</a>` : ''}</td>
-      <td class='dj-act'><a class='dj-chg' href='#${t.name}'>${t.writable && ROLE==='editor' ? 'Change' : 'View'}</a></td></tr>`).join('') + `</table></div>`;
+      <td class='dj-act'>${canWrite(t) && ROLE==='editor' ? `<a class='dj-add' href='#${t.name}/add'>+ Add</a>` : ''}</td>
+      <td class='dj-act'><a class='dj-chg' href='#${t.name}'>${canWrite(t) && ROLE==='editor' ? 'Change' : 'View'}</a></td></tr>`).join('') + `</table></div>`;
 }
 async function loadRecent(){
   const el = document.getElementById('recent'); if(!el) return;
@@ -205,12 +234,12 @@ const FILTER_SKIP = /note|comment|remark|description|narrative|statement|title|u
 async function renderList(t, qs){
   crumbs([`<b>${esc(title(t.name))}</b>`]);
   const v = document.getElementById('view');
-  const readonly = !(t.writable && ROLE==='editor');
+  const readonly = !(canWrite(t) && ROLE==='editor');
   const search = qs.get('q') || '', order = qs.get('order') || (t.key ? t.key[0] : t.columns[0].name), dir = qs.get('dir') || 'asc', p = +(qs.get('p')||0);
   const filters = [...qs.entries()].filter(([k])=>k.startsWith('f.'));
   const params = new URLSearchParams({table:t.name, limit:PAGE, offset:p*PAGE, order, dir}); if(search) params.set('q', search); filters.forEach(([k,val])=>params.set(k,val));
-  v.innerHTML = `<div class='dj-listhead'><h1>${esc(title(t.name))} <span class='dj-owner'>${esc(t.owner)}${t.kind==='view'?' · view':''}</span></h1>
-    ${readonly ? `<div class='dj-ro'>${t.kind==='view' ? 'Database view — read-only.' : !t.writable ? `Read-only here: owned by <b>${esc(t.owner)}</b>${t.name==='entry_audit'?' (append-only audit trail)':''}.` : 'Viewing. Log in as editor to change rows.'}</div>` : `<a class='dj-btn' href='#${t.name}/add'>+ Add ${esc(title(t.name).toLowerCase())}</a>`}
+  v.innerHTML = `<div class='dj-listhead'><h1>${esc(title(t.name))} <span class='dj-owner'>${ownerLine(t)}</span></h1>
+    ${readonly ? roNote(t, 'rows') : `<a class='dj-btn' href='#${t.name}/add'>+ Add ${esc(title(t.name).toLowerCase())}</a>`}
    </div>
    <div class='dj-cols'><div class='dj-main'>
     <form class='dj-search' onsubmit='return doSearch(event,"${t.name}")'><input name='q' value='${esc(search)}' placeholder='Search text columns…'><button>Search</button>
@@ -252,7 +281,7 @@ async function renderForm(t, key){
   const adding = !key;
   crumbs([`<a href='#${t.name}'>${esc(title(t.name))}</a>`, `<b>${adding ? 'Add' : esc(Object.values(key).join(' / '))}</b>`]);
   const v = document.getElementById('view');
-  const canEdit = t.writable && ROLE==='editor';
+  const canEdit = canWrite(t) && ROLE==='editor';
   let row = {};
   if(!adding){
     try { const j = await getJSON(`/rows?table=${t.name}&limit=2&${(t.key||[]).map(k=>`f.${k}=${encodeURIComponent(key[k])}`).join('&')}`);
@@ -275,8 +304,8 @@ async function renderForm(t, key){
     return `<div class='dj-row'><label>${esc(c.name)}${isKey?" <span class='dj-tag'>key</span>":''}${!c.nullable&&!c.has_default?" <span class='dj-req'>*</span>":''}</label>${input}<div class='dj-help'>${esc(c.type)}</div></div>`;
   };
   const keyCols = t.columns.filter(c=>(t.key||[]).includes(c.name)), other = t.columns.filter(c=>!(t.key||[]).includes(c.name));
-  v.innerHTML = `<h1>${adding?'Add':'Change'} ${esc(title(t.name).toLowerCase())}</h1>
-   ${canEdit ? '' : `<div class='dj-ro'>${!t.writable ? `Read-only here: owned by <b>${esc(t.owner)}</b>.` : 'Viewing. Log in as editor to change this row.'}</div>`}
+  v.innerHTML = `<h1>${adding?'Add':canEdit?'Change':'View'} ${esc(title(t.name).toLowerCase())}</h1>
+   ${canEdit ? '' : roNote(t, 'this row')}
    <form id='f' class='dj-form' onsubmit='return false'>
     <fieldset><h2>Key</h2>${keyCols.map(field).join('')}</fieldset>
     <fieldset><h2>Fields</h2>${other.map(field).join('')}</fieldset>
@@ -364,6 +393,9 @@ boot();
 #adm h1 { font-size:20px; font-weight:300; color:#666; margin:0 0 10px; } #adm h1 .dj-owner { color:#999; }
 #adm .dj-btn { background:var(--dj-secondary); color:#fff !important; padding:7px 14px; border-radius:4px; font-size:12.5px; white-space:nowrap; } #adm .dj-btn:hover { background:#205067; text-decoration:none !important; }
 .dj-ro { background:#fff8e1; border:1px solid #f0dc9c; color:#6b5310; padding:7px 12px; border-radius:4px; font-size:12px; }
+.dj-ro.dj-mirror { background:#eaf3f8; border-color:#b5d3e3; color:#24506a; max-width:760px; line-height:1.5; }
+.dj-tag.dj-tag-mirror { background:#dcecf5; color:#24506a; font-weight:600; }
+.dj-modnote { padding:8px 12px; font-size:12px; color:#24506a; background:#eaf3f8; border-bottom:1px solid #d5e6ef; line-height:1.5; }
 .dj-search { display:flex; gap:8px; align-items:center; margin:6px 0 10px; } .dj-search input { padding:6px 10px; border:1px solid #ccc; border-radius:4px; width:320px; font-size:13px; }
 .dj-search button { padding:6px 12px; background:var(--dj-primary); color:#fff; border:0; border-radius:4px; cursor:pointer; } .dj-count { color:#666; font-size:12px; margin-left:auto; } .dj-clear { font-size:12px; }
 .dj-scroll { overflow-x:auto; border:1px solid #eee; border-radius:4px; }

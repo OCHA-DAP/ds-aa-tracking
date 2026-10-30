@@ -7,7 +7,7 @@ Conventions (shared with the existing `aa` writers):
   version_performance_reported, funding_breakdown, actual_activation,
   activation_allocation; see BACKTEST_TABLES / KB_ERA_TABLES). It never writes the
   ds-cerf-supplement mirror tables (cerf_allocation, cerf_project*, cerf_supplement,
-  cerf_allocation_storm)
+  cerf_allocation_storm, cbpf_*…): proxy/mirror_tables.json lists them (D154)
 - full-refresh loads (truncate + insert in one transaction)
 - source rows that conflict across sheets are kept side by side (source in the key);
   reconciliation happens in views, not at load time

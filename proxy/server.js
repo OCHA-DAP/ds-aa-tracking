@@ -16,8 +16,8 @@
  *                    version's rows. The nightly/manual ingest merges entered_*
  *                    into aa.framework_version (entered values win).
  *
- *   GET  /schema     every aa table + column (types, keys, owner, writable) — the
- *                    admin page is populated from this, Django-admin style
+ *   GET  /schema     every aa table + column (types, keys, owner, writable, mirror,
+ *                    reads_mirror) — the admin page is populated from this, Django-admin style
  *   GET  /rows       ?table=&limit=&offset=&order=&dir=&q=&f.<col>= -> paged rows
  *   GET  /distinct   ?table=&col= -> distinct values for filter sidebars
  *   POST /save       {table, key|null, row, by} -> UPDATE (key given) or INSERT,
@@ -29,8 +29,9 @@
  * embedded only in the pages of the admin site (admin/, its own staticrypt
  * password), so "has the admin-site password" = viewer) and EDITOR_TOKEN (editor — never embedded; the pages prompt for it
  * once and keep it in localStorage). Reads need viewer; /extract, /entry, /save
- * and /delete need editor. Generic writes are refused on tables other writers
- * own (OneGMS mirrors), on the frozen KB-era record and on the append-only audit table.
+ * and /delete need editor. Generic writes are refused on the mirrors (tables another repo
+ * copies in from an outside source every day, listed in mirror_tables.json — D154), on the
+ * frozen KB-era record and on the append-only audit table.
  * The backtest tables (window, simulated_activation, version_performance_reported) are
  * this repo's since 2026-10-05 and editable here like any other owned table.
  *
@@ -48,7 +49,17 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ||
 const MODELS = new Set(["claude-opus-5"]);
 const MAX_BODY = 45 * 1024 * 1024;
 const RATE = { extract: 20, entry: 60, read: 1200, write: 600, windowMs: 60 * 60 * 1000 };
-// tables the generic /save and /delete refuse: other repos' loaders own them, or append-only
+// the mirrors (D154): tables and views another repo copies in from an outside source every
+// day. mirror_tables.json is the one list (the admin page build and scripts/apply_entries.py
+// read it too); a table matching one of its prefixes is a mirror before it is listed
+const MIRRORS = require("./mirror_tables.json");
+function mirrorOf(t) {
+  const own = (o, k) => Object.hasOwn(o, k) ? o[k] : null;
+  const source = own(MIRRORS.tables, t) || own(MIRRORS.views, t) ||
+    Object.entries(MIRRORS.prefixes).find(([p]) => t.startsWith(p))?.[1];
+  return source ? { source, repo: MIRRORS.repo, refresh: MIRRORS.refresh, fix: MIRRORS.fix } : null;
+}
+// tables the generic /save and /delete refuse besides the mirrors: frozen, or append-only
 const READONLY_TABLES = new Set([
   "entry_audit",
   // document registry: content-addressed, written only by scripts/register_documents.py
@@ -56,19 +67,17 @@ const READONLY_TABLES = new Set([
   // the KB-era record, frozen 2026-10-05 (superseded by window_funding / window_activation /
   // activation_funding); the backtest tables the KB used to load are editable here
   "funding_breakdown", "actual_activation", "activation_allocation",
-  // ds-cerf-supplement OneGMS mirrors
-  "cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country",
-  "cerf_allocation_storm", "cerf_supplement", "cerf_contribution",
 ]);
-const READONLY_PREFIXES = ["cbpf_", "zz_legacy_"];
+const READONLY_PREFIXES = ["zz_legacy_"];
 const TABLE_OWNER = (t) =>
   t.startsWith("zz_legacy_") ? "retired" :
-  READONLY_PREFIXES.some((p) => t.startsWith(p)) || t.startsWith("cerf_allocation_storm") ||
-  ["cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country", "cerf_supplement", "cerf_contribution"].includes(t)
-    ? "ds-cerf-supplement"
-    : ["funding_breakdown", "actual_activation", "activation_allocation"].includes(t)
-      ? "nobody — the frozen KB-era record" : "ds-aa-tracking";
-const isReadonly = (t) => READONLY_TABLES.has(t) || READONLY_PREFIXES.some((p) => t.startsWith(p));
+  mirrorOf(t) ? MIRRORS.repo :
+  ["funding_breakdown", "actual_activation", "activation_allocation"].includes(t)
+    ? "nobody — the frozen KB-era record" : "ds-aa-tracking";
+const isReadonly = (t) => READONLY_TABLES.has(t) || READONLY_PREFIXES.some((p) => t.startsWith(p)) || !!mirrorOf(t);
+const refusal = (t) => t.mirror
+  ? `${t.name} is a mirror and cannot be edited here: ${t.mirror.source}, refreshed ${t.mirror.refresh} by ${t.mirror.repo}. ${t.mirror.fix}`
+  : `${t.name} is read-only here (owned by ${t.owner})`;
 const hits = new Map();
 
 const pool = process.env.DSCI_AZ_DB_DEV_HOST
@@ -521,12 +530,27 @@ async function schema(force) {
   const counts = (await pool.query(
     `SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname = 'aa'`)).rows;
   const nrows = Object.fromEntries(counts.map((r) => [r.relname, Number(r.n_live_tup)]));
+  // what each view reads (tables and views), from the rewrite rules: unlike
+  // information_schema.view_table_usage, this is not limited to tables our login owns
+  const uses = (await pool.query(
+    `SELECT DISTINCT v.relname AS view, u.relname AS used
+     FROM pg_rewrite r
+     JOIN pg_class v ON v.oid = r.ev_class
+     JOIN pg_namespace vn ON vn.oid = v.relnamespace
+     JOIN pg_depend d ON d.classid = 'pg_rewrite'::regclass AND d.objid = r.oid
+                     AND d.refclassid = 'pg_class'::regclass
+     JOIN pg_class u ON u.oid = d.refobjid
+     JOIN pg_namespace un ON un.oid = u.relnamespace
+     WHERE vn.nspname = 'aa' AND un.nspname = 'aa' AND u.oid <> v.oid`)).rows;
+  const usedBy = {};
+  for (const u of uses) (usedBy[u.view] ??= []).push(u.used);
   const tables = {};
   for (const c of cols) {
     const t = (tables[c.table_name] ??= {
       name: c.table_name, kind: c.table_type === "VIEW" ? "view" : "table", columns: [],
       key: null, key_type: null, owner: TABLE_OWNER(c.table_name),
       writable: false, n_rows: nrows[c.table_name] ?? null,
+      mirror: mirrorOf(c.table_name), reads_mirror: [],
     });
     t.columns.push({
       name: c.column_name, type: c.data_type, udt: c.udt_name, nullable: c.nullable,
@@ -541,6 +565,14 @@ async function schema(force) {
   }
   for (const t of Object.values(tables))
     t.writable = t.kind === "table" && !!t.key && !isReadonly(t.name);
+  // a view of ours reads a mirror directly or through other views: name the mirror tables
+  const mirrorsUnder = (name, seen = new Set()) => {
+    if (seen.has(name)) return [];
+    seen.add(name);
+    return (usedBy[name] || []).flatMap((u) => mirrorOf(u) && !Object.hasOwn(MIRRORS.views, u) ? [u] : mirrorsUnder(u, seen));
+  };
+  for (const t of Object.values(tables))
+    if (t.kind === "view" && !t.mirror) t.reads_mirror = [...new Set(mirrorsUnder(t.name))].sort();
   SCHEMA = tables; schemaAt = Date.now();
   return SCHEMA;
 }
@@ -620,7 +652,7 @@ async function adminSave(req, res) {
   const client = await pool.connect();
   try {
     const sch = await schema(); const t = tableOf(sch, p.table, res); if (!t) return;
-    if (!t.writable) return send(res, 403, { error: `${t.name} is read-only here (owned by ${t.owner})` });
+    if (!t.writable) return send(res, 403, { error: refusal(t) });
     const row = p.row && typeof p.row === "object" ? p.row : {};
     const editable = t.columns.filter((c) => !c.generated);
     await client.query("BEGIN");
@@ -681,7 +713,7 @@ async function adminDelete(req, res) {
   const client = await pool.connect();
   try {
     const sch = await schema(); const t = tableOf(sch, p.table, res); if (!t) return;
-    if (!t.writable) return send(res, 403, { error: `${t.name} is read-only here (owned by ${t.owner})` });
+    if (!t.writable) return send(res, 403, { error: refusal(t) });
     const key = p.key && typeof p.key === "object" ? p.key : null;
     if (!key) return send(res, 400, { error: "key required" });
     const kc = t.key.map((k, i) => `${q(k)}::text = $${i + 1}`).join(" AND ");
