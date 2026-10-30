@@ -1202,7 +1202,7 @@ def assemble(d, e):
                   agency, sector, amount_usd, provenance
            FROM aa.v_window_funding_split
            WHERE amount_usd IS NOT NULL AND (agency IS NOT NULL OR sector IS NOT NULL)""", e)
-    from dashboards import EXCLUDED_EVENT_TYPES, read_simulated, sim_before_start, sim_when
+    from dashboards import EXCLUDED_EVENT_TYPES, funding_sql, read_simulated, sim_before_start, sim_when
     sim = read_simulated(e)   # with event_date / event_time when the DB has them
     psb = fb.iloc[0:0]                                    # folded into window_funding
     excl = ", ".join(f"'{t}'" for t in EXCLUDED_EVENT_TYPES)
@@ -1214,8 +1214,8 @@ def assemble(d, e):
     actf = pd.read_sql(
         """SELECT f.country_iso3, f.hazard, f.event_date, f.window_name, f.event_label,
                   f.event_type, f.fund_code, f.allocation_code, f.amount_usd, f.people_targeted,
-                  c.year AS alloc_year
-           FROM aa.activation_funding f
+                  f.refund_usd, f.provisional, c.year AS alloc_year
+           FROM """ + funding_sql(e) + """ f
            LEFT JOIN (SELECT DISTINCT ON (application_code) application_code, year
                       FROM aa.cerf_allocation ORDER BY application_code, year) c
              ON c.application_code = f.allocation_code
@@ -1521,7 +1521,11 @@ def assemble(d, e):
                 "released": _num(u["released_usd"]) if u is not None else None,
                 "full": _f(u["full_activation"]) if u is not None else None,
                 "funding": [{"fund": x.fund_code, "code": _s(x.allocation_code),
-                             "usd": _num(x.amount_usd),
+                             "usd": _num(x.amount_usd),     # net of any refund (funding_sql)
+                             # money sent back after the activation stopped; an amount entered
+                             # before OneGMS recorded the allocation (both marked in the panel)
+                             **({"refund": _num(x.refund_usd)} if _num(x.refund_usd) else {}),
+                             **({"prov": True} if _f(x.provisional) in (True, "True", "true") else {}),
                              "fk": _fund_kind(x.fund_code, _s(x.allocation_code), freg),
                              # the allocation's public CERF page (year = allocation year)
                              "cerf_url": (f"https://cerf.un.org/what-we-do/allocation/"
@@ -1731,6 +1735,9 @@ def _flow_acts(f, layers, year=None):
 
 
 # headline tile icons (24x24 strokes; coloured by CSS)
+COF_NOTE = ("Money from outside CERF and the Country and Regional Funds (agencies, donors, governments) "
+            "pre-arranged for the frameworks shown, as reported for the year: the Financing page's figure.")
+
 TILE_ICONS = {
     "doc": "<path d='M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z'/><path d='M14 3v5h5'/>"
            "<path d='M9 13h6M9 17h6'/>",
@@ -1740,7 +1747,13 @@ TILE_ICONS = {
               "<path d='M16 5.2a3 3 0 0 1 0 5.6M18 14.8c1.9.6 3 2.4 3 5.2'/>",
     "bolt": "<path d='M13 2 4.5 13.5H11L10 22l8.5-11.5H12z'/>",
     "news": "<circle cx='12' cy='12' r='9'/><path d='M12 7v5l3.2 2'/>",
+    "cofin": "<circle cx='9' cy='12' r='5.5'/><circle cx='15' cy='12' r='5.5'/>",
 }
+
+
+def cof_of(f, year=None):
+    """A framework's co-financing pre-arranged for `year` (None: now) — fwRows' cofin in the page."""
+    return (f.get("cofin_y") or {}).get(str(year or TODAY.year))
 
 
 def tile_figures(countries, layers, year=None):
@@ -1785,6 +1798,8 @@ def tile_figures(countries, layers, year=None):
             "ptargeted": sum(x["planned"] for x in ptgt), "n_ptgt": len(ptgt), "n_pool": len(pool),
             "n_nousd": sum(1 for a in acts if not any(x["usd"] or x.get("shared") for x in a["funding"])),
             "pre_cerf": part("cerf"), "pre_pooled": part("pooled"), "pre_all": part("all"),
+            # co-financing pre-arranged for the year (the current year: now), the table's column
+            "cofin": sum(cof_of(f, year) or 0 for f in fw), "n_cofin": sum(1 for f in fw if cof_of(f, year) is not None),
             # frameworks whose pre-arranged money counts N activations a year (apy: assemble)
             "apy": [(f["apy"], f"{cd['name']} {f['hz_label'].lower()}") for cd in countries.values()
                     for f in cd["fws"] if id(f) in {id(g) for g in fw} and (f.get("apy") or 0) > 1]}
@@ -1933,9 +1948,21 @@ def build_landing(page, d, e):
              else f"people reached with the {Y} releases — CERF allocations" if n_rep
              else f"people reached with the {Y} releases: no report yet for the CERF allocation" if n_cerf == 1
              else f"people reached with the {Y} releases: no report yet for the {n_cerf} CERF allocations",
-             note=reach_note)))
+             note=reach_note),
+        # co-financing, in the place the What's new box had (owner, 2026-10-30)
+        tile("t-cof", "cofin", "Co-financing", f"${_jsround(t['cofin'] / 1e6)}M" if t["n_cofin"] else "—",
+             "co-financing pre-arranged now", note=" ".join((COF_NOTE, f"{t['n_cofin']} of the {t['n_fw']} frameworks shown have co-financing recorded."))),
+    ))
 
+    # What's new sits beside the definition box (owner, 2026-10-30); build_site puts the box at
+    # the placeholder
     body = f"""
+<div class='toprow'><!--POLICY-->
+ <section class='tile news' id='news' {ATTR("aria-label", "What's new in the last 30 days")}>
+  <div class='k'><svg viewBox='0 0 24 24' aria-hidden='true'>{TILE_ICONS["news"]}</svg><span>{T("What's new")}</span><span class='news-w'>· {T("last 30 days")}</span></div>
+  <ul class='news-l' id='newsl'></ul>
+ </section>
+</div>
 <div class='hero'>
  <div class='yearbar' id='yearbar' role='group' {ATTR("aria-label", "Year shown on the map")}><span class='yl'>{T("Year")}</span>
   {"".join(
@@ -1948,10 +1975,6 @@ def build_landing(page, d, e):
  <div class='tiles gtiles' id='gtiles'>
   <div class='gcap' id='gcap'>Global portfolio — all layers currently shown on the map · {Y}, as of today</div>
   {tiles}
-  <section class='tile news' id='news' {ATTR("aria-label", "What's new in the last 30 days")}>
-   <div class='k'><svg viewBox='0 0 24 24' aria-hidden='true'>{TILE_ICONS["news"]}</svg><span>{T("What's new")}</span><span class='news-w'>· {T("last 30 days")}</span></div>
-   <ul class='news-l' id='newsl'></ul>
-  </section>
  </div>
 </div>
 <div class='maprow' id='maprow'>
@@ -1976,7 +1999,7 @@ def build_landing(page, d, e):
  <p class='fwt-cap' id='fwtcap'></p>
  <div class='fwt-scroll'><table class='fwtab' id='fwtab'></table></div>
  <p class='fwt-note' id='fwtfoot' hidden></p>
- <p class='fwt-note'>{TB("<b>Return period</b>: how often the framework's latest version would activate (any of its trigger windows, in a year), as the framework states it where it does, otherwise from its historical simulation. <b>Pre-arranged (OCHA-managed funds)</b>: for each framework, the envelope of its most recent version that has one, from CERF and the Country and Regional Funds; a framework being updated keeps its last envelope, and one in development shows the envelope recorded for it so far. <b>Co-financing</b>: money from outside the OCHA-managed funds pre-arranged for the framework, as reported for the year (the Financing page's figure). <b>Activations</b> and <b>released from OCHA</b> count the framework activations of the frameworks listed; non-framework allocations and retired frameworks are not listed. Click a column heading to sort.")}</p>
+ <p class='fwt-note'>{TB("<b>Return period</b>: how often the framework's latest version would activate (any of its trigger windows, in a year), as the framework states it where it does, otherwise from its historical simulation. <b>Pre-arranged (OCHA-managed funds)</b>: for each framework, the envelope of its most recent version that has one, from CERF and the Country and Regional Funds; a framework being updated keeps its last envelope, and one in development shows the envelope recorded for it so far. <b>Co-financing</b>: money from outside the OCHA-managed funds pre-arranged for the framework, as reported for the year (the Financing page's figure). <b>Activations</b> and <b>released from OCHA</b> count the framework activations of the frameworks listed; non-framework allocations and retired frameworks are not listed. Released money is split by fund as pre-arranged money is, and is net of money refunded after an activation was stopped; a CERF amount that OneGMS has not recorded yet is provisional. Click a column heading to sort.")}</p>
 </section>
 <!-- 2026-10-02 meeting: the internal links that sat here (dashboards, explorer, data entry,
      data & schema review) were easy to miss below the map; they all live in the Internal menu -->
@@ -2024,7 +2047,7 @@ LANDING_CSS = r"""
   .maprow .side, .maprow.open .side { height:auto; max-height:none; opacity:1; visibility:visible; }
   .mapbox.compact .callout, .mapbox.compact .leader { display:none; }
   .mapbox.compact .cdot { r:2.5; }
-  .mapbox.compact .maplegend { display:none; }
+  .mapbox.compact .maplegend, .maprow:not(.cview) > .maplegend { display:none; }
   /* the world in two panels, each about twice the scale (buildOverview) */
   .mapbox.ov { height:auto; }
   .mapbox.ov #map, .mapbox.ov .labelpane { display:none; }   /* the hidden map's callout dots too */
@@ -2116,6 +2139,16 @@ table.acttbl tr.oldv td { background:#f8fafc; }
 .maplegend { position:absolute; left:12px; bottom:12px; font-size:11.5px; line-height:1.55; background:rgba(255,255,255,.86); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); padding:9px 12px;
   border-radius:10px; box-shadow:0 1px 2px rgba(16,24,40,.08), 0 6px 18px -8px rgba(16,24,40,.25); border:1px solid rgba(226,232,240,.9); z-index:3; color:#334155; transition: opacity .3s; }
 .maplegend b { color:#0f2540; }
+/* placed by placeLegend() over a zoomed country: the corner it leaves clearest */
+.maplegend.lg-br { left:auto; right:12px; }
+.maplegend.lg-tr { left:auto; right:12px; bottom:auto; top:12px; }
+.maplegend.lg-tl { bottom:auto; top:56px; }
+/* a map too narrow to hold it: under the map, the world legend's parts side by side (legendHome) */
+.maplegend.below { position:static; grid-column:1; width:auto; max-width:none; margin-top:10px;
+  background:#fff; backdrop-filter:none; -webkit-backdrop-filter:none; box-shadow:none; }
+.maplegend.below > .layerctl { display:inline-flex; vertical-align:top; margin:0 28px 0 0; padding:0; border:0; }
+.maplegend.below > .lsub { display:inline-flex; flex-wrap:wrap; vertical-align:top; margin:3px 28px 0 0; }
+.maplegend.below > .deflink { display:inline-block; vertical-align:top; margin-top:3px; }
 .maplegend .dot { display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:5px; vertical-align:-1px; }
 .maplegend .sq { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
 .backbtn { position:absolute; top:12px; left:12px; z-index:4; padding:6px 13px; border:1px solid #dbe2ea;
@@ -2225,8 +2258,14 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
    row — so the 6 / 3 / 2-column grid holds it like a tile. It takes the row's height and scrolls
    inside (height:0 keeps it from growing the row); on a phone it spans the row, as does the tile
    before it (five tiles in two columns would leave a hole) */
-.gtiles .news { display:flex; flex-direction:column; }
-.gtiles .news .k { flex-wrap:wrap; row-gap:0; } .gtiles .news .news-w { font-size:11.5px; font-weight:400; color:#64748b; }
+/* What's new beside the definition box (owner, 2026-10-30): the row takes the definition's
+   height (the box's own content does not count: contain:size) and the list scrolls inside it */
+.toprow { display:flex; gap:14px; align-items:stretch; margin:4px 0 14px; }
+.toprow > .policy { flex:1 1 0; min-width:0; margin:0; max-width:none; }
+.toprow > .news { flex:0 0 330px; min-width:0; contain:size; min-height:150px; display:flex; flex-direction:column; padding:10px 14px; }
+.toprow .news .k { display:flex; flex-wrap:wrap; align-items:center; gap:7px; row-gap:0; font-size:15px; font-weight:700; color:#0f2540; line-height:1.2; margin-bottom:3px; }
+.toprow .news .k svg { width:22px; height:22px; flex:0 0 auto; fill:none; stroke:var(--ocha); stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+.toprow .news .news-w { font-size:11.5px; font-weight:400; color:#64748b; }
 /* the list scrolls inside the tile; a fade at the foot shows there is more, instead of a line cut in half
    (the bottom padding keeps the last entry clear of the fade when everything fits) */
 .news-l { list-style:none; margin:2px 0 0; padding:0 0 14px; font-size:12px; line-height:1.35; flex:1 1 auto; height:0; overflow-y:auto;
@@ -2237,7 +2276,8 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
 .news-l .nd { color:#b3261e; font-weight:650; margin-right:2px; }
 .news-0 { color:#64748b; }
 .gtiles .tile .l .tsub { color:#334155; font-weight:600; margin-top:2px; }
-@media (max-width:759px){ .gtiles .news, .gtiles #t-reach { grid-column:1 / -1; } .news-l { height:auto; max-height:150px; } }
+@media (max-width:759px){ .news-l { height:auto; max-height:150px; }
+  .toprow { flex-direction:column; gap:10px; } .toprow > .news { flex:none; contain:none; min-height:0; } }
 /* the legend's definitions (they replace the status diagram, 2026-10-27) */
 .layerctl .lrow { display:flex; align-items:center; gap:2px; }
 .maplegend .info::after { left:0; transform:none; }
@@ -2420,7 +2460,10 @@ function flowFiguresOf(acts){
            noUsd: acts.filter(a => !(a.funding || []).some(x => x.usd || x.shared)).length,
            reached: sum(rep, 'reached'), nRep: rep.length, nCerf: cerf.length, nInterim: rep.filter(x => x.interim).length,
            targeted: sum(tgt, 'planned'), nTgt: tgt.length,
-           ptargeted: sum(ptgt, 'planned'), nPtgt: ptgt.length, nPool: pool.length };
+           ptargeted: sum(ptgt, 'planned'), nPtgt: ptgt.length, nPool: pool.length,
+           // money sent back after an activation stopped (already taken off usd), and amounts
+           // entered before OneGMS recorded the allocation
+           refund: sum(rows, 'refund'), prov: sum(rows.filter(x => x.prov), 'usd') };
 }
 // what the flow figures count under the layers shown, in words
 function flowWhat(F){ return F.nAd === 0 ? 'framework activations' : F.nAd === F.n ? 'non-framework allocations' : 'framework activations and non-framework allocations'; }
@@ -2790,6 +2833,42 @@ function drawAdmin(iso, fade){
   adm.classList.add('show');
   legend.innerHTML = `<b>${esc(tr8(c.name))}</b><br>` + tiers.map(t =>
       `<span class='sq' style='background:${t.color}'></span>${esc(t.hzl)}${t.label?` — ${esc(t.label)}`:''}${t.rest?' ' + esc(tr8('(whole country)')):''}<br>`).join('');
+  placeLegend();
+}
+
+// ---------- where the legend goes (owner, 2026-10-30: "when you zoom in, sometimes the legend covers
+// some things"). A map narrower than LEGEND_OVER px has no room for it: it sits under the map
+// (decided by width only, so toggling a layer never moves the page). Over a zoomed country it
+// takes the corner the country leaves clearest; over the world, the bottom left as before.
+const LEGEND_OVER = 1100;
+function legendHome(){
+  const below = maprow.getBoundingClientRect().width < LEGEND_OVER;
+  if(!below){ if(legend.parentNode !== mapbox) mapbox.appendChild(legend); }
+  else if(isMobile()){ if(mapbox.nextElementSibling !== legend) mapbox.after(legend); }   // a phone: right under the map, above the panel
+  else if(maprow.lastElementChild !== legend) maprow.appendChild(legend);                 // the grid's next row, under the map's column
+  legend.classList.toggle('below', below);
+}
+function placeLegend(){
+  legend.classList.remove('lg-tr', 'lg-br', 'lg-tl');
+  maprow.classList.toggle('cview', !!state.iso);
+  if(legend.classList.contains('below') || !state.iso || !svg.classList.contains('zoomed')) return;
+  const m = mapbox.getBoundingClientRect(), r = legend.getBoundingClientRect(), w = r.width + 12, h = r.height + 12;
+  const bb = back.hidden ? 0 : back.getBoundingClientRect().bottom - m.top;
+  // how much of the map a box would cover: the country's own areas and its pins, sampled on a grid
+  // each shape's screen-to-map transform once (an admin-2 country has hundreds of shapes)
+  const shapes = [...adm.querySelectorAll('path:not(.nb)')].map(p => [p, p.getScreenCTM()]).filter(([, M]) => M).map(([p, M]) => [p, M.inverse()]), pins = [...mapbox.querySelectorAll('.iconbox')].filter(e => !e.closest('.hide')).map(e => e.getBoundingClientRect());   // the world's callouts stay in the page, hidden
+  const cover = (x0, y0) => { let n = 0;
+    for(let i = 0; i < 16; i++) for(let j = 0; j < 8; j++){
+      const x = x0 + (i + .5) * w / 16, y = y0 + (j + .5) * h / 8;
+      if(pins.some(p => x >= p.left && x <= p.right && y >= p.top && y <= p.bottom)){ n += 3; continue; }
+      if(shapes.some(([p, I]) => p.isPointInFill(new DOMPoint(x, y).matrixTransform(I)))) n++;
+    }
+    return n; };
+  // the bottom left, where it always was, unless another corner covers less of the country
+  let best = '', low = cover(m.left, m.bottom - h);
+  for(const [k, x, y] of [['lg-br', m.right - w, m.bottom - h], ['lg-tr', m.right - w, m.top], ['lg-tl', m.left, m.top + bb]]){
+    const v = cover(x, y); if(v < low){ low = v; best = k; } }
+  if(best) legend.classList.add(best);
 }
 
 // ---------- world legend (KB style). Each status and layer carries a one-sentence definition (owner,
@@ -2825,6 +2904,7 @@ function worldLegend(){
     + (pastY() ? '' : `<span><span class='dot' style='background:#fff;border:3px solid #e3322d;box-sizing:border-box'></span>${esc(tr8('Activated in the last {0} days', RECENT_DAYS))} <span class='cnt'>${nRec}</span></span>`
       + `<span><span class='dot' style='background:#fff;border:2px solid #f5a300;box-sizing:border-box'></span>${esc(tr8('In monitoring season'))} <span class='cnt'>${nNow}</span></span>`) + `</div>`
     + `<a class='deflink' href='definitions.html'>${esc(tr8('Definitions'))} →</a>`;
+  placeLegend();
 }
 // what a list of map entries is called: frameworks, unless some are ad hoc allocations or technical support
 function nounCount(fs){
@@ -2992,6 +3072,8 @@ function updateTiles(){
          RF.n ? tr8(RF.n === 1 ? 'Includes {0} released by a framework since retired ({1}): money released stays counted, whatever the framework\'s status today.'
                                : 'Includes {0} released by frameworks since retired ({1}): money released stays counted, whatever the framework\'s status today.', money(RF.usd), raNames.join(', ')) : '',
          F.noUsd ? tr8('{0} of the {1} have no amount recorded.', F.noUsd, F.n) : '',
+         F.refund ? tr8('Net of {0} refunded to the funds after activations were stopped.', money(F.refund)) : '',
+         F.prov ? tr8('{0} of it is provisional: money released that OneGMS does not show yet.', money(F.prov)) : '',
          notShown((lab, G) => G.n ? (G.nAd ? tr8(G.n === 1 ? '{0} non-framework allocation' : '{0} non-framework allocations', G.n)
                                           : tr8(lab === 'retired frameworks' ? '{0} on retired frameworks' : '{0} on current frameworks', G.n))
                                     + (G.usd >= 5e4 ? ` (${money(G.usd)})` : '') : null)]});
@@ -3015,6 +3097,13 @@ function updateTiles(){
                 + tr8('. A person reached under two allocations counts twice. Reports come about nine months after an allocation, so recent years are incomplete.')
                 + ' ' + tr8('Country and Regional Funds report too late to count here, so their allocations count with the people they target. Not people covered: that is what the plans cover now.'),
               notShown((lab, G) => G.nRep || G.nTgt || G.nPtgt ? `${tr8(lab)} ${est(G)}` : null)]});
+  // co-financing pre-arranged by the frameworks shown, for the year (owner, 2026-10-30: in the
+  // What's new box's place) — the table's column total (fwRows: cofin)
+  const cofY = String(YEAR != null ? YEAR : YEARS.now), cofs = fw.map(f => (f.cofin_y || {})[cofY]).filter(v => v != null);
+  set('t-cof', cofs.length ? '$' + Math.round(cofs.reduce((t, v) => t + v, 0) / 1e6) + 'M' : '—',
+      past ? tr8('co-financing pre-arranged in {0}', YEAR) : tr8('co-financing pre-arranged now'),
+      {note: fw.length ? [tr8("Money from outside CERF and the Country and Regional Funds (agencies, donors, governments) pre-arranged for the frameworks shown, as reported for the year: the Financing page's figure."),
+                          tr8('{0} of the {1} frameworks shown have co-financing recorded.', cofs.length, fw.length)] : []});
   const g = document.getElementById('gtiles'); if(g) g.classList.toggle('global', !!state.iso);
   const cap = document.getElementById('gcap'); if(cap) cap.textContent = (state.iso ? tr8('Global portfolio — not {0}: its own figures are in the panel', tr8(L[state.iso].name)) : tr8('Global portfolio — all layers currently shown on the map'))
     + (past ? ' · ' + tr8('as at 31 December {0}', YEAR) : YEAR != null ? ' · ' + tr8('{0}, as of today', YEAR) : '');
@@ -3133,13 +3222,14 @@ function uncross(W, H){
   }
 }
 function runLayout(){
+  legendHome();
   const r = svg.getBoundingClientRect(), W = r.width, H = r.height;
   if(!W) return;
   const mobile = window.matchMedia('(max-width: 760px)').matches;
   mapbox.classList.toggle('compact', mobile); PAD = mobile ? 3 : 8; GAP = mobile ? 2 : 4;
   ALLRECTS = labels.map(Lb => rectOf(Lb.bbox)).filter(Boolean);
   const lr = legend.getBoundingClientRect(), mr = mapbox.getBoundingClientRect();
-  if(lr.width) ALLRECTS.push({x1:lr.left-mr.left-6, y1:lr.top-mr.top-6, x2:lr.right-mr.left+6, y2:lr.bottom-mr.top+6});
+  if(lr.width && !legend.classList.contains('below')) ALLRECTS.push({x1:lr.left-mr.left-6, y1:lr.top-mr.top-6, x2:lr.right-mr.left+6, y2:lr.bottom-mr.top+6});
   labels.forEach(Lb => {
     const p = toPx(Lb.lon, Lb.lat); Lb.px = p[0]; Lb.py = p[1];
     Lb.w = Lb.el.offsetWidth; Lb.h = Lb.el.offsetHeight;
@@ -3174,7 +3264,8 @@ function scheduleLayout(){ clearTimeout(rto); rto = setTimeout(() => { if(!state
   if(pendingFocus !== undefined && !state.iso){ focusWorld(pendingFocus); pendingFocus = undefined; }   // not if a country was opened during the zoom-out
   lastLayoutW = svg.getBoundingClientRect().width;
   // a resize can land while this tab is throttled: re-check once the dust settles
-  setTimeout(() => { if(!state.iso && Math.abs(svg.getBoundingClientRect().width - lastLayoutW) > 1) scheduleLayout(); }, 600); } }, 120); }
+  setTimeout(() => { if(!state.iso && Math.abs(svg.getBoundingClientRect().width - lastLayoutW) > 1) scheduleLayout(); }, 600); }
+  else { legendHome(); placeLegend(); } }, 120); }   // a country open: only the legend's place may change
 new ResizeObserver(() => scheduleLayout()).observe(svg);
 window.addEventListener('resize', scheduleLayout);
 
@@ -3472,7 +3563,7 @@ function adhocBlock(f){
   return `<h4>${esc(tr8('Non-framework allocations ({0})', rows.length))}</h4>` + rows.map(({a, x}) => {
     const p = x.fund === 'cerf' ? cerfOf(a, x) : null;
     return `<div class='trig'><div class='tn'>${esc(x.fund ? fundTitle(x, c) : tr8('fund not recorded'))}</div>
-      <div class='tt'><b>${x.usd != null ? money(x.usd) : esc(tr8('amount not recorded'))}</b> · ${esc(String(a.date).slice(0, 4))}</div>
+      <div class='tt'><b>${x.usd != null ? money(x.usd) : esc(tr8('amount not recorded'))}</b>${x.usd != null ? withNote(x) : ''} · ${esc(String(a.date).slice(0, 4))}</div>
       ${p ? detail(p) : x.fund === 'cerf' ? `<div class='tm'>${esc(tr8('No CERF allocation found for this allocation in the CERF data.'))}</div>` : ''}</div>`; }).join('');
 }
 function groupBy(rows, kf, vf){ const m = {}; rows.forEach(r=>{ const k = kf(r); m[k] = (m[k]||0) + (vf(r)||0); }); return m; }
@@ -3571,7 +3662,13 @@ function actLinks(a){
   (a.funding||[]).forEach(x => { if(x.cerf_url) out.push(`<a href='${esc(x.cerf_url)}' target='_blank' rel='noopener'>${esc(tr8('CERF allocation↗'))}</a>`); });
   return [...new Set(out)];
 }
-function actMoney(a){ return (a.funding||[]).filter(x=>x.usd!=null).map(x=>`${esc(a.type === 'adhoc_aa' && state.iso ? fundTitle(x, L[state.iso]) : fundName(String(x.fund)))} ${money(x.usd)}`).join(' + ') || (a.released ? money(a.released) : ''); }
+// what a funding line carries beside its amount: the allocation it is net of and the money
+// refunded after the activation was stopped ('$2.3M (of $4.5M; $2.3M refunded)'), an amount
+// entered before OneGMS recorded the allocation
+const fundNote = x => [x.refund ? tr8('of {0}; {1} refunded', money(x.usd + x.refund), money(x.refund)) : null,
+                       x.prov ? tr8('provisional until OneGMS records it') : null].filter(Boolean).join('; ');
+const withNote = x => fundNote(x) ? ` (${esc(fundNote(x))})` : '';
+function actMoney(a){ return (a.funding||[]).filter(x=>x.usd!=null).map(x=>`${esc(a.type === 'adhoc_aa' && state.iso ? fundTitle(x, L[state.iso]) : fundName(String(x.fund)))} ${money(x.usd)}${withNote(x)}`).join(' + ') || (a.released ? money(a.released) : ''); }
 function realMark(a, v){
   const old = !!(v && a.version && a.version !== v.v && !String(a.version).startsWith(v.v) && !String(v.v).startsWith(a.version));
   const title = `${a.date} · ${a.window||tr8('window not recorded')}${actMoney(a)?' · '+actMoney(a):''}${old?' · ' + tr8('under version {0}', a.version):''}${a.full===false?' · ' + tr8('partial'):''}`;
@@ -3712,6 +3809,9 @@ function fwRows(){
             cofin: stock ? (f.cofin_y || {})[String(YEAR != null ? YEAR : YEARS.now)] ?? null : null,
             // no amount recorded for any of them: '—', not $0
             released: rows.some(x => x.usd != null) ? rows.reduce((s, x) => s + (x.usd || 0), 0) : null,
+            // ... by fund (owner, 2026-10-30), as pre-arranged is: CERF, Country and Regional Funds
+            rel_cerf: rows.some(x => x.usd != null && x.fund === 'cerf') ? rows.reduce((s, x) => s + (x.fund === 'cerf' ? x.usd || 0 : 0), 0) : null,
+            rel_pool: rows.some(x => x.usd != null && x.fund !== 'cerf') ? rows.reduce((s, x) => s + (x.fund !== 'cerf' ? x.usd || 0 : 0), 0) : null,
             months: (v && v.months) || []});
   }));
   const {k, dir} = FWT;
@@ -3749,7 +3849,8 @@ function buildFwTable(){
       ['pre', past ? tr8('Pre-arranged (OCHA-managed funds) in {0}', YEAR) : tr8('Pre-arranged (OCHA-managed funds) total'), 1]]
     .concat(split ? [['cerf', tr8('of which CERF'), 1, 'sub'], ['pooled', tr8('of which Country and Regional Funds'), 1, 'sub']] : [])
     .concat([['cofin', past ? tr8('Co-financing in {0}', YEAR) : tr8('Co-financing'), 1],
-             ['released', YEAR != null ? tr8('Released from OCHA in {0}', YEAR) : tr8('Released from OCHA to date'), 1]]);
+             ['released', YEAR != null ? tr8('Released from OCHA in {0}', YEAR) : tr8('Released from OCHA to date'), 1],
+             ['rel_cerf', tr8('of which CERF'), 1, 'sub'], ['rel_pool', tr8('of which Country and Regional Funds'), 1, 'sub']]);
   const on = k => FWT.k === k;
   const head = '<thead><tr>' + cols.map(([k, lab, isNum, cls]) => k
       ? `<th data-k='${k}' aria-sort='${on(k) ? (FWT.dir > 0 ? 'ascending' : 'descending') : 'none'}' class='${isNum ? 'num' : ''} ${cls || ''}'><button type='button' class='sortbtn'>${esc(lab)}<span class='ar' aria-hidden='true'>${on(k) ? (FWT.dir > 0 ? '▲' : '▼') : ''}</span></button></th>`
@@ -3765,7 +3866,7 @@ function buildFwTable(){
       rp: r.rp == null ? '—' : `<span title='${esc(rpTitle(r.v))}'>${esc(rpText(r.rp))}</span>`,
       n: r.n || '—', covered: num(r.covered),
       pre: usd(r.pre) + mk + drvPre + notes, cerf: usd(r.cerf) + (r.cerf != null ? mk : ''), pooled: usd(r.pooled) + (r.pooled != null ? mk : ''),
-      cofin: usd(r.cofin), released: usd(r.released)};
+      cofin: usd(r.cofin), released: usd(r.released), rel_cerf: usd(r.rel_cerf), rel_pool: usd(r.rel_pool)};
     return '<tr>' + cols.map(([k, , isNum]) => k == null ? `<td class='mstrip'>${r.months.length ? monthStrip(r.months) : '—'}</td>`
       : `<td class='${isNum ? 'num' : k === 'status' ? 'nw' : ''}'>${cell[k]}</td>`).join('') + '</tr>'; }).join('') + '</tbody>';
   // the totals: every money and count column; a return period has none. The label spans the
@@ -3774,7 +3875,9 @@ function buildFwTable(){
   const tot = {n: sum('n') || '—', covered: num(R.some(r => r.covered != null) ? sum('covered') : null),
                pre: usd(sum('pre') + preX) + (anyApy ? "<span class='tmark'>†</span>" : ''), cerf: usd(sum('cerf')), pooled: usd(sum('pooled')),
                cofin: usd(R.some(r => r.cofin != null) ? sum('cofin') : null),
-               released: usd(R.some(r => r.released != null) ? sum('released') : null)};
+               released: usd(R.some(r => r.released != null) ? sum('released') : null),
+               rel_cerf: usd(R.some(r => r.rel_cerf != null) ? sum('rel_cerf') : null),
+               rel_pool: usd(R.some(r => r.rel_pool != null) ? sum('rel_pool') : null)};
   const iPre = cols.findIndex(c => c[0] === 'pre');
   const xrow = preX ? `<tr class='x'><td colspan='${iPre}'>${esc(tr8('Country and Regional Fund allocations in {0} not tied to one framework', YEAR))}</td>`
       + `<td class='num'>${usd(preX)}</td><td colspan='${cols.length - iPre - 1}'></td></tr>` : '';
@@ -3806,13 +3909,13 @@ function fwCSV(){
                 `activations_${yr}`, 'people_covered',
                 pastY() ? `prearranged_ocha_funds_${YEAR}_usd` : 'prearranged_ocha_funds_now_usd', 'prearranged_cerf_usd',
                 'prearranged_country_regional_funds_usd', pastY() ? `cofinancing_${YEAR}_usd` : 'cofinancing_usd',
-                `released_from_ocha_${yr}_usd`, 'activations_per_year', 'prearranged_from_version', 'version',
+                `released_from_ocha_${yr}_usd`, `released_cerf_${yr}_usd`, `released_country_regional_funds_${yr}_usd`, 'activations_per_year', 'prearranged_from_version', 'version',
                 'framework_document', 'framework_page'];
   const RPB = {backtest: 'historical simulation', stated: 'stated in the framework'};
   const ST_EN = {retired: 'retired', adhoc: 'non-framework allocation', tech: 'technical support'};   // the status as drawn (fwRows: st)
   const lines = [cols.join(',')].concat(R.map(r => [r.c.name, r.iso, r.f.hz_label, r.lay === 'framework' ? r.f.disp_label : ST_EN[r.lay],
       r.months.map(m => MON[m - 1]).join(' '), r.rp == null ? null : +r.rp.toFixed(2), r.rp == null ? null : RPB[r.v.rp_src],
-      r.n, r0(r.covered), r0(r.pre), split ? r0(r.cerf) : null, split ? r0(r.pooled) : null, r0(r.cofin), r0(r.released),
+      r.n, r0(r.covered), r0(r.pre), split ? r0(r.cerf) : null, split ? r0(r.pooled) : null, r0(r.cofin), r0(r.released), r0(r.rel_cerf), r0(r.rel_pool),
       r.apy || 1, split ? r.pre_v : null, r.f.current, r.v && r.v.doc_url,
       r.f.page ? new URL(r.f.page, location.href).href : null].map(q).join(',')));
   const a = document.createElement('a');

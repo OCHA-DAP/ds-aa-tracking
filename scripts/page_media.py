@@ -19,6 +19,7 @@ page)."""
 
 import html
 import json
+import re
 from datetime import date
 from pathlib import Path
 
@@ -112,6 +113,11 @@ button.mmore:hover { border-color:var(--accent); background:#eef4fc; }
 .mpost .pc { color:var(--muted); font-size:12px; margin-top:4px; }
 .mpost .pt { font-size:13px; line-height:1.45; margin:8px 0 8px; white-space:pre-line; overflow-wrap:anywhere; }
 .mpost .pl { font-size:12.5px; }
+/* X's own embed, once it has come (MEDIA_JS): the card it replaces is hidden */
+.mpost .xemb:empty { display:none; }
+.mpost.embedded { border:0; background:none; overflow:visible; }
+.mpost.embedded > .pimg, .mpost.embedded > .pb { display:none; }
+.mpost .xemb .twitter-tweet { margin:0 !important; }
 """
 
 MEDIA_JS = """
@@ -251,6 +257,28 @@ MEDIA_JS = """
     const t = i.closest('.mt'), p = i.closest('.pimg');
     if (t) t.classList.add('gone'); else if (p) p.remove();
   }, true);
+
+  // X posts as X shows them (owner, 2026-10-30): a card gives way to X's own embed once it
+  // comes into view — X's script loads then, once, with do-not-track on. A post X no longer
+  // serves (deleted, protected), or X's script blocked, keeps its card
+  const xs = [...document.querySelectorAll('.mpost[data-x]')];
+  if (xs.length && 'IntersectionObserver' in window) {
+    let lib = null;
+    const load = () => lib || (lib = new Promise((ok, no) => {
+      const sc = document.createElement('script');
+      sc.src = 'https://platform.twitter.com/widgets.js'; sc.async = true; sc.charset = 'utf-8';
+      sc.onload = () => (window.twttr && twttr.ready ? twttr.ready(ok) : no());
+      sc.onerror = no; document.head.appendChild(sc);
+    }));
+    const lang = (window.aaLang && aaLang()) || 'en';
+    const io = new IntersectionObserver(es => es.forEach(e => {
+      if (!e.isIntersecting) return;
+      const c = e.target; io.unobserve(c);
+      load().then(T => T.widgets.createTweet(c.dataset.x, c.querySelector('.xemb'), {dnt: true, conversation: 'none', lang}))
+        .then(el => { if (el) c.classList.add('embedded'); }).catch(() => {});
+    }), {rootMargin: '300px'});
+    xs.forEach(c => io.observe(c));
+  }
 })();
 """
 
@@ -325,7 +353,10 @@ def _post(p, k):
     words = " ".join(p.get(f, "") for f in ("platform", "account", "country", "theme", "asset", "text")).lower()
     pic = (f'<a class="pimg" href="{_e(p["url"])}" target="_blank" rel="noopener" tabindex="-1" aria-hidden="true">'
            f'<img loading="lazy" referrerpolicy="no-referrer" {attr}="{_e(p["image"])}" alt=""></a>') if p.get("image") else ""
-    return (f'<article class="mpost" data-p="{_e(p["platform"])}" data-q="{_e(words)}">{pic}<div class="pb">'
+    # an X post: its id, for X's own embed (MEDIA_JS); the card below stays until the embed has come
+    xid = re.search(r"/status(?:es)?/(\d+)", p.get("url") or "") if p["platform"] == "X" else None
+    xattr, xemb = (f' data-x="{xid.group(1)}"', '<div class="xemb"></div>') if xid else ("", "")
+    return (f'<article class="mpost" data-p="{_e(p["platform"])}" data-q="{_e(words)}"{xattr}>{xemb}{pic}<div class="pb">'
             f'<div class="ph"><span class="av" aria-hidden="true">{_e((p.get("account") or p["platform"])[:1].upper())}</span>'
             f'<b>{_e(p.get("account", ""))}</b><span class="plat">{_e(p["platform"])}</span>'
             f'<span class="d">{_day(p.get("date"))}</span></div>'

@@ -171,6 +171,17 @@ Besides upserts, an item can `"delete"` one row by its full key or `"op": "repla
 version's rows in a table (a re-run backtest). A file that fails stays pending and never
 blocks the others.
 
+**Money released before OneGMS shows it, and money refunded.** A CERF amount that went out
+before OneGMS records the allocation is an `aa.activation_funding` row with
+`match_method: "provisional"` and no `allocation_code` (the activation's key, `fund_code`
+`cerf`, the amount). The nightly job (`scripts/resolve_provisional.py`, after the entries)
+replaces it with OneGMS's code and approved amount once the allocation appears (rules in its
+docstring), and audits the change; when two allocations could fit, or none has come 120 days
+on, it warns and leaves the choice to a person. Money
+an activation sent back after it was paused or stopped is an `aa.activation_refund` row
+(the activation's key, the fund, the allocation when known, the amount): every page counts
+released money net of it.
+
 ## Running
 
 The dev DB is the single source of truth: data is entered and corrected through the

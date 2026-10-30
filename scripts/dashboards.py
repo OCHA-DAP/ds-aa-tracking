@@ -596,6 +596,49 @@ def envelope_by_fund(rows, reg):
             ["total_usd"].max())
 
 
+def funding_sql(e):
+    """aa.activation_funding as every page reads released money (2026-10-30): amount_usd NET of
+    the money the activation refunded (aa.activation_refund, owner: "the money goes out, but the
+    activation gets paused or stopped, so the money is refunded back to CERF"), refund_usd beside
+    it, and provisional = an amount entered before OneGMS recorded the allocation
+    (scripts/resolve_provisional.py). A refund names its allocation, or (NULL) the activation's
+    allocation from that fund. A FROM-clause source with the table's own columns; on a database
+    without the refund table yet (before the schema run), no refunds."""
+    has = pd.read_sql("SELECT to_regclass('aa.activation_refund') AS r", e)["r"].iloc[0] is not None
+    if not has:
+        return ("(SELECT f.*, NULL::numeric AS refund_usd, (f.match_method = 'provisional') AS provisional "
+                "FROM aa.activation_funding f)")
+    k = ("country_iso3", "hazard", "event_date", "event_label", "event_type", "fund_code")
+    return ("(SELECT f.country_iso3, f.hazard, f.event_date, f.window_name, f.event_label, f.event_type,"
+            " f.fund_code, f.allocation_code, f.amount_usd - coalesce(r.usd, 0) AS amount_usd,"
+            " r.usd AS refund_usd, f.people_targeted, f.reported_to_ahub, f.match_method, f.source,"
+            " f.updated_at, (f.match_method = 'provisional') AS provisional"
+            " FROM aa.activation_funding f LEFT JOIN LATERAL ("
+            "  SELECT sum(x.amount_usd) AS usd FROM aa.activation_refund x WHERE "
+            + " AND ".join(f"x.{c} = f.{c}" for c in k)
+            + " AND x.window_name IS NOT DISTINCT FROM f.window_name"
+              " AND (x.allocation_code IS NULL OR x.allocation_code = f.allocation_code)) r ON true)")
+
+
+def refund_problems(e):
+    """Refund rows that match no funding row, or (no allocation named) more than one: the build
+    warns, since a refund would then be lost or counted twice."""
+    if pd.read_sql("SELECT to_regclass('aa.activation_refund') AS r", e)["r"].iloc[0] is None:
+        return []
+    r = pd.read_sql(
+        """SELECT x.country_iso3, x.hazard, x.event_date, x.window_name, x.event_label, x.event_type,
+                  x.fund_code, x.allocation_code, count(f.fund_code) AS n
+           FROM aa.activation_refund x LEFT JOIN aa.activation_funding f
+             ON f.country_iso3 = x.country_iso3 AND f.hazard = x.hazard AND f.event_date = x.event_date
+            AND f.event_label = x.event_label AND f.event_type = x.event_type AND f.fund_code = x.fund_code
+            AND f.window_name IS NOT DISTINCT FROM x.window_name
+            AND (x.allocation_code IS NULL OR x.allocation_code = f.allocation_code)
+           GROUP BY 1, 2, 3, 4, 5, 6, 7, 8 HAVING count(f.fund_code) <> 1""", e)
+    return [f"{x.country_iso3}/{x.hazard}/{x.event_date}/{x.window_name or ''}/{x.fund_code}"
+            f"{'/' + x.allocation_code if isinstance(x.allocation_code, str) else ''}: "
+            f"{'no funding row' if not x.n else f'{x.n} funding rows'}" for x in r.itertuples()]
+
+
 def pooled_spent(e):
     """(country, hazard, version) whose Country or Regional Fund envelope an activation of that
     version has drawn on (owner, 2026-10-28): a framework being updated after an activation keeps its
@@ -603,7 +646,7 @@ def pooled_spent(e):
     committed — Burkina Faso floods' regional-fund $1M after the September 2025 activation."""
     r = pd.read_sql(
         """SELECT DISTINCT f.country_iso3, f.hazard, a.version
-           FROM aa.activation_funding f
+           FROM """ + funding_sql(e) + """ f   -- net of refunds: money sent back is not spent
            JOIN aa.activation a ON a.country_iso3 = f.country_iso3 AND a.hazard = f.hazard
             AND a.event_date = f.event_date AND a.event_type = f.event_type
             AND a.window_name IS NOT DISTINCT FROM f.window_name
@@ -657,9 +700,9 @@ def _fetch(e):
     d["activation"] = pd.read_sql(
         """SELECT a.country_iso3, a.hazard, a.event_type, a.event_date,
                   a.window_name, a.version, a.people_targeted, a.kb_event_date,
-                  f.fund_code, f.allocation_code, f.amount_usd,
+                  f.fund_code, f.allocation_code, f.amount_usd, f.refund_usd, f.provisional,
                   r.region
-           FROM aa.activation_funding f
+           FROM """ + funding_sql(e) + """ f   -- released money net of refunds
            -- null-safe: non-framework rows have no window, and a plain USING join silently
            -- dropped them (until 2026-09-30 only framework activations came through)
            JOIN aa.activation a
@@ -670,6 +713,8 @@ def _fetch(e):
            LEFT JOIN aa.country_hazard r
              ON r.country_iso3 = a.country_iso3 AND r.hazard = a.hazard
            WHERE a.event_type NOT IN (""" + _EXCL_SQL + ")", e)
+    for p in refund_problems(e):   # a refund that matches no funding row (lost) or two (counted twice)
+        print(f"::warning::refund {p}: a refund must match exactly one funding row of its activation")
     d["versions"] = pd.read_sql(
         """SELECT country_iso3, hazard, version, kb_status, valid_from, source,
                   doc_url, analysis_ref, prearranged_usd_doc, supersedes
@@ -2127,7 +2172,17 @@ def build_funding(page, d):
 <p class='meta'>{TB("Funds → agencies and grantees → the organisations that implement, <b>pre-arranged</b> (the envelopes in place on a date) or <b>released</b> (what went out in a year) — two views never added together. Follows the layers and the fund switch. It opens on the money released in the last complete year, from each fund's donors; untick <i>donors</i> to start at the funds.")}</p>
 <p class='fwnote' id='fwFlowNote' style='display:none'>{T("This chart shows every framework of the layers above: it does not follow the framework selection (nor the hazard and region filters).")}</p>
 {_flow_panel(donors_on=True, extra=two_how)}
-<div class='grid' style='margin-top:16px'>
+<h2>{T("Co-financing")}</h2>
+<p class='meta'>{T("Money from outside CERF and the Country and Regional Funds — agencies' own funds, donors, governments — pre-arranged for the frameworks. Not in the chart above, which follows the OCHA-managed funds.")}</p>
+<div class='grid'>
+ <div class='panel'><h3>{T("Co-financing pre-arranged, by year")}</h3><canvas id='cofYear' height='260'></canvas><p class='empty' id='cofYearX' style='display:none'></p>
+   {f"<div class='note'>{nonaa_html}</div>" if nonaa_html else ""}
+   {how(COF_YEAR_HOW)}</div>
+ <div class='panel'><h3>{T("Co-financing pre-arranged now, by co-financer")}</h3><div id='cofWhoBox' style='position:relative;height:300px'><canvas id='cofWho' style='max-height:none'></canvas></div><p class='empty' id='cofWhoX' style='display:none'></p>
+   {how(COF_WHO_HOW)}</div>
+</div>
+<h2>{T("Frameworks and money by year, hazard and region")}</h2>
+<div class='grid'>
  <div class='panel'><h3>{T("Frameworks each year, by status")}</h3><canvas id='c0' height='260'></canvas>
    {how("Each framework's status at the end of the year: active while an endorsed version was valid at any time in the year; being updated when none was and its next version is in development or its last one had expired; in development before its first endorsed version; retired from the first full year after its retirement date. The current year is today's status, the Map's figure. Follows the layers, the framework selection and the hazard and region filters; the GHO filter applies year by year; the fund switch does not apply (a count, not money).")}</div>
  <div class='panel'><h3>{T("Pre-arranged funding in place each year, by fund")}</h3><canvas id='c1' height='260'></canvas>
@@ -2138,11 +2193,6 @@ def build_funding(page, d):
    {how("Latest envelope of every framework that is active, being updated or in development.", two=True)}</div>
  <div class='panel'><h3>{T("Pre-arranged now, by region")}</h3><canvas id='c4' height='260'></canvas>
    {how("The same envelopes as by hazard, by the framework's region.", two=True)}</div>
- <div class='panel'><h3>{T("Co-financing pre-arranged, by year")}</h3><canvas id='cofYear' height='260'></canvas><p class='empty' id='cofYearX' style='display:none'></p>
-   {f"<div class='note'>{nonaa_html}</div>" if nonaa_html else ""}
-   {how(COF_YEAR_HOW)}</div>
- <div class='panel'><h3>{T("Co-financing pre-arranged now, by co-financer")}</h3><div id='cofWhoBox' style='position:relative;height:300px'><canvas id='cofWho' style='max-height:none'></canvas></div><p class='empty' id='cofWhoX' style='display:none'></p>
-   {how(COF_WHO_HOW)}</div>
 </div>
 <h2>{T("Where the pre-arranged money goes")}</h2>
 <p class='meta'>{T("The latest version of every current framework, split by agency and sector as the framework documents state it, stacked by fund.")}</p>
@@ -3970,10 +4020,15 @@ h4.sect { font-size:11.5px; text-transform:uppercase; letter-spacing:.04em;
 
 
 def _fmt_usd(v):
+    """$2.3M, $800k, $500: halves round up, as the Map's money() does in the page (Python's own
+    formatting rounds 2.25 to 2.2, the page's to 2.3)."""
     if v is None or pd.isna(v):
         return ""
+    from decimal import ROUND_HALF_UP, Decimal
     v = float(v)
-    return f"${v/1e6:.1f}M" if v >= 1e6 else f"${v/1e3:.0f}k" if v >= 1e3 else f"${v:.0f}"
+    def r(x, q):   # the float's exact binary value, as toFixed() reads it: 1.15 -> 1.1, 2.25 -> 2.3
+        return Decimal(x).quantize(Decimal(q), ROUND_HALF_UP)
+    return f"${r(v / 1e6, '0.1')}M" if v >= 1e6 else f"${r(v / 1e3, '1')}k" if v >= 1e3 else f"${r(v, '1')}"
 
 
 def _st(status, kind="fw"):

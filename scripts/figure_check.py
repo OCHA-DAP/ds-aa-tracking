@@ -14,7 +14,7 @@ name their layers explicitly either way):
   * pre-arranged now — total, CERF, Country and Regional Funds — and per framework: Map ↔
     Financing ↔ the framework page (its chart's current-year bar; its version envelope when it is
     the version the figure comes from, times the activations a year it allows)
-  * people covered now: Map ↔ Financing
+  * people covered now, and co-financing pre-arranged now: Map ↔ Financing
   * released this year by fund (current frameworks): Map ↔ Financing
   * released to date, framework activations and non-framework allocations, and the number of
     each: Map ↔ Financing ↔ History; and on the pages' opening layers (current frameworks), where
@@ -101,6 +101,10 @@ def check() -> None:
     # an envelope not split by fund: the map lists it apart, the Financing page with the pooled funds
     cmp("pre-arranged now, Country and Regional Funds", "Map ↔ Financing", t["pre_pooled"] + t["pre_all"], pre_pool)
     cmp("people covered now", "Map ↔ Financing", t["covered"], sum(r["people_covered"] or 0 for r in F["cov"]), "n")
+    # co-financing pre-arranged now: the Map's tile (current frameworks) and the Financing page's
+    # co-financing now, current frameworks
+    cmp("co-financing pre-arranged now", "Map ↔ Financing", t["cofin"],
+        sum(r["amount_usd"] or 0 for r in F.get("cofNow", []) if r["g"] == "c"))
     a_cy = [r for r in act if r["g"] == "c" and int(r["year"]) == cy]
     cmp(f"released {cy}, CERF", "Map ↔ Financing", t["released_cerf"], usd(r for r in a_cy if r["fund_code"] == "cerf"))
     cmp(f"released {cy}, Country and Regional Funds", "Map ↔ Financing", t["released"] - t["released_cerf"],
