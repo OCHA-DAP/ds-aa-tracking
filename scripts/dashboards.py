@@ -2235,9 +2235,7 @@ if(TWO.size) document.querySelectorAll('.twoOnly').forEach(el=>{ el.style.displa
 // framework money follows its framework's tick; money that belongs to no listed framework (an ad
 // hoc allocation, a country-level pooled fund allocation, a pipeline pair) follows its country:
 // kept while any line of that country is ticked
-// A retired framework's released money while the retired layer is off (its line is not listed
-// then): follows its country too
-const fwOK = (r, s) => !s.fws || (r.g!=='a' && FWK.has(r.k) && (r.g!=='r' || s.ret) ? s.fws.has(r.k) : s.fwC.has(cOf(r.k)));
+const fwOK = (r, s) => !s.fws || (r.g!=='a' && FWK.has(r.k) ? s.fws.has(r.k) : s.fwC.has(cOf(r.k)));
 const escH = t => String(t).replace(/[&<>"']/g, c=>'&#'+c.charCodeAt(0)+';');
 const M2 = v => '$'+(v/1e6).toFixed(2)+'M';
 const LCL0 = {active:'active', updating:'being updated', development:'in development', retired:'retired'};
@@ -2271,7 +2269,7 @@ function fwFromHash(){ const m = /[#&]fw=([^&]*)/.exec(location.hash); if(!m) re
 // the layers or the hazard / region filter leave out dimmed, and the total — the tile's figure
 function fwPaint(s, N){
   const amt = groupSum(D.now.filter(r=>ftOK(r.ft, s)), r=>r.k, r=>r.total_usd);
-  const inView = f => f.lc ? (!s.hz||f.hz===s.hz) && (!s.rg||f.region===s.rg) && (layerOK(f.g, s) || (!!f.g2 && layerOK(f.g2, s))) : !s.rg && s.adh;
+  const inView = f => f.lc ? (!s.hz||f.hz===s.hz) && (!s.rg||f.region===s.rg) && ((f.g==='r' ? relOK : layerOK)(f.g, s) || (!!f.g2 && relOK(f.g2, s))) : !s.rg && s.adh;
   const ticked = f => !s.fws || s.fws.has(f.k), gsum = {};
   fwLines().forEach(l=>{ const f = FWBY[l.dataset.k], a = amt[f.k], v = inView(f);
     l.classList.toggle('off', !v); l.title = v ? '' : tr8('left out by the layers or the hazard / region filter');
@@ -3644,6 +3642,9 @@ def _no_framework_body(d, fw, c, h, umap, docs):
         what = code_words(EVENT_TYPE_LABEL, r.event_type, "event type") or "non-framework allocation"
         lab = r.event_label if isinstance(r.event_label, str) and r.event_label else ""
         ppl = getattr(r, "people_targeted", None)
+        if ppl is None or pd.isna(ppl):   # the allocation rows' figure, as the Map counts it
+            fp = lk["fund"]["people_targeted"].dropna() if "people_targeted" in lk["fund"] else []
+            ppl = float(fp.sum()) if len(fp) else None
         rows += (f"<tr><td>{esc(ed)}</td><td>{esc(lab) + ' ' if lab else ''}<span class='muted'>({T(what)})</span></td>"
                  f"<td>{fl}</td><td class='num'>{f'{int(ppl):,}' if ppl is not None and pd.notna(ppl) else '—'}</td>"
                  f"<td>{' · '.join(links)}</td></tr>")
@@ -3694,8 +3695,8 @@ def build_framework_pages(page, tbl, d, e=None):
     for _i, fw in cur.sort_values("country_name").iterrows():
         c, h = fw["country_iso3"], fw["hazard"]
         slug = f"fw-{c.lower()}-{h}"
-        # a pair with no framework version (Uganda flood, Zimbabwe drought…) gets a page for its
-        # ad hoc allocations; its sheet status (pipeline talks) is not shown on it
+        # a pair with no framework version (Uganda flood, Zimbabwe drought…) gets a page of its own
+        # kind (_no_framework_body): its allocations, or technical support, never a framework shell
         no_fw = ver[(ver["country_iso3"] == c) & (ver["hazard"] == h)].empty
         status = ("no framework" if no_fw else
                   next((x for x in (fw.get("lifecycle"), fw.get("status")) if _has(x)), "no status"))

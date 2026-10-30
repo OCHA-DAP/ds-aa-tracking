@@ -1846,7 +1846,7 @@ def build_landing(page, d, e):
     ret_in = [(cd, f, a) for cd in countries.values() for f in cd["fws"] for a in _flow_acts(f, {"framework"}, Y)
               if a["type"] != "adhoc_aa" and (a["old"] or "framework" not in f["layers"])]
     ret_usd = sum(x["usd"] or 0 for _, _, a in ret_in for x in a["funding"])
-    ret_names = list(dict.fromkeys(f"{cd['name']} {f['hz_label'].lower()} {str(a['date'])[:4]}" for cd, f, a in ret_in))
+    ret_names = sorted(dict.fromkeys(f"{cd['name']} {f['hz_label'].lower()} {str(a['date'])[:4]}" for cd, f, a in ret_in))
     ret_note = (f"Includes {_money(ret_usd)} released by {'a framework' if len(ret_in) == 1 else 'frameworks'} since retired "
                 f"({', '.join(ret_names)}): money released stays counted, whatever the framework's status today."
                 if ret_in else "")
@@ -2494,7 +2494,7 @@ function syncYearUI(){
   document.querySelectorAll('#yearbar button').forEach(b => { const on = b.dataset.y === (YEAR == null ? '' : String(YEAR));
     b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
   const n = document.getElementById('yearnote'), ni = document.getElementById('yearnote-i');
-  if(n){ n.classList.toggle('off', !pastY()); n.setAttribute('aria-hidden', pastY() ? 'false' : 'true'); }
+  if(n){ n.classList.toggle('off', !pastY()); if(pastY()) n.removeAttribute('aria-hidden'); else n.setAttribute('aria-hidden', 'true'); }
   // the tip is the aria-label, which the language switch translates
   if(ni){ ni.dataset.tip = ni.getAttribute('aria-label'); if(pastY()) ni.tabIndex = 0; else ni.removeAttribute('tabindex'); }
 }
@@ -2967,12 +2967,14 @@ function updateTiles(){
   // the releases of frameworks since retired counted while the retired layer is off: said in the note
   const RA = LAYERS.retired ? [] : Object.values(L).flatMap(c => c.fws.flatMap(f => flowActs(f).filter(a => retAct(f, a)).map(a => [c, f, a])));
   const RF = flowFiguresOf(RA.map(([, , a]) => a));
-  const raNames = [...new Set(RA.map(([c, f, a]) => `${tr8(c.name)} ${tr8(f.hz_label).toLowerCase()} ${String(a.date).slice(0, 4)}`))];
+  const raNames = [...new Set(RA.map(([c, f, a]) => `${tr8(c.name)} ${tr8(f.hz_label).toLowerCase()} ${String(a.date).slice(0, 4)}`))].sort();
   // what the layers switched off would ADD: named in each tile's note, so no figure is taken for
   // the whole (switching the retired layer on adds nothing while current frameworks are on)
   const cur = new Set(all.flatMap(f => flowActs(f)));
   const offs = [['adhoc','non-framework allocations'],['retired','retired frameworks'],['framework','current frameworks']]
-    .filter(([k]) => !LAYERS[k]).map(([k, lab]) => [lab, flowFiguresOf(all.flatMap(f => flowActs(f, {...LAYERS, [k]: true})).filter(a => !cur.has(a)))]);
+    .filter(([k]) => !LAYERS[k]).map(([k, lab]) => [lab, flowFiguresOf(all.flatMap(f => flowActs(f, {...LAYERS, [k]: true})
+      // the current frameworks' own: a retired framework's releases are named under 'retired' (no double listing)
+      .filter(a => !cur.has(a) && (k !== 'framework' || !retAct(f, a)))))]);
   const notShown = fn => { const xs = offs.map(([lab, G]) => fn(lab, G)).filter(Boolean); return xs.length ? tr8('Not shown: {0}.', xs.join(', ')) : ''; };
   // activations and the money they released, in one tile (owner, 2026-10-27): the count, then the
   // amount and its split by fund; the note names what the layers switched off would add
@@ -2984,6 +2986,9 @@ function updateTiles(){
        note: [tr8(F.nAd
          ? 'Money released when a framework activated, or allocated for anticipatory action outside a framework, from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.'
          : 'Money released when a framework activated, from the activation record: the Financing page gives the same figure for the same layers. Early action allocations are not counted.'),
+         // a past year shows the frameworks as they stood at its end: with the current-frameworks layer
+         // off, a framework retired since is not counted here, while the Financing page counts its releases
+         pastY() && !LAYERS.framework ? tr8('For a past year the map shows the frameworks as they stood at its end: a framework retired since counts here under current frameworks, while the Financing page counts its releases under either layer.') : '',
          RF.n ? tr8(RF.n === 1 ? 'Includes {0} released by a framework since retired ({1}): money released stays counted, whatever the framework\'s status today.'
                                : 'Includes {0} released by frameworks since retired ({1}): money released stays counted, whatever the framework\'s status today.', money(RF.usd), raNames.join(', ')) : '',
          F.noUsd ? tr8('{0} of the {1} have no amount recorded.', F.noUsd, F.n) : '',
@@ -3256,6 +3261,7 @@ function countryTiles(c){
   const fws = vis(c), fw = fws.filter(f=>visLayer(f)==='framework');
   const pre = fw.reduce((s,f)=>s+(f.pre_now||0),0), cov = fw.reduce((s,f)=>s+(f.covered||0),0);
   const F = flowFigures(c.fws);   // the global tiles' rule, this country (a retired pin's releases too)
+  const RU = LAYERS.retired ? 0 : flowFiguresOf(c.fws.flatMap(f => flowActs(f).filter(a => retAct(f, a)))).usd;
   const kind = F.nAd && F.nAd === F.n ? 'non-framework allocation' : F.nAd ? 'activation' : 'framework activation', one = F.n === 1;
   const ACT = {'non-framework allocation': one ? ['non-framework allocation to date', 'non-framework allocation in {0}'] : ['non-framework allocations to date', 'non-framework allocations in {0}'],
                'activation': one ? ['activation to date', 'activation in {0}'] : ['activations to date', 'activations in {0}'],
@@ -3267,7 +3273,7 @@ function countryTiles(c){
     <div class='ctile'><div class='v'>${pre?money(pre) + apyMark(apyN):'—'}</div><div class='l'>${esc(pastY() ? tr8('pre-arranged in {0}', YEAR) : tr8('pre-arranged now'))}</div></div>
     <div class='ctile'><div class='v'>${cov?num(cov):'—'}</div><div class='l'>${esc(tr8(pastY() ? 'people covered' : 'people covered now'))}</div></div>
     <div class='ctile'><div class='v'>${F.n}</div><div class='l'>${esc(actL)}</div></div>
-    <div class='ctile'><div class='v'>${F.n?money(F.usd):'—'}</div><div class='l'>${esc(yr('released to date', 'released in {0}'))}</div></div>
+    <div class='ctile'><div class='v'>${F.n?money(F.usd):'—'}</div><div class='l'>${esc(yr('released to date', 'released in {0}'))}${RU >= 5e4 ? ' ' + esc(tr8('· includes {0} released by frameworks since retired', money(RU))) : ''}</div></div>
     <div class='ctile'><div class='v'>${F.nRep?num(F.reached):'—'}</div><div class='l'>${esc(tr8('people reached'))}${F.nCerf ? ' · ' + esc(tr8(F.nCerf === 1 ? '{0} of {1} CERF allocation reported' : '{0} of {1} CERF allocations reported', F.nRep, F.nCerf)) : ''}</div></div></div>`;
 }
 function hiddenNote(c){
