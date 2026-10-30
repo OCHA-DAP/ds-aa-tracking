@@ -513,8 +513,9 @@ def prearranged_now(e):
     are listed as gaps (see envelope_gaps). Only versions of the framework's current line
     count (old_versions): a new framework never inherits the envelope of the one it replaced.
     A Country or Regional Fund envelope that an activation of the version drew on is left out
-    (pooled_spent): released, no longer committed — unlike CERF's, which stays committed while
-    the framework is being updated.
+    (pooled_spent): released, no longer committed — unlike CERF's, which stays committed after
+    an activation until the framework is retired: the framework is revised and re-approved for
+    the next season (owner, 2026-10-30; D163).
     A version that allows two activations a year (activation_factors) counts its envelope
     twice: total_usd is the envelope × activations_per_year (a column of the result, 1 for
     every other version) — every page reading this gets the multiplied figure and must not
@@ -560,7 +561,7 @@ def prearranged_now(e):
                                                          out["fund_code"])]
     out["total_usd"] = out["total_usd"].astype(float) * out["activations_per_year"]
     # a Country or Regional Fund envelope an activation has drawn on is released, no longer
-    # committed (pooled_spent); CERF's stays while the framework is being updated
+    # committed (pooled_spent); CERF's stays until the framework is retired (D163)
     spent = pooled_spent(e)
     pooled = out["fund_code"].astype(str).str.startswith(("cbpf", "rhpf"))
     out = out[~(pooled & pd.Series([(c, h, str(v)) in spent for c, h, v in
