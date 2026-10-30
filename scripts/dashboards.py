@@ -1668,10 +1668,11 @@ FLOW_NOTE = " ".join(TB(x) for x in (
     "pool. Top 12 donors, the rest grouped."))
 
 
-def _flow_panel(donors_on, donor_toggle=True, extra=""):
+def _flow_panel(donors_on, donor_toggle=True, extra="", note=""):
     """The 'Where the money flows' panel: pre-arranged / released switch, year, levels
     (FLOW_JS mounts it). Used by the Financing page (donors off) and the donor-shares page
-    (donors on, no toggle: the donor-flows view). extra: HTML appended to the method note."""
+    (donors on, no toggle: the donor-flows view). extra: HTML appended to the method note;
+    note: a line shown above the chart."""
     chk = " checked" if donors_on else ""
     dctl = (f"<label><input type='checkbox' id='flD'{chk}> {T('donors')}</label>" if donor_toggle
             else f"<input type='checkbox' id='flD'{chk} hidden>")
@@ -1688,7 +1689,7 @@ def _flow_panel(donors_on, donor_toggle=True, extra=""):
   <label>{T('Find')} <input type='search' id='flS' list='flSL' {ATTR('placeholder', 'a donor, country or organisation')} {ATTR('aria-label', 'Find a donor, country or organisation in the flows')} style='width:230px;max-width:100%;font-size:12.5px;padding:3px 6px'></label><datalist id='flSL'></datalist>
   <span id='flTot' class='muted'></span>
  </div>
- <div id='flow'></div><div id='flLeg' class='note' style='display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center'></div><script src="sankey.js"></script>
+ {f"<p class='note' style='margin:0 0 6px'>{note}</p>" if note else ""}<div id='flow'></div><div id='flLeg' class='note' style='display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center'></div><script src="sankey.js"></script>
  <details class='note'><summary style='cursor:pointer'>{T('How the flows are counted')}</summary>{FLOW_NOTE}{extra}</details>
 </div>"""
 
@@ -1782,9 +1783,14 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
 // cfg.yLab(year) labels a year (Financing: the current year as '2026*', indicative), cfg.cy the
 // current year (the build's; else the viewer's clock). Returns the redraw function, for the page
 // to call when its own filters change.
+// cfg.noYear: a year the chart never shows, in any view, 'all years' included — the Financing
+// page's current year, until the donors' contributions for it are final (owner, 2026-10-30; the
+// rows stay in the page data)
 function mountFlow(cfg){
   if(!window.sankeySVG) return ()=>{};
-  const keep = cfg.keep || (()=>true), yLab = cfg.yLab || (y=>String(y)), cy = cfg.cy || new Date().getFullYear();
+  const noY = cfg.noYear == null ? null : +cfg.noYear, keep0 = cfg.keep || (()=>true);
+  const keep = noY == null ? keep0 : (r => +r.y !== noY && keep0(r));
+  const yLab = cfg.yLab || (y=>String(y)), cy = cfg.cy || new Date().getFullYear();
   const modeOf = () => document.querySelector("input[name='flM']:checked").value;
   // the search box (owner, 2026-10-28): every donor, country and organisation of the view, so a
   // small one grouped under 'other' can be picked, named and focused like a large one
@@ -1824,15 +1830,19 @@ function mountFlow(cfg){
         return pick.startsWith('o:') ? r && r.name===pick.slice(2) : n.dataset.id===pick; });
       if(nd) nd.dispatchEvent(new MouseEvent('click', {bubbles:true})); }
     flTot.textContent = mode==='p' ? (+flY.value===cy ? tr8('Pre-arranged, in place in {0}: {1} (today)', yLab(flY.value), money(F.total)) : tr8('Pre-arranged, in place in {0}: {1}', yLab(flY.value), money(F.total)))
-                                    : flY.value==='all' ? tr8('Released in all years: {0}', money(F.total)) : tr8('Released in {0}: {1}', yLab(flY.value), money(F.total));
+                                    : flY.value==='all' ? (noY != null ? tr8('Released in all years to {0}: {1}', noY - 1, money(F.total)) : tr8('Released in all years: {0}', money(F.total)))
+                                    : tr8('Released in {0}: {1}', yLab(flY.value), money(F.total));
   }
   // the year list depends on the view: pre-arranged is one year's stock (no 'all years')
   function fillYears(){
     const mode = modeOf(), keepY = flY.value;
     flY.innerHTML = '';
-    D.flowYears[mode].slice().reverse().forEach(y=>flY.add(new Option(yLab(y), y)));
-    if(mode==='r') flY.add(new Option(tr8('all years'), 'all'));
-    flY.value = [...flY.options].some(o=>o.value===keepY) && keepY!=='' ? keepY : String(D.flowDefault[mode]);
+    const ys = D.flowYears[mode].filter(y => +y !== noY);
+    ys.slice().reverse().forEach(y=>flY.add(new Option(yLab(y), y)));
+    if(mode==='r') flY.add(new Option(noY != null ? tr8('all years, to {0}', noY - 1) : tr8('all years'), 'all'));
+    // the default year, unless it is the one left out: then the latest shown
+    const def = +D.flowDefault[mode] === noY ? Math.max(...ys) : D.flowDefault[mode];
+    flY.value = [...flY.options].some(o=>o.value===keepY) && keepY!=='' ? keepY : String(def);
     document.getElementById('flYl').textContent = mode==='p' ? tr8('In place in') : tr8('Released in');
     document.getElementById('flPw').style.display = mode==='r' ? '' : 'none';
   }
@@ -2172,7 +2182,7 @@ def build_funding(page, d):
 <h2>{T("Where the money flows")}</h2>
 <p class='meta'>{TB("Funds → agencies and grantees → the organisations that implement, <b>pre-arranged</b> (the envelopes in place on a date) or <b>released</b> (what went out in a year) — two views never added together. Follows the layers and the fund switch. It opens on the money released in the last complete year, from each fund's donors; untick <i>donors</i> to start at the funds.")}</p>
 <p class='fwnote' id='fwFlowNote' style='display:none'>{T("This chart shows every framework of the layers above: it does not follow the framework selection (nor the hazard and region filters).")}</p>
-{_flow_panel(donors_on=True, extra=two_how)}
+{_flow_panel(donors_on=True, extra=two_how, note=TF("{y} is not shown in this chart until the donors' contributions for the year are final.", y=cy))}
 <h2>{T("Co-financing")}</h2>
 <p class='meta'>{T("Money from outside CERF and the Country and Regional Funds — agencies' own funds, donors, governments — pre-arranged for the frameworks. Not in the chart above, which follows the OCHA-managed funds.")}</p>
 <div class='grid'>
@@ -2531,7 +2541,7 @@ document.addEventListener('aalang', ()=>{
   [fHaz, fReg].forEach(el=>[...el.options].forEach(o=>{ if(o.value) o.text = tr8(o.value); }));
   fwBuild(); fwToDom(); draw(); });
 // the flow chart: the layers and the fund switch filter its rows (donors off: it starts at the funds)
-window._flowDraw = mountFlow({label:'AA money through funds and agencies to partners', yLab, cy:CY,
+window._flowDraw = mountFlow({label:'AA money through funds and agencies to partners', yLab, cy:CY, noYear:CY,
   keep: r=>{ const s = sel(); return relOK(r.g, s) && (!s.fund || (s.fund==='cerf') === (r.fu==='c'))
                                 && (!s.rg || r.rg===s.rg); }});
 // the framework picker: a group line ticks its lines; with a search typed, the buttons and the
