@@ -17,10 +17,13 @@ name their layers explicitly either way):
   * people covered now: Map ↔ Financing
   * released this year by fund (current frameworks): Map ↔ Financing
   * released to date, framework activations and non-framework allocations, and the number of
-    each: Map ↔ Financing ↔ History
+    each: Map ↔ Financing ↔ History; and on the pages' opening layers (current frameworks), where
+    a framework since retired still brings what it released (owner, 2026-10-30)
   * people reached, CERF allocations of framework activations to date: Map ↔ Activities
 Deliberate differences are not checked here — they are labelled on the pages: a past year on the
-map shows the frameworks as they stood then (Financing classifies by today's status); the
+map shows the frameworks as they stood then (Financing classifies pre-arranged money by today's
+status, and with the current-frameworks layer off a past year's releases differ too: labelled on the
+Map's tile); the
 Activities page's localisation share leaves partners not yet typed out of the whole, the
 Financing page's counts them in; a framework page's version envelope is the budget of one
 activation, or that of an earlier version where the current one has no split.
@@ -106,6 +109,11 @@ def check() -> None:
         usd(r for r in act if r["g"] in ("c", "r")))
     cmp("released to date, non-framework allocations", "Map ↔ Financing", t_ad["released"],
         usd(r for r in act if r["g"] == "a"))
+    # the opening view: current frameworks only, a retired framework's releases included (relOK)
+    t_open = landing.tile_figures(M, {"framework"}, None)
+    cmp("released to date, opening layers", "Map ↔ Financing", t_open["released"],
+        usd(r for r in act if r["g"] in ("c", "r")))
+    cmp("framework activations to date, opening layers vs both framework layers", "Map", t_open["n_act"], t_fr["n_act"], "n")
     f_pre = {}
     for r in now_c:
         f_pre[r["k"]] = f_pre.get(r["k"], 0) + (r["total_usd"] or 0)
