@@ -19,6 +19,11 @@ table are read-only regardless of role — the proxy enforces it, the page says 
 says what it is copied from, by whom, how often and where a wrong value is fixed; a view
 built on one names the mirror tables under it. The mirror list (proxy/mirror_tables.json) is
 built into the page, so the labels are right even before the proxy is redeployed.
+
+A save is in the database at once, but the site is built from a copy of the database taken
+every night (D17). The bar under the breadcrumbs (D164) says which copy the site shows and
+gives editors "Publish changes": the proxy starts the publish workflow with a fresh copy
+(POST /publish), about 15 minutes to the live site, and the bar follows it (GET /publish).
 """
 
 import os
@@ -84,6 +89,7 @@ ADMIN_HTML = r"""
   <div class='dj-user' id='who'></div>
  </div>
  <div class='dj-crumbs' id='crumbs'>Home</div>
+ <div class='dj-pub' id='pub' hidden></div>
  <div class='dj-msg' id='msg' hidden></div>
  <div id='view' class='dj-body'><div class='dj-loading'>Loading schema…</div></div>
 </div>
@@ -174,6 +180,49 @@ async function refreshRole(){
 function loginEditor(){ const et = prompt('Editor token (ask Tristan). Saved in this browser only:'); if(et){ localStorage.setItem('editorToken', et.trim()); editorName(); boot(); } }
 function logoutEditor(){ localStorage.removeItem('editorToken'); boot(); }
 
+// ---------- publish (D164): which copy of the database the site shows; editors can publish now
+let PUB = null, pubTimer = null;
+const when = s => new Date(s).toLocaleString([], {weekday:'short', hour:'2-digit', minute:'2-digit', timeZoneName:'short'});
+async function loadPublish(){
+  clearTimeout(pubTimer);
+  try { PUB = await getJSON('/publish'); } catch(e){ PUB = {error: e.message}; }
+  renderPublish();
+  pubTimer = setTimeout(loadPublish, (PUB.runs||[]).some(r=>r.status!=='completed') ? 15000 : 120000);
+}
+function renderPublish(){
+  const el = document.getElementById('pub');
+  if(!PUB || (PUB.configured===false && ROLE!=='editor')){ el.hidden = true; return; }
+  el.hidden = false;
+  if(PUB.error){ el.innerHTML = `<span class='dj-warn'>Cannot read the publish status (${esc(PUB.error)}).</span>`; return; }
+  if(PUB.configured===false){ el.innerHTML = `Publishing from this page is not set up yet: edits reach the site after the nightly copy of the database.`; return; }
+  const runs = PUB.runs || [];
+  const running = runs.find(r=>r.status==='in_progress');
+  const waiting = runs.find(r=>r.fresh && r.status!=='completed' && r.status!=='in_progress');
+  const done = runs.find(r=>r.status==='completed' && !['cancelled','skipped'].includes(r.conclusion));
+  const STEP = {starting: 'starting', copying: 'copying the database (step 1 of 2)', building: 'building the site (step 2 of 2)'};
+  let line;
+  if(running && running.fresh) line = `<b>Publishing:</b> ${STEP[running.phase]||'running'}, started ${when(running.started_at)}. It takes about 15 minutes.`;
+  else if(running) line = `<b>The site is being rebuilt</b> (started ${when(running.started_at)}) from the last copy of the database.`;
+  else if(waiting) line = `<b>Publishing:</b> starting.`;
+  else if(!done) line = `No recent publish found.`;
+  else if(done.conclusion!=='success') line = `<span class='dj-warn'>The last publish failed (${when(done.finished_at)}).</span> <a href='${esc(done.url)}' target='_blank' rel='noopener'>Details</a>. The site still shows the copy before it.`;
+  else if(done.fresh) line = `Site published ${when(done.finished_at)}: it shows everything saved before ${when(done.started_at)}.` + (Date.now()-new Date(done.finished_at) < 3600e3 ? ` An open page may need a reload to show it.` : '');
+  else if(done.event==='schedule') line = `Site last rebuilt ${when(done.finished_at)}, from the nightly copy of the database.`;
+  else line = `Site last rebuilt ${when(done.finished_at)}, from the last copy of the database.`;
+  if(running && waiting) line += ` Another publish is queued: it starts when this one ends and includes everything saved until then.`;
+  const btn = ROLE!=='editor' ? '' : waiting
+    ? `<button disabled title='A publish is queued; it will include your changes'>Publish queued</button>`
+    : `<button onclick='publishNow(this)' title='Copies the database and rebuilds the site: about 15 minutes'>Publish changes</button>`;
+  el.innerHTML = `<span>${line}</span>${btn}`;
+}
+async function publishNow(btn){
+  btn.disabled = true; btn.textContent = 'Starting…';
+  try { const j = await postJSON('/publish', {});
+    msg(j.waiting ? 'A publish is already queued; it will include your changes.' : 'Publishing: your changes will be on the site in about 15 minutes.'); }
+  catch(e){ msg(e.message, 'err'); }
+  setTimeout(loadPublish, 4000);
+}
+
 // ---------- routing  #table | #table/change?k=v | #table/add
 window.addEventListener('hashchange', route);
 async function route(){
@@ -204,7 +253,8 @@ function renderIndex(){
   html += `</div><div class='dj-side'><div class='dj-module'><h2>Recent actions</h2><div id='recent' class='dj-recent'>…</div></div>
     <div class='dj-module'><h2>About</h2><div class='dj-about'>Every table in the <code>aa</code> schema, straight from the database.
     ${ROLE==='editor' ? 'You can add, change and delete rows on the tables this repo owns; each field change is written to the audit trail under your name.' : 'You are viewing. Log in as editor (top right) to change data.'}
-    The mirrors (copied in every day by ${esc(MIRRORS.repo)}) and the frozen records are read-only here.</div></div></div></div>`;
+    The mirrors (copied in every day by ${esc(MIRRORS.repo)}) and the frozen records are read-only here.
+    A change is in the database at once; the site shows it after the next publish: every night, or about 15 minutes after an editor presses Publish changes.</div></div></div></div>`;
   document.getElementById('view').innerHTML = html;
   loadRecent();
 }
@@ -334,7 +384,8 @@ async function saveRow(tname, adding, after){
   try {
     const key = adding ? null : Object.fromEntries(Object.entries(v._key).map(([k,x])=>[k, x==='∅' ? null : x]));
     const j = await postJSON('/save', {table: tname, key, row: rowVals, by});
-    msg(adding ? `Added ${title(tname).toLowerCase()} ${Object.values(j.key).join(' / ')}.` : `Saved ${j.changes} change${j.changes===1?'':'s'}.`);
+    msg((adding ? `Added ${title(tname).toLowerCase()} ${Object.values(j.key).join(' / ')}.` : `Saved ${j.changes} change${j.changes===1?'':'s'}.`) +
+      (PUB && PUB.configured ? ' Publish changes (above) puts it on the site.' : ' It reaches the site after the nightly copy.'));
     if(after === 'add') location.hash = `#${tname}/add`;
     else if(after === 'stay') { location.hash = `#${tname}/change?${keyQS(t, j.row)}`; route(); }
     else location.hash = `#${tname}`;
@@ -354,6 +405,7 @@ let schemaCountsDirty = false;
 // ---------- boot
 async function boot(){
   await refreshRole();
+  loadPublish();
   try {
     const j = await getJSON('/schema' + (schemaCountsDirty ? '?refresh=1' : ''));
     SCHEMA = Object.fromEntries(j.tables.map(t=>[t.name, t])); BY_TABLE = SCHEMA; schemaCountsDirty = false;
@@ -371,6 +423,9 @@ boot();
 #adm .dj-brand a { color:#f5f5f5; font-size:22px; font-weight:300; letter-spacing:.2px; } #adm .dj-brand a:hover { color:#fff; text-decoration:none; }
 .dj-user { font-size:12px; color:#ddd; } #adm .dj-user a { color:#fff; text-decoration:underline; } .dj-user b { color:#fff; }
 .dj-crumbs { background:var(--dj-primary); color:#c4dce8; padding:10px 40px; font-size:13px; } #adm .dj-crumbs a { color:#fff; } .dj-crumbs b { color:#fff; font-weight:400; }
+.dj-pub { display:flex; gap:14px; align-items:center; justify-content:space-between; padding:8px 40px; background:#f4f8fb; border-bottom:1px solid #e3ecf2; font-size:12.5px; color:#444; }
+.dj-pub .dj-warn { padding:0; } .dj-pub button { padding:6px 14px; border:0; border-radius:4px; background:var(--dj-secondary); color:#fff; cursor:pointer; font-size:12.5px; white-space:nowrap; }
+.dj-pub button:hover { background:#205067; } .dj-pub button:disabled { background:#9bb5c4; cursor:default; }
 .dj-msg { margin:0; padding:10px 40px; font-size:13px; background:#dfd; color:#155724; border-bottom:1px solid #cec; }
 .dj-msg.err { background:#ffefef; color:#ba2121; border-color:#f3c9c9; }
 .dj-body { padding:20px 40px 30px; min-height:400px; background:#fff; }

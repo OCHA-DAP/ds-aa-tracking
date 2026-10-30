@@ -28,6 +28,12 @@ variables:
   existing_cluster_id:
     description: Interactive cluster for the dev target
     default: "0515-161935-i2w5mxhc"
+  publish_sp:
+    description: >-
+      The service principal behind the admin page's "Publish changes" (D164: publish.yml with
+      fresh_snapshot, scripts/fresh_snapshot.py): it may start this job, nothing else
+    lookup:
+      service_principal: ds-aa-tracking-publish
 
 resources:
   jobs:
@@ -37,6 +43,8 @@ resources:
       permissions:
         - group_name: dsci
           level: CAN_MANAGE
+        - service_principal_name: ${var.publish_sp}
+          level: CAN_MANAGE_RUN
       git_source:
         git_url: https://github.com/OCHA-DAP/ds-aa-tracking.git
         git_provider: gitHub
