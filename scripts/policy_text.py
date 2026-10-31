@@ -69,12 +69,6 @@ POLICY = {
         "activated; it is drawn from the pre-arranged envelopes, so the two are never added "
         "together. CERF and the Country and Regional Funds both pre-arrange money for "
         "anticipatory action."),
-    "dash-donors.html": (
-        "How is AA money attributed to donors?",
-        "Donors contribute to the pooled funds as a whole, not to anticipatory action "
-        "specifically. This page attributes each fund's AA money to its donors in proportion "
-        "to what each donor paid into the fund that year. Donors report their AA funding "
-        "annually under the Grand Bargain; these figures are meant to support that reporting."),
     "pillar-learning.html": (
         "What do we know about anticipatory action?",
         "Every activation is a chance to learn whether acting early worked. Evaluations, "

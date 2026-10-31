@@ -20,6 +20,7 @@ from dashboards import (
     _dash_page,
     _st,
     clean_org_names,
+    current_source,
     haz,
     hazard_word,
 )
@@ -682,11 +683,11 @@ def build_plan(page, d):
     fem = {ph: (dis[ph][0] + dis[ph][1]) / max(sum(dis[ph][:4]), 1) for ph in ("planned", "reached")}
 
     # ================================================================== GHO
-    inc = ex["incl"]
+    inc = ex["incl"].assign(source=lambda x: x["source"].map(current_source))
     kpi_rows = ""
     kpi_note = []      # (template, values): the note in each language
-    s25 = inc[(inc["year"] == 2025) & (inc["source"] == "yakubu-hnrp-2025")]
-    s26 = inc[(inc["year"] == 2026) & (inc["source"] == "yakubu-fcdo-bc") & (inc["plan_type"] == "GHO")]
+    s25 = inc[(inc["year"] == 2025) & (inc["source"] == "cerf-workbook-hnrp-2025")]
+    s26 = inc[(inc["year"] == 2026) & (inc["source"] == "cerf-workbook-fcdo-bc") & (inc["plan_type"] == "GHO")]
 
     def yn(s, col):
         t, f, na = int((s[col] == True).sum()), int((s[col] == False).sum()), int(s[col].isna().sum())
@@ -722,7 +723,7 @@ def build_plan(page, d):
                         c=c, fw=", ".join(f"{w(h)} {w(st)}" for h, st in lv[c]) if c in lv
                         else w("no current framework")) for c in blank)
             kpi_note.append(("Blank 'framework' cells for 2026: {list}. ", {"list": blank_txt}))
-        jg = inc[(inc["year"] == 2026) & (inc["source"] == "julia-gho-2026")]
+        jg = inc[(inc["year"] == 2026) & (inc["source"] == "aa-workbook-gho-2026")]
         clash = sorted(set(s26["country_iso3"]) & set(jg.loc[jg["in_gho"] == False, "country_iso3"]))
         if clash:
             kpi_note.append((("A second GHO 2026 list in the database marks {list} as not in the GHO while "

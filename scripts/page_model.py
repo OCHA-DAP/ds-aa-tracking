@@ -471,7 +471,7 @@ def _win_names(f, tl):
 
 def model_windows(d):
     """The current frameworks and their trigger-window rows, with what each window watches,
-    its basis, lead time, return period and activations (also used by page_model_draft)."""
+    its basis, lead time, return period and activations."""
     fws = _frameworks(d)
     ws, wa = _window_state()
     if ws is None:   # fallback: status joined to aa.window rows, activations without version

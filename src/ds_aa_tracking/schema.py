@@ -68,7 +68,7 @@ TABLES = {
                                            --   up to the shared pot; total = max)
                                            -- capped (windows sum past the envelope;
                                            --   first to fire draws down)
-            source text NOT NULL,          -- kb-frontmatter | sheet-revision | ocha-web | pa-monorepo | entered
+            source text NOT NULL,          -- aa-team | ocha-web | pa-monorepo | entered
             note text,
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard, version)
@@ -87,7 +87,6 @@ TABLES = {
             expected_status text,
             comments text,
             version text,                  -- attributed framework version (see framework_version)
-            version_match text,            -- kb-activation | auto-interval | auto-post-validity
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard, as_of, source)
         )""",
@@ -100,7 +99,6 @@ TABLES = {
             as_of date NOT NULL,
             source text NOT NULL,
             version text,                  -- attributed framework version (see framework_version)
-            version_match text,
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard, role, person, as_of)
         )""",
@@ -112,7 +110,6 @@ TABLES = {
             phase text NOT NULL,
             is_finalization_deadline boolean NOT NULL DEFAULT false,
             version text,                  -- attributed framework version (see framework_version)
-            version_match text,            -- kb-activation | auto-interval | auto-post-validity
             as_of date NOT NULL,
             source text NOT NULL,
             updated_at timestamptz NOT NULL DEFAULT now(),
@@ -159,7 +156,6 @@ TABLES = {
             additional_people_covered bigint,
             remarks text,
             version text,                  -- attributed framework version (see framework_version)
-            version_match text,            -- kb-activation | auto-interval | auto-post-validity
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard, as_of, source)
         )""",
@@ -262,7 +258,6 @@ TABLES = {
             note text,
             source text NOT NULL,
             version text,                  -- attributed framework version (see framework_version)
-            version_match text,
 
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (report_year, channel, country_iso3, hazard, unit)
@@ -433,7 +428,6 @@ TABLES = {
             country_iso3 text[] NOT NULL,  -- one, or several for a regional framework
             hazard text,
             frontmatter jsonb NOT NULL,    -- the page's YAML frontmatter, as imported / edited
-            frontmatter_text text,         -- raw YAML at import (keeps scope-tier comments)
             triggers jsonb NOT NULL DEFAULT '[]'::jsonb,   -- rows of the page's Trigger windows table
             tiers jsonb NOT NULL DEFAULT '[]'::jsonb,      -- scope tiers parsed from the raw YAML
             body_md text,                  -- the page body (reference only)
@@ -774,7 +768,6 @@ DURABLE_TABLES = {
             version text NOT NULL,
             kb_framework text,
             kb_status text,
-            gsheet_tab text,               -- provenance of the reported numbers
             excel_fv text,
             overall_rp_reported numeric,   -- published overall return period
             overall_prob_reported numeric,
@@ -888,10 +881,6 @@ INDEXES = [
        (COALESCE(kb_framework, ''), COALESCE(event_date, ''), COALESCE(application_code, ''))""",
 ]
 
-LEGACY_TABLES = [   # renamed zz_legacy_<name> by the window-first migration; read-only history
-    "framework_registry", "activation", "prearranged_funding", "prearranged_sector_budget",
-    "entered_version_funding",
-]
 
 VIEWS = {
     # ---- backtest performance (moved from the KB's load_aa_performance.py, 2026-10-05).
@@ -944,13 +933,6 @@ VIEWS = {
                  d.total_budget
     """,
     # the old crosswalk shape, for readers still keyed (kb_framework, kb_version, country_iso3)
-    "framework_version_map": """
-        CREATE OR REPLACE VIEW aa.framework_version_map AS
-        SELECT kb_framework, version AS kb_version, country_iso3, kb_status, gsheet_tab,
-               excel_fv, overall_rp_reported, overall_prob_reported, overall_spend_reported,
-               flag
-        FROM aa.version_performance_reported
-    """,
     # ---- KB-era record (frozen tables), views unchanged
     "v_funding_by_sector": """
         CREATE OR REPLACE VIEW aa.v_funding_by_sector AS
@@ -1012,20 +994,18 @@ VIEWS = {
         GROUP BY ev.kb_framework, ev.event_date, ev.version, ev.country_iso3, ev.hazard,
                  ev.window_name, ev.full_activation, ev.released_usd
     """,
-    # ---- compatibility names (one release): the old table names as views
-    "framework_registry": """
-        CREATE OR REPLACE VIEW aa.framework_registry AS SELECT * FROM aa.country_hazard
-    """,
+    # ---- the pre-window table names as views (the site reads aa.activation and
+    # aa.prearranged_funding)
     "activation": """
         CREATE OR REPLACE VIEW aa.activation AS
         SELECT country_iso3, hazard, 'framework_aa'::text AS event_type, event_date,
-               window_name, event_label, version, NULL::text AS version_match,
+               window_name, event_label, version,
                ch.kb_framework, kb_event_date, people_targeted, reported_to_ahub, comments,
                w.source, w.updated_at
         FROM aa.window_activation w
         LEFT JOIN aa.country_hazard ch USING (country_iso3, hazard)
         UNION ALL
-        SELECT country_iso3, hazard, event_type, event_date, NULL, event_label, NULL, NULL,
+        SELECT country_iso3, hazard, event_type, event_date, NULL, event_label, NULL,
                ch.kb_framework, NULL, people_targeted, reported_to_ahub, comments,
                a.source, a.updated_at
         FROM aa.adhoc_activation a
@@ -1035,7 +1015,7 @@ VIEWS = {
         CREATE OR REPLACE VIEW aa.prearranged_funding AS
         SELECT country_iso3, hazard, year, kind, fund_code, financier, amount_usd,
                NULL::boolean AS identified, NULL::text AS funding_change, note AS remarks,
-               version, provenance AS version_match, source, updated_at, window_name
+               version, source, updated_at, window_name
         FROM aa.window_funding
         WHERE agency IS NULL AND sector IS NULL
     """,
@@ -1109,7 +1089,7 @@ VIEWS = {
             SELECT country_iso3, hazard, version, kind, source,
                    CASE WHEN provenance = 'entered' THEN 0
                         WHEN source LIKE 'kb-%' OR provenance = 'kb' THEN 1
-                        WHEN source LIKE 'yakubu-sector-%' THEN 2
+                        WHEN source LIKE 'cerf-workbook-sector-%' THEN 2
                         ELSE 3 END AS rank_
             FROM aa.window_funding
             WHERE amount_usd IS NOT NULL AND (agency IS NOT NULL OR sector IS NOT NULL)
@@ -1363,54 +1343,7 @@ VIEWS = {
         LEFT JOIN aa.entered_window ew USING (country_iso3, hazard, version, window_name)
     """,
     # activation events vs KB actual_activation: matches + conflicts
-    "v_trk_activation_reconciliation": """
-        CREATE OR REPLACE VIEW aa.v_trk_activation_reconciliation AS
-        WITH funding AS (
-            SELECT country_iso3, hazard, event_date, window_name, event_label,
-                   event_type,
-                   sum(amount_usd) AS total_usd,
-                   string_agg(fund_code || ': ' || coalesce(allocation_code, '?'),
-                              ' + ' ORDER BY fund_code) AS funds,
-                   count(*) AS n_funding_rows
-            FROM aa.activation_funding
-            GROUP BY 1, 2, 3, 4, 5, 6
-        )
-        SELECT act.country_iso3, act.hazard, act.event_date, act.window_name,
-               act.event_label, act.event_type, act.version,
-               act.people_targeted, act.source,
-               f.total_usd AS sheet_total_usd, f.funds, f.n_funding_rows,
-               act.kb_framework, act.kb_event_date,
-               a.released_usd AS kb_released_usd, a.full_activation,
-               CASE
-                   WHEN act.source LIKE 'historical-ocha-web%%'
-                       THEN 'UNVERIFIED_EVIDENCE'
-                   WHEN act.event_type = 'early_action' THEN 'EARLY_ACTION'
-                   WHEN act.event_type = 'adhoc_aa' THEN 'ADHOC_AA'
-                   WHEN act.kb_framework IS NULL THEN 'KB_BACKFILL'
-                   WHEN a.released_usd IS NOT NULL AND f.total_usd IS NOT NULL
-                        AND abs(a.released_usd - f.total_usd) > 1000
-                       THEN 'AMOUNT_CONFLICT'
-                   ELSE 'OK'
-               END AS reconciliation
-        FROM aa.activation act
-        LEFT JOIN funding f USING (country_iso3, hazard, event_date, window_name,
-                                   event_label, event_type)
-        LEFT JOIN aa.actual_activation a
-               ON a.kb_framework = act.kb_framework
-              AND a.event_date = act.kb_event_date
-    """,
     # KB activations with no counterpart in the window activations
-    "v_trk_activation_kb_only": """
-        CREATE OR REPLACE VIEW aa.v_trk_activation_kb_only AS
-        SELECT a.kb_framework, a.event_date, a.country_iso3, a.window_name,
-               a.full_activation, a.released_usd, a.note
-        FROM aa.actual_activation a
-        WHERE NOT EXISTS (
-            SELECT 1 FROM aa.activation e
-            WHERE e.kb_framework = a.kb_framework
-              AND e.kb_event_date = a.event_date
-        )
-    """,
     "v_trk_aa_localization": """
         CREATE OR REPLACE VIEW aa.v_trk_aa_localization AS
         SELECT year, localization,

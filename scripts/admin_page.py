@@ -56,15 +56,20 @@ GROUPS = [
      [*MIRRORS["tables"], *MIRRORS["views"]],
      (f"Copied in {MIRRORS['refresh']} by {MIRRORS['repo']}: the CERF OneGMS feeds, the CBPF "
       f"OData API and its storm and drought matches. {MIRRORS['fix']}")),
-    ("Legacy — pre window-first (read-only history)", "retired", [
-        "zz_legacy_activation", "zz_legacy_prearranged_funding",
-        "zz_legacy_prearranged_sector_budget", "zz_legacy_entered_version_funding"]),
 ]
+
+# tables of ours that were filled once from a file and are not kept up to date (D168)
+IMPORTED = {
+    "cerf_subgrant": ("Imported once, in 2026, from the CERF secretariat's sub-grant workbooks "
+                      "(2020-2025, and the AA projects to June 2026); not refreshed. CERF's data "
+                      "feeds publish no sub-grants, so this is not a mirror; the pooled funds' "
+                      "sub-grants are (cbpf_project_subip)."),
+}
 
 # columns that read better as a textarea
 LONG_TEXT = ("note", "notes", "comment", "comments", "remark", "remarks", "description",
              "narrative", "statement", "title", "summary", "text", "lesson", "objective",
-             "evidence", "key_stat", "frontmatter", "frontmatter_text", "body_md", "triggers",
+             "evidence", "key_stat", "frontmatter", "body_md", "triggers",
              "tiers")
 
 
@@ -78,6 +83,7 @@ def build_admin(page):
             .replace("__TOKEN__", site_token)
             .replace("__GROUPS__", json.dumps(GROUPS))
             .replace("__MIRRORS__", json.dumps(MIRRORS).replace("</", "<\\/"))
+            .replace("__IMPORTED__", json.dumps(IMPORTED))
             .replace("__LONGTEXT__", json.dumps(LONG_TEXT)))
     page("admin.html", "Administration", body)
 
@@ -96,7 +102,7 @@ ADMIN_HTML = r"""
 <script>
 window.PROXY = new URLSearchParams(location.search).get('proxy') || '__PROXY__';
 window.SITE_TOKEN = '__TOKEN__';
-const GROUPS = __GROUPS__, LONG_TEXT = __LONGTEXT__, MIRRORS = __MIRRORS__;
+const GROUPS = __GROUPS__, LONG_TEXT = __LONGTEXT__, MIRRORS = __MIRRORS__, IMPORTED = __IMPORTED__;
 const PAGE = 100;
 // controlled vocabularies: rendered as dropdowns in the change form
 const VOCAB = {
@@ -159,11 +165,12 @@ function mirrorOf(t){
 const canWrite = t => t.writable && !mirrorOf(t);   // never offer to edit a mirror
 // a table of ours named like a mirror one (cerf_subgrant beside cerf_project)
 const looksMirror = t => t.kind==='table' && !mirrorOf(t) && t.owner==='ds-aa-tracking' && /^(cerf|cbpf)_/.test(t.name);
-function ownerLine(t){ return esc(t.owner) + (t.kind==='view'?' · view':'') + (mirrorOf(t)?' · mirror':'') + (looksMirror(t)?' · kept here, not a mirror':''); }
+function ownerLine(t){ return esc(t.owner) + (t.kind==='view'?' · view':'') + (mirrorOf(t)?' · mirror':'') + (Object.hasOwn(IMPORTED, t.name)?' · imported once':looksMirror(t)?' · kept here, not a mirror':''); }
 // why this table (or row) cannot be changed here
 function roNote(t, what){
   const m = mirrorOf(t), under = t.reads_mirror || [];
   if(m) return `<div class='dj-ro dj-mirror'><b>Mirror — read-only.</b> ${esc(m.source)}. Refreshed ${esc(m.refresh)} by <b>${esc(m.repo)}</b>. ${esc(m.fix)}</div>`;
+  if(Object.hasOwn(IMPORTED, t.name)) return `<div class='dj-ro dj-mirror'><b>Imported once, not refreshed.</b> ${esc(IMPORTED[t.name])}</div>`;
   if(t.kind==='view') return `<div class='dj-ro'>Database view — read-only.${under.length ? ` Built on the mirror table${under.length>1?'s':''} ${under.map(n=>`<a href='#${esc(n)}'>${esc(n)}</a>`).join(', ')}, refreshed ${esc(MIRRORS.refresh)} by <b>${esc(MIRRORS.repo)}</b>.` : ''}</div>`;
   if(!t.writable) return `<div class='dj-ro'>Read-only here: owned by <b>${esc(t.owner)}</b>${t.name==='entry_audit'?' (append-only audit trail)':''}.</div>`;
   return `<div class='dj-ro'>Viewing. Log in as editor to change ${what}.</div>`;
@@ -270,7 +277,7 @@ function module(g, owner, ts, note){
   const tags = t => (t.kind==='view'?" <span class='dj-tag'>view</span>":'') +
     (mirrorOf(t) ? " <span class='dj-tag dj-tag-mirror'>mirror</span>" : '') +
     ((t.reads_mirror||[]).length ? " <span class='dj-tag'>built on a mirror</span>" : '') +
-    (looksMirror(t) ? " <span class='dj-tag'>kept here, not a mirror</span>" : '');
+    (Object.hasOwn(IMPORTED, t.name) ? " <span class='dj-tag'>imported once</span>" : looksMirror(t) ? " <span class='dj-tag'>kept here, not a mirror</span>" : '');
   return `<div class='dj-module'><h2>${esc(g)} ${owner?`<span class='dj-owner'>${esc(owner)}</span>`:''}</h2>${note?`<div class='dj-modnote'>${esc(note)}</div>`:''}<table class='dj-modtbl'>` +
     ts.map(t=>`<tr><th><a href='#${t.name}'>${esc(title(t.name))}</a>${tags(t)}</th>
       <td class='dj-n'>${t.n_rows!=null?Number(t.n_rows).toLocaleString():''}</td>

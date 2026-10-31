@@ -29,7 +29,7 @@ import site_i18n as i18n  # noqa: E402  (EN / FR / ES: the team mechanism, KB D8
 from site_i18n import ATTR, T, TB, TF  # noqa: E402
 
 from ds_aa_tracking import schema as trk_schema  # noqa: E402
-from ds_aa_tracking.mirrors import undescribed  # noqa: E402  (D154)
+from ds_aa_tracking.mirrors import MIRRORS, mirror_of, undescribed  # noqa: E402  (D154)
 
 OUT = Path(__file__).parents[1] / "site_build"
 OUT.mkdir(exist_ok=True)
@@ -127,8 +127,8 @@ function dlcsv(id, name) {
 # ---------------------------------------------------------------- two sites, one build
 # The PUBLIC site (shared widely) is the tabs of its header and the framework pages the map
 # opens: nothing else, and no link to anything else. Every other page — the admin, data
-# entry, the tables and review pages, the extra dashboards and explorers, the pages of the
-# pipeline frameworks the map does not show — is the ADMIN site: written to admin/, with its
+# entry, the schema, the pages of the pipeline frameworks the map does not show — is the
+# ADMIN site: written to admin/, with its
 # own header, encrypted with its own password (scripts/publish.sh). The builders do not say
 # which site a page belongs to: page() collects them all and write_site() sorts them once
 # the map is known. An admin page may link to the public site; a public page never links
@@ -177,10 +177,7 @@ NAV_ADMIN = """
    <a href="index.html">All pages</a>
    <a href="admin.html">Data admin</a>
    <a href="entry.html">Data entry</a>
-   <a href="dashboards.html">Dashboards</a>
-   <a href="hierarchy.html">Portfolio explorer</a>
    <a href="schema.html">DB schema</a>
-   <a href="reconciliation.html">Reconciliation</a>
   </nav>
   <a class="tosite" href="../index.html">Public site →</a>
 </header>
@@ -192,26 +189,7 @@ ADMIN_HOME = [
     ("Data", [
         ("admin.html", "browse and edit every table of the tracking database"),
         ("entry.html", "enter or ingest a framework: upload the PDF or fill the form"),
-        ("status.html", "the status form"),
-    ]),
-    ("Dashboards and explorers (not on the public site)", [
-        ("dashboards.html", "the hub: every framework page, with the monitoring calendar"),
-        ("dash-delivery.html", "sub-grants, localisation, agencies, sectors, cash, people reached"),
-        ("dash-allocations.html", "every CERF, Country and Regional Fund allocation since 2006; complementarity; timeliness"),
-        ("dash-donors.html", "each donor's share of AA released / pre-arranged, per donor and fund; build earmarks"),
-        ("hierarchy.html", ""),
-        ("questions.html", ""),
-        ("pillar-model-draft.html", ""),
-    ]),
-    ("Schema and data review", [
-        ("overview.html", "ownership map, portfolio at a glance"),
-        ("schema.html", ""),
-        ("tables.html", ""),
-        ("reconciliation.html", ""),
-        ("review-julia.html", ""), ("review-yakubu.html", ""),
-        ("cerf-mirror.html", ""),
-        ("decisions.html", ""),
-        ("roadmap.html", ""),
+        ("schema.html", "every table and view of the database, with its columns"),
     ]),
 ]
 
@@ -308,8 +286,8 @@ def _admin_home(admin):
     rest = sorted(n for n in admin if n not in listed and not n.startswith(("fw-", "table-")))
     if rest:
         cards.append("<div class='card'><b>Other pages</b><ul class='adm-list'>" + "".join(map(li, rest)) + "</ul></div>")
-    return ("<div class='card'>The admin site: data administration and entry, the internal dashboards "
-            "and explorers, the schema and the review pages. It is not linked from the public site "
+    return ("<div class='card'>The admin site: data administration and entry, the schema, and the "
+            "pages of frameworks the public map does not show. It is not linked from the public site "
             "and has its own password.</div>" + "".join(cards))
 
 
@@ -337,7 +315,7 @@ GUARD_STRICT = os.environ.get("AA_SITE_GUARD", "").strip().lower() == "strict"
 # 'aa.pdf' is not one) or is one of the schema's single-word tables; a column, when given, has one
 # too ('aa.window.html' is a file). Not followed by '.<letter>' (a file name).
 _ONE_WORD_TABLES = sorted({t for names in (trk_schema.TABLES, trk_schema.DURABLE_TABLES,
-                                           trk_schema.LEGACY_TABLES, trk_schema.VIEWS)
+                                           trk_schema.VIEWS)
                            for t in names if "_" not in t} | {"activation", "cirv", "fund", "window"})
 _DB_NAME = (r"(?:aa\.(?:[a-z]+_[a-z_]+|" + "|".join(_ONE_WORD_TABLES) + r")(?:\.[a-z]+_[a-z_]+)?"
             r"|v_[a-z]+(?:_[a-z]+)*)(?!\.?[\w/-])")
@@ -356,7 +334,7 @@ def _code_words():
               dashboards.FUND_TYPE_LABEL, dashboards.DOC_TYPE_LABEL, dict(dashboards.PREMISES),
               landing.SHEET_STATUS_LABEL, dashboards._NOTE_FIELDS)      # _NOTE_FIELDS: the version record's columns
     words = {k: w for v in vocabs for k, w in v.items() if "_" in k}
-    words |= {k: dashboards.VERSION_SOURCE_LABEL[k] for k in ("kb-frontmatter", "sheet-revision", "pa-monorepo")}
+    words |= {k: dashboards.VERSION_SOURCE_LABEL[k] for k in ("pa-monorepo",)}
     words |= {"adhoc aa": dashboards.EVENT_TYPE_LABEL["adhoc_aa"],
               "framework aa": dashboards.EVENT_TYPE_LABEL["framework_aa"],
               "non_aa_mobilised": None, "cerf_secretariat": "CERF secretariat", "rcrc_nat": None,
@@ -672,7 +650,7 @@ NOTES = {
     "country_hazard": "The (country, hazard) pair — the identity everything hangs off: pipeline entries with no version yet, plus descriptive attributes that aren't approved per version (region, language, coordination group) the manual <code>retired</code> flag (a retired framework is hidden from the map whatever its versions say) and <code>technical_support</code> (OCHA supported the framework technically, without a funding commitment). The framework status everyone shows comes from <code>v_framework_lifecycle</code>. Hierarchy: country_hazard → framework_version → window → {window_activation, simulated_activation, window_funding}; ad hoc / early-action allocations attach to the pair (adhoc_activation).",
     "window": "A framework version's trigger windows as BACKTESTED: analysis span (the RP denominator), all-in flag, reported RP/prob. With <code>simulated_activation</code> and <code>version_performance_reported</code> it is the version's backtest. Owned and edited here since 2026-10-05 (entries files with <code>op: replace</code>, this admin page); corrected as errors are found — <code>v_trk_backtest_check</code> lists the rows that break a rule. Written by the KB's loader until then.",
     "simulated_activation": "The years a version's trigger WOULD have fired, per window — never a real activation of the version itself (those are <code>window_activation</code>). Should fall inside the window's analysis span: the KB-era data broke that where real activations were appended (listed by <code>v_trk_backtest_check</code>).",
-    "framework_version": "The unit that actually gets approved: one row per framework version, seeded from KB page frontmatter (incl. superseded/retired versions), the historical sweep of the OCHA AA web page and the pa-anticipatory-action monorepo (<code>source='ocha-web'/'pa-monorepo'</code>, with <code>doc_url</code>/<code>analysis_ref</code>), plus sheet-reported revision dates with no KB page (<code>source='sheet-revision'</code> — a KB completeness gap). Version-specific facts (budgets, sector budgets, coverage, calendar, activations, status) carry a <code>version</code> attribution: direct from the KB for matched activations, otherwise inferred from the version in force at the fact's date (<code>version_match</code>; NULL = no version exists to attribute to). Caveat: figures reported mid-revision may belong to the upcoming version — interval inference can't see that; overrides are a curation pass.",
+    "framework_version": "The unit that actually gets approved: one row per framework version (incl. superseded versions), first recorded from the team's records (<code>source='aa-team'</code>), the historical sweep of the OCHA AA web page and the pa-anticipatory-action monorepo (<code>source='ocha-web'/'pa-monorepo'</code>, with <code>doc_url</code>/<code>analysis_ref</code>), and since then entered here (<code>source='entered'</code>). Version-specific facts (budgets, sector budgets, coverage, calendar, activations, status) carry a <code>version</code>.",
     "framework_status": "Operational lifecycle snapshots from every source sheet, kept side by side (PK includes <code>source</code>). Canonical <code>status</code> vocabulary; raw spelling preserved. This is deliberately distinct from the KB page-status vocabulary.",
     "framework_focal_point": "Focal points by role from the 2026 planning sheet, attributed to the version in force at the snapshot date.",
     "framework_calendar": "Monthly markers recovered from cell <em>colors</em> in the planning sheet: green = trigger window, orange = framework finalization, red = proposal development; 'F' = finalization deadline.",
@@ -699,188 +677,13 @@ NOTES = {
     "trigger_timeline": "When each trigger window of a framework version can activate, on its hazard's clock (the Model page's trigger timelines): storms in hours (<code>h</code>) and floods in days (<code>d</code>) before (−) / after (+) landfall or the flood peak, as a bar <code>lead_from</code> → <code>lead_to</code>; drought as the calendar <code>months</code> a trigger is checked, against the rainy season (<code>season_start</code>, <code>season_len</code>). A leg is a river or a season; <code>seq</code> orders the rows. Read by hand from the framework document and entered through entries files (<code>op: replace</code> per version); only the current version's rows are drawn.",
 }
 
-TABLE_ORDER = list(NOTES)
-
-
 def main():
     e = stratus.get_engine(stage="dev")
-
-    # ---------- per-table pages + tables index
-    cards = []
-    for t in TABLE_ORDER:
-        # a durable table exists only after the one-off `--ensure-schema` run of the nightly
-        # job: until then the snapshot has no copy of it, which is not an error
-        if t in trk_schema.DURABLE_TABLES and pd.read_sql(
-                f"SELECT to_regclass('aa.{t}') AS r", e)["r"].iloc[0] is None:
-            print(f"::warning::aa.{t} is not in the snapshot yet (run the nightly with --ensure-schema)")
-            continue
-        df = pd.read_sql(f"SELECT * FROM aa.{t}", e)
-        df = df.drop(columns=[c for c in ("updated_at",) if c in df.columns])
-        _tblname = t
-        if t == "cerf_application_people":
-            wide = df.pivot_table(
-                index=["application_code", "source", "phase"],
-                columns=["disaggregation", "grp"], values="value", aggfunc="first",
-            )
-            wide.columns = [f"{a}:{b}" for a, b in wide.columns]
-            wide = wide.reset_index()
-            body = (
-                f"<div class='card'>{NOTES[t]}</div>"
-                + "<h2>Pivoted (one row per application × phase)</h2>"
-                + tbl(wide, name=f"aa_{_tblname}_pivot")
-            )
-        else:
-            body = f"<div class='card'>{NOTES[t]}</div>" + tbl(df, name=f"aa_{_tblname}")
-        page(f"table-{t}.html", f"aa.{t}", body)
-        cards.append(
-            f"<div class='card'><span class='badge b-new'>new</span>"
-            f"<a href='table-{t}.html'><b>aa.{t}</b></a>"
-            f" — {len(df):,} rows<br><span class='meta'>{NOTES[t]}</span></div>"
-        )
-    page("tables.html", "Tracking tables (owned by ds-aa-tracking)", "\n".join(cards))
-
-    # ---------- reconciliation page
-    sections = []
-    rec = pd.read_sql(
-        "SELECT * FROM aa.v_trk_activation_reconciliation ORDER BY event_date DESC",
-        e,
-    )
-    counts = rec["reconciliation"].value_counts().to_dict()
-    sections.append(
-        "<div class='card'><b>Activation events: sheets vs KB.</b> "
-        f"{counts.get('OK', 0)} matched · "
-        f"<span class='badge b-warn'>{counts.get('AMOUNT_CONFLICT', 0)} amount conflicts</span>"
-        f"<span class='badge b-kb'>{counts.get('KB_BACKFILL', 0)} accepted, pending KB "
-        "backfill</span>"
-        f"<span class='badge b-warn'>{counts.get('UNVERIFIED_EVIDENCE', 0)} unverified "
-        "evidence</span>"
-        f"{counts.get('ADHOC_AA', 0)} ad-hoc AA · {counts.get('EARLY_ACTION', 0)} early "
-        "action. ADJUDICATION POLICY: the sheets are assumed correct wherever the KB "
-        "is simply silent — those rows are a KB-backfill queue, not conflicts. Only "
-        "actual value conflicts (AMOUNT_CONFLICT) and weakly-evidenced sweep items "
-        "(UNVERIFIED_EVIDENCE) need a human call. Amounts compare at activation "
-        "level (multi-fund events sum their funding rows). "
-        "Per your call, no KB pages have been edited — adjudicate here first.</div>"
-    )
-    sections.append(
-        "<h2>Actual conflicts & unverified items</h2>"
-        + tbl(rec[rec["reconciliation"].isin(["AMOUNT_CONFLICT", "UNVERIFIED_EVIDENCE"])])
-    )
-    backfill = pd.read_sql(
-        """SELECT country_iso3, hazard, event_date, event_type, window_name,
-                  people_targeted, source FROM aa.v_trk_activation_reconciliation
-           WHERE reconciliation = 'KB_BACKFILL' ORDER BY event_date DESC""", e)
-    vgap2 = pd.read_sql(
-        """SELECT country_iso3, hazard, version, doc_url, source
-           FROM aa.framework_version WHERE source IN ('ocha-web','pa-monorepo')
-           ORDER BY country_iso3""", e)
-    sections.append(
-        "<h2>KB backfill queue (accepted — the KB just doesn't have it yet)</h2>"
-        "<p class='meta'>Per the adjudication policy these are treated as correct in "
-        "this DB; they become KB PRs (framework-page activations + version pages) "
-        "when convenient.</p>"
-        + tbl(backfill)
-        + "<h3>Historical framework versions with no KB page</h3>" + tbl(vgap2)
-    )
-    backfill = pd.read_sql(
-        """SELECT country_iso3, hazard, event_date, event_type, window_name,
-                  people_targeted, source FROM aa.v_trk_activation_reconciliation
-           WHERE reconciliation = 'KB_BACKFILL' ORDER BY event_date DESC""", e)
-    vgap2 = pd.read_sql(
-        """SELECT country_iso3, hazard, version, doc_url, source
-           FROM aa.framework_version WHERE source IN ('ocha-web','pa-monorepo')
-           ORDER BY country_iso3""", e)
-    sections.append(
-        "<h2>KB backfill queue (accepted — the KB just doesn't have it yet)</h2>"
-        "<p class='meta'>Per the adjudication policy these are treated as correct in "
-        "this DB; they become KB PRs (framework-page activations + version pages) "
-        "when convenient.</p>"
-        + tbl(backfill)
-        + "<h3>Historical framework versions with no KB page</h3>" + tbl(vgap2)
-    )
-    kb_only = pd.read_sql("SELECT * FROM aa.v_trk_activation_kb_only", e)
-    sections.append(
-        "<h2>KB activations with no sheet counterpart</h2>"
-        "<p class='meta'>Mostly pre-2020 pilots, partial-window triggers, and "
-        "multi-country frameworks recorded differently — worth an explicit pass.</p>"
-        + tbl(kb_only)
-    )
-    flags = pd.read_sql("SELECT * FROM aa.v_trk_aa_flag_reconciliation", e)
-    sections.append(
-        "<h2>AA flag: OneGMS reported vs mirror keyword heuristic</h2>"
-        "<p class='meta'>The mirror derives <code>aa_keyword</code> from titles; OneGMS "
-        "now reports a structured flag (in <code>aa.cerf_allocation_extra</code>). "
-        "Disagreements below.</p>" + tbl(flags)
-    )
-    sections.append(
-        "<p class='meta'>Pre-arranged funding and people-covered source pivots live "
-        "on the per-person pages (<a href='review-julia.html'>Julia</a> / "
-        "<a href='review-yakubu.html'>Yakubu</a>) — not duplicated here.</p>")
-    page("reconciliation.html", "Reconciliation — sheets vs KB vs mirror",
-         "\n".join(sections))
-
-    # ---------- CERF mirror page
-    sections = []
-    sections.append(
-        "<div class='card'><span class='badge b-mirror'>mirror</span>"
-        "The OneGMS mirror (<code>ds-cerf-supplement</code>) gained full project-level "
-        "tables in Aug 2026 — <code>aa.cerf_project</code>, "
-        "<code>aa.cerf_project_sector</code>, <code>aa.cerf_project_country</code> — "
-        "which the KB only partially documents (the ERD shows ~7 of 48 project columns; "
-        "sector taxonomy columns and lifecycle dates are undocumented). NEW (Aug 2026): "
-        "the <b>Country and Regional Fund mirror</b> — <code>aa.cbpf_allocation</code> (one row "
-        "per Standard/Reserve allocation envelope; a set of approved projects), "
-        "<code>aa.cbpf_fund</code>, the fund-agnostic union view "
-        "<code>aa.v_allocation</code>, and project-level tables: "
-        "<code>aa.cbpf_project</code> (one row per project = a grant to ONE "
-        "implementing partner — unlike CERF, NGOs incl. NNGOs receive Country and Regional Fund projects "
-        "directly), <code>aa.cbpf_project_cluster</code> (sector splits) and "
-        "<code>aa.cbpf_project_subip</code> (sub-implementing partners) — all "
-        "refreshed daily by the same workflow. Summary below; "
-        "the new tracking tables link to these via "
-        "<code>application_code</code>/<code>project_code</code>.</div>"
-    )
-    for t, q in [
-        ("cbpf_allocation", "SELECT year, count(*) n_allocations, sum(CASE WHEN aa_keyword THEN 1 ELSE 0 END) n_aa_keyword, sum(approved_budget) approved_budget FROM aa.cbpf_allocation GROUP BY year ORDER BY year"),
-        ("cbpf_allocation (AA-keyword rows)", "SELECT a.year, f.name AS fund, a.allocation_source, a.title, a.approved_budget, a.planned_usd FROM aa.cbpf_allocation a LEFT JOIN aa.cbpf_fund f ON f.pf_id=a.pooled_fund_id WHERE a.aa_keyword ORDER BY a.year DESC"),
-        ("cbpf_fund", "SELECT pf_id, name, abbrv, country_code_iso2, parent_pf_id FROM aa.cbpf_fund ORDER BY name"),
-        ("cbpf_project", "SELECT allocation_year, count(*) n_projects, count(DISTINCT org_name) n_orgs, sum(budget) budget, sum(CASE WHEN org_type='National NGO' THEN budget ELSE 0 END) budget_nngo FROM aa.cbpf_project GROUP BY 1 ORDER BY 1"),
-        ("cbpf_project (org types)", "SELECT org_type, count(*) n_projects, sum(budget) budget FROM aa.cbpf_project GROUP BY 1 ORDER BY budget DESC NULLS LAST"),
-        ("cbpf_project_subip", "SELECT count(*) n_rows, count(DISTINCT subip_name) n_partners, count(DISTINCT chf_project_code) n_projects, sum(subip_amount) known_amounts FROM aa.cbpf_project_subip"),
-        ("v_allocation", "SELECT fund_type, count(*) n, sum(CASE WHEN is_aa THEN 1 ELSE 0 END) n_aa, sum(amount_usd) amount_usd FROM aa.v_allocation GROUP BY fund_type"),
-        ("cerf_allocation", "SELECT year, count(*) n_allocations, sum(CASE WHEN aa_keyword THEN 1 ELSE 0 END) n_aa_keyword, sum(amount_approved) amount_approved FROM aa.cerf_allocation GROUP BY year ORDER BY year"),
-        ("cerf_project", "SELECT year, count(*) n_projects, count(DISTINCT application_code) n_applications, sum(amount_approved) amount_approved FROM aa.cerf_project GROUP BY year ORDER BY year"),
-        ("cerf_project_sector", "SELECT cerf_sector_name, count(*) n, sum(sector_amount) amount FROM aa.cerf_project_sector GROUP BY 1 ORDER BY amount DESC NULLS LAST"),
-        ("cerf_project_country", "SELECT count(*) n_rows, count(DISTINCT project_code) n_projects, count(DISTINCT country_iso3) n_countries FROM aa.cerf_project_country"),
-    ]:
-        df = pd.read_sql(q, e)
-        sections.append(f"<h2>aa.{t}</h2>" + tbl(df, max_rows=200))
-    cols = pd.read_sql(
-        """SELECT table_name, column_name, data_type
-           FROM information_schema.columns
-           WHERE table_schema='aa' AND table_name IN
-                 ('cerf_project','cerf_project_sector','cerf_project_country')
-           ORDER BY table_name, ordinal_position""",
-        e,
-    )
-    sections.append(
-        "<h2>Full column inventory (not yet in the KB ERD)</h2>" + tbl(cols, 300)
-    )
-    page("cerf-mirror.html", "CERF OneGMS mirror — new content", "\n".join(sections))
-
-    # ---------- decisions page
-    page("decisions.html", "Source workbooks — sheet-by-sheet decisions", DECISIONS)
 
     # ---------- schema page
     build_schema_page(e)
 
-    # ---------- per-person review pages
-    build_person_pages(e)
-
-    # ---------- roadmap
-    build_roadmap_page()
-
-    # ---------- dashboards + per-framework pages
+    # ---------- the site's pages
     import dashboards
     dashboards.build_all(e, page, tbl)
     import admin_page
@@ -894,521 +697,12 @@ def main():
     import page_accessibility
     page_accessibility.build(page)
 
-    # ---------- index
-    reg = pd.read_sql("SELECT * FROM aa.v_trk_framework_current ORDER BY country_name", e)
-    n_active = int((reg["lifecycle"] == "active").sum())   # aa.v_framework_lifecycle
-    idx = f"""
-<div class='card'>
-<b>What this is.</b> The expanded <code>aa</code> schema in the dev DB now covers all
-the tracking done in Julia's and Yakubu's spreadsheets, crosswalked to the existing
-KB trigger-performance tables and the CERF OneGMS mirror. This site shows every new
-table's full contents plus the conflicts that need your adjudication. Once reviewed,
-the DB becomes the single authoritative source and the sheets can be retired.
-</div>
-<div class='card'>
-<b>Ownership map</b> (single writer per table, schema <code>aa</code>):<br>
-<span class='badge b-new'>ds-aa-tracking (this repo; since 2026-10-05 also the KB-era tables below)</span>
-country_hazard · framework_version · framework_status · framework_focal_point ·
-framework_calendar · fund ·
-window_funding · window_funding · people_covered · activation ·
-activation_funding · report_channel_inclusion · plan_inclusion · start_network · cirv · cerf_subgrant ·
-cerf_application_people · cerf_application_report · cerf_allocation_extra ·
-cerf_project_supplement · cerf_cva_history · emergency_type_override<br>
-<span class='badge b-new'>ds-aa-tracking, from the KB loaders</span>
-window · simulated_activation · version_performance_reported (framework_version_map = compat view) — the backtests ·
-funding_breakdown · actual_activation · activation_allocation — frozen<br>
-<span class='badge b-mirror'>ds-cerf-supplement</span>
-cerf_allocation · cerf_project · cerf_project_sector · cerf_project_country ·
-cerf_allocation_storm · cerf_supplement
-</div>
-<h2>Portfolio at a glance ({n_active} active · {int((reg["lifecycle"] == "updating").sum())} being updated · {int((reg["lifecycle"] == "development").sum())} in development, of {len(reg)} tracked pairs)</h2>
-{tbl(reg)}
-"""
-    page("overview.html", "AA tracking — schema & data review", idx)
     write_site()
     import figure_check
     figure_check.check()      # the figures shown on more than one page agree
     i18n.report_missing()
 
 
-def _latest_status_pivot(e, since="2025-12-01"):
-    """Latest status per (framework, source) for recent snapshots; conflict-flagged."""
-    st = pd.read_sql(
-        f"""SELECT DISTINCT ON (country_iso3, hazard, source)
-                   country_iso3, hazard, source, status, as_of
-            FROM aa.framework_status WHERE as_of >= '{since}'
-            ORDER BY country_iso3, hazard, source, as_of DESC""",
-        e,
-    )
-    st["cell"] = st["status"] + " (" + st["as_of"].astype(str) + ")"
-    piv = st.pivot_table(index=["country_iso3", "hazard"], columns="source",
-                         values="cell", aggfunc="first")
-    nuniq = st.groupby(["country_iso3", "hazard"])["status"].nunique()
-    piv["n_distinct_statuses"] = nuniq
-    return piv.reset_index()
-
-
-def _prearranged_pivot(e):
-    pre = pd.read_sql(
-        """SELECT country_iso3, hazard, year, source, amount_usd
-           FROM aa.zz_legacy_prearranged_funding
-           WHERE kind = 'prearranged' AND fund_code = 'cerf'""",
-        e,
-    )
-    piv = pre.pivot_table(index=["country_iso3", "hazard", "year"], columns="source",
-                          values="amount_usd", aggfunc="first")
-    piv["n_distinct_amounts"] = piv.apply(lambda r: r.dropna().nunique(), axis=1)
-    return piv.reset_index()
-
-
-def _covered_pivot(e):
-    cov = pd.read_sql("SELECT * FROM aa.people_covered", e)
-    piv = cov.pivot_table(index=["country_iso3", "hazard"], columns="source",
-                          values="people_covered", aggfunc="first")
-    piv["n_distinct_values"] = piv.apply(lambda r: r.dropna().nunique(), axis=1)
-    return piv.reset_index()
-
-
-def _conflict_rows(piv, person, count_col):
-    """Rows where sources disagree and this person's sheets contributed a value."""
-    p_cols = [c for c in piv.columns if str(c).startswith(f"{person}-")]
-    if not p_cols:
-        return piv.iloc[0:0]
-    has_p = piv[p_cols].notna().any(axis=1)
-    return piv[(piv[count_col] > 1) & has_p]
-
-
-def _version_issues(e, person):
-    """Version-attribution uncertainties on this person's facts."""
-    fv = pd.read_sql(
-        "SELECT country_iso3, hazard, version, kb_status FROM aa.framework_version", e
-    )
-    fw_with_versions = set(zip(fv["country_iso3"], fv["hazard"]))
-    dev = fv[fv["kb_status"] == "development"]
-    dev_versions = set(zip(dev["country_iso3"], dev["hazard"], dev["version"]))
-    specs = {
-        "framework_status": ("as_of::text AS fact_date", "status AS detail"),
-        "framework_calendar": ("as_of::text AS fact_date",
-                               "phase || ' m' || month AS detail"),
-        "people_covered": ("as_of::text AS fact_date",
-                           "people_covered::text AS detail"),
-        "prearranged_funding": ("year::text AS fact_date",
-                                "kind || ' ' || COALESCE(fund_code, financier, 'cofinancing') || ' $' || COALESCE(amount_usd::text,'?') AS detail"),
-        "zz_legacy_prearranged_sector_budget": ("year_label AS fact_date",
-                                      "agency || ' / ' || sector || ' $' || COALESCE(amount_usd::text,'?') AS detail"),
-        "activation": ("event_date AS fact_date",
-                       "event_type || ' / window ' || COALESCE(window_name,'-') AS detail"),
-    }
-    frames = []
-    for t, (datecol, detailcol) in specs.items():
-        df = pd.read_sql(
-            f"""SELECT '{t}' AS "table", country_iso3, hazard, {datecol}, {detailcol},
-                       source, version, version_match
-                FROM aa.{t} WHERE source LIKE '{person}-%%'""",
-            e,
-        )
-        frames.append(df)
-    facts = pd.concat(frames, ignore_index=True)
-    issues = []
-    for _, r in facts.iterrows():
-        key = (r["country_iso3"], r["hazard"])
-        if r["version_match"] == "auto-post-validity":
-            issue = ("dated after the attributed version's validity — belongs to a "
-                     "newer/upcoming version?")
-        elif pd.isna(r["version"]) and key in fw_with_versions:
-            issue = "no version covers this date (predates first known version?)"
-        elif (pd.notna(r["version"])
-              and (r["country_iso3"], r["hazard"], r["version"]) in dev_versions):
-            issue = "attributed to an in-development version — confirm"
-        else:
-            continue
-        issues.append({**r, "issue": issue})
-    return pd.DataFrame(issues)
-
-
-def build_person_pages(e):
-    people = {
-        "julia": "Julia — sheet reconciliation queue",
-        "yakubu": "Yakubu — sheet reconciliation queue",
-    }
-    status_piv = _latest_status_pivot(e)
-    pre_piv = _prearranged_pivot(e)
-    cov_piv = _covered_pivot(e)
-
-    for person, title in people.items():
-        sections = [
-            "<div class='card'>Everything on this page traces back to "
-            f"<b>{person.title()}'s</b> workbooks: places where they disagree with the "
-            "KB, the CERF mirror, the other tracking sheets, or where a fact can't be "
-            "confidently attributed to a framework version. Each table is a queue — "
-            "the answer is either 'the sheet is right' (we fix the KB/mirror), 'the "
-            "other source is right' (we correct at ingestion), or a version override."
-        ]
-        if person == "julia":
-            sections[0] += (
-                " Sources: 2026 planning, 2024/2025 AA reporting, 2026 GHO, "
-                "activations 2020–2026.</div>"
-            )
-        else:
-            sections[0] += (
-                " Sources: CERF AA Data (Jun 2026), subgrant data, displacement/GMS "
-                "exports, March 2026 allocation analysis.</div>"
-            )
-
-        st = _conflict_rows(status_piv, person, "n_distinct_statuses")
-        sections.append(
-            "<h2>Framework status: recent snapshots disagree</h2>"
-            "<p class='meta'>Latest status per source since Dec 2025. Some differences "
-            "are genuine evolution (a framework endorsed between two snapshot dates); "
-            "the rest need one answer.</p>" + tbl(st)
-        )
-        pre = _conflict_rows(pre_piv, person, "n_distinct_amounts")
-        sections.append(
-            "<h2>Pre-arranged CERF funding: sources disagree</h2>"
-            "<p class='meta'>Per framework and year, CERF-only amounts (fund-source "
-            "totals are compared separately on the Reconciliation page). Timing "
-            "explains some (a top-up between snapshots) — confirm which figure is "
-            "authoritative per year.</p>" + tbl(pre)
-        )
-        cov = _conflict_rows(cov_piv, person, "n_distinct_values")
-        sections.append(
-            "<h2>People covered: sources disagree</h2>"
-            "<p class='meta'>e.g. Afghanistan drought appears as 769,000 (2025 "
-            "reporting), 392,816 (Jun 2026 CERF sheet) and 257,996 (2025 baseline) — "
-            "which is the number to carry?</p>" + tbl(cov)
-        )
-        vi = _version_issues(e, person)
-        sections.append(
-            "<h2>Version attribution to confirm</h2>"
-            "<p class='meta'>Facts from these sheets whose framework-version "
-            "attribution is uncertain. Key cases: figures reported while a framework "
-            "was under revision may describe the <em>upcoming</em> version, not the "
-            "one in force.</p>" + tbl(vi)
-        )
-
-        if person == "julia":
-            rec = pd.read_sql(
-                """SELECT * FROM aa.v_trk_activation_reconciliation
-                   WHERE reconciliation IN ('AMOUNT_CONFLICT', 'UNVERIFIED_EVIDENCE')
-                   ORDER BY reconciliation, event_date DESC""",
-                e,
-            )
-            sections.append(
-                "<h2>Activations: remaining conflicts</h2>"
-                "<p class='meta'>Your list is treated as correct wherever the KB was "
-                "silent (all such records are now IN the KB). What remains is "
-                "genuine value disagreement — currently one: the 2020 Bangladesh "
-                "activation, your $5.2M vs CERF's itemized $5,339,084 "
-                "(FAO 500k + WFP 4.25M + UNFPA 589,084; the 5.2M appears to be the "
-                "rounded public figure).</p>" + tbl(rec)
-            )
-            kb_only = pd.read_sql("SELECT * FROM aa.v_trk_activation_kb_only", e)
-            if not kb_only.empty:
-                sections.append(
-                    "<h2>KB activations missing from your list</h2>" + tbl(kb_only))
-            vgap = pd.read_sql(
-                "SELECT * FROM aa.framework_version WHERE source='sheet-revision'", e
-            )
-            if not vgap.empty:
-                sections.append(
-                    "<h2>Revisions you reported with no KB version page</h2>"
-                    + tbl(vgap))
-        else:
-            flags = pd.read_sql("SELECT * FROM aa.v_trk_aa_flag_reconciliation", e)
-            sections.append(
-                "<h2>'Is AA' flag: your OneGMS export vs the mirror heuristic</h2>"
-                "<p class='meta'>The mirror flags AA allocations from title keywords; "
-                "your export carries OneGMS's structured flag. Which is right for "
-                "these?</p>" + tbl(flags)
-            )
-            retag = pd.read_sql(
-                """SELECT o.application_code, o.country_name, o.initial_type,
-                          o.actual_type, o.storm_name,
-                          c.emergency_type AS mirror_current_type,
-                          s.not_tc AS mirror_not_tc
-                   FROM aa.emergency_type_override o
-                   LEFT JOIN aa.cerf_allocation c USING (application_code)
-                   LEFT JOIN aa.cerf_supplement s USING (application_code)
-                   ORDER BY o.application_code""",
-                e,
-            )
-            sections.append(
-                "<h2>Retagged allocations vs the mirror</h2>"
-                "<p class='meta'>Your re-tags next to what the OneGMS mirror "
-                "currently says (and the storm-matcher's <code>not_tc</code> where "
-                "set). Rows where <code>mirror_current_type</code> still equals the "
-                "initial tag are uncorrected upstream; blank mirror columns = "
-                "application code not found in the mirror (code format worth "
-                "checking).</p>" + tbl(retag)
-            )
-            sect = pd.read_sql(
-                """SELECT * FROM aa.zz_legacy_prearranged_sector_budget
-                   WHERE year_label IS NULL
-                      OR year_label NOT IN ('Prearranged', '2025', '2026')""",
-                e,
-            )
-            sections.append(
-                "<h2>Sector budgets with unclear year labels</h2>"
-                "<p class='meta'>The 'Year' column in Sector Data - Pre-arranged "
-                "includes notes like “Think these are the info from old info” — "
-                "which framework version do these rows describe?</p>" + tbl(sect)
-            )
-            grain = pd.read_sql(
-                """SELECT country_name, agency, emergency_type, year, n_source_rows,
-                          amount_approved_usd, cva_usd, people_receiving_cash
-                   FROM aa.cerf_cva_history WHERE n_source_rows > 1
-                   ORDER BY n_source_rows DESC""",
-                e,
-            )
-            sections.append(
-                "<h2>CVA data grain check</h2>"
-                "<p class='meta'>Your Disbursement+CVA sheet has no project codes, so "
-                "rows were aggregated to country × agency × emergency × year. "
-                "Rows below collapsed multiple sheet rows (n_source_rows) — confirm "
-                "summing was right (e.g. repeat activations in one year).</p>"
-                + (tbl(grain) if not grain.empty
-                   else "<p class='meta'>none — every combination was already "
-                        "unique ✓</p>")
-            )
-        page(f"review-{person}.html", title, "\n".join(sections))
-
-
-TARGET_STYLE = {
-    "new": ("#e3f1e6", "#1c6b31"),
-    "kb": ("#e8e8f8", "#3b3b8f"),
-    "mirror": ("#fdf1dc", "#8a5c0a"),
-    "future": ("#eeeeee", "#555555"),
-    "ext": ("#e8f4f8", "#0b6079"),
-}
-
-TARGET_NODES = [
-    ("fund", "new", "fund_code — OCHA pooled funds only"),
-    ("country_hazard", "new", "country_iso3 · hazard (identity only)"),
-    ("framework_version", "new", "+ version — THE unified registry"),
-    ("version_performance_reported", "new", "gsheet_tab · excel_fv · *_reported"),
-    ("window", "new", "+ window_name · basis · trigger_statement"),
-    ("v_version_funding", "future", "window × fund_code × agency × sector"),
-    ("window_activation", "new", "+ event_date (partial ISO → datetime) · event_label"),
-    ("activation_funding", "new", "+ fund_code · allocation_code · amount"),
-    ("cerf_allocation", "mirror", "application_code"),
-    ("cbpf_allocation", "mirror", "pooled_fund_id · allocation_type_id"),
-    ("v_allocation", "future", "fund_code · allocation_code (union view)"),
-]
-
-TARGET_EDGES = [
-    ("framework_version", "country_hazard", "", "many", "one", False),
-    ("version_performance_reported", "framework_version", "", "one0", "one", False),
-    ("window", "framework_version", "min 1 per version (single-window explicit)", "many", "one", False),
-    ("v_version_funding", "window", "window x fund x agency x sector", "many", "one", False),
-    ("v_version_funding", "fund", "fund_code", "many", "one", False),
-    ("window_activation", "window", "NOT NULL for framework_aa; null for adhoc/EA", "many0", "one0", False),
-    ("activation_funding", "window_activation", "", "many", "one", False),
-    ("activation_funding", "fund", "fund_code", "many", "one", False),
-    ("activation_funding", "v_allocation", "allocation_code", "many0", "one0", False),
-    ("cerf_allocation", "v_allocation", "", "one0", "one", False),
-    ("cbpf_allocation", "v_allocation", "", "one0", "one", False),
-]
-
-
-TARGET_FULL_NODES = [
-    ("fund", "new", "fund_code — OCHA pooled funds only"),
-    ("country_hazard", "new", "country_iso3 · hazard (identity only)"),
-    ("framework_version", "new", "+ version = an ENDORSED doc · endorsed_by"),
-    ("version_performance_reported", "new", "gsheet_tab · excel_fv · *_reported"),
-    ("window", "new", "+ window_name · basis · trigger_statement"),
-    ("window_month", "future", "+ month (monitoring period)"),
-    ("version_funding", "future", "window × fund × agency × sector · provenance"),
-    ("prearranged_commitment", "new", "= window_funding (fund_code/financier built)"),
-    ("people_covered", "new", "window-attached · as_of · source"),
-    ("simulated_activation", "new", "+ window_name · event_year"),
-    ("framework_status", "new", "observed snapshots (vs v_expected_status)"),
-    ("framework_focal_point", "new", "+ role · person · as_of"),
-    ("report_channel_inclusion", "new", "report_year · channel"),
-    ("window_activation", "new", "built — KB-table unification pending (phase 6)"),
-    ("activation_funding", "new", "+ fund_code · allocation_code · amount"),
-    ("cerf_allocation", "mirror", "application_code"),
-    ("cbpf_allocation", "mirror", "pooled_fund_id · allocation_type_id"),
-    ("v_allocation", "mirror", "union view: fund_code · allocation_code"),
-    ("cerf_supplement", "mirror", "corrections incl. absorbed retags"),
-    ("cerf_allocation_extra", "new", "application_code"),
-    ("cerf_application_people", "new", "application_code · phase · grp"),
-    ("cerf_application_report", "new", "application_code"),
-    ("cerf_project", "mirror", "project_code"),
-    ("cerf_project_sector", "mirror", "project_code + sector"),
-    ("cerf_project_country", "mirror", "project_code · country_iso3"),
-    ("cerf_project_supplement", "new", "project_code"),
-    ("cerf_subgrant", "new", "project_code · partner_name"),
-    ("cerf_allocation_storm", "mirror", "application_code · sid"),
-    ("ibtracs_storms", "ext", "sid — storms schema"),
-    ("cbpf_allocation", "mirror", "pooled_fund_id · allocation_type_id"),
-    ("cbpf_fund", "mirror", "pf_id (pooled funds incl. RhPF)"),
-    ("cbpf_project", "mirror", "chf_project_code — one implementing partner"),
-    ("cbpf_project_cluster", "mirror", "+ cluster"),
-    ("cbpf_project_subip", "mirror", "+ subip_name (sub-grants)"),
-    ("v_allocation", "mirror", "union view: fund · allocation_code"),
-]
-
-TARGET_FULL_EDGES = [
-    ("framework_version", "country_hazard", "", "many", "one", False),
-    ("version_performance_reported", "framework_version", "", "one0", "one", False),
-    ("window", "framework_version", "", "many", "one", False),
-    ("window_month", "window", "", "many", "one", False),
-    ("version_funding", "window", "", "many", "one", False),
-    ("version_funding", "fund", "", "many", "one", False),
-    ("prearranged_commitment", "framework_version", "", "many", "one", False),
-    ("prearranged_commitment", "fund", "null for cofinancing (financier text)", "many0", "one0", False),
-    ("people_covered", "window", "", "many0", "one0", False),
-    ("simulated_activation", "window", "", "many", "one", False),
-    ("framework_status", "framework_version", "", "many0", "one0", False),
-    ("framework_focal_point", "framework_version", "", "many0", "one0", False),
-    ("report_channel_inclusion", "framework_version", "", "many0", "one0", False),
-    ("window_activation", "window", "NOT NULL for framework_aa; null for adhoc/EA", "many0", "one0", False),
-    ("activation_funding", "window_activation", "", "many", "one", False),
-    ("activation_funding", "fund", "", "many", "one", False),
-    ("activation_funding", "v_allocation", "", "many0", "one0", False),
-    ("cerf_allocation", "v_allocation", "", "one0", "one", False),
-    ("cbpf_allocation", "v_allocation", "", "one0", "one", False),
-    ("cerf_supplement", "cerf_allocation", "", "one0", "one", False),
-    ("cerf_allocation_extra", "cerf_allocation", "", "one0", "one0", False),
-    ("cerf_application_people", "cerf_allocation", "", "many", "one0", False),
-    ("cerf_application_report", "cerf_allocation", "", "one0", "one0", False),
-    ("cerf_allocation_storm", "cerf_allocation", "", "many", "one", False),
-    ("cerf_allocation_storm", "ibtracs_storms", "sid (m:n via link table)", "many", "one", False),
-    ("cbpf_allocation", "cbpf_fund", "pooled_fund_id", "many", "one", False),
-    ("cbpf_project", "cbpf_allocation", "pooled_fund_id + allocation_type_id", "many0", "one0", False),
-    ("cbpf_project_cluster", "cbpf_project", "", "many", "one", False),
-    ("cbpf_project_subip", "cbpf_project", "", "many", "one", False),
-    ("cerf_allocation", "v_allocation", "", "one0", "one", False),
-    ("cbpf_allocation", "v_allocation", "", "one0", "one", False),
-
-    ("cerf_project", "cerf_allocation", "", "many0", "one0", False),
-    ("cerf_project_sector", "cerf_project", "", "many", "one", False),
-    ("cerf_project_country", "cerf_project", "", "many", "one", False),
-    ("cerf_project_supplement", "cerf_project", "", "one0", "one", False),
-    ("cerf_subgrant", "cerf_project", "", "many0", "one0", False),
-]
-
-TARGET_COUNTRY_NODES = [
-    ("plan_inclusion", "new", "country_iso3 · year · source"),
-    ("start_network", "new", "country_iso3 · as_of"),
-    ("cirv", "new", "country_iso3 · year"),
-    ("cerf_cva_history", "new", "country · agency · type · year"),
-]
-
-
-def _target_erd(nodes, edges, country_nodes=None, name="target"):
-    import shutil
-    import subprocess
-
-    dot_bin = shutil.which("dot") or "/opt/homebrew/bin/dot"
-    tail = {"many": "crowtee", "many0": "crowodot", "one0": "teeodot"}
-    head = {"one": "teetee", "one0": "teeodot"}
-    lines = [
-        f"digraph {name} {{",
-        '  rankdir=RL; splines=true;',
-        '  graph [fontname="Helvetica", pad="0.3", nodesep=0.3, ranksep=1.15];',
-        '  node [shape=none, fontname="Helvetica", fontsize=11];',
-        '  edge [fontname="Helvetica", fontsize=8.5, color="#8a97a8",'
-        ' fontcolor="#5a6675", dir=both, arrowsize=0.7];',
-    ]
-    for n, owner, keys in nodes:
-        bg, fg = TARGET_STYLE[owner]
-        lines.append(
-            f'  {n} [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">'
-            f'<tr><td bgcolor="{bg}"><font color="{fg}"><b>{n}</b></font></td></tr>'
-            f'<tr><td bgcolor="white"><font point-size="9" color="#444">{keys}</font></td></tr>'
-            f"</table>>];"
-        )
-    if country_nodes:
-        lines.append('  subgraph cluster_country {')
-        lines.append('    label="country-level context (join on country_iso3 only)";')
-        lines.append('    fontname="Helvetica"; fontsize=10; color="#c8d2dc"; style=dashed;')
-        for n, owner, keys in country_nodes:
-            bg, fg = TARGET_STYLE[owner]
-            lines.append(
-                f'    {n} [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">'
-                f'<tr><td bgcolor="{bg}"><font color="{fg}"><b>{n}</b></font></td></tr>'
-                f'<tr><td bgcolor="white"><font point-size="9" color="#444">{keys}</font></td></tr>'
-                f"</table>>];"
-            )
-        lines.append("  }")
-    for child, parent, label, ccard, pcard, fk in edges:
-        attrs = [f'arrowtail="{tail[ccard]}"', f'arrowhead="{head[pcard]}"',
-                 "style=dashed"]
-        if label:
-            attrs.append(f'label="{label}"')
-        lines.append(f"  {child} -> {parent} [{' '.join(attrs)}];")
-    lines.append("}")
-    svg = subprocess.run([dot_bin, "-Tsvg"], input="\n".join(lines).encode(),
-                         capture_output=True, check=True).stdout.decode()
-    svg = svg[svg.index("<svg"):]
-    return svg.replace("<svg ", "<svg style='max-width:100%;height:auto' ", 1)
-
-
-def build_target_erd():
-    import shutil
-    import subprocess
-
-    dot_bin = shutil.which("dot") or "/opt/homebrew/bin/dot"
-    lines = [
-        "digraph target {",
-        '  rankdir=RL; splines=true;',
-        '  graph [fontname="Helvetica", pad="0.3", nodesep=0.35, ranksep=1.1];',
-        '  node [shape=none, fontname="Helvetica", fontsize=11];',
-        '  edge [fontname="Helvetica", fontsize=8.5, color="#8a97a8",'
-        ' fontcolor="#5a6675", dir=both, arrowsize=0.7];',
-    ]
-    for name, owner, keys in TARGET_NODES:
-        bg, fg = TARGET_STYLE[owner]
-        lines.append(
-            f'  {name} [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">'
-            f'<tr><td bgcolor="{bg}"><font color="{fg}"><b>{name}</b></font></td></tr>'
-            f'<tr><td bgcolor="white"><font point-size="9" color="#444">{keys}</font></td></tr>'
-            f"</table>>];"
-        )
-    for child, parent, label, ccard, pcard, fk in TARGET_EDGES:
-        tail = {"many": "crowtee", "many0": "crowodot", "one0": "teeodot"}
-        head = {"one": "teetee", "one0": "teeodot"}
-        attrs = [f'arrowtail="{tail[ccard]}"', f'arrowhead="{head[pcard]}"',
-                 "style=dashed"]
-        if label:
-            attrs.append(f'label="{label}"')
-        lines.append(f"  {child} -> {parent} [{' '.join(attrs)}];")
-    lines.append("}")
-    svg = subprocess.run([dot_bin, "-Tsvg"], input="\n".join(lines).encode(),
-                         capture_output=True, check=True).stdout.decode()
-    svg = svg[svg.index("<svg"):]
-    return svg.replace("<svg ", "<svg style='max-width:100%;height:auto' ", 1)
-
-
-def build_roadmap_page():
-    import markdown as md
-
-    design = (Path(__file__).parents[1] / "DESIGN.md").read_text()
-    body_html = md.markdown(design, extensions=["tables", "fenced_code"])
-    erd = build_target_erd()
-    body = (
-        LEGEND_CARD.format(svg=build_erd_legend())
-        + "<div class='card'><b>Complete target schema</b> — every table in the "
-          "end state with all simplifications applied (one activation table, calendar "
-          "reduced to window months, window-attached coverage, "
-          "retags absorbed into cerf_supplement). Gray = future objects."
-        + f"<div class='scroll' style='max-height:none'>"
-          f"{_target_erd(TARGET_FULL_NODES, TARGET_FULL_EDGES, TARGET_COUNTRY_NODES, 'full')}</div></div>"
-        + "<div class='card'><b>What changes (focused view)</b> — gray boxes are future objects; "
-        "<span class='badge b-new'>ds-aa-tracking</span>"
-        "<span class='badge b-mirror'>mirror repo</span> as elsewhere. Full plan below "
-        "(also in the repo as <code>DESIGN.md</code>)."
-        f"<div class='scroll' style='max-height:none'>{erd}</div></div>"
-        f"<div class='card'>{body_html}</div>"
-    )
-    page("roadmap.html", "Roadmap — unified versions & multi-fund model", body)
-
-
-MIRROR_TABLES = [
-    "cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country",
-    "cerf_allocation_storm", "cerf_supplement",
-]
 OWNER_BADGE = {
     "ds-aa-tracking": "<span class='badge b-new'>ds-aa-tracking</span>",
     "ds-knowledge-base": "<span class='badge b-kb'>ds-knowledge-base</span>",
@@ -1664,8 +958,8 @@ def build_schema_page(e):
     def owner_of(t):
         if t in trk_schema.TABLES or t in trk_schema.DURABLE_TABLES:
             return "ds-aa-tracking"
-        if t in MIRROR_TABLES:
-            return "ds-cerf-supplement"
+        if mirror_of(t):
+            return MIRRORS["repo"]
         return "other"
 
     sections = [
@@ -1688,18 +982,9 @@ def build_schema_page(e):
         "<b>Version-first:</b> every framework-level fact attaches to "
         "<code>framework_version</code> (the approved unit) — the registry holds only "
         "identity and descriptive attributes; country-level context tables (boxed) "
-        "join on country alone. "
-        "<b>Version unification + crosswalk removal (done 2026-09):</b> "
-        "<code>framework_version</code> is THE version registry and "
-        "<code>window</code> / <code>actual_activation</code> key on it DIRECTLY "
-        "(country_iso3 · hazard · version) — the crosswalk table is gone; reported "
-        "trigger-performance headlines live in "
-        "<code>version_performance_reported</code>, and "
-        "<code>framework_version_map</code> survives only as a compatibility view "
-        "until remaining readers repoint (phase 3). <b>Entry path:</b> the "
-        "<code>entered_*</code> tables (durable, browser-written via the entry "
-        "page's proxy, every change audited in <code>entry_audit</code>) are merged "
-        "by the ingest — entered values win.</p>"
+        "join on country alone. <b>Entry path:</b> the <code>entered_*</code> tables "
+        "(browser-written through the entry page's proxy, every change audited in "
+        "<code>entry_audit</code>).</p>"
         f"<div class='scroll' style='max-height:none'>{build_erd()}</div></div>"
     )
     tables = sorted(cols["table_name"].unique(), key=lambda t: (owner_of(t) != "ds-aa-tracking", t))
@@ -1736,13 +1021,9 @@ def build_schema_page(e):
                 else "<p class='meta'>no PK/unique constraint (append-only fact "
                      "table; see notes)</p>"
             )
-            link = (
-                f" · <a href='table-{t}.html'>data</a>"
-                if t in trk_schema.TABLES and t in TABLE_ORDER else ""
-            )
             sections.append(
                 f"<div class='card'><h3 style='margin:2px 0'>aa.{t}"
-                f"<span class='meta' style='font-weight:400'> — {n:,} rows{link}</span></h3>"
+                f"<span class='meta' style='font-weight:400'> — {n:,} rows</span></h3>"
                 + (f"<p class='meta'>{note}</p>" if note else "")
                 + keys_html
                 + tbl_plain(tc)
@@ -1779,83 +1060,6 @@ def tbl_plain(df):
         + df.to_html(index=False, classes="data", na_rep="", border=0)
         + "</div>"
     )
-
-
-DECISIONS = """
-<div class='card'>Per workbook: which sheets were ingested as primary data, and which
-were skipped as derived pivots/scratch (they recompute from the primary sheets or from
-data already in the mirror). Flag anything you disagree with.</div>
-<h2>julia/2026 AA planning_USE THIS.xlsx</h2>
-<ul class='tight'>
-<li><b>Status and planning</b> → registry, status, focal points, calendar (from cell
-colors), 2026 pre-arranged, Start Fund/READY. <span class='badge b-warn'>caveat</span>
-the coordination-group column appears row-shifted in the source for some countries
-(e.g. Chad shows Philippines actors) — ingested as-is, needs a fix upstream.</li>
-<li><b>Trends</b> — skipped (derived yearly counts).</li>
-<li><b>2025 plan w FAO &amp; WFP</b> — skipped (marked outdated in its own name).</li>
-</ul>
-<h2>julia/AA reports_counting frameworks and countries.xlsx</h2>
-<ul class='tight'>
-<li><b>2024 / 2025 AA reporting</b> → framework_status, report_channel_inclusion,
-window_funding (2025+2026), people_covered, plan_inclusion.</li>
-<li><b>2026 GHO</b> → status, funding, GHO inclusion.</li>
-</ul>
-<h2>julia/OCHA_AA_activations_2020-2026.xlsb</h2>
-<ul class='tight'>
-<li><b>Overall activations</b> → the activation record (now split into <code>activation</code> + <code>activation_funding</code>: one event, N fund allocations).</li>
-<li><b>Activations by region</b> — skipped (pivot).</li>
-</ul>
-<h2>yakubu/26 March 2026 CERF Allocation Analysis for AA.xlsx</h2>
-<ul class='tight'>
-<li><b>Retagged Allocations</b> → emergency_type_override. <b>CIRV</b> → cirv.
-<b>HNRP 2025 countries / HNRP FCDO BC analysis / Summary by country</b> →
-plan_inclusion.</li>
-<li><b>Cholera/Drought/Flood/Storms + regional summaries</b> — skipped: per-hazard
-allocation totals are recomputable from <code>aa.cerf_allocation</code> (mirror), which
-is the better source; the retags feed the override table instead.</li>
-</ul>
-<h2>yakubu/AA Displacement Data - Clean.xlsx</h2>
-<ul class='tight'>
-<li><b>CERF GMS Data 2020-2024</b> → cerf_application_people (planned+reached ×
-sex-age/disability/category) + cerf_application_report (narratives, report metadata).</li>
-<li><b>OneGMS Data 2024-2025</b> → cerf_allocation_extra (structured AA flag, onset,
-response requirements) + planned demographics.</li>
-<li><b>Main AA Data / Sheets 1-6 / pivots / CORRECT VALUES / Totals</b> — skipped
-(all derived from the two exports above; verified the curated AA set matches).</li>
-</ul>
-<h2>yakubu/CERF AA - Clean Subgrant Data 2020 - 2025_AR.xlsx</h2>
-<ul class='tight'>
-<li><b>Sheet3</b> (full CERF subgrants) + <b>Subgrants - June 2026</b> (from the other
-workbook; curated AA set with localization) → cerf_subgrant, deduplicated with the
-curated rows winning.</li>
-<li>All pivot/top-N sheets — skipped (derived).</li>
-</ul>
-<h2>yakubu/CERF AA Data as of June 1st 2026.xlsx</h2>
-<ul class='tight'>
-<li><b>Agency HQ Report</b> → cerf_project_supplement (markers, CVA, targeting).</li>
-<li><b>Disbursement Data+CVA</b> → cerf_cva_history (aggregated to its grain — the
-sheet has no project codes).</li>
-<li><b>People covered / Double activations / Co-financing / Pre-arranged /
-New-Extended Frameworks / Sector Data - Pre-arranged / 2026 Portfolio for
-Insurance</b> → people_covered, window_funding, framework_status,
-window_funding.</li>
-<li><b>ProjectSearch / Regular Data / Sector Data Jun 2026</b> — skipped: project-level
-sector splits, dates and targeting are already in the mirror
-(<code>aa.cerf_project</code>/<code>_sector</code>), which covers 2006→present;
-Regular Data additionally has visible column corruption (dates in numeric columns).</li>
-<li>All remaining pivot sheets — skipped (derived).</li>
-</ul>
-<h2>Cross-cutting conventions</h2>
-<ul class='tight'>
-<li>Framework identity = (country_iso3, canonical hazard); raw spellings kept in
-*_raw columns; 'Mauretania', 'Congo DR' etc. normalized.</li>
-<li>Sheets that disagree are loaded side by side (source in the key) — reconciliation
-is a view, not a silent merge; where a single value is needed the newest sheet wins.</li>
-<li>EA (early action) events are in scope, flagged <code>aa_or_ea='EA'</code>.</li>
-<li>Sub-frameworks (Bangladesh Jamuna/Padma) are windows — the sector-budget table
-carries them as <code>window_name</code> rather than duplicate frameworks (KB rule D62).</li>
-</ul>
-"""
 
 
 if __name__ == "__main__":
