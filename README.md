@@ -12,18 +12,13 @@ knowledge base's loaders used to write (see "AA management moved here" below). I
   pipeline (early conversations → active → dormant/expired), status snapshots over time,
   focal points, trigger-window calendar
 - **funding**: pre-arranged amounts per year and fund source, co-financing,
-  sector-level pre-arranged budgets; donor shares (`dash-donors.html`, admin site since
-  2026-10-15, `scripts/donors.py`):
-  each donor's share of a fund's income per fiscal year (`aa.v_contribution`, the
-  ds-cerf-supplement contribution mirrors) × the AA that fund released / pre-arranged that
-  year, plus hand-entered build earmarks (`aa.build_contribution`)
+  sector-level pre-arranged budgets, hand-entered build earmarks (`aa.build_contribution`)
 - **activations**: the full activation-event record 2020→ (framework + ad-hoc, AA + EA,
-  CERF + country/regional funds), crosswalked to KB `actual_activation` and the CERF
-  mirror, with a reconciliation view for conflicts
+  CERF + country/regional funds), tied to the CERF mirror's allocations
 - **reporting**: which frameworks count toward which external reports (A-Hub, UK BCs,
   SG/CERF/OCHA annual reports, SF KPI, CPC), GHO/HNRP inclusion, people covered
-- **CERF depth**: subgrants to implementing partners (localization), project-level CVA
-  and markers, application-level beneficiary demographics, final-report narratives,
+- **CERF depth**: subgrants to implementing partners (imported once from the CERF
+  secretariat's workbooks; CERF's feeds publish none), project-level CVA and markers, application-level beneficiary demographics, final-report narratives,
   emergency-type retags, CIRV
 
 Decisions about the site (who made them, when, why, and whether they still stand) are logged in [`docs/DECISIONS.md`](docs/DECISIONS.md).
@@ -33,8 +28,7 @@ Decisions about the site (who made them, when, why, and whether they still stand
 This system is **authoritative**. The knowledge base (`ds-knowledge-base`) is no longer a
 source: its framework pages were imported once into `aa.version_page` (scope, monitoring
 months, trigger facets, data sources, agencies, the "Trigger windows" table, the page body)
-and are edited here; the nightly KB sweep (`scripts/sync_kb.py`) is off; the site build
-reads only the database snapshot (no KB checkout). The KB's job is now the other way
+and are edited here; the site build reads only the database snapshot (no KB checkout). The KB's job is now the other way
 round: read this DB (registry, versions, statuses, funding) and find the code, monitoring
 and published documents for each framework.
 
@@ -58,8 +52,6 @@ are kept forever (the year-end official state, for the map's time view).
 
 ## Layout
 
-- `src/ds_aa_tracking/normalize.py` — canonical country/hazard/status vocabularies
-- `src/ds_aa_tracking/parsers.py` — one parser per source workbook
 - `src/ds_aa_tracking/schema.py` — DDL (tables + views), all in schema `aa`; hierarchy
   country_hazard → framework_version → window → {window_activation, simulated_activation,
   window_funding}; ad hoc / early-action allocations off the pair (adhoc_activation)
@@ -84,8 +76,8 @@ are kept forever (the year-end official state, for the map's time view).
 - two sites, one build (2026-10-07): the **public site** is the tabs of its header (map,
   model + historical activations, plan, financing, learning, media) and the
   framework pages the map opens — nothing else, and no link to anything else. Every other
-  page (data admin and entry, tables, schema, reconciliation and review pages, the extra
-  dashboards and explorers, the pages of pipeline frameworks the map does not show) is the
+  page (data admin and entry, the schema, the pages of pipeline frameworks the map does not
+  show) is the
   **admin site**, published under `admin/` with its own password and its own header; it may
   link to the public site, never the reverse. The builders do not say which site a page is
   on: `page()` collects the pages and `write_site()` in `scripts/build_site.py` sorts them
@@ -111,8 +103,10 @@ are kept forever (the year-end official state, for the map's time view).
   faithful. Pages carry a "data snapshot <time> UTC" stamp.
 - statuses: version = endorsed | development | pre-development (superseded is inferred);
   retired = a flag on country_hazard; per-window triggered flags in window_status
-- `src/ds_aa_tracking/migrations.py` — the idempotent window-first migration (run by ensure_schema)
-- `scripts/ingest.py` — parse → crosswalk to KB → full-refresh load (dev DB)
+- `src/ds_aa_tracking/migrations.py` — the status collapse and window_status seeding (run by ensure_schema)
+- `scripts/drop_leftovers.py` — one-off (D168): archives, then drops what was left from
+  building the tracker (the zz_legacy tables, version_match, raw KB YAML, old views) and
+  renames the source labels that named people
 - `scripts/build_site.py` — render the two password-protected GH Pages sites (public at
   the root, admin under `admin/`)
 - `scripts/admin_page.py` — `admin/admin.html`: Django-admin-style CRUD over every `aa` table,
@@ -138,8 +132,6 @@ are kept forever (the year-end official state, for the map's time view).
   hand-entered from the framework documents through an entries file (`op: replace` per
   version) — never committed here; until the nightly's one-off `--ensure-schema` run creates
   the table, every framework reads "trigger windows not recorded yet"
-- `scripts/donors.py` — the donor-shares page, admin only (reads `dashboards.funding_series`, so its
-  released / pre-arranged totals are the Funding page's)
 - `scripts/page_media.py` — the Media page: the folder "AA visuals" (OCHA-HFSA SharePoint,
   "(08) External communication"; a Google Drive folder until that was deleted in Oct 2026) as
   it was gathered (photos by country, the social posts of the folder's catalogue), read from
@@ -204,13 +196,11 @@ released money net of it.
 ## Running
 
 The dev DB is the single source of truth: data is entered and corrected through the
-admin site (`admin/entry.html`, `admin/admin.html`) — there is no spreadsheet ingest and no KB sync any
-more (`scripts/ingest.py` is the retired migration-era loader and refuses to run).
+admin site (`admin/entry.html`, `admin/admin.html`) — there is no spreadsheet ingest and no KB sync.
 DB access via `ocha-stratus` env vars; `PGSSLMODE=require` is set automatically.
 
 ```sh
 uv run python scripts/ensure_schema.py   # idempotent: create missing tables, additive migrations, views
-uv run python scripts/import_kb_pages.py # one-off (done 2026-09-28): KB pages → aa.version_page
 uv run python scripts/build_site.py      # needs graphviz (`brew install graphviz`) for the ERD
 bash scripts/publish.sh                  # build → encrypt → gh-pages; needs ADMIN_PASSWORD (SKIP_BUILD=1 reuses the build, DRY_RUN=1 stops before the commit)
 ```

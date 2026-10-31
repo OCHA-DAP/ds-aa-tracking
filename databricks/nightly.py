@@ -4,9 +4,11 @@ This is the only place that will still reach the dev DB once its public network 
 goes (2026-09). It wraps the ordinary scripts unchanged, so the same steps run from a
 laptop while access lasts:
 
-    python databricks/nightly.py [--ensure-schema] [--relabel ISO3/HAZARD/OLD NEW] [--no-prune] [--kb-sync]
+    python databricks/nightly.py [--drop-leftovers] [--ensure-schema] [--relabel ISO3/HAZARD/OLD NEW] [--no-prune]
 
 Steps
+  0. one-off --drop-leftovers: scripts/drop_leftovers.py --write (D168: archives, then drops
+     what was left from building the tracker and renames person-named source labels)
   1. optional --ensure-schema: scripts/ensure_schema.py (idempotent DDL; off by default so
      a schema change ships deliberately, via a one-off run of this job with the flag)
   1b. optional --relabel ISO3/HAZARD/OLD NEW: scripts/relabel_version.py — a version label
@@ -25,10 +27,8 @@ Steps
      projects/ds-aa-tracking/snapshot/{latest,YYYY-MM-DD}/ (dated copies kept 30 days,
      31-December copies forever)
 
-KB flip (2026-09-28): this system is authoritative; the knowledge base is no longer a
-source, so the nightly sweep of KB framework pages (scripts/sync_kb.py) is OFF. Frameworks
-and versions are entered here (entry/admin pages). `--kb-sync` remains only for a
-deliberate one-off, never scheduled.
+KB flip (2026-09-28): this system is authoritative; the knowledge base is not a source.
+Frameworks and versions are entered here (entry/admin pages).
 
 The GitHub Actions publish workflow (04:17 UTC) then restores `latest` into a throwaway
 Postgres and builds the site — see .github/workflows/publish.yml.
@@ -41,8 +41,6 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-
-KB_REPO = "https://github.com/OCHA-DAP/ds-knowledge-base.git"
 
 
 def _checkout_root() -> Path:
@@ -85,9 +83,8 @@ def run(*args, **env):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--kb-sync", action="store_true",
-                    help="one-off: sweep KB framework pages into the registry (OFF since the KB flip)")
     ap.add_argument("--ensure-schema", action="store_true")
+    ap.add_argument("--drop-leftovers", action="store_true", help="one-off, D168")
     ap.add_argument("--relabel", nargs=2, metavar=("ISO3/HAZARD/OLD", "NEW"))
     ap.add_argument("--no-prune", action="store_true")
     a, _unknown = ap.parse_known_args()  # tolerate stray job parameters
@@ -96,10 +93,8 @@ def main():
         if not os.environ.get(v):
             sys.exit(f"{v} is not set — the cluster policy should inject the dsci secrets")
 
-    if a.kb_sync:
-        kb = Path(tempfile.mkdtemp(prefix="kb-")) / "ds-knowledge-base"
-        subprocess.run(["git", "clone", "-q", "--depth", "1", KB_REPO, str(kb)], check=True)
-        run("scripts/sync_kb.py", "--i-know-the-kb-is-not-a-source", KB_DIR=str(kb))
+    if a.drop_leftovers:
+        run("scripts/drop_leftovers.py", "--write")
     if a.ensure_schema:
         run("scripts/ensure_schema.py")
     if a.relabel:

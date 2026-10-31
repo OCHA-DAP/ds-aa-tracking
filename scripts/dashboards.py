@@ -44,9 +44,8 @@ REPORT_CHANNEL_LABEL = {
     "uk_cerf_bc": "UK CERF business case", "cpc": "CPC"}
 # where a version record came from (aa.framework_version.source); 'aa-team-<date>' = the team's
 # own records of that day
-VERSION_SOURCE_LABEL = {"kb-frontmatter": "knowledge base page", "entered": "data entry",
-                        "ocha-web": "OCHA AA web page", "pa-monorepo": "team analysis repository",
-                        "sheet-revision": "tracking sheet", "aa-team": "AA team records"}
+VERSION_SOURCE_LABEL = {"entered": "data entry", "ocha-web": "OCHA AA web page",
+                        "pa-monorepo": "team analysis repository", "aa-team": "AA team records"}
 # a partner's role in a framework document, when it is a code (the documents' own words are
 # shown as written)
 PARTNER_ROLE_LABEL = {"implementing": "implementing", "technical": "technical",
@@ -90,10 +89,21 @@ def hazard_word(h):
     """A hazard as a word ('food insecurity'); an unlabelled one is 'other hazard', never its code."""
     return code_words(HAZARD_WORD, h, "hazard") or "other hazard"
 
+def current_source(s):
+    """A source label as the database names it after D168 (julia-* -> aa-workbook-*, yakubu-*
+    -> cerf-workbook-*, kb-frontmatter -> aa-team). A snapshot taken before the one-off
+    scripts/drop_leftovers.py run still carries the old labels; drop this with the KB renames."""
+    if not isinstance(s, str):
+        return s
+    if s == "kb-frontmatter":
+        return "aa-team"
+    return re.sub(r"^yakubu-", "cerf-workbook-", re.sub(r"^julia-", "aa-workbook-", s))
+
+
 SOURCE_PRIORITY = [
-    "yakubu-prearranged-jun2026", "yakubu-cofinancing-jun2026", "julia-planning-2026",
-    "julia-reporting-2025", "yakubu-insurance-2026", "julia-gho-2026",
-    "yakubu-new-extended-2025",
+    "cerf-workbook-prearranged-jun2026", "cerf-workbook-cofinancing-jun2026",
+    "aa-workbook-planning-2026", "aa-workbook-reporting-2025", "cerf-workbook-insurance-2026",
+    "aa-workbook-gho-2026", "cerf-workbook-new-extended-2025",
 ]
 
 
@@ -122,9 +132,9 @@ NOT_SOCIAL_SQL = r"coalesce(url, '') !~* '^https?://([a-z]+\.)?(x|twitter)\.com/
 
 def canonical(df, keys):
     """One row per key-combo by source priority (dashboard view; conflicts live on
-    the reconciliation pages)."""
+    the admin page)."""
     df = df.copy()
-    df["_p"] = df["source"].map(
+    df["_p"] = df["source"].map(current_source).map(
         {s: i for i, s in enumerate(SOURCE_PRIORITY)}).fillna(99)
     return (df.sort_values("_p").drop_duplicates(subset=keys, keep="first")
             .drop(columns="_p"))
@@ -2647,251 +2657,6 @@ def build_learning(page, d):
     return page_learning.build_learning(page, d)
 
 
-# ------------------------------------------------------------- allocations
-def build_allocations(page, d):
-    al = d["alloc"].copy()
-    act = d["activation"].copy()
-    act["year"] = act["event_date"].str[:4].astype(int)
-    tim = d["timeliness"]
-
-    panels = f"""
-<div class='fbar'>
- <label>Fund <select id='fFund'><option value=''>all</option></select></label>
- <label>Country <select id='fC'><option value=''>all</option></select></label>
- <label>Year ≥ <select id='fY1'></select></label>
- <label>Year ≤ <select id='fY2'></select></label>
- <label>AA <select id='fAA'><option value='1' selected>AA only</option><option value=''>all allocations</option></select></label>
- <label>Search <input id='fQ' class='filter' style='width:200px;margin:0' placeholder='title…'></label>
-</div>
-<div class='tiles'><div class='tile'><div class='v' id='tN'>–</div><div class='l'>allocations</div></div>
- <div class='tile'><div class='v' id='tUsd'>–</div><div class='l'>total USD</div></div></div>
-<div class='grid'>
- <div class='panel'><h3>Allocations by year × fund type</h3><canvas id='a1' height='240'></canvas></div>
- <div class='panel'><h3>Top countries</h3><canvas id='a2' height='240'></canvas></div>
- <div class='panel' style='grid-column:1/-1'><h3>CERF ↔ Country and Regional Funds complementarity (AA activations)</h3><canvas id='a3' height='240'></canvas>
-   <div class='note'>Per activation event: countries funded by more than one pooled fund at once appear in both series (from aa.activation_funding).</div></div>
- <div class='panel'><h3>Non-framework AA (ad-hoc) by country</h3><canvas id='a4' height='240'></canvas></div>
- <div class='panel'><h3>Timeliness: ERC endorsement → first project approved (AA, days)</h3><canvas id='a5' height='240'></canvas>
-   <div class='note'>From the CERF mirror; activation→endorsement lag needs curated activation datetimes (sheet-era dates are month-grain).</div></div>
-</div>
-<h2>Allocation table</h2>
-<section><div style='display:flex;gap:10px;align-items:center'>
-<input class='filter' placeholder='filter rows…' oninput='filt(this)'>
-<button class='dl' onclick='dlFiltered()'>⬇ CSV (current filter)</button></div>
-<div class='scroll'><table class='data' id='tbl'><thead><tr>
-<th>fund</th><th>code</th><th>country</th><th>year</th><th>USD</th><th>AA</th><th>title</th>
-</tr></thead><tbody></tbody></table></div></section>"""
-
-    data = {
-        "al": json.loads(_records(al)),
-        "act": json.loads(_records(act, ["country_iso3", "hazard", "event_type",
-                                         "year", "fund_code", "amount_usd"])),
-        "tim": json.loads(_records(tim, ["year", "days"])),
-    }
-    js = """
-const YEARS = uniqSorted(D.al, r=>r.year);
-YEARS.forEach(y=>{fY1.add(new Option(y,y)); fY2.add(new Option(y,y));});
-fY1.value = 2020; fY2.value = YEARS[YEARS.length-1];
-uniqSorted(D.al, r=>r.fund_type).forEach(f=>fFund.add(new Option(f,f)));
-uniqSorted(D.al, r=>r.country_iso3).forEach(c=>fC.add(new Option(c,c)));
-function rows(){ const q = fQ.value.toLowerCase();
-  return D.al.filter(r=> (!fFund.value||r.fund_type===fFund.value)
-    && (!fC.value||r.country_iso3===fC.value)
-    && r.year>=+fY1.value && r.year<=+fY2.value
-    && (!fAA.value||r.is_aa)
-    && (!q||(r.title||'').toLowerCase().includes(q))); }
-function draw(){ const R = rows();
-  tN.textContent = R.length.toLocaleString();
-  tUsd.textContent = money(R.reduce((s,r)=>s+(r.amount_usd||0),0));
-  const ys = uniqSorted(R, r=>r.year);
-  mkChart('a1','bar',ys,['cerf','cbpf','regional_fund'].map(ft=>({label:FUND_TYPE_LABEL[ft],
-    data:ys.map(y=>R.filter(r=>r.fund_type===ft&&r.year===y).reduce((s,r)=>s+(r.amount_usd||0),0)),
-    backgroundColor:FUND_COLORS[ft]})),{stacked:true});
-  const byC = Object.entries(groupSum(R,r=>r.country_iso3||r.fund_name,r=>r.amount_usd))
-    .sort((a,b)=>b[1]-a[1]).slice(0,15);
-  mkChart('a2','bar',byC.map(x=>x[0]),[{label:'USD',data:byC.map(x=>x[1]),backgroundColor:PAL[0]}],
-    {extra:{indexAxis:'y'}});
-  const multi = {};
-  D.act.forEach(r=>{ const k=r.country_iso3; (multi[k]??={cerf:0,pooled:0});
-    multi[k][fundType(r.fund_code)==='cerf'?'cerf':'pooled'] += r.amount_usd||0; });
-  const both = Object.entries(multi).filter(([,v])=>v.cerf&&v.pooled)
-    .sort((a,b)=>(b[1].cerf+b[1].pooled)-(a[1].cerf+a[1].pooled));
-  mkChart('a3','bar',both.map(x=>x[0]),
-    [{label:'CERF',data:both.map(x=>x[1].cerf),backgroundColor:FUND_COLORS.cerf},
-     {label:'Country and Regional Funds',data:both.map(x=>x[1].pooled),backgroundColor:FUND_COLORS.cbpf}]);
-  const adhoc = D.act.filter(r=>r.event_type!=='framework_aa');
-  const byA = Object.entries(groupSum(adhoc,r=>r.country_iso3,r=>r.amount_usd)).sort((a,b)=>b[1]-a[1]);
-  mkChart('a4','bar',byA.map(x=>x[0]),[{label:'non-framework AA USD',data:byA.map(x=>x[1]),backgroundColor:PAL[3]}]);
-  const ty = uniqSorted(D.tim,r=>r.year);
-  mkChart('a5','line',ty,[{label:'median days',data:ty.map(y=>{
-    const v=D.tim.filter(r=>r.year===y).map(r=>r.days).sort((a,b)=>a-b);
-    return v.length?v[Math.floor(v.length/2)]:null;}),backgroundColor:PAL[0]}],{count:true});
-  const tb = document.querySelector('#tbl tbody');
-  tb.innerHTML = R.slice(0,600).map(r=>`<tr><td>${r.fund_type}</td><td>${r.allocation_code}</td>
-    <td>${r.country_iso3??r.fund_name??''}</td><td>${r.year??''}</td><td>${money(r.amount_usd)}</td>
-    <td>${r.is_aa?'✓':''}</td><td>${r.title??''}</td></tr>`).join('');
-}
-function dlFiltered(){ const R = rows();
-  const cols = ['fund_type','fund_name','allocation_code','country_iso3','year','amount_usd','is_aa','title'];
-  const esc = v => v==null ? '' : /[",\\n]/.test(String(v)) ? '"'+String(v).replace(/"/g,'""')+'"' : String(v);
-  const csv = [cols.join(',')].concat(R.map(r=>cols.map(c=>esc(r[c])).join(','))).join('\\n');
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
-  a.download = 'allocations_filtered.csv'; a.click(); URL.revokeObjectURL(a.href); }
-[fFund,fC,fY1,fY2,fAA].forEach(el=>el.addEventListener('change',draw));
-fQ.addEventListener('input',draw);
-draw();"""
-    _dash_page(page, "dash-allocations.html", "Allocation explorer",
-               "Query the full historical allocation universe — every CERF "
-               "application (2006→) and every Country and Regional Fund allocation envelope — with "
-               "the AA lens on by default. Complementarity and non-framework AA "
-               "views come from the activation record.",
-               panels, json.dumps(data, default=str), js)
-
-
-# ------------------------------------------------------------------ delivery
-def build_delivery(page, d):
-    sg = d["subgrant"]
-    cb = d["cbpf_proj"]
-    sec = d["sector"]
-    ag = d["agency"]
-    # pre-arranged splits: the latest version of every current framework, as on the Financing
-    # page (2026-10-02: every version's split was summed here, and lines with a sector but no
-    # agency showed as a 'null' bar)
-    ps = d["plan_rows"].copy()
-    ps["agency"] = ps["agency"].fillna("not stated in the budget")
-    ps["sector"] = ps["sector"].fillna("not stated in the budget")
-    cva = d["cva"]
-    rc = d["reached"]
-    # CERF activations whose allocation code is not recorded: their money cannot be split by
-    # agency or sector until it is
-    import html as _html
-    act = d["activation"]
-    nolink = act[(act["fund_code"] == "cerf") & act["allocation_code"].isna()
-                 & (act["amount_usd"].fillna(0) > 0)]
-    nolink_html = ("" if not len(nolink) else
-                   f"<p class='note' style='font-size:12px;color:#555'>Not in the released charts yet — "
-                   f"<b>{len(nolink)} CERF activation{'s' if len(nolink) > 1 else ''} "
-                   f"(${nolink['amount_usd'].sum()/1e6:,.1f}M) with no CERF allocation code recorded</b>: "
-                   + "; ".join(f"{_html.escape(str(r.country_iso3))} {_html.escape(str(r.hazard))} "
-                               f"{_html.escape(str(r.event_date))} (${r.amount_usd/1e6:,.1f}M)"
-                               for r in nolink.sort_values("event_date").itertuples()) + ".</p>")
-
-    panels = nolink_html + """
-<div class='grid'>
- <div class='panel'><h3>CERF AA subgrants by partner type × year</h3><canvas id='d1' height='250'></canvas>
-   <div class='note'>Yakubu's curated AA subgrant set; local = NNGO+GOV+RedC per his localization tagging.</div></div>
- <div class='panel'><h3>Country and Regional Fund AA projects: direct funding by org type</h3><canvas id='d2' height='250'></canvas>
-   <div class='note'>Country and Regional Funds pay partners directly — this is the localization view CERF can't show. AA-keyword allocations only.</div></div>
- <div class='panel'><h3>Released by agency (CERF AA projects)</h3><canvas id='d3' height='250'></canvas>
-   <div class='note'>CERF AA project budgets, all years: the allocations the activation record draws on (framework and non-framework), as on the Financing page.</div></div>
- <div class='panel'><h3>Released by sector (CERF AA projects)</h3><canvas id='d4' height='250'></canvas>
-   <div class='note'>The sector split of the same projects (CERF sector names).</div></div>
- <div class='panel'><h3>Pre-arranged by agency (framework budgets)</h3><canvas id='d5' height='250'></canvas>
-   <div class='note'>The budget lines of the latest version of every current framework, as on the Financing page.</div></div>
- <div class='panel'><h3>Pre-arranged by sector (framework budgets)</h3><canvas id='d6' height='250'></canvas>
-   <div class='note'>Sector lines of the same budgets.</div></div>
- <div class='panel'><h3>AA delivered as CVA by year</h3><canvas id='d7' height='250'></canvas>
-   <div class='note'>cerf_cva_history (2020–2026 CERF AA); project-level markers exist for 2024+ in cerf_project_supplement.</div></div>
- <div class='panel'><h3>People reached by gender × year (CERF AA)</h3><canvas id='d8' height='250'></canvas>
-   <div class='note'>Reached figures lag ~9 months (final reports); recent years undercount.</div></div>
-</div>"""
-
-    data = {
-        "sg": json.loads(_records(sg[sg["is_aa"]],
-                                  ["year", "partner_type", "localization",
-                                   "subgrant_usd"])),
-        "cb": json.loads(_records(cb[cb["aa_keyword"] == True],  # noqa: E712
-                                  ["year", "org_type", "budget"])),
-        "sec": json.loads(_records(sec)),
-        "ag": json.loads(_records(ag)),
-        "ps": json.loads(_records(ps, ["agency", "sector", "amount_usd"])),
-        "cva": json.loads(_records(cva, ["year", "cva_usd"])),
-        "rc": json.loads(_records(rc, ["year", "grp", "value"])),
-    }
-    js = """
-const PT = ['NNGO','INGO','GOV','RedC'];
-const sgY = uniqSorted(D.sg, r=>r.year);
-mkChart('d1','bar',sgY,PT.map((t,i)=>({label:t,
-  data:sgY.map(y=>groupSum(D.sg.filter(r=>r.partner_type===t&&r.year===y),()=>0,r=>r.subgrant_usd)[0]||0),
-  backgroundColor:PAL[i]})),{stacked:true});
-const cbY = uniqSorted(D.cb, r=>r.year);
-const OT = ['National NGO','International NGO','UN Agency','Others'];
-mkChart('d2','bar',cbY,OT.map((t,i)=>({label:t,
-  data:cbY.map(y=>groupSum(D.cb.filter(r=>r.org_type===t&&r.year===y),()=>0,r=>r.budget)[0]||0),
-  backgroundColor:PAL[i]})),{stacked:true});
-for(const [id, rows, kf, vf] of [
-   ['d3', D.ag, r=>r.agency, r=>r.amount_approved],
-   ['d4', D.sec, r=>r.sector, r=>r.sector_amount],
-   ['d5', D.ps, r=>r.agency, r=>r.amount_usd],
-   ['d6', D.ps, r=>r.sector, r=>r.amount_usd]]){
-  const g = Object.entries(groupSum(rows,kf,vf)).sort((a,b)=>b[1]-a[1]).slice(0,14);
-  mkChart(id,'bar',g.map(x=>x[0]),[{label:'USD',data:g.map(x=>x[1]),backgroundColor:PAL[0]}],
-    {extra:{indexAxis:'y'}});
-}
-const cvY = uniqSorted(D.cva,r=>r.year);
-mkChart('d7','bar',cvY,[{label:'CVA USD',data:cvY.map(y=>groupSum(D.cva.filter(r=>r.year===y),()=>0,r=>r.cva_usd)[0]||0),backgroundColor:PAL[4]}]);
-const rcY = uniqSorted(D.rc,r=>r.year);
-mkChart('d8','bar',rcY,[['women',0],['men',1],['girls',2],['boys',3]].map(([g,i])=>({label:g,
-  data:rcY.map(y=>groupSum(D.rc.filter(r=>r.grp===g&&r.year===y),()=>0,r=>r.value)[0]||0),
-  backgroundColor:PAL[i]})),{stacked:true,count:true});"""
-    _dash_page(page, "dash-delivery.html", "Delivery, partners & people",
-               "Who the money flows through and who it reaches: subgrants and "
-               "localization (CERF AA), direct partner funding (Country and Regional Fund AA), agency "
-               "and sector splits (released vs pre-arranged), CVA, and people "
-               "reached by gender.",
-               panels, json.dumps(data, default=str), js)
-
-
-# ------------------------------------------------------------------ questions
-COVERAGE = [
-    ("Pre-arranged funding by year, cumulative", "covered", "dash-funding.html", "canonical per framework-year; cumulative toggle"),
-    ("Pre-arranged by hazard / region", "covered", "dash-funding.html", ""),
-    ("AA amount released by year, cumulative", "covered", "dash-funding.html", "all pooled funds via activation_funding"),
-    ("Subgrants by partner type / local partners", "covered", "dash-delivery.html", "CERF AA subgrants + Country and Regional Fund direct org-type funding"),
-    ("Released funds by agency", "covered", "dash-delivery.html", "CERF AA projects"),
-    ("Released funds by sector", "covered", "dash-delivery.html", "CERF AA project sector splits"),
-    ("Pre-arranged funds by agency / sector", "covered", "dash-delivery.html", "budget lines of the latest version of every current framework (v_window_funding_split)"),
-    ("Agency participation across the portfolio", "covered", "dash-delivery.html", "agency axis of pre-arranged budgets"),
-    ("AA delivered as CVA", "partial", "dash-delivery.html", "totals by year 2020–2026; MPC-vs-sector split only for 2024+ projects (cerf_project_supplement)"),
-    ("People covered", "partial", "dash-funding.html", "per framework (latest); by CATEGORY of people not tracked anywhere"),
-    ("People reached by gender, by year", "covered", "dash-delivery.html", "CERF AA final reports; ~9-month lag"),
-    ("Co-funding amount and source", "partial", "dash-funding.html", "amounts yes; financier mostly uncurated free text"),
-    ("Calendar of monitoring windows", "covered", "dashboards.html#calendar", "trigger-window months per framework (from planning-sheet colors)"),
-    ("Filter by hazard", "covered", "dash-funding.html", "all dashboards filter by hazard"),
-    ("Frameworks started/revised/endorsed per year", "covered", "dash-funding.html", "endorsed-document versions per year"),
-    ("Non-framework AA allocations", "covered", "dash-allocations.html", "explicit non-framework AA category (non-framework layer on the Financing page)"),
-    ("CERF + Country/Regional Funds complementarity", "covered", "dash-allocations.html", "multi-fund activations from activation_funding"),
-    ("AA funding to GHO contexts", "covered", "dash-funding.html", "GHO filter (plan_inclusion)"),
-    ("CERF AA growth (released, people, countries…)", "covered", "dash-funding.html", "cumulative toggles + tiles"),
-    ("Timeliness (activation → approval letters)", "partial", "dash-allocations.html", "ERC endorsement → first project approved works; trigger-date lag needs curated activation datetimes"),
-    ("Partner participation beyond CERF (Start, RCRC, WB…)", "missing", "", "only Start Fund alert counts (start_network); no systematic non-OCHA partner data"),
-    ("Activities repository", "missing", "", "not tracked anywhere yet — would need framework-doc activity extraction"),
-    ("Endorsement and activation dates", "covered", "dashboards.html#frameworks", "framework_version + activation (dates as precise as known)"),
-    ("Framework versions", "covered", "table-framework_version.html", "65+ versions incl. the historical sweep, with doc links"),
-]
-
-
-def build_questions(page):
-    rows = "\n".join(
-        f"<tr><td>{q}</td><td class='{cls}'>{cls.upper()}</td>"
-        f"<td>{f'<a href={link!r}>{link.split(chr(46))[0]}</a>' if link else '—'}</td>"
-        f"<td>{note}</td></tr>"
-        for q, cls, link, note in COVERAGE)
-    n_cov = sum(1 for _k, c, _t, _n in COVERAGE if c == "covered")
-    n_par = sum(1 for _k, c, _t, _n in COVERAGE if c == "partial")
-    body = f"""
-<div class='card'>Item-by-item coverage of the CERF <b>"AA Datasets — key data
-points"</b> deck (Oct 2025, updated Aug 2026): {n_cov} covered · {n_par} partial ·
-{len(COVERAGE) - n_cov - n_par} missing. The deck's own diagnosis — Excel doesn't
-scale and the Power BI view mistags allocations — is what this system replaces.</div>
-<section><div class='scroll'><table class='data'><thead>
-<tr><th>Key data point (deck)</th><th>status</th><th>where</th><th>notes</th></tr>
-</thead><tbody>{rows}</tbody></table></div></section>
-<style>{DASH_CSS}</style>"""
-    page("questions.html", "CERF key-data-points coverage", body)
-
-
 # ------------------------------------------------------------------ hub + frameworks
 MONTHS = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"]
 
@@ -3318,12 +3083,6 @@ def sim_when(r):
     return str(sim_year(r))
 
 
-def sim_at(r):
-    """'in 2019' / 'in 2019-08' / 'on 2019-08-12' / 'on 2019-08-12 06:00 UTC'."""
-    w = sim_when(r)
-    return ("on " if len(w) > 7 else "in ") + w
-
-
 def _sim_tip(window, r):
     """'<window>: would have activated in 2019 (simulation)', in every language (ATTRC)."""
     when = sim_when(r)
@@ -3629,6 +3388,7 @@ def _role_words(x):
 
 def _source_words(src):
     """Where a version record came from, in words ('' for a source with none)."""
+    src = current_source(src)
     if isinstance(src, str) and re.fullmatch(r"aa-team-\d{4}-\d{2}-\d{2}", src):
         src = "aa-team"
     w = code_words(VERSION_SOURCE_LABEL, src, "version source")
@@ -3959,67 +3719,6 @@ document.addEventListener('aalang', drawSplit);
     return links
 
 
-def build_hub(page, d, fw_links):
-    cal = d["calendar"]
-    fw_items = "".join(
-        f"<tr><td><a href='{slug}.html'>{name} — {hz}</a></td><td>{status or ''}</td>"
-        f"<td>{_cal_strip(cal, iso3, hz)}</td></tr>"
-        for name, hz, status, slug, iso3 in fw_links)
-    body = f"""
-<div class='card'><b>Dashboards</b> — interactive views over the tracking DB,
-built to the CERF key-data-points list (<a href='questions.html'>coverage map</a>).
-<div class='tiles'>
-<div class='tile'><a href='dash-funding.html'><b>Financing</b></a><div class='l'>pre-arranged & released, by year/hazard/region/fund, GHO, cumulative; any subset of frameworks (tick them in the list); current / retired frameworks and non-framework allocations as on the map; money flows; localisation</div></div>
-<div class='tile'><a href='dash-donors.html'><b>Donor shares</b></a><div class='l'>each donor's share of AA released / pre-arranged, via their contributions to CERF and the Country and Regional Funds; donor flows; build earmarks</div></div>
-<div class='tile'><a href='dash-allocations.html'><b>Allocation explorer</b></a><div class='l'>query every CERF, Country and Regional Fund allocation 2006→; complementarity; timeliness</div></div>
-<div class='tile'><a href='dash-delivery.html'><b>Delivery & people</b></a><div class='l'>subgrants, localization, agencies, sectors, CVA, people reached</div></div>
-<div class='tile'><a href='pillar-learning.html'><b>Learning</b></a><div class='l'>headline findings on the map, and every learning document by country and hazard</div></div>
-<div class='tile'><a href='media.html'><b>Media & visuals</b></a><div class='l'>photos by country and social posts on AA, from the shared AA Visuals folder (a first collection, not curated yet)</div></div>
-</div></div>
-<h2 id='frameworks'>Per-framework pages</h2>
-<p class='meta' id='calendar'>Green cells = trigger-window months (monitoring calendar).</p>
-<section><input class='filter' placeholder='filter frameworks…' oninput='filt(this)'>
-<div class='scroll'><table class='data'><thead><tr><th>framework</th><th>status</th><th>monitoring window</th></tr></thead>
-<tbody>{fw_items}</tbody></table></div></section>
-<style>{DASH_CSS}</style>"""
-    page("dashboards.html", "Dashboards", body)
-
-
-# ------------------------------------------------------------------ hierarchy
-HIER_CSS = """
-.tree details.fw { background:#fff; border:1px solid #dfe4ea; border-radius:8px;
-  padding:6px 16px 10px; margin:10px 0; }
-.tree details.ver { border-left:3px solid #e3e8ef; padding-left:14px; margin:8px 0 8px 8px; }
-.tree summary { cursor:pointer; padding:6px 2px; list-style:none; }
-.tree summary::before { content:'▸'; color:#8a97a8; font-size:12px; margin-right:8px;
-  display:inline-block; transition:transform .12s; }
-.tree details[open] > summary::before { transform:rotate(90deg); }
-.tree summary:hover { background:#f4f7fa; border-radius:5px; }
-.fw-line { display:inline-grid; grid-template-columns:300px 150px 110px 130px 110px;
-  gap:8px; align-items:baseline; width:calc(100% - 30px); }
-.fw-line .nm { font-weight:700; font-size:14px; }
-.ver-line { display:inline-grid; grid-template-columns:150px 110px 130px auto;
-  gap:8px; align-items:baseline; width:calc(100% - 30px); }
-.ver-line .nm { font-weight:650; font-size:13px; font-family:ui-monospace,monospace; }
-.muted { color:#667; font-size:12px; } .num { font-size:12.5px; color:#334; }
-.st { display:inline-block; padding:0 8px; border-radius:9px; font-size:11px;
-  font-weight:600; }
-.st-on { background:#e3f1e6; color:#1c6b31; } .st-off { background:#ededed; color:#666; }
-.st-dev { background:#fdf1dc; color:#8a5c0a; }
-table.mini { border-collapse:collapse; font-size:12px; margin:6px 0 10px; background:#fff; }
-table.mini th { text-align:left; font-weight:600; color:#556; background:#f4f6f9;
-  padding:3px 10px; border:1px solid #e6eaef; white-space:nowrap; }
-table.mini td { padding:3px 10px; border:1px solid #e6eaef; vertical-align:top; }
-table.mini td.lbl { color:#667; white-space:nowrap; width:110px; background:#fafbfc; }
-table.mini a { color:#1d5aa8; }
-.hier-tools { display:flex; gap:10px; margin:12px 0; align-items:center; }
-.hier-tools button { padding:5px 12px; border:1px solid #bbb; border-radius:5px;
-  background:#fff; cursor:pointer; font-size:12.5px; }
-h4.sect { font-size:11.5px; text-transform:uppercase; letter-spacing:.04em;
-  color:#5f6470; margin:10px 0 2px; }
-"""
-
-
 def _fmt_usd(v):
     """$2.3M, $800k, $500: halves round up, as the Map's money() does in the page (Python's own
     formatting rounds 2.25 to 2.2, the page's to 2.3)."""
@@ -4068,199 +3767,6 @@ def _trigger_line(x, w=lambda s: s):
     bits = [w(basis) if basis else None, ind,
             w("monitored {m}").format(m="".join(names[m - 1] for m in months)) if months else None]
     return " · ".join(b for b in bits if b)
-
-
-def build_hierarchy(page, d, e):
-    cur = d["current"]
-    ver = pd.read_sql(
-        """SELECT * FROM aa.framework_version
-           ORDER BY country_iso3, hazard, valid_from NULLS LAST""", e)
-    win = pd.read_sql(
-        """SELECT w.country_iso3, w.hazard, w.version, w.window_name,
-                  w.all_in, w.basis, w.allocation_usd,
-                  p.n_activations AS sim_activations, p.analysis_years,
-                  p.return_period, p.activation_prob
-           FROM aa.window w
-           LEFT JOIN aa.v_window_performance p
-             USING (country_iso3, hazard, version, window_name)""", e)
-    # browser-entered windows (entry.html → aa.entered_window): trigger statements,
-    # basis and per-window funding; they enrich KB windows and add missing ones
-    ew = pd.read_sql(
-        """SELECT w.country_iso3, w.hazard, w.version, w.window_name,
-                  w.basis AS basis_entered, w.trigger_statement,
-                  f.amount_usd AS entered_usd
-           FROM aa.entered_window w
-           LEFT JOIN (SELECT country_iso3, hazard, version, window_name,
-                             sum(amount_usd) AS amount_usd
-                      FROM aa.window_funding
-                      WHERE agency IS NULL AND sector IS NULL AND kind = 'prearranged'
-                      GROUP BY country_iso3, hazard, version, window_name) f
-             USING (country_iso3, hazard, version, window_name)""", e)
-    if len(ew):
-        win = win.merge(ew, on=["country_iso3", "hazard", "version", "window_name"],
-                        how="outer")
-        win["basis"] = win["basis"].where(win["basis"].notna(), win["basis_entered"])
-        win["allocation_usd"] = win["allocation_usd"].where(
-            win["allocation_usd"].notna(), win["entered_usd"])
-    else:
-        win["trigger_statement"] = None
-    act = d["activation"]
-    urls = pd.read_sql(
-        "SELECT kb_framework, event_date, url FROM aa.actual_activation "
-        "WHERE url IS NOT NULL", e)
-    url_map = {(r["kb_framework"], r["event_date"]): r["url"]
-               for _i, r in urls.iterrows()}
-    trig = _kb_trigger_info(e)
-    focal = d["focal"]
-
-    def windows_table(wins_v):
-        if not len(wins_v):
-            return ""
-        rows = "".join(
-            f"<tr><td>{w.window_name}</td>"
-            f"<td>{w.basis if pd.notna(w.basis) else ''}"
-            f"{' · all-in' if w.all_in is True else ''}</td>"
-            f"<td>{_fmt_usd(w.allocation_usd)}</td>"
-            f"<td>{f'{w.return_period:.1f} yr' if pd.notna(w.return_period) else ''}</td>"
-            f"<td>{f'{w.activation_prob:.0%}' if pd.notna(w.activation_prob) else ''}</td>"
-            f"<td>{f'{int(w.sim_activations)} in {int(w.analysis_years)} yrs' if pd.notna(w.sim_activations) and pd.notna(w.analysis_years) else ''}</td></tr>"
-            for w in wins_v.itertuples())
-        trig_rows = "".join(
-            f"<div class='hint' style='margin:2px 0'><b>{w.window_name}:</b> "
-            f"{w.trigger_statement}</div>"
-            for w in wins_v.itertuples()
-            if pd.notna(getattr(w, "trigger_statement", None)))
-        return ("<h4 class='sect'>Windows</h4>"
-                "<table class='mini'><thead><tr><th>window</th><th>basis</th>"
-                "<th>budget</th><th>return period</th><th>annual prob</th>"
-                "<th>backtest</th></tr></thead><tbody>" + rows + "</tbody></table>"
-                + trig_rows)
-
-    def activations_table(acts_v, kb_fw):
-        if not len(acts_v):
-            return ""
-        rows = []
-        for ed, g in acts_v.groupby("event_date", sort=True):
-            first = g.iloc[0]
-            funding = "<br>".join(
-                f"{r.fund_code}: {_fmt_usd(r.amount_usd) or '?'}"
-                + (f" <span class='muted'>({r.allocation_code})</span>"
-                   if pd.notna(r.allocation_code) else "")
-                for r in g.itertuples())
-            url = url_map.get((kb_fw, first.get("kb_event_date")))
-            link = f"<a href='{url}'>announcement</a>" if url else ""
-            targeted = (f"{int(first['people_targeted']):,}"
-                        if pd.notna(first.get("people_targeted")) else "")
-            wname = first.get("window_name")
-            rows.append(
-                f"<tr><td>{ed}</td><td>{first['event_type'].replace('_', ' ')}</td>"
-                f"<td>{wname if pd.notna(wname) and wname != 'unspecified' else ''}</td>"
-                f"<td>{funding}</td><td>{targeted}</td><td>{link}</td></tr>")
-        return ("<h4 class='sect'>Activations</h4>"
-                "<table class='mini'><thead><tr><th>date</th><th>type</th>"
-                "<th>window</th><th>funding</th><th>people targeted</th><th>link</th>"
-                "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
-
-    def ver_block(v, wins_v, acts_v, kb_fw):
-        n_act = acts_v["event_date"].nunique() if len(acts_v) else 0
-        head = (f"<span class='ver-line'><span class='nm'>{v.version}</span>"
-                f"<span>{_st(v.kb_status)}</span>"
-                f"<span class='num'>{_fmt_usd(v.prearranged_usd_doc)}</span>"
-                f"<span class='muted'>"
-                f"{f'{len(wins_v)} windows · ' if len(wins_v) else ''}"
-                f"{f'{n_act} activation(s)' if n_act else ''}</span></span>")
-        meta = []
-        rng = " → ".join(str(x) for x in [v.valid_from, v.valid_until]
-                         if x is not None and str(x) != "None")
-        if rng:
-            meta.append(("Valid", rng))
-        if pd.notna(v.doc_url):
-            meta.append(("Document", f"<a href='{v.doc_url}'>"
-                         f"{v.doc_title if pd.notna(v.doc_title) else 'framework document'}</a>"))
-        t = trig.get((kb_fw, v.version))
-        if t:
-            meta.append(("Trigger", t))
-        if pd.notna(v.analysis_ref):
-            meta.append(("Analysis", f"<code>{v.analysis_ref}</code>"))
-        if pd.notna(v.endorsed_by):
-            meta.append(("Endorsed by", v.endorsed_by))
-        if pd.notna(v.supersedes) and str(v.supersedes) not in ("None", "null"):
-            meta.append(("Supersedes", str(v.supersedes)))
-        meta.append(("Source", v.source))
-        meta_tbl = ("<table class='mini'>" + "".join(
-            f"<tr><td class='lbl'>{k}</td><td>{val}</td></tr>" for k, val in meta)
-            + "</table>")
-        return (f"<details class='ver'><summary>{head}</summary>"
-                f"{meta_tbl}{windows_table(wins_v)}{activations_table(acts_v, kb_fw)}"
-                "</details>")
-
-    blocks = []
-    for _i, fw in cur.sort_values("country_name").iterrows():
-        c, h = fw["country_iso3"], fw["hazard"]
-        kb_fw = fw.get("kb_framework") if pd.notna(fw.get("kb_framework")) else None
-        vs = ver[(ver["country_iso3"] == c) & (ver["hazard"] == h)]
-        acts_f = act[(act["country_iso3"] == c) & (act["hazard"] == h)]
-        n_act = acts_f["event_date"].nunique()
-        head = (f"<span class='fw-line'><span class='nm'>{fw['country_name']} — {h}</span>"
-                f"<span>{_st(fw['status'])}</span>"
-                f"<span class='num'>{_fmt_usd(fw.get('cerf_prearranged_usd'))}</span>"
-                f"<span class='muted'>"
-                f"{f'{int(fw.people_covered):,} covered' if pd.notna(fw.get('people_covered')) else ''}</span>"
-                f"<span class='muted'>{f'{n_act} activation(s)' if n_act else ''}</span>"
-                "</span>")
-        meta = []
-        if kb_fw:
-            meta.append(("KB", f"<code>{kb_fw}</code>"))
-        if pd.notna(fw.get("region")):
-            meta.append(("Region", fw["region"]))
-        fps = focal[(focal["country_iso3"] == c) & (focal["hazard"] == h)]
-        if len(fps):
-            meta.append(("Focal points", ", ".join(
-                f"{r.person} <span class='muted'>({r.role.replace('_', ' ')})</span>"
-                for r in fps.itertuples())))
-        meta.append(("More", f"<a href='fw-{c.lower()}-{h}.html'>framework page</a>"))
-        meta_tbl = ("<table class='mini'>" + "".join(
-            f"<tr><td class='lbl'>{k}</td><td>{val}</td></tr>" for k, val in meta)
-            + "</table>")
-        inner = ""
-        for v in vs.itertuples():
-            wins_v = win[(win["country_iso3"] == c) & (win["hazard"] == h)
-                         & (win["version"] == v.version)]
-            acts_v = acts_f[acts_f["version"] == v.version]
-            inner += ver_block(v, wins_v, acts_v, kb_fw)
-        stray_f = acts_f[~acts_f["version"].isin(set(vs["version"]))]
-        if len(stray_f):
-            inner += ("<h4 class='sect'>Activations not attributed to a version</h4>"
-                      + activations_table(stray_f, kb_fw))
-        if not len(vs):
-            inner += "<p class='muted'>No endorsed version anywhere yet — pipeline framework.</p>"
-        blocks.append(
-            f"<details class='fw' data-name='{fw['country_name'].lower()} {h}'>"
-            f"<summary>{head}</summary>{meta_tbl}{inner}</details>")
-
-    body = f"""
-<div class='card'>The portfolio as a collapsible tree — <b>framework → version →
-window → activation</b> — with everything the DB knows at each level: status and
-funding, framework documents per version, structured trigger info (basis, indicators,
-monitored months — from the KB pages; plain-text trigger statements land with the
-window registry), per-window budgets and backtested return periods, and each
-activation's fund-by-fund allocations with announcement links.</div>
-<div class='hier-tools'>
- <input class='filter' placeholder='filter frameworks…' oninput='hfilter(this.value)'>
- <button onclick='setAll(true)'>expand all</button>
- <button onclick='setAll(false)'>collapse all</button>
-</div>
-<div class='tree'>{''.join(blocks)}</div>
-<script>
-function setAll(open){{ document.querySelectorAll('.tree details').forEach(d=>d.open=open); }}
-function hfilter(q){{ q=q.toLowerCase();
-  document.querySelectorAll('.tree > details').forEach(d=>{{
-    d.style.display = d.dataset.name.includes(q) ? '' : 'none'; }}); }}
-</script>
-<style>{DASH_CSS}{HIER_CSS}</style>"""
-    page("hierarchy.html", "Portfolio explorer — framework › version › window › activation", body)
-
-
 
 
 # ------------------------------------------------------------------ entry form
@@ -4329,8 +3835,8 @@ funding); or fill it by hand. If the version already exists, the page shows a
 <b>field-by-field diff against the database</b> — overwrite what the document
 corrects, keep what the database already has right. <b>Save writes straight to the
 DB</b> (<code>aa.entered_*</code>, every change audited with who/when/old/new);
-the ingest merges entered values into the registry, and entered values win.
-<a href='status.html'>Status updates</a> stay on their own page.</div>
+entered values win over what the registry held.
+Status updates are rows of the <a href='admin.html#framework_status'>framework status table</a>.</div>
 
 <div class='form-card' id='drop' style='border:2px dashed #9db2c9; text-align:center;
      padding:34px; cursor:pointer'>
@@ -4829,100 +4335,6 @@ function downloadJson(){
             .replace("__DASH_CSS__", DASH_CSS)
             .replace("__FORM_CSS__", FORM_CSS))
     page("entry.html", "Framework data entry", body)
-    redirect = ("<meta http-equiv='refresh' content='0; url=entry.html'>"
-                "<p>Moved to <a href='entry.html'>entry.html</a>.</p>")
-    page("ingest-doc.html", "Moved — framework data entry", redirect)
-    page("form.html", "Moved — framework data entry", redirect)
-
-
-
-# ------------------------------------------------------------------ status entry
-STATUS_CARDS = [
-    ("endorsed_live", "Endorsed — live & monitoring",
-     "The framework document is endorsed, funds pre-arranged, triggers monitored. Not currently activated.", "active"),
-    ("triggered", "Triggered — activation underway",
-     "A trigger has been reached; the activation/allocation process is in motion.", "activated_implementing"),
-    ("implementing", "Activated — implementing",
-     "Funds released; agencies implementing anticipatory activities.", "activated_implementing"),
-    ("post_activation", "Previously activated — back to monitoring",
-     "Implementation finished; the framework returns to live monitoring (or awaits revision/refill).", "active"),
-    ("under_revision", "Under revision",
-     "An endorsed framework being revised/renewed; monitoring may pause.", "under_revision"),
-    ("dormant", "Dormant / expired",
-     "No current activity or validity lapsed with no successor.", "dormant"),
-]
-
-
-def build_status_form(page, d):
-    cur = d["current"].sort_values("country_name")
-    fw = [{"key": f"{r.country_iso3}|{r.hazard}",
-           "label": f"{r.country_name} — {r.hazard}",
-           "status": r.status if pd.notna(r.status) else None,
-           "version": r.current_version if pd.notna(r.current_version) else None}
-          for r in cur.itertuples()]
-    cards = "".join(
-        f"""<label class='scard'><input type='radio' name='st' value='{val}' data-key='{key}'>
-        <div><b>{title}</b><div class='hint'>{desc}</div></div></label>"""
-        for key, title, desc, val in STATUS_CARDS)
-    body = f"""
-<div class='card'><b>Framework status update (demo)</b> — the quick way to record
-where a framework is in its lifecycle. One click per state; “Save” previews the
-<code>aa.framework_status</code> row (nothing is written). Activation events
-themselves are entered via the <a href='entry.html'>data entry page</a> — this page only moves the status.</div>
-<div class='form-card'>
- <div class='frow'>
-  <label>Framework <select id='fw' onchange='fwSel()'></select></label>
-  <label>As of <input type='date' id='asof'></label>
- </div>
- <div id='cur' class='hint'></div>
- <div class='scards'>{cards}</div>
- <div class='frow'><label>Note <input id='note' style='min-width:420px'
-   placeholder='e.g. Window 1 trigger reached 30 Apr; CERF letter pending'></label></div>
- <div class='frow'><button class='primary' onclick='save()'>Save (preview row)</button></div>
-</div>
-<pre id='payload' style='display:none'></pre>
-<script>window.S = {json.dumps(fw)};</script>
-<script>
-S.forEach(f=>document.getElementById('fw').appendChild(new Option(f.label, f.key)));
-document.getElementById('asof').valueAsDate = new Date();
-function fwSel(){{
-  const f = S.find(x=>x.key===document.getElementById('fw').value);
-  document.getElementById('cur').innerHTML =
-    `current status: <b>${{f.status||'—'}}</b> · current version: <code>${{f.version||'—'}}</code>`;
-}}
-function save(){{
-  const f = S.find(x=>x.key===document.getElementById('fw').value);
-  const sel = document.querySelector('input[name=st]:checked');
-  const p = document.getElementById('payload');
-  if(!sel){{ p.style.display='block'; p.textContent='pick a state first'; return; }}
-  const [iso, hz] = f.key.split('|');
-  p.style.display = 'block';
-  p.textContent = JSON.stringify({{
-    _dummy: 'no data written — row preview',
-    'aa.framework_status (insert)': {{
-      country_iso3: iso, hazard: hz,
-      as_of: document.getElementById('asof').value,
-      status: sel.value, status_raw: sel.closest('.scard').querySelector('b').textContent,
-      version: f.version, version_match: 'entered',
-      comments: document.getElementById('note').value || null,
-      source: 'status-form' }},
-    _previous_status: f.status,
-  }}, null, 2);
-}}
-fwSel();
-</script>
-<style>{{DASH_CSS}}{{FORM_CSS}}
-.scards {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:10px; margin:12px 0; }}
-.scard {{ display:flex; gap:10px; align-items:flex-start; border:1.5px solid #d8dee6;
-  border-radius:8px; padding:12px 14px; cursor:pointer; }}
-.scard:hover {{ border-color:#2a78d6; background:#f4f8fd; }}
-.scard:has(input:checked) {{ border-color:#1c6b31; background:#eef7f0; }}
-.scard input {{ margin-top:3px; }}
-</style>"""
-    body = body.replace("{DASH_CSS}", DASH_CSS).replace("{FORM_CSS}", FORM_CSS)
-    page("status.html", "Framework status update (demo)", body)
-
-
 
 
 
@@ -4944,19 +4356,9 @@ def build_all(e, page, tbl):
     page_definitions.build_definitions(page, d)
     import page_history
     page_history.build_history(page, d)
-    import page_model_draft          # mock-ups of alternative visuals, internal (for comparison)
-    page_model_draft.build_model_draft(page, d)
-    build_allocations(page, d)
-    build_delivery(page, d)
-    import donors
-    donors.build_donors(page, d)
-    build_questions(page)
-    links = build_framework_pages(page, tbl, d, e)
-    build_hub(page, d, links)
+    build_framework_pages(page, tbl, d, e)
     import page_media
     page_media.build_media(page)
-    build_hierarchy(page, d, e)
     build_entry(page, d, e)
-    build_status_form(page, d)
     import landing
     landing.build_landing(page, d, e)

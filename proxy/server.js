@@ -13,8 +13,8 @@
  *                    (country, hazard, version); every field change is written
  *                    to aa.entry_audit (old, new, who, when). Replace-set
  *                    semantics per version: the posted windows/funding ARE the
- *                    version's rows. The nightly/manual ingest merges entered_*
- *                    into aa.framework_version (entered values win).
+ *                    version's rows. The same transaction upserts the version into
+ *                    aa.framework_version (entered values win).
  *
  *   GET  /schema     every aa table + column (types, keys, owner, writable, mirror,
  *                    reads_mirror) — the admin page is populated from this, Django-admin style
