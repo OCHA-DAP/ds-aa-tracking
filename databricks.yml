@@ -12,6 +12,8 @@
 #   # one-off schema migration: run with the flag (see databricks/nightly.py)
 #   databricks bundle run aa_tracking_nightly -t prod -p DEFAULT \
 #       --python-params "--ensure-schema"
+#   # several flags: comma-separated ("--a --b" arrives as ONE parameter and is ignored)
+#   #   --python-params "--drop-leftovers,--ensure-schema"
 #
 # Deployment targets follow the team convention (KB infrastructure/databricks.md):
 # `dev` = your interactive cluster, unscheduled; `prod` = ephemeral Job Compute
