@@ -11,7 +11,6 @@ KB a source. It is not one any more: the pages were imported once into
 import re
 
 import pandas as pd
-import yaml
 
 REST_RE = re.compile(r"all other|non-endemic|rest of|remaining|elsewhere", re.I)
 

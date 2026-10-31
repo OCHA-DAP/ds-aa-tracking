@@ -1,7 +1,7 @@
 """Interactive dashboards + per-framework pages for the review site.
 
 Built to answer the CERF "AA Datasets" key-data-points list (Oct 2025 deck, updated
-Aug 2026) — see questions.html for the item-by-item coverage map. Charts are Chart.js
+Aug 2026). Charts are Chart.js
 (inlined local asset, no CDN) over row-level JSON embedded in each page, so every
 chart is client-side filterable (hazard / region / fund / year). Chart styling
 follows the team dataviz method: fixed categorical order (validated palette), one
@@ -3812,10 +3812,9 @@ def build_entry(page, d, e):
     via the chd-ds-aa-extract proxy (spinner) -> full prefilled form (version
     fields, per-fund totals, windows with triggers and per-window per-fund
     funding) -> live per-field diff against the DB -> Save writes straight to
-    aa.entered_* through the proxy, with every field change audited. The ingest
-    merges entered values into aa.framework_version (entered wins). Replaces the
-    old ingest-doc demo + dummy form; heuristic pdf.js detection remains the
-    no-proxy fallback."""
+    aa.entered_* through the proxy, with every field change audited; the same save
+    upserts the version into aa.framework_version (entered wins). Heuristic pdf.js
+    detection remains the no-proxy fallback."""
     import os as _os
     from pathlib import Path as _P
 

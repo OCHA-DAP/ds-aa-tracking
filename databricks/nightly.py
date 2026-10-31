@@ -8,7 +8,9 @@ laptop while access lasts:
 
 Steps
   0. one-off --drop-leftovers: scripts/drop_leftovers.py --write (D168: archives, then drops
-     what was left from building the tracker and renames person-named source labels)
+     what was left from building the tracker and renames person-named source labels). Run
+     it before (or with) --ensure-schema: a schema pass first would rebuild a view that
+     ranks sources by their new labels over rows still carrying the old ones
   1. optional --ensure-schema: scripts/ensure_schema.py (idempotent DDL; off by default so
      a schema change ships deliberately, via a one-off run of this job with the flag)
   1b. optional --relabel ISO3/HAZARD/OLD NEW: scripts/relabel_version.py — a version label

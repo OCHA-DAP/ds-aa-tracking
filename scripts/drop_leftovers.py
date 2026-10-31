@@ -68,7 +68,8 @@ def present(conn):
 
 
 def dependents(conn, tables, columns):
-    """Views that read a table going, or a column going (CASCADE would drop them)."""
+    """Views that read a table going, a column going, or one of the schema's views (all
+    dropped CASCADE below and rebuilt from schema.VIEWS): a view not rebuilt would be lost."""
     q = sa.text("""
         SELECT DISTINCT v.relname FROM pg_depend d
         JOIN pg_rewrite rw ON rw.oid = d.objid
@@ -76,10 +77,11 @@ def dependents(conn, tables, columns):
         JOIN pg_class t ON t.oid = d.refobjid
         JOIN pg_namespace n ON n.oid = t.relnamespace
         LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = d.refobjsubid
-        WHERE n.nspname = 'aa' AND v.relname <> t.relname
+        WHERE d.classid = 'pg_rewrite'::regclass AND d.refclassid = 'pg_class'::regclass
+          AND n.nspname = 'aa' AND v.relname <> t.relname
           AND (t.relname = ANY(:tables) OR (t.relname || '.' || a.attname) = ANY(:cols))""")
-    return sorted(r[0] for r in conn.execute(q, {"tables": tables,
-                                                 "cols": [f"{t}.{c}" for t, c in columns]}))
+    return sorted(r[0] for r in conn.execute(q, {
+        "tables": [*tables, *VIEWS, *schema.VIEWS], "cols": [f"{t}.{c}" for t, c in columns]}))
 
 
 def relabels(conn):
@@ -123,7 +125,7 @@ def main():
         print(f"  drop view aa.{v}")
     for t, old, new, n in labels:
         print(f"  aa.{t}.source: {old} -> {new} ({n} rows)")
-    print(f"  views rebuilt afterwards: {len(schema.VIEWS)} (dropped with them: {deps or 'none'})")
+    print(f"  views rebuilt afterwards: {len(schema.VIEWS)} (views reading what goes: {deps or 'none'})")
     if not (tables or columns or views or labels):
         print("nothing left to do")
         return
@@ -159,6 +161,9 @@ def main():
                                 {"old": old, "new": new}).rowcount
             if done != n:   # raising rolls everything back
                 raise SystemExit(f"aa.{t}: expected {n} rows labelled {old}, changed {done}")
+        for pat, rep in RELABEL:   # a note quoting a label (window_status: one row)
+            conn.execute(sa.text("UPDATE aa.window_status SET note = regexp_replace(note, :p, :r, 'g') "
+                                 "WHERE note ~ :p"), {"p": pat.replace("^", r"\m"), "r": rep})
         for name in [*VIEWS, *schema.VIEWS]:      # the schema's views come back below
             conn.execute(sa.text(f"DROP VIEW IF EXISTS aa.{name} CASCADE"))
         for t, c in columns:

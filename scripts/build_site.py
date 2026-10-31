@@ -127,8 +127,8 @@ function dlcsv(id, name) {
 # ---------------------------------------------------------------- two sites, one build
 # The PUBLIC site (shared widely) is the tabs of its header and the framework pages the map
 # opens: nothing else, and no link to anything else. Every other page — the admin, data
-# entry, the tables and review pages, the extra dashboards and explorers, the pages of the
-# pipeline frameworks the map does not show — is the ADMIN site: written to admin/, with its
+# entry, the schema, the pages of the pipeline frameworks the map does not show — is the
+# ADMIN site: written to admin/, with its
 # own header, encrypted with its own password (scripts/publish.sh). The builders do not say
 # which site a page belongs to: page() collects them all and write_site() sorts them once
 # the map is known. An admin page may link to the public site; a public page never links
@@ -286,8 +286,8 @@ def _admin_home(admin):
     rest = sorted(n for n in admin if n not in listed and not n.startswith(("fw-", "table-")))
     if rest:
         cards.append("<div class='card'><b>Other pages</b><ul class='adm-list'>" + "".join(map(li, rest)) + "</ul></div>")
-    return ("<div class='card'>The admin site: data administration and entry, the internal dashboards "
-            "and explorers, the schema and the review pages. It is not linked from the public site "
+    return ("<div class='card'>The admin site: data administration and entry, the schema, and the "
+            "pages of frameworks the public map does not show. It is not linked from the public site "
             "and has its own password.</div>" + "".join(cards))
 
 
@@ -650,7 +650,7 @@ NOTES = {
     "country_hazard": "The (country, hazard) pair — the identity everything hangs off: pipeline entries with no version yet, plus descriptive attributes that aren't approved per version (region, language, coordination group) the manual <code>retired</code> flag (a retired framework is hidden from the map whatever its versions say) and <code>technical_support</code> (OCHA supported the framework technically, without a funding commitment). The framework status everyone shows comes from <code>v_framework_lifecycle</code>. Hierarchy: country_hazard → framework_version → window → {window_activation, simulated_activation, window_funding}; ad hoc / early-action allocations attach to the pair (adhoc_activation).",
     "window": "A framework version's trigger windows as BACKTESTED: analysis span (the RP denominator), all-in flag, reported RP/prob. With <code>simulated_activation</code> and <code>version_performance_reported</code> it is the version's backtest. Owned and edited here since 2026-10-05 (entries files with <code>op: replace</code>, this admin page); corrected as errors are found — <code>v_trk_backtest_check</code> lists the rows that break a rule. Written by the KB's loader until then.",
     "simulated_activation": "The years a version's trigger WOULD have fired, per window — never a real activation of the version itself (those are <code>window_activation</code>). Should fall inside the window's analysis span: the KB-era data broke that where real activations were appended (listed by <code>v_trk_backtest_check</code>).",
-    "framework_version": "The unit that actually gets approved: one row per framework version, seeded from KB page frontmatter (incl. superseded/retired versions), the historical sweep of the OCHA AA web page and the pa-anticipatory-action monorepo (<code>source='ocha-web'/'pa-monorepo'</code>, with <code>doc_url</code>/<code>analysis_ref</code>), plus sheet-reported revision dates with no KB page (<code>source='sheet-revision'</code> — a KB completeness gap). Version-specific facts (budgets, sector budgets, coverage, calendar, activations, status) carry a <code>version</code> attribution: direct from the KB for matched activations, otherwise inferred from the version in force at the fact's date (<code>version_match</code>; NULL = no version exists to attribute to). Caveat: figures reported mid-revision may belong to the upcoming version — interval inference can't see that; overrides are a curation pass.",
+    "framework_version": "The unit that actually gets approved: one row per framework version (incl. superseded versions), first recorded from the team's records (<code>source='aa-team'</code>), the historical sweep of the OCHA AA web page and the pa-anticipatory-action monorepo (<code>source='ocha-web'/'pa-monorepo'</code>, with <code>doc_url</code>/<code>analysis_ref</code>), and since then entered here (<code>source='entered'</code>). Version-specific facts (budgets, sector budgets, coverage, calendar, activations, status) carry a <code>version</code>.",
     "framework_status": "Operational lifecycle snapshots from every source sheet, kept side by side (PK includes <code>source</code>). Canonical <code>status</code> vocabulary; raw spelling preserved. This is deliberately distinct from the KB page-status vocabulary.",
     "framework_focal_point": "Focal points by role from the 2026 planning sheet, attributed to the version in force at the snapshot date.",
     "framework_calendar": "Monthly markers recovered from cell <em>colors</em> in the planning sheet: green = trigger window, orange = framework finalization, red = proposal development; 'F' = finalization deadline.",

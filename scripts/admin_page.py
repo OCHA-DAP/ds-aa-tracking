@@ -165,12 +165,12 @@ function mirrorOf(t){
 const canWrite = t => t.writable && !mirrorOf(t);   // never offer to edit a mirror
 // a table of ours named like a mirror one (cerf_subgrant beside cerf_project)
 const looksMirror = t => t.kind==='table' && !mirrorOf(t) && t.owner==='ds-aa-tracking' && /^(cerf|cbpf)_/.test(t.name);
-function ownerLine(t){ return esc(t.owner) + (t.kind==='view'?' · view':'') + (mirrorOf(t)?' · mirror':'') + (looksMirror(t)?' · kept here, not a mirror':''); }
+function ownerLine(t){ return esc(t.owner) + (t.kind==='view'?' · view':'') + (mirrorOf(t)?' · mirror':'') + (Object.hasOwn(IMPORTED, t.name)?' · imported once':looksMirror(t)?' · kept here, not a mirror':''); }
 // why this table (or row) cannot be changed here
 function roNote(t, what){
   const m = mirrorOf(t), under = t.reads_mirror || [];
   if(m) return `<div class='dj-ro dj-mirror'><b>Mirror — read-only.</b> ${esc(m.source)}. Refreshed ${esc(m.refresh)} by <b>${esc(m.repo)}</b>. ${esc(m.fix)}</div>`;
-  if(Object.hasOwn(IMPORTED, t.name)) return `<div class='dj-ro dj-mirror'><b>Imported once — read-only.</b> ${esc(IMPORTED[t.name])}</div>`;
+  if(Object.hasOwn(IMPORTED, t.name)) return `<div class='dj-ro dj-mirror'><b>Imported once, not refreshed.</b> ${esc(IMPORTED[t.name])}</div>`;
   if(t.kind==='view') return `<div class='dj-ro'>Database view — read-only.${under.length ? ` Built on the mirror table${under.length>1?'s':''} ${under.map(n=>`<a href='#${esc(n)}'>${esc(n)}</a>`).join(', ')}, refreshed ${esc(MIRRORS.refresh)} by <b>${esc(MIRRORS.repo)}</b>.` : ''}</div>`;
   if(!t.writable) return `<div class='dj-ro'>Read-only here: owned by <b>${esc(t.owner)}</b>${t.name==='entry_audit'?' (append-only audit trail)':''}.</div>`;
   return `<div class='dj-ro'>Viewing. Log in as editor to change ${what}.</div>`;
