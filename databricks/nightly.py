@@ -89,7 +89,10 @@ def main():
     ap.add_argument("--drop-leftovers", action="store_true", help="one-off, D168")
     ap.add_argument("--relabel", nargs=2, metavar=("ISO3/HAZARD/OLD", "NEW"))
     ap.add_argument("--no-prune", action="store_true")
-    a, _unknown = ap.parse_known_args()  # tolerate stray job parameters
+    a, unknown = ap.parse_known_args()  # tolerate stray job parameters, but say so
+    if unknown:   # e.g. "--a --b" sent as one: `bundle run --python-params` splits on commas
+        print(f"!! ignored job parameter(s) {unknown}: separate flags with commas, "
+              '--python-params "--drop-leftovers,--ensure-schema"', flush=True)
 
     for v in ("DSCI_AZ_DB_DEV_HOST", "DSCI_AZ_DB_DEV_UID_WRITE", "DSCI_AZ_BLOB_DEV_SAS_WRITE"):
         if not os.environ.get(v):
