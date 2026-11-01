@@ -30,6 +30,7 @@ ROOT = Path(__file__).parents[1]
 OUT = ROOT / "site_build"
 CACHE = ROOT / "data" / "fieldmaps"
 
+import copy
 import datetime as _dt
 import math
 from decimal import ROUND_HALF_UP, Decimal
@@ -1828,6 +1829,50 @@ def _people(v):
 
 
 # ---------------------------------------------------------------- page
+def withheld_on_open_map(e):
+    """{(iso3, hazard): {(as_of, people)}}: the people-covered figures the open map does not
+    show — those taken from a framework document that is not published (no file of that
+    version is public, or none is registered). The owner's rule: an unpublished document's
+    figures stay off anything public; the development site, behind its password, shows them
+    (2026-11-01, when the map was opened). Registering the published document
+    (register_documents.py) brings the figure back."""
+    w = _try_sql(e, """SELECT p.country_iso3, p.hazard, p.as_of, p.people_covered FROM aa.people_covered p
+                       WHERE p.source = 'framework-doc' AND p.people_covered IS NOT NULL
+                         AND NOT EXISTS (SELECT 1 FROM aa.version_document vd
+                                         JOIN aa.framework_document f ON f.sha256 = vd.sha256
+                                         WHERE vd.country_iso3 = p.country_iso3 AND vd.hazard = p.hazard
+                                           AND vd.version = p.version AND f.is_public)""",
+                 ["country_iso3", "hazard", "as_of", "people_covered"])
+    out = {}
+    for x in w.itertuples():
+        out.setdefault((x.country_iso3, x.hazard), set()).add((str(x.as_of)[:10], int(x.people_covered)))
+    return out
+
+
+def open_map_countries(countries, withheld):
+    """The map's data for the open site: a copy without the withheld figures (the framework's
+    people covered now, and the year selector's past figures). The development map, and the
+    cross-page figure check, keep them."""
+    out = copy.deepcopy(countries)
+    n = 0
+    for iso, cd in out.items():
+        for f in cd.get("fws", []):
+            gone = withheld.get((iso, f.get("hazard")))
+            if not gone:
+                continue
+            if f.get("covered") is not None and int(f["covered"]) in {v for _, v in gone}:
+                f["covered"] = None
+                n += 1
+            h = f.get("hist") or {}
+            if h.get("cov"):
+                keep = [c for c in h["cov"] if (str(c[0])[:10], int(c[1])) not in gone]
+                n += len(h["cov"]) - len(keep)
+                h["cov"] = keep
+    print(f"  open map: {n} people-covered figure(s) from unpublished documents left out "
+          f"({', '.join(sorted(f'{i} {h}' for i, h in withheld)) or 'none'})")
+    return out
+
+
 def build_landing(page, d, e):
     cur = d["current"]
     names = dict(zip(cur["country_iso3"], cur["country_name"]))
@@ -2002,7 +2047,7 @@ def build_landing(page, d, e):
 </section>
 <!-- 2026-10-02 meeting: the internal links that sat here (dashboards, explorer, data entry,
      data & schema review) were easy to miss below the map; they all live in the Internal menu -->
-<script>window.L = {json.dumps(countries, default=str)};
+<script>window.L = /*AA_L*/null;
 window.HAZ = {json.dumps(HAZ_COLOR)}; window.COLOR = {json.dumps(KB_COLOR)};
 window.KBLABEL = {json.dumps(DISP_LABEL)}; window.GLYPH = {json.dumps(HAZARD_SVG)};
 window.LAYER_ORDER = {json.dumps(list(LAYER_ORDER))}; window.LAYER_COLOR = {json.dumps(LAYER_COLOR)};
@@ -2019,7 +2064,13 @@ window.YEARS = {json.dumps({"first": YEAR_FIRST, "now": TODAY.year, "today": TOD
     # the countries' names in every language (an ad hoc-only country has the map's name)
     i18n.register_countries((iso, cd.get("name")) for iso, cd in countries.items())
     i18n.register_countries((iso, w.get("n")) for iso, w in wdata.items())
-    page("index.html", "OCHA Anticipatory Action — portfolio", body)
+    # the open site's map: the same page without the figures it may not show
+    if body.count("/*AA_L*/null") != 1:
+        raise SystemExit("FATAL: the map's data placeholder is not in its page exactly once")
+    open_json = json.dumps(open_map_countries(countries, withheld_on_open_map(e)), default=str)
+    page("index.html", "OCHA Anticipatory Action — portfolio",
+         body.replace("/*AA_L*/null", json.dumps(countries, default=str), 1),
+         prod_body=body.replace("/*AA_L*/null", open_json, 1))
 
 
 LANDING_CSS = r"""
