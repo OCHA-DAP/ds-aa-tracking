@@ -69,11 +69,12 @@ os.environ.setdefault("PGSSLMODE", "require")
 import ocha_stratus as stratus  # noqa: E402
 
 from ds_aa_tracking import schema, snapshot  # noqa: E402
-from ds_aa_tracking.versions import KB_DIR  # noqa: E402
 
 CONTAINER = "projects"
 PREFIX = "ds-aa-tracking/raw/framework_documents"
 ENTRIES = "ds-aa-tracking/entries"  # applied by the nightly job (scripts/apply_entries.py)
+# the PDFs fetched before the KB flip are cached in the knowledge-base clone
+KB_DIR = Path(os.environ.get("KB_DIR", "~/OCHA/repos/ds-knowledge-base")).expanduser()
 PDF_CACHE = KB_DIR / "raw" / ".pdf-cache"
 PUBLISHERS = ("reliefweb.int", "unocha.org")
 ROLES = ("endorsed", "published", "translation", "annex")

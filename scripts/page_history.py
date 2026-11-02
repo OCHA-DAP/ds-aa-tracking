@@ -210,7 +210,7 @@ def _events(d, c, h, ref, kb_fw=None, umap=None, slug=None, adhoc=False):
         vv = "" if vv in ("nan", "None", "NaT", "<NA>") else vv
         evs.append(dict(date=ed, year=int(ed[:4]), win=wn, label=_str(r.event_label), version=vv,
                         amount=float(amt.sum()) if amt.notna().any() else None,
-                        funds="; ".join(f"{fund_label(x.fund_code)} {_fmt_usd(x.amount_usd)}".strip()
+                        funds="; ".join(f"{fund_label(x.fund_code)} {_fmt_usd(x.amount_usd)}{_fund_note(x)}".strip()
                                         for x in f.itertuples() if isinstance(x.fund_code, str)),
                         funds_csv="; ".join(f"{x.fund_code}: {x.amount_usd:.0f}" if pd.notna(x.amount_usd)
                                             else f"{x.fund_code}: not recorded"
@@ -218,6 +218,18 @@ def _events(d, c, h, ref, kb_fw=None, umap=None, slug=None, adhoc=False):
                         same=(not vv) or (ref is not None and _vm(vv, str(ref))),
                         href=href, goes=goes))
     return evs
+
+
+def _fund_note(x):
+    """Beside a funding line's amount: the allocation it is net of and the money refunded after
+    the activation was stopped ('of $4.5M; $2.3M refunded'), or 'provisional' for an amount
+    OneGMS does not show yet (dashboards.funding_sql)."""
+    ref = pd.to_numeric(getattr(x, "refund_usd", None), errors="coerce")
+    net = pd.to_numeric(getattr(x, "amount_usd", None), errors="coerce")
+    notes = ([f"of {_fmt_usd((net if pd.notna(net) else 0) + ref)}; {_fmt_usd(ref)} refunded"]
+             if pd.notna(ref) and ref > 0 else []) \
+        + (["provisional"] if getattr(x, "provisional", None) in (True,) else [])
+    return f" ({'; '.join(notes)})" if notes else ""
 
 
 # ---------------- the interactive timeline (top of the page), data for its JS
@@ -1013,7 +1025,7 @@ def build_history(page, d):
 .lf {{ display:inline-block; padding:0 8px; border-radius:9px; font-size:11px; font-weight:600; white-space:nowrap; }}
 .lf-active {{ background:#dbe9f6; color:#17548a; }} .lf-updating {{ background:#e6f1f8; color:#2b6d99; }}
 .lf-development {{ background:#fdf1dc; color:#8a5c0a; }}
-.muted {{ color:#888; }}
+.muted {{ color:#666; }}
 .fbar input[type=checkbox] {{ vertical-align:-2px; }}
 .fbar .cnt {{ font-size:12px; color:#666; margin-left:auto; }}
 .hscroll {{ max-height:none; background:#fff; }}
@@ -1034,7 +1046,7 @@ table.hgrid td.na, p.legend .sw.na {{ background:repeating-linear-gradient(135de
 table.hgrid td.use {{ background:#fbf6ee; }}
 table.hgrid a.mk {{ text-decoration:none; }} table.hgrid a.mk:hover .dot {{ transform:scale(1.25); }}
 table.hgrid td.old, table.hgrid th.old {{ min-width:52px; width:52px; border-right:2px solid #cbd6e2; font-size:11px; }}
-table.hgrid td.old .of {{ color:#888; }}
+table.hgrid td.old .of {{ color:#666; }}
 table.hgrid tr.hrow:hover th.fw, table.hgrid tr.hrow:hover td:not(.na) {{ background:#f2f7fc; }}
 table.hgrid .dot {{ margin:0 1px; }}
 .dot.sim {{ background:{SIM_COL}; width:11px; height:11px; }}
@@ -1083,7 +1095,7 @@ p.legend .sw {{ display:inline-block; width:14px; height:12px; background:#fff; 
 .tlbar {{ display:flex; gap:8px 14px; flex-wrap:wrap; align-items:center; font-size:12.5px; margin:6px 0; }}
 .tlbar .tlr {{ display:flex; gap:6px 10px; flex-wrap:wrap; align-items:center; }}
 .tlbar input[type=date], .tlbar select, .tlbar button {{ font:inherit; font-size:12px; }}
-.tlbar .rhint {{ color:#888; font-size:11.5px; }} .tlbar .cnt {{ font-size:12px; color:#666; margin-left:auto; }}
+.tlbar .rhint {{ color:#666; font-size:11.5px; }} .tlbar .cnt {{ font-size:12px; color:#666; margin-left:auto; }}
 .tlk {{ display:inline-block; width:10px; height:10px; border-radius:50%; vertical-align:-1px; margin:0 2px; }}
 .tlk.sq {{ border-radius:2px; }} .tlk.dia {{ transform:rotate(45deg) scale(.85); border-radius:1px; }}
 .tlk.ring {{ background:#fff !important; box-shadow:inset 0 0 0 1.5px #667; }}
@@ -1141,5 +1153,7 @@ document.addEventListener('aalang', hfilt);"""
     intro = TB("A <b>simulated activation</b> means today's trigger would have activated in a past "
                "year, given the historical data for that year. A <b>real activation</b> means the trigger was actually met and the "
                "pre-arranged money was released.")
+    import figure_check
+    figure_check.KEY["history"] = tl         # the cross-page figure check (build_site)
     _dash_page(page, "pillar-history.html", "Historical activations", intro, panels,
                json.dumps({"rows": rows, "tl": tl}, default=str).replace("</", "<\\/"), js)

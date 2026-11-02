@@ -13,11 +13,11 @@
  *                    (country, hazard, version); every field change is written
  *                    to aa.entry_audit (old, new, who, when). Replace-set
  *                    semantics per version: the posted windows/funding ARE the
- *                    version's rows. The nightly/manual ingest merges entered_*
- *                    into aa.framework_version (entered values win).
+ *                    version's rows. The same transaction upserts the version into
+ *                    aa.framework_version (entered values win).
  *
- *   GET  /schema     every aa table + column (types, keys, owner, writable) — the
- *                    admin page is populated from this, Django-admin style
+ *   GET  /schema     every aa table + column (types, keys, owner, writable, mirror,
+ *                    reads_mirror) — the admin page is populated from this, Django-admin style
  *   GET  /rows       ?table=&limit=&offset=&order=&dir=&q=&f.<col>= -> paged rows
  *   GET  /distinct   ?table=&col= -> distinct values for filter sidebars
  *   POST /save       {table, key|null, row, by} -> UPDATE (key given) or INSERT,
@@ -25,12 +25,17 @@
  *   POST /delete     {table, key, by} -> DELETE one row, audited
  *   GET  /whoami     -> {role}
  *
+ *   POST /publish    start the publish workflow with a fresh copy of the database (D164:
+ *                    the admin page's "Publish changes"; about 15 minutes to the live site)
+ *   GET  /publish    the workflow's recent runs, for the page's status line
+ *
  * Two roles, two shared secrets in header x-site-token: SITE_TOKEN (viewer —
  * embedded only in the pages of the admin site (admin/, its own staticrypt
  * password), so "has the admin-site password" = viewer) and EDITOR_TOKEN (editor — never embedded; the pages prompt for it
  * once and keep it in localStorage). Reads need viewer; /extract, /entry, /save
- * and /delete need editor. Generic writes are refused on tables other writers
- * own (OneGMS mirrors), on the frozen KB-era record and on the append-only audit table.
+ * and /delete (and POST /publish) need editor. Generic writes are refused on the mirrors (tables another repo
+ * copies in from an outside source every day, listed in mirror_tables.json — D154), on the
+ * frozen KB-era record and on the append-only audit table.
  * The backtest tables (window, simulated_activation, version_performance_reported) are
  * this repo's since 2026-10-05 and editable here like any other owned table.
  *
@@ -47,8 +52,22 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ||
   "https://ocha-dap.github.io").split(",");
 const MODELS = new Set(["claude-opus-5"]);
 const MAX_BODY = 45 * 1024 * 1024;
-const RATE = { extract: 20, entry: 60, read: 1200, write: 600, windowMs: 60 * 60 * 1000 };
-// tables the generic /save and /delete refuse: other repos' loaders own them, or append-only
+const RATE = { extract: 20, entry: 60, read: 1200, write: 600, publish: 30, windowMs: 60 * 60 * 1000 };
+// GitHub: a fine-grained token for this repo only, Actions read and write — it can start the
+// publish workflow and read its runs, nothing else. Unset -> the page hides the button.
+const GH_TOKEN = process.env.GITHUB_TOKEN || "";
+const GH_REPO = (process.env.GITHUB_API || "https://api.github.com") + "/repos/OCHA-DAP/ds-aa-tracking/actions";
+// the mirrors (D154): tables and views another repo copies in from an outside source every
+// day. mirror_tables.json is the one list (the admin page build and scripts/apply_entries.py
+// read it too); a table matching one of its prefixes is a mirror before it is listed
+const MIRRORS = require("./mirror_tables.json");
+function mirrorOf(t) {
+  const own = (o, k) => Object.hasOwn(o, k) ? o[k] : null;
+  const source = own(MIRRORS.tables, t) || own(MIRRORS.views, t) ||
+    Object.entries(MIRRORS.prefixes).find(([p]) => t.startsWith(p))?.[1];
+  return source ? { source, repo: MIRRORS.repo, refresh: MIRRORS.refresh, fix: MIRRORS.fix } : null;
+}
+// tables the generic /save and /delete refuse besides the mirrors: frozen, or append-only
 const READONLY_TABLES = new Set([
   "entry_audit",
   // document registry: content-addressed, written only by scripts/register_documents.py
@@ -56,19 +75,17 @@ const READONLY_TABLES = new Set([
   // the KB-era record, frozen 2026-10-05 (superseded by window_funding / window_activation /
   // activation_funding); the backtest tables the KB used to load are editable here
   "funding_breakdown", "actual_activation", "activation_allocation",
-  // ds-cerf-supplement OneGMS mirrors
-  "cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country",
-  "cerf_allocation_storm", "cerf_supplement", "cerf_contribution",
 ]);
-const READONLY_PREFIXES = ["cbpf_", "zz_legacy_"];
+const READONLY_PREFIXES = ["zz_legacy_"];
 const TABLE_OWNER = (t) =>
   t.startsWith("zz_legacy_") ? "retired" :
-  READONLY_PREFIXES.some((p) => t.startsWith(p)) || t.startsWith("cerf_allocation_storm") ||
-  ["cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country", "cerf_supplement", "cerf_contribution"].includes(t)
-    ? "ds-cerf-supplement"
-    : ["funding_breakdown", "actual_activation", "activation_allocation"].includes(t)
-      ? "nobody — the frozen KB-era record" : "ds-aa-tracking";
-const isReadonly = (t) => READONLY_TABLES.has(t) || READONLY_PREFIXES.some((p) => t.startsWith(p));
+  mirrorOf(t) ? MIRRORS.repo :
+  ["funding_breakdown", "actual_activation", "activation_allocation"].includes(t)
+    ? "nobody — the frozen KB-era record" : "ds-aa-tracking";
+const isReadonly = (t) => READONLY_TABLES.has(t) || READONLY_PREFIXES.some((p) => t.startsWith(p)) || !!mirrorOf(t);
+const refusal = (t) => t.mirror
+  ? `${t.name} is a mirror and cannot be edited here: ${t.mirror.source}, refreshed ${t.mirror.refresh} by ${t.mirror.repo}. ${t.mirror.fix}`
+  : `${t.name} is read-only here (owned by ${t.owner})`;
 const hits = new Map();
 
 const pool = process.env.DSCI_AZ_DB_DEV_HOST
@@ -521,12 +538,27 @@ async function schema(force) {
   const counts = (await pool.query(
     `SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname = 'aa'`)).rows;
   const nrows = Object.fromEntries(counts.map((r) => [r.relname, Number(r.n_live_tup)]));
+  // what each view reads (tables and views), from the rewrite rules: unlike
+  // information_schema.view_table_usage, this is not limited to tables our login owns
+  const uses = (await pool.query(
+    `SELECT DISTINCT v.relname AS view, u.relname AS used
+     FROM pg_rewrite r
+     JOIN pg_class v ON v.oid = r.ev_class
+     JOIN pg_namespace vn ON vn.oid = v.relnamespace
+     JOIN pg_depend d ON d.classid = 'pg_rewrite'::regclass AND d.objid = r.oid
+                     AND d.refclassid = 'pg_class'::regclass
+     JOIN pg_class u ON u.oid = d.refobjid
+     JOIN pg_namespace un ON un.oid = u.relnamespace
+     WHERE vn.nspname = 'aa' AND un.nspname = 'aa' AND u.oid <> v.oid`)).rows;
+  const usedBy = {};
+  for (const u of uses) (usedBy[u.view] ??= []).push(u.used);
   const tables = {};
   for (const c of cols) {
     const t = (tables[c.table_name] ??= {
       name: c.table_name, kind: c.table_type === "VIEW" ? "view" : "table", columns: [],
       key: null, key_type: null, owner: TABLE_OWNER(c.table_name),
       writable: false, n_rows: nrows[c.table_name] ?? null,
+      mirror: mirrorOf(c.table_name), reads_mirror: [],
     });
     t.columns.push({
       name: c.column_name, type: c.data_type, udt: c.udt_name, nullable: c.nullable,
@@ -541,6 +573,14 @@ async function schema(force) {
   }
   for (const t of Object.values(tables))
     t.writable = t.kind === "table" && !!t.key && !isReadonly(t.name);
+  // a view of ours reads a mirror directly or through other views: name the mirror tables
+  const mirrorsUnder = (name, seen = new Set()) => {
+    if (seen.has(name)) return [];
+    seen.add(name);
+    return (usedBy[name] || []).flatMap((u) => mirrorOf(u) && !Object.hasOwn(MIRRORS.views, u) ? [u] : mirrorsUnder(u, seen));
+  };
+  for (const t of Object.values(tables))
+    if (t.kind === "view" && !t.mirror) t.reads_mirror = [...new Set(mirrorsUnder(t.name))].sort();
   SCHEMA = tables; schemaAt = Date.now();
   return SCHEMA;
 }
@@ -620,7 +660,7 @@ async function adminSave(req, res) {
   const client = await pool.connect();
   try {
     const sch = await schema(); const t = tableOf(sch, p.table, res); if (!t) return;
-    if (!t.writable) return send(res, 403, { error: `${t.name} is read-only here (owned by ${t.owner})` });
+    if (!t.writable) return send(res, 403, { error: refusal(t) });
     const row = p.row && typeof p.row === "object" ? p.row : {};
     const editable = t.columns.filter((c) => !c.generated);
     await client.query("BEGIN");
@@ -681,7 +721,7 @@ async function adminDelete(req, res) {
   const client = await pool.connect();
   try {
     const sch = await schema(); const t = tableOf(sch, p.table, res); if (!t) return;
-    if (!t.writable) return send(res, 403, { error: `${t.name} is read-only here (owned by ${t.owner})` });
+    if (!t.writable) return send(res, 403, { error: refusal(t) });
     const key = p.key && typeof p.key === "object" ? p.key : null;
     if (!key) return send(res, 400, { error: "key required" });
     const kc = t.key.map((k, i) => `${q(k)}::text = $${i + 1}`).join(" AND ");
@@ -698,6 +738,62 @@ async function adminDelete(req, res) {
     await client.query("ROLLBACK").catch(() => {});
     send(res, 400, { error: String(e.message || e) });
   } finally { client.release(); }
+}
+
+// ------------------------------------------------------------------ /publish
+// The site is static pages built from a copy of the database that Databricks takes every
+// night (D17), so an edit made here reaches the site the next morning. "Publish changes"
+// (D164) starts the publish workflow with fresh_snapshot: Databricks copies the database
+// first, then the site is rebuilt. publish.yml's concurrency group runs one at a time and
+// keeps only the newest waiting run, so a second press never doubles the work.
+const COPY_START = "Start a fresh copy of the database (Databricks)";   // publish.yml step names
+const COPY_WAIT = "Wait for the fresh copy of the database";
+const BUTTON_RUN = "Publish changes";                                   // publish.yml run-name
+async function gh(path, opts = {}) {
+  const r = await fetch(GH_REPO + path, { ...opts, headers: {
+    authorization: `Bearer ${GH_TOKEN}`, accept: "application/vnd.github+json",
+    "x-github-api-version": "2022-11-28", "user-agent": "ds-aa-tracking-proxy", ...(opts.headers || {}) } });
+  if (!r.ok) throw new Error(`GitHub said ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  return r.status === 204 ? null : r.json();
+}
+let publishSeen = { at: 0, body: null };   // every open admin page polls: ask GitHub at most every 8 s
+let publishAsked = 0;                       // GitHub lists a dispatched run a few seconds late
+async function publishRuns() {
+  if (Date.now() - publishSeen.at < 8000) return publishSeen.body;
+  const { workflow_runs } = await gh("/workflows/publish.yml/runs?per_page=10");
+  const runs = workflow_runs.map((w) => ({
+    id: w.id, status: w.status, conclusion: w.conclusion, event: w.event, url: w.html_url,
+    fresh: w.event === "workflow_dispatch" && (w.display_title || "").startsWith(BUTTON_RUN),
+    queued_at: w.created_at, started_at: w.run_started_at, finished_at: w.status === "completed" ? w.updated_at : null,
+  }));
+  // a running publish: copying the database, or building the site (the steps say which)
+  for (const run of runs.filter((x) => x.status === "in_progress")) {
+    const steps = ((await gh(`/runs/${run.id}/jobs`)).jobs[0] || {}).steps || [];
+    const wait = steps.find((st) => st.name === COPY_WAIT), start = steps.find((st) => st.name === COPY_START);
+    run.phase = !run.fresh || wait?.status === "completed" ? "building"
+      : start?.status === "completed" ? "copying" : "starting";
+  }
+  publishSeen = { at: Date.now(), body: { ok: true, configured: true, runs } };
+  return publishSeen.body;
+}
+async function publishStatus(req, res) {
+  if (!GH_TOKEN) return send(res, 200, { ok: true, configured: false });
+  try { send(res, 200, await publishRuns()); }
+  catch (e) { send(res, 502, { error: String(e.message || e) }); }
+}
+async function publishStart(req, res) {
+  if (limited(req, res, "publish")) return;
+  if (!GH_TOKEN) return send(res, 503, { error: "publishing from this page is not set up (the proxy has no GITHUB_TOKEN)" });
+  try {
+    // a fresh run still waiting to start will copy the database after this edit anyway
+    publishSeen.at = 0;
+    const waiting = (await publishRuns()).runs.find((x) => x.fresh && x.status !== "completed" && x.status !== "in_progress");
+    if (waiting || Date.now() - publishAsked < 30000) return send(res, 200, { ok: true, started: false, waiting: true });
+    await gh("/workflows/publish.yml/dispatches", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ref: "main", inputs: { fresh_snapshot: "true" } }) });
+    publishAsked = Date.now(); publishSeen.at = 0;
+    send(res, 200, { ok: true, started: true });
+  } catch (e) { send(res, 502, { error: String(e.message || e) }); }
 }
 
 // ------------------------------------------------------------------- server
@@ -720,12 +816,14 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/schema") return adminSchema(req, res, url.searchParams);
   if (req.method === "GET" && url.pathname === "/rows") return adminRows(req, res, url.searchParams);
   if (req.method === "GET" && url.pathname === "/distinct") return adminDistinct(req, res, url.searchParams);
-  if (r !== "editor" && ["/extract", "/entry", "/save", "/delete"].includes(url.pathname))
+  if (req.method === "GET" && url.pathname === "/publish") return publishStatus(req, res);
+  if (r !== "editor" && ["/extract", "/entry", "/save", "/delete", "/publish"].includes(url.pathname))
     return send(res, 401, { error: "editor token required" });   // 401: pages prompt for it
   if (req.method === "POST" && url.pathname === "/extract") return extract(req, res);
   if (req.method === "POST" && url.pathname === "/entry") return entry(req, res);
   if (req.method === "POST" && url.pathname === "/save") return adminSave(req, res);
   if (req.method === "POST" && url.pathname === "/delete") return adminDelete(req, res);
+  if (req.method === "POST" && url.pathname === "/publish") return publishStart(req, res);
   send(res, 404, { error: "not found" });
 });
 

@@ -316,6 +316,7 @@ aa.activation_funding         one row per activation × fund, either kind of act
   unattributable, never spread. Build earmarks to the OCHA AA project are hand-entered
   (`aa.build_contribution`) and shown directly. Computed client-side on `dash-donors.html`;
   a SQL view (`v_donor_aa_share`) is the natural next step once the series are stored.
+  (The page was removed with the other admin dashboards on 2026-10-30, D168.)
 - Public site (2026-09-21): nav = Map · Funding · Model · Plan · Learning (the building
   blocks of AA) with everything internal behind one menu; the framework sidebar leads
   with the same three blocks (+ Learning when there is material). Publishing is automated
@@ -325,7 +326,9 @@ aa.activation_funding         one row per activation × fund, either kind of act
   `adhoc_activation`; `prearranged_funding`, `prearranged_sector_budget` and
   `entered_version_funding` folded into `window_funding`. The retired tables live on as
   `zz_legacy_*` (read-only history) and the old names are compatibility VIEWS for one
-  release (`framework_registry`, `activation`, `prearranged_funding`).
+  release (`framework_registry`, `activation`, `prearranged_funding`). The `zz_legacy_*`
+  tables and `framework_registry` went on 2026-10-30 (D168, archived on the dev blob); the
+  site still reads `activation` and `prearranged_funding`.
 - Version-level figures from the sheets/KB were attributed to the window when the version
   has exactly one (`single` when it has none named) and parked on the `unattributed`
   sentinel otherwise — `v_trk_funding_rollup` and `v_trk_activation_window_check` are the

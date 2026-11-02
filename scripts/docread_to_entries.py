@@ -274,7 +274,7 @@ def convert(read, body, db):
                  "return period": w.get("return_period"),
                  "releases (usd)": w.get("allocation_usd")} for w in read.get("windows") or []]
     add("version_page", {"kb_framework": kb, "version": ver, "country_iso3": countries, "hazard": hz,
-                         "frontmatter": merged, "frontmatter_text": None, "triggers": triggers, "body_md": body,
+                         "frontmatter": merged, "triggers": triggers, "body_md": body,
                          "source": SOURCE, "note": f"full read of the framework document ({quality})"})
 
     # ---- windows, funding, backtest, people: per country of the version

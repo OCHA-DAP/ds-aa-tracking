@@ -1,6 +1,7 @@
 """The mock-up: the public site as it would sit on https://www.unocha.org/anticipatory-action.
 
-    python scripts/mock_unocha.py [SITE_DIR]      (after build_site.py; publish.sh runs it)
+    python scripts/mock_unocha.py [SITE_DIR]      (after build_site.py; publish.sh runs it;
+                                                  default site_build/dev, the development site)
 
 The user's brief (2026-10-27): the whole site, every tab, goes right under the big photo of
 OCHA's page; it takes the place of their section tabs (the intro text, "What is anticipatory
@@ -10,8 +11,8 @@ width, like the photo; it lives on our Pages site, unlisted.
 Every page a visitor reaches from the map (the tabs and the framework pages the map opens; not
 the unlisted pages) gets a twin, index.html -> mock-unocha.html, x.html -> mock-unocha-x.html:
 OCHA's page (site_src/unocha-shell.html, scripts/snapshot_unocha.py) with the page's content in
-it. The twins link only to each other and nothing on the site links to them. They are written at
-the top level of the site, so publish.sh encrypts them with the public pages.
+it. The twins link only to each other and nothing on the site links to them. They are written
+beside the development site's pages (site_build/dev/), so publish.sh encrypts them with those.
 
 Our CSS is scoped to .aa-embed, so it cannot restyle OCHA's page. OCHA's rules still reach our
 content, as they would on the real page; the ones that break it are reset in EMBED_CSS, and that
@@ -29,7 +30,9 @@ TITLE = "Anticipatory action | OCHA"
 
 # a page as build_site._render writes it
 DOC = re.compile(r'<!doctype html><html lang="en"><head>(?P<head>.*?)</head><body>\n'
-                 r'(?P<top>.*?)<main>(?P<main>.*)</main></body></html>\s*', re.S)
+                 r'(?P<top>.*?)<main[^>]*>(?P<main>.*)</main>(?:<footer class=.foot.>.*?</footer>)?</body></html>\s*', re.S)
+# <main id=… tabindex=…> since the skip link (PR #56); the foot (the accessibility link) is ours, not
+# shown inside OCHA's page, which has its own footer
 
 # our block in their page: full width like the photo, their tab row, their font
 EMBED_CSS = """
@@ -246,4 +249,4 @@ def main(site):
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]) if len(sys.argv) > 1 else REPO / "site_build")
+    main(Path(sys.argv[1]) if len(sys.argv) > 1 else REPO / "site_build" / "dev")

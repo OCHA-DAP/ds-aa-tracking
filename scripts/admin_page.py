@@ -13,23 +13,34 @@ the page never carries a data snapshot. Two roles:
   delete on the tables this repo owns; every field change is audited to
   aa.entry_audit under the editor's name.
 
-Tables owned by other writers (OneGMS mirrors), the frozen KB-era record and the audit table are
-read-only regardless of role — the proxy enforces it, the page just says so.
+The mirrors (D154: tables and views ds-cerf-supplement copies in every day from OneGMS, the
+CBPF OData API and its storm and drought matchers), the frozen KB-era record and the audit
+table are read-only regardless of role — the proxy enforces it, the page says so. A mirror
+says what it is copied from, by whom, how often and where a wrong value is fixed; a view
+built on one names the mirror tables under it. The mirror list (proxy/mirror_tables.json) is
+built into the page, so the labels are right even before the proxy is redeployed.
+
+A save is in the database at once, but the site is built from a copy of the database taken
+every night (D17). The bar under the breadcrumbs (D164) says which copy the site shows and
+gives editors "Publish changes": the proxy starts the publish workflow with a fresh copy
+(POST /publish), about 15 minutes to the live site, and the bar follows it (GET /publish).
 """
 
 import os
 from pathlib import Path
 
+from ds_aa_tracking.mirrors import MIRRORS
+
 PROXY_URL = "https://chd-ds-aa-extract.azurewebsites.net"
 
-# grouping for the index page, Django-admin "app" style
+# grouping for the index page, Django-admin "app" style: (heading, owner, tables[, note])
 GROUPS = [
     ("Frameworks & tracking", "ds-aa-tracking", [
         "country_hazard", "framework_version", "framework_status", "framework_focal_point",
         "framework_calendar", "fund", "build_contribution", "window_status", "window_funding",
         "window_activation",
         "adhoc_activation",
-        "activation_funding", "people_covered", "plan_inclusion", "report_channel_inclusion",
+        "activation_funding", "activation_refund", "people_covered", "plan_inclusion", "report_channel_inclusion",
         "start_network", "cirv", "emergency_type_override",
         "cerf_allocation_extra", "cerf_application_people", "cerf_application_report",
         "cerf_project_supplement", "cerf_subgrant", "cerf_cva_history"]),
@@ -41,20 +52,24 @@ GROUPS = [
      "ds-aa-tracking", ["window", "simulated_activation", "version_performance_reported"]),
     ("KB-era record (read-only, frozen 2026-10-05)", "ds-aa-tracking", [
         "funding_breakdown", "actual_activation", "activation_allocation"]),
-    ("OneGMS mirrors (read-only)", "ds-cerf-supplement", [
-        "cerf_allocation", "cerf_project", "cerf_project_sector", "cerf_project_country",
-        "cerf_allocation_storm", "cerf_supplement", "cbpf_fund", "cbpf_allocation",
-        "cbpf_project", "cbpf_project_cluster", "cbpf_project_subip",
-        "cerf_contribution", "cbpf_contribution"]),
-    ("Legacy — pre window-first (read-only history)", "retired", [
-        "zz_legacy_activation", "zz_legacy_prearranged_funding",
-        "zz_legacy_prearranged_sector_budget", "zz_legacy_entered_version_funding"]),
+    ("Mirrors — copied in every day, read-only", MIRRORS["repo"],
+     [*MIRRORS["tables"], *MIRRORS["views"]],
+     (f"Copied in {MIRRORS['refresh']} by {MIRRORS['repo']}: the CERF OneGMS feeds, the CBPF "
+      f"OData API and its storm and drought matches. {MIRRORS['fix']}")),
 ]
+
+# tables of ours that were filled once from a file and are not kept up to date (D168)
+IMPORTED = {
+    "cerf_subgrant": ("Imported once, in 2026, from the CERF secretariat's sub-grant workbooks "
+                      "(2020-2025, and the AA projects to June 2026); not refreshed. CERF's data "
+                      "feeds publish no sub-grants, so this is not a mirror; the pooled funds' "
+                      "sub-grants are (cbpf_project_subip)."),
+}
 
 # columns that read better as a textarea
 LONG_TEXT = ("note", "notes", "comment", "comments", "remark", "remarks", "description",
              "narrative", "statement", "title", "summary", "text", "lesson", "objective",
-             "evidence", "key_stat", "frontmatter", "frontmatter_text", "body_md", "triggers",
+             "evidence", "key_stat", "frontmatter", "body_md", "triggers",
              "tiers")
 
 
@@ -67,6 +82,8 @@ def build_admin(page):
             .replace("__PROXY__", PROXY_URL)
             .replace("__TOKEN__", site_token)
             .replace("__GROUPS__", json.dumps(GROUPS))
+            .replace("__MIRRORS__", json.dumps(MIRRORS).replace("</", "<\\/"))
+            .replace("__IMPORTED__", json.dumps(IMPORTED))
             .replace("__LONGTEXT__", json.dumps(LONG_TEXT)))
     page("admin.html", "Administration", body)
 
@@ -78,13 +95,14 @@ ADMIN_HTML = r"""
   <div class='dj-user' id='who'></div>
  </div>
  <div class='dj-crumbs' id='crumbs'>Home</div>
+ <div class='dj-pub' id='pub' hidden></div>
  <div class='dj-msg' id='msg' hidden></div>
  <div id='view' class='dj-body'><div class='dj-loading'>Loading schema…</div></div>
 </div>
 <script>
 window.PROXY = new URLSearchParams(location.search).get('proxy') || '__PROXY__';
 window.SITE_TOKEN = '__TOKEN__';
-const GROUPS = __GROUPS__, LONG_TEXT = __LONGTEXT__;
+const GROUPS = __GROUPS__, LONG_TEXT = __LONGTEXT__, MIRRORS = __MIRRORS__, IMPORTED = __IMPORTED__;
 const PAGE = 100;
 // controlled vocabularies: rendered as dropdowns in the change form
 const VOCAB = {
@@ -137,6 +155,26 @@ function editorName(){ let n = localStorage.getItem('editorName'); if(!n){ n = p
 function keyOf(t, row){ return Object.fromEntries((t.key||[]).map(k=>[k, row[k]])); }
 function keyQS(t, row){ return (t.key||[]).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(row[k]==null?'∅':row[k])).join('&'); }
 function groupOf(name){ for(const [g] of GROUPS){ const grp = GROUPS.find(x=>x[0]===g); if(grp[2].includes(name)) return g; } return null; }
+// mirrors (D154): the proxy says so in /schema; the list built into the page covers an older proxy
+function mirrorOf(t){
+  if(t.mirror) return t.mirror;
+  const own = (o, k) => Object.hasOwn(o, k) ? o[k] : null;
+  const source = own(MIRRORS.tables, t.name) || own(MIRRORS.views, t.name) || (Object.entries(MIRRORS.prefixes).find(([p])=>t.name.startsWith(p))||[])[1];
+  return source ? {source, repo: MIRRORS.repo, refresh: MIRRORS.refresh, fix: MIRRORS.fix} : null;
+}
+const canWrite = t => t.writable && !mirrorOf(t);   // never offer to edit a mirror
+// a table of ours named like a mirror one (cerf_subgrant beside cerf_project)
+const looksMirror = t => t.kind==='table' && !mirrorOf(t) && t.owner==='ds-aa-tracking' && /^(cerf|cbpf)_/.test(t.name);
+function ownerLine(t){ return esc(t.owner) + (t.kind==='view'?' · view':'') + (mirrorOf(t)?' · mirror':'') + (Object.hasOwn(IMPORTED, t.name)?' · imported once':looksMirror(t)?' · kept here, not a mirror':''); }
+// why this table (or row) cannot be changed here
+function roNote(t, what){
+  const m = mirrorOf(t), under = t.reads_mirror || [];
+  if(m) return `<div class='dj-ro dj-mirror'><b>Mirror — read-only.</b> ${esc(m.source)}. Refreshed ${esc(m.refresh)} by <b>${esc(m.repo)}</b>. ${esc(m.fix)}</div>`;
+  if(Object.hasOwn(IMPORTED, t.name)) return `<div class='dj-ro dj-mirror'><b>Imported once, not refreshed.</b> ${esc(IMPORTED[t.name])}</div>`;
+  if(t.kind==='view') return `<div class='dj-ro'>Database view — read-only.${under.length ? ` Built on the mirror table${under.length>1?'s':''} ${under.map(n=>`<a href='#${esc(n)}'>${esc(n)}</a>`).join(', ')}, refreshed ${esc(MIRRORS.refresh)} by <b>${esc(MIRRORS.repo)}</b>.` : ''}</div>`;
+  if(!t.writable) return `<div class='dj-ro'>Read-only here: owned by <b>${esc(t.owner)}</b>${t.name==='entry_audit'?' (append-only audit trail)':''}.</div>`;
+  return `<div class='dj-ro'>Viewing. Log in as editor to change ${what}.</div>`;
+}
 
 // ---------- header / role
 async function refreshRole(){
@@ -148,6 +186,57 @@ async function refreshRole(){
 }
 function loginEditor(){ const et = prompt('Editor token (ask Tristan). Saved in this browser only:'); if(et){ localStorage.setItem('editorToken', et.trim()); editorName(); boot(); } }
 function logoutEditor(){ localStorage.removeItem('editorToken'); boot(); }
+
+// ---------- publish (D164): which copy of the database the site shows; editors can publish now
+let PUB = null, pubTimer = null, pubAsked = 0;
+const when = s => new Date(s).toLocaleString([], {weekday:'short', hour:'2-digit', minute:'2-digit', timeZoneName:'short'});
+async function loadPublish(){
+  clearTimeout(pubTimer);
+  try { PUB = await getJSON('/publish'); }
+  catch(e){ PUB = e.message==='not found' ? {configured: false} : {error: e.message}; }   // an older proxy
+  renderPublish();
+  pubTimer = setTimeout(loadPublish, (PUB.runs||[]).some(r=>r.status!=='completed') ? 15000 : Date.now()-pubAsked < 60000 ? 5000 : 120000);
+}
+function renderPublish(){
+  const el = document.getElementById('pub');
+  if(!PUB || (PUB.configured===false && ROLE!=='editor')){ el.hidden = true; return; }
+  el.hidden = false;
+  if(PUB.error){ el.innerHTML = `<span class='dj-warn'>Cannot read the publish status (${esc(PUB.error)}).</span>`; return; }
+  if(PUB.configured===false){ el.innerHTML = `Publishing from this page is not set up yet: edits reach the site after the nightly copy of the database.`; return; }
+  const runs = PUB.runs || [];
+  const running = runs.find(r=>r.status==='in_progress');
+  // a run just asked for that GitHub does not list yet counts as waiting
+  const waiting = runs.find(r=>r.fresh && r.status!=='completed' && r.status!=='in_progress') ||
+    (Date.now()-pubAsked < 60000 && !runs.some(r=>r.fresh && new Date(r.queued_at) > pubAsked-15000) ? {fresh: true} : null);
+  // GitHub keeps one waiting publish: a code change or the nightly arriving meanwhile replaces a
+  // waiting Publish changes, and builds from the copy before it
+  const lastFresh = runs.find(r=>r.fresh), replaced = lastFresh && lastFresh.conclusion==='cancelled' &&
+    !runs.some(r=>r.event==='schedule' && r.conclusion==='success' && new Date(r.started_at) > new Date(lastFresh.queued_at));
+  const done = runs.find(r=>r.status==='completed' && !['cancelled','skipped'].includes(r.conclusion));
+  const STEP = {starting: 'starting', copying: 'copying the database (step 1 of 2)', building: 'building the site (step 2 of 2)'};
+  let line;
+  if(running && running.fresh) line = `<b>Publishing:</b> ${STEP[running.phase]||'running'}, started ${when(running.started_at)}. It takes about 15 minutes.`;
+  else if(running) line = `<b>The site is being rebuilt</b> (started ${when(running.started_at)}) from the last copy of the database.`;
+  else if(waiting) line = `<b>Publishing:</b> starting.`;
+  else if(!done) line = `No recent publish found.`;
+  else if(done.conclusion!=='success') line = `<span class='dj-warn'>The last publish failed (${when(done.finished_at)}).</span> <a href='${esc(done.url)}' target='_blank' rel='noopener'>Details</a>. The site still shows the copy before it.`;
+  else if(done.fresh) line = `Site published ${when(done.finished_at)}: it shows everything saved before ${when(done.started_at)}.` + (Date.now()-new Date(done.finished_at) < 3600e3 ? ` An open page may need a reload to show it.` : '');
+  else if(done.event==='schedule') line = `Site last rebuilt ${when(done.finished_at)}, from the nightly copy of the database.`;
+  else line = `Site last rebuilt ${when(done.finished_at)}, from the last copy of the database.`;
+  if(running && waiting) line += ` Another publish is queued: it starts when this one ends and includes everything saved until then.`;
+  if(replaced && !waiting && !(running && running.fresh)) line += ` <span class='dj-warn'>A Publish changes asked for at ${when(lastFresh.queued_at)} was replaced by another rebuild that used the earlier copy of the database; press Publish changes again to put recent edits on the site.</span>`;
+  const btn = ROLE!=='editor' ? '' : waiting
+    ? `<button disabled title='A publish is queued; it will include your changes'>Publish queued</button>`
+    : `<button onclick='publishNow(this)' title='Copies the database and rebuilds the site: about 15 minutes'>Publish changes</button>`;
+  el.innerHTML = `<span>${line}</span>${btn}`;
+}
+async function publishNow(btn){
+  btn.disabled = true; btn.textContent = 'Starting…';
+  try { const j = await postJSON('/publish', {}); pubAsked = Date.now();
+    msg(j.waiting ? 'A publish is already queued; it will include your changes.' : 'Publishing: your changes will be on the site in about 15 minutes.'); }
+  catch(e){ msg(e.message, 'err'); }
+  setTimeout(loadPublish, 4000);
+}
 
 // ---------- routing  #table | #table/change?k=v | #table/add
 window.addEventListener('hashchange', route);
@@ -167,28 +256,33 @@ function renderIndex(){
   crumbs([]);
   const used = new Set();
   let html = `<div class='dj-cols'><div class='dj-main'>`;
-  for(const [g, owner, names] of GROUPS){
+  for(const [g, owner, names, note] of GROUPS){
     const ts = names.map(n=>BY_TABLE[n]).filter(Boolean); ts.forEach(t=>used.add(t.name));
     if(!ts.length) continue;
-    html += module(g, owner, ts);
+    html += module(g, owner, ts, note);
   }
   const rest = Object.values(SCHEMA).filter(t=>!used.has(t.name) && t.kind==='table');
   if(rest.length) html += module('Other tables', '', rest);
-  const views = Object.values(SCHEMA).filter(t=>t.kind==='view');
+  const views = Object.values(SCHEMA).filter(t=>!used.has(t.name) && t.kind==='view');
   if(views.length) html += module('Views (read-only)', 'derived', views);
   html += `</div><div class='dj-side'><div class='dj-module'><h2>Recent actions</h2><div id='recent' class='dj-recent'>…</div></div>
     <div class='dj-module'><h2>About</h2><div class='dj-about'>Every table in the <code>aa</code> schema, straight from the database.
     ${ROLE==='editor' ? 'You can add, change and delete rows on the tables this repo owns; each field change is written to the audit trail under your name.' : 'You are viewing. Log in as editor (top right) to change data.'}
-    Tables owned by other writers are read-only here.</div></div></div></div>`;
+    The mirrors (copied in every day by ${esc(MIRRORS.repo)}) and the frozen records are read-only here.
+    A change is in the database at once; the site shows it after the next publish: every night, or about 15 minutes after an editor presses Publish changes.</div></div></div></div>`;
   document.getElementById('view').innerHTML = html;
   loadRecent();
 }
-function module(g, owner, ts){
-  return `<div class='dj-module'><h2>${esc(g)} ${owner?`<span class='dj-owner'>${esc(owner)}</span>`:''}</h2><table class='dj-modtbl'>` +
-    ts.map(t=>`<tr><th><a href='#${t.name}'>${esc(title(t.name))}</a>${t.kind==='view'?" <span class='dj-tag'>view</span>":''}</th>
+function module(g, owner, ts, note){
+  const tags = t => (t.kind==='view'?" <span class='dj-tag'>view</span>":'') +
+    (mirrorOf(t) ? " <span class='dj-tag dj-tag-mirror'>mirror</span>" : '') +
+    ((t.reads_mirror||[]).length ? " <span class='dj-tag'>built on a mirror</span>" : '') +
+    (Object.hasOwn(IMPORTED, t.name) ? " <span class='dj-tag'>imported once</span>" : looksMirror(t) ? " <span class='dj-tag'>kept here, not a mirror</span>" : '');
+  return `<div class='dj-module'><h2>${esc(g)} ${owner?`<span class='dj-owner'>${esc(owner)}</span>`:''}</h2>${note?`<div class='dj-modnote'>${esc(note)}</div>`:''}<table class='dj-modtbl'>` +
+    ts.map(t=>`<tr><th><a href='#${t.name}'>${esc(title(t.name))}</a>${tags(t)}</th>
       <td class='dj-n'>${t.n_rows!=null?Number(t.n_rows).toLocaleString():''}</td>
-      <td class='dj-act'>${t.writable && ROLE==='editor' ? `<a class='dj-add' href='#${t.name}/add'>+ Add</a>` : ''}</td>
-      <td class='dj-act'><a class='dj-chg' href='#${t.name}'>${t.writable && ROLE==='editor' ? 'Change' : 'View'}</a></td></tr>`).join('') + `</table></div>`;
+      <td class='dj-act'>${canWrite(t) && ROLE==='editor' ? `<a class='dj-add' href='#${t.name}/add'>+ Add</a>` : ''}</td>
+      <td class='dj-act'><a class='dj-chg' href='#${t.name}'>${canWrite(t) && ROLE==='editor' ? 'Change' : 'View'}</a></td></tr>`).join('') + `</table></div>`;
 }
 async function loadRecent(){
   const el = document.getElementById('recent'); if(!el) return;
@@ -205,12 +299,12 @@ const FILTER_SKIP = /note|comment|remark|description|narrative|statement|title|u
 async function renderList(t, qs){
   crumbs([`<b>${esc(title(t.name))}</b>`]);
   const v = document.getElementById('view');
-  const readonly = !(t.writable && ROLE==='editor');
+  const readonly = !(canWrite(t) && ROLE==='editor');
   const search = qs.get('q') || '', order = qs.get('order') || (t.key ? t.key[0] : t.columns[0].name), dir = qs.get('dir') || 'asc', p = +(qs.get('p')||0);
   const filters = [...qs.entries()].filter(([k])=>k.startsWith('f.'));
   const params = new URLSearchParams({table:t.name, limit:PAGE, offset:p*PAGE, order, dir}); if(search) params.set('q', search); filters.forEach(([k,val])=>params.set(k,val));
-  v.innerHTML = `<div class='dj-listhead'><h1>${esc(title(t.name))} <span class='dj-owner'>${esc(t.owner)}${t.kind==='view'?' · view':''}</span></h1>
-    ${readonly ? `<div class='dj-ro'>${t.kind==='view' ? 'Database view — read-only.' : !t.writable ? `Read-only here: owned by <b>${esc(t.owner)}</b>${t.name==='entry_audit'?' (append-only audit trail)':''}.` : 'Viewing. Log in as editor to change rows.'}</div>` : `<a class='dj-btn' href='#${t.name}/add'>+ Add ${esc(title(t.name).toLowerCase())}</a>`}
+  v.innerHTML = `<div class='dj-listhead'><h1>${esc(title(t.name))} <span class='dj-owner'>${ownerLine(t)}</span></h1>
+    ${readonly ? roNote(t, 'rows') : `<a class='dj-btn' href='#${t.name}/add'>+ Add ${esc(title(t.name).toLowerCase())}</a>`}
    </div>
    <div class='dj-cols'><div class='dj-main'>
     <form class='dj-search' onsubmit='return doSearch(event,"${t.name}")'><input name='q' value='${esc(search)}' placeholder='Search text columns…'><button>Search</button>
@@ -252,7 +346,7 @@ async function renderForm(t, key){
   const adding = !key;
   crumbs([`<a href='#${t.name}'>${esc(title(t.name))}</a>`, `<b>${adding ? 'Add' : esc(Object.values(key).join(' / '))}</b>`]);
   const v = document.getElementById('view');
-  const canEdit = t.writable && ROLE==='editor';
+  const canEdit = canWrite(t) && ROLE==='editor';
   let row = {};
   if(!adding){
     try { const j = await getJSON(`/rows?table=${t.name}&limit=2&${(t.key||[]).map(k=>`f.${k}=${encodeURIComponent(key[k])}`).join('&')}`);
@@ -275,8 +369,8 @@ async function renderForm(t, key){
     return `<div class='dj-row'><label>${esc(c.name)}${isKey?" <span class='dj-tag'>key</span>":''}${!c.nullable&&!c.has_default?" <span class='dj-req'>*</span>":''}</label>${input}<div class='dj-help'>${esc(c.type)}</div></div>`;
   };
   const keyCols = t.columns.filter(c=>(t.key||[]).includes(c.name)), other = t.columns.filter(c=>!(t.key||[]).includes(c.name));
-  v.innerHTML = `<h1>${adding?'Add':'Change'} ${esc(title(t.name).toLowerCase())}</h1>
-   ${canEdit ? '' : `<div class='dj-ro'>${!t.writable ? `Read-only here: owned by <b>${esc(t.owner)}</b>.` : 'Viewing. Log in as editor to change this row.'}</div>`}
+  v.innerHTML = `<h1>${adding?'Add':canEdit?'Change':'View'} ${esc(title(t.name).toLowerCase())}</h1>
+   ${canEdit ? '' : roNote(t, 'this row')}
    <form id='f' class='dj-form' onsubmit='return false'>
     <fieldset><h2>Key</h2>${keyCols.map(field).join('')}</fieldset>
     <fieldset><h2>Fields</h2>${other.map(field).join('')}</fieldset>
@@ -305,7 +399,8 @@ async function saveRow(tname, adding, after){
   try {
     const key = adding ? null : Object.fromEntries(Object.entries(v._key).map(([k,x])=>[k, x==='∅' ? null : x]));
     const j = await postJSON('/save', {table: tname, key, row: rowVals, by});
-    msg(adding ? `Added ${title(tname).toLowerCase()} ${Object.values(j.key).join(' / ')}.` : `Saved ${j.changes} change${j.changes===1?'':'s'}.`);
+    msg((adding ? `Added ${title(tname).toLowerCase()} ${Object.values(j.key).join(' / ')}.` : `Saved ${j.changes} change${j.changes===1?'':'s'}.`) +
+      (PUB && PUB.configured ? ' Publish changes (above) puts it on the site.' : ' It reaches the site after the nightly copy.'));
     if(after === 'add') location.hash = `#${tname}/add`;
     else if(after === 'stay') { location.hash = `#${tname}/change?${keyQS(t, j.row)}`; route(); }
     else location.hash = `#${tname}`;
@@ -325,6 +420,7 @@ let schemaCountsDirty = false;
 // ---------- boot
 async function boot(){
   await refreshRole();
+  loadPublish();
   try {
     const j = await getJSON('/schema' + (schemaCountsDirty ? '?refresh=1' : ''));
     SCHEMA = Object.fromEntries(j.tables.map(t=>[t.name, t])); BY_TABLE = SCHEMA; schemaCountsDirty = false;
@@ -342,6 +438,9 @@ boot();
 #adm .dj-brand a { color:#f5f5f5; font-size:22px; font-weight:300; letter-spacing:.2px; } #adm .dj-brand a:hover { color:#fff; text-decoration:none; }
 .dj-user { font-size:12px; color:#ddd; } #adm .dj-user a { color:#fff; text-decoration:underline; } .dj-user b { color:#fff; }
 .dj-crumbs { background:var(--dj-primary); color:#c4dce8; padding:10px 40px; font-size:13px; } #adm .dj-crumbs a { color:#fff; } .dj-crumbs b { color:#fff; font-weight:400; }
+.dj-pub { display:flex; gap:14px; align-items:center; justify-content:space-between; padding:8px 40px; background:#f4f8fb; border-bottom:1px solid #e3ecf2; font-size:12.5px; color:#444; }
+.dj-pub .dj-warn { padding:0; } .dj-pub button { padding:6px 14px; border:0; border-radius:4px; background:var(--dj-secondary); color:#fff; cursor:pointer; font-size:12.5px; white-space:nowrap; }
+.dj-pub button:hover { background:#205067; } .dj-pub button:disabled { background:#9bb5c4; cursor:default; }
 .dj-msg { margin:0; padding:10px 40px; font-size:13px; background:#dfd; color:#155724; border-bottom:1px solid #cec; }
 .dj-msg.err { background:#ffefef; color:#ba2121; border-color:#f3c9c9; }
 .dj-body { padding:20px 40px 30px; min-height:400px; background:#fff; }
@@ -364,6 +463,9 @@ boot();
 #adm h1 { font-size:20px; font-weight:300; color:#666; margin:0 0 10px; } #adm h1 .dj-owner { color:#999; }
 #adm .dj-btn { background:var(--dj-secondary); color:#fff !important; padding:7px 14px; border-radius:4px; font-size:12.5px; white-space:nowrap; } #adm .dj-btn:hover { background:#205067; text-decoration:none !important; }
 .dj-ro { background:#fff8e1; border:1px solid #f0dc9c; color:#6b5310; padding:7px 12px; border-radius:4px; font-size:12px; }
+.dj-ro.dj-mirror { background:#eaf3f8; border-color:#b5d3e3; color:#24506a; max-width:760px; line-height:1.5; }
+.dj-tag.dj-tag-mirror { background:#dcecf5; color:#24506a; font-weight:600; }
+.dj-modnote { padding:8px 12px; font-size:12px; color:#24506a; background:#eaf3f8; border-bottom:1px solid #d5e6ef; line-height:1.5; }
 .dj-search { display:flex; gap:8px; align-items:center; margin:6px 0 10px; } .dj-search input { padding:6px 10px; border:1px solid #ccc; border-radius:4px; width:320px; font-size:13px; }
 .dj-search button { padding:6px 12px; background:var(--dj-primary); color:#fff; border:0; border-radius:4px; cursor:pointer; } .dj-count { color:#666; font-size:12px; margin-left:auto; } .dj-clear { font-size:12px; }
 .dj-scroll { overflow-x:auto; border:1px solid #eee; border-radius:4px; }

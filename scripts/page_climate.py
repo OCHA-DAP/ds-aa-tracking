@@ -32,7 +32,18 @@ ACC_TITLE = "Climate coding: can a model reproduce it?"
 
 # the hand coder the accuracy page scores the models against; if absent, the human coder
 # with the most answers (with a warning)
-REF_CODER = "Nico"
+REF_CODER = "Nico"            # the coder whose answers are the reference (a data key: not shown)
+REF_LABEL = "the hand coder"  # how the pages name them (no staff names on the site)
+
+
+def _by_role(df):
+    """The hand coder's rows carry the role, not the name: the pages' data is on the site."""
+    df["coded_by"] = df["coded_by"].replace({REF_CODER: REF_LABEL})
+    others = sorted(set(df["coded_by"]) - {REF_LABEL} - {c for c in df["coded_by"] if str(c).startswith("model-")})
+    if others:   # another person's coding would reach the page under their name
+        print(f"::warning::{PAGE}: {len(others)} hand coder(s) other than the reference are named in the data; map them to a role")
+    return df
+
 # the automated passes the accuracy page knows, in the order it shows them: coded_by, name,
 # what the model was given. A model-* coder not listed here is shown last, under its key.
 RUNS = [
@@ -169,7 +180,7 @@ def _rows(df):
 def build(e, page):
     """Both pages (each says so when it has nothing to show)."""
     exists = pd.read_sql("SELECT to_regclass('aa.cerf_climate_coding') AS r", e)["r"].iloc[0]
-    df = pd.read_sql(SQL, e) if exists is not None else pd.DataFrame()
+    df = _by_role(pd.read_sql(SQL, e)) if exists is not None else pd.DataFrame()
     if df.empty:
         page(PAGE, TITLE, f"<style>{DASH_CSS}</style><div class='card'>No coded projects loaded yet: "
              "the codes arrive through a data-entry file (scripts/import_climate_coding.py).</div>")
@@ -256,7 +267,7 @@ CC_CSS = """
 .cc-gate .cc-th { max-width:600px; margin-bottom:12px; }
 .cc-i { display:grid; grid-template-columns:auto 1fr 56px 42px; gap:6px; align-items:center; font-size:12.5px;
         padding:3px 0; cursor:pointer; }
-.cc-i.zero { color:#999; }
+.cc-i.zero { color:#707070; }
 .cc-i .bar { display:block; height:8px; background:#eef1f5; border-radius:4px; position:relative; overflow:hidden; }
 .cc-i .bar i { position:absolute; left:0; top:0; bottom:0; background:var(--accent); }
 .cc-i .cnt { font-size:11.5px; color:#333; text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
@@ -267,7 +278,7 @@ CC_CSS = """
           background:#eaf4ff; color:#0b4f8a; white-space:nowrap; cursor:help; }
 .cc-tag.gate { background:#fff4d6; color:#7a5200; }
 .cc-note { color:#555; font-size:11.5px; margin-top:3px; }
-.cc-none { color:#999; font-size:12px; }
+.cc-none { color:#707070; font-size:12px; }
 /* funding meters: one ratio each, a filled track */
 .cc-fund { background:#fff; border:1px solid #e0e0e0; border-radius:6px; padding:12px 16px; max-width:980px; }
 .cc-fund .hero { font-size:22px; font-weight:700; } .cc-fund .hero span { font-size:13px; font-weight:400; color:var(--muted); }
@@ -509,8 +520,8 @@ def build_accuracy(df, page):
         page(ACC_PAGE, ACC_TITLE, f"<style>{DASH_CSS}</style><div class='card'>{missing} loaded yet. "
              f"The hand coding is on <a href='{PAGE}'>its own page</a>.</div>")
         return
-    if REF_CODER in humans:
-        ref_coder = REF_CODER
+    if REF_LABEL in humans:
+        ref_coder = REF_LABEL
     else:
         ref_coder = max(humans, key=lambda c: int(((df["coded_by"] == c) & df["value"].notna()).sum()))
         print(f"::warning::{ACC_PAGE}: reference coder {REF_CODER!r} not found; scoring against {ref_coder!r}")
@@ -568,29 +579,29 @@ def build_accuracy(df, page):
 
     body = f"""
 <div class='card'><b>Unlisted page, work in progress.</b> Can a model code CERF proposals the way
-{_e(ref_coder)} did? The model (Claude) coded the same projects in {len(runs)} ways, and every answer is compared with
-{_e(ref_coder)}'s: {len(ref)} hand-coded projects, {n_ref_y} answers <i>yes</i> out of
+{_e(REF_LABEL)} did? The model (Claude) coded the same projects in {len(runs)} ways, and every answer is compared with
+{_e(REF_LABEL)}'s: {len(ref)} hand-coded projects, {n_ref_y} answers <i>yes</i> out of
 {n_ref:,}. The hand coding itself, with its filters, is on <a href='{PAGE}'>its own page</a>.
-<p class='meta' style='margin:8px 0 0'>Under {_e(ref_coder)}'s reading, {any_ref} of the {len(ref)} projects have at
+<p class='meta' style='margin:8px 0 0'>Under {_e(REF_LABEL)}'s reading, {any_ref} of the {len(ref)} projects have at
 least one activity indicator coded yes: most indicators are read as broad humanitarian categories (any disease
 work, any psychosocial support, any food or cash), not only climate-related activity.</p></div>
 
 <h2>Run by run</h2>
-<p class='meta'><b>Kappa</b>: agreement with {_e(ref_coder)} beyond what chance would give (1 = the same answers,
+<p class='meta'><b>Kappa</b>: agreement with {_e(REF_LABEL)} beyond what chance would give (1 = the same answers,
 0 = no better than chance); the number to read, since most answers are <i>no</i> for everyone and plain agreement
-is high whatever happens. <b>Precision</b>: of the model's yes answers, the share {_e(ref_coder)} also gave.
-<b>Recall</b>: of {_e(ref_coder)}'s yes answers, the share the model found.</p>
+is high whatever happens. <b>Precision</b>: of the model's yes answers, the share {_e(REF_LABEL)} also gave.
+<b>Recall</b>: of {_e(REF_LABEL)}'s yes answers, the share the model found.</p>
 <div class='scroll' style='max-height:none'><table class='data acc-runs'><thead><tr>
  <th>Run</th><th>Projects</th><th>Kappa</th><th>Precision</th><th>Recall</th><th>Model yes / both yes</th>
  <th>Answers agreeing</th><th>Climate-risk question: kappa (agree)</th><th>"At least one yes" agrees</th>
 </tr></thead><tbody>{score_rows}</tbody></table></div>
 
 <h2>Indicator by indicator</h2>
-<p class='meta'>How many projects each coder said <i>yes</i> on: {_e(ref_coder)}, then for each run the model's
-yes answers / those {_e(ref_coder)} also gave (counted where {_e(ref_coder)} answered). Indicators with only a few yes answers cannot be learned or scored
+<p class='meta'>How many projects each coder said <i>yes</i> on: {_e(REF_LABEL)}, then for each run the model's
+yes answers / those {_e(REF_LABEL)} also gave (counted where {_e(REF_LABEL)} answered). Indicators with only a few yes answers cannot be learned or scored
 from this sample.</p>
 <div class='scroll'><table class='data acc-ind'><thead><tr><th>Area</th><th>Indicator</th>
- <th>{_e(ref_coder)}</th>{head}</tr></thead><tbody>{''.join(ind_rows)}</tbody></table></div>
+ <th>{_e(REF_LABEL)}</th>{head}</tr></thead><tbody>{''.join(ind_rows)}</tbody></table></div>
 
 <h2 id='acc-h'>Project by project</h2>
 <div class='fbar'>
@@ -600,10 +611,10 @@ from this sample.</p>
  <span id='acc-count' class='meta'></span>
 </div>
 <p class='meta'>Click a project to see every answer side by side, and why the model said yes: its evidence,
-quoted from the proposal. <span class='acc-key extra'>extra</span> the model said yes, {_e(ref_coder)} no.
-<span class='acc-key miss'>missed</span> {_e(ref_coder)} said yes, the model no.</p>
+quoted from the proposal. <span class='acc-key extra'>extra</span> the model said yes, {_e(REF_LABEL)} no.
+<span class='acc-key miss'>missed</span> {_e(REF_LABEL)} said yes, the model no.</p>
 <div class='scroll'><table class='data acc-proj'><thead><tr><th>Project</th><th>Country</th><th>Emergency</th>
- <th>Title</th><th>{_e(ref_coder)}: yes</th>{"".join(f"<th>{_e(n)}: differs</th>" for _, n, _ in runs)}</tr></thead>
+ <th>Title</th><th>{_e(REF_LABEL)}: yes</th>{"".join(f"<th>{_e(n)}: differs</th>" for _, n, _ in runs)}</tr></thead>
  <tbody id='acc-body'></tbody></table></div>
 
 <script type='application/json' id='acc-data'>{payload}</script>
@@ -615,7 +626,7 @@ ACC_CSS = """
 .acc-runs td, .acc-ind td { vertical-align:top; }
 .acc-d { color:var(--muted); font-size:11.5px; max-width:460px; margin-top:2px; }
 td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
-.acc-ind tr.zero td { color:#aaa; }
+.acc-ind tr.zero td { color:#707070; }
 .acc-proj tr.p { cursor:pointer; }
 .acc-proj tr.p.open td { background:#eef4fb; }
 .acc-proj td.sel { font-weight:700; }

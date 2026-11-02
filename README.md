@@ -12,27 +12,23 @@ knowledge base's loaders used to write (see "AA management moved here" below). I
   pipeline (early conversations → active → dormant/expired), status snapshots over time,
   focal points, trigger-window calendar
 - **funding**: pre-arranged amounts per year and fund source, co-financing,
-  sector-level pre-arranged budgets; donor shares (`dash-donors.html`, admin site since
-  2026-10-15, `scripts/donors.py`):
-  each donor's share of a fund's income per fiscal year (`aa.v_contribution`, the
-  ds-cerf-supplement contribution mirrors) × the AA that fund released / pre-arranged that
-  year, plus hand-entered build earmarks (`aa.build_contribution`)
+  sector-level pre-arranged budgets, hand-entered build earmarks (`aa.build_contribution`)
 - **activations**: the full activation-event record 2020→ (framework + ad-hoc, AA + EA,
-  CERF + country/regional funds), crosswalked to KB `actual_activation` and the CERF
-  mirror, with a reconciliation view for conflicts
+  CERF + country/regional funds), tied to the CERF mirror's allocations
 - **reporting**: which frameworks count toward which external reports (A-Hub, UK BCs,
   SG/CERF/OCHA annual reports, SF KPI, CPC), GHO/HNRP inclusion, people covered
-- **CERF depth**: subgrants to implementing partners (localization), project-level CVA
-  and markers, application-level beneficiary demographics, final-report narratives,
+- **CERF depth**: subgrants to implementing partners (imported once from the CERF
+  secretariat's workbooks; CERF's feeds publish none), project-level CVA and markers, application-level beneficiary demographics, final-report narratives,
   emergency-type retags, CIRV
+
+Decisions about the site (who made them, when, why, and whether they still stand) are logged in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 ## The KB flip (2026-09-28)
 
 This system is **authoritative**. The knowledge base (`ds-knowledge-base`) is no longer a
 source: its framework pages were imported once into `aa.version_page` (scope, monitoring
 months, trigger facets, data sources, agencies, the "Trigger windows" table, the page body)
-and are edited here; the nightly KB sweep (`scripts/sync_kb.py`) is off; the site build
-reads only the database snapshot (no KB checkout). The KB's job is now the other way
+and are edited here; the site build reads only the database snapshot (no KB checkout). The KB's job is now the other way
 round: read this DB (registry, versions, statuses, funding) and find the code, monitoring
 and published documents for each framework.
 
@@ -56,8 +52,6 @@ are kept forever (the year-end official state, for the map's time view).
 
 ## Layout
 
-- `src/ds_aa_tracking/normalize.py` — canonical country/hazard/status vocabularies
-- `src/ds_aa_tracking/parsers.py` — one parser per source workbook
 - `src/ds_aa_tracking/schema.py` — DDL (tables + views), all in schema `aa`; hierarchy
   country_hazard → framework_version → window → {window_activation, simulated_activation,
   window_funding}; ad hoc / early-action allocations off the pair (adhoc_activation)
@@ -67,13 +61,36 @@ are kept forever (the year-end official state, for the map's time view).
   not a source any more). It never touches the dev DB: it restores the blob snapshot
   (below) into a Postgres service container and builds against localhost. Needs the org
   blob secret plus repo secrets `EXTRACT_TOKEN` (the proxy site token), `SITE_PASSWORD`
-  (staticrypt, public site) and `ADMIN_PASSWORD` (staticrypt, admin site; no default
+  (staticrypt, development site) and `ADMIN_PASSWORD` (staticrypt, admin site; no default
   anywhere, the publish fails without it).
+- **Publish changes** (D164): an admin-page edit is in the database at once but on the site
+  only after the next publish from a fresh copy. The admin page's bar says which copy the
+  site shows; its button (editors) has the proxy start `publish.yml` with `fresh_snapshot`,
+  which runs the Databricks job first (`scripts/fresh_snapshot.py`) — about 15 minutes to the
+  live site. Needs the proxy app setting `GITHUB_TOKEN` (fine-grained, this repo only,
+  Actions read and write: it can start, read and cancel this repo's workflow runs; it expires
+  within a year, after which the bar shows a GitHub error until it is replaced; unset hides
+  the button), and for the workflow the repo variables
+  `DATABRICKS_HOST` + `DATABRICKS_CLIENT_ID` and secret `DATABRICKS_CLIENT_SECRET` of the
+  service principal `ds-aa-tracking-publish`, which `databricks.yml` lets run the job.
+- **open site and development site** (D169, 2026-11-01): the site's address
+  (https://ocha-dap.github.io/ds-aa-tracking/) is the **open site**, no password: the map,
+  the Definitions page and the accessibility statement (`build_site.OPEN_PAGES`, the map links
+  to both), and in place of every other public page a "Coming soon" page (a drawn outline, blurred,
+  nothing of the page itself) linking to that page on the **development site**, `dev/`: every
+  public page, behind `SITE_PASSWORD` (the old site's password). The open map leaves out the
+  figures it may not show (`landing.withheld_on_open_map`: a people-covered figure from a
+  framework document none of whose files is registered as public); the development map shows
+  them. `site_build/` is laid out as published: the open site at its top, `dev/`, `admin/`.
+  `publish.sh` serves a top-level page plain only if the build marked it for the open site
+  (`OPEN_META`), and apart from the pages of its own `OPEN_PAGES` list (the same as the
+  build's) only a "Coming soon" page, and a small one; everything under
+  `dev/` and `admin/` must be encrypted. The admin site links to the development site.
 - two sites, one build (2026-10-07): the **public site** is the tabs of its header (map,
   model + historical activations, plan, financing, learning, media) and the
   framework pages the map opens — nothing else, and no link to anything else. Every other
-  page (data admin and entry, tables, schema, reconciliation and review pages, the extra
-  dashboards and explorers, the pages of pipeline frameworks the map does not show) is the
+  page (data admin and entry, the schema, the pages of pipeline frameworks the map does not
+  show) is the
   **admin site**, published under `admin/` with its own password and its own header; it may
   link to the public site, never the reverse. The builders do not say which site a page is
   on: `page()` collects the pages and `write_site()` in `scripts/build_site.py` sorts them
@@ -85,9 +102,11 @@ are kept forever (the year-end official state, for the map's time view).
   gets fixed at the source; `AA_SITE_GUARD=strict` stops the build instead (local checks).
   A public page can be **unlisted** (`UNLISTED_TABS`): same password as the
   tabs, but no header link and no link from any page (the build stops if one appears), so
-  only people given its address find it. `scripts/publish.sh` allows exactly one directory on gh-pages (`admin/`,
-  encrypted pages and the two pdf.js files only) and refuses any page that is not
-  encrypted. Every page carries the "internal product under development" banner.
+  only people given its address find it. `scripts/publish.sh` allows three directories on
+  gh-pages (`admin/`: encrypted pages and the two pdf.js files; `dev/`: encrypted pages, the
+  map's geometry and the vendored scripts; `dev/media/`: the Media page's photos) and refuses
+  a page under them that is not encrypted. Every page carries the "internal product under
+  development" banner; the development site's adds that it is the development version.
 - the **open layer** (2026-10-08, `scripts/llm_layer.py`, written by `write_site()`): the one
   thing published unencrypted, so fetch-based tools and LLMs can read the public figures while
   the pages keep their password. At the site root: `llms.txt` (the index: what the site is,
@@ -136,16 +155,28 @@ are kept forever (the year-end official state, for the map's time view).
   faithful. Pages carry a "data snapshot <time> UTC" stamp.
 - statuses: version = endorsed | development | pre-development (superseded is inferred);
   retired = a flag on country_hazard; per-window triggered flags in window_status
-- `src/ds_aa_tracking/migrations.py` — the idempotent window-first migration (run by ensure_schema)
-- `scripts/ingest.py` — parse → crosswalk to KB → full-refresh load (dev DB)
-- `scripts/build_site.py` — render the two password-protected GH Pages sites (public at
-  the root, admin under `admin/`)
+- `src/ds_aa_tracking/migrations.py` — the status collapse and window_status seeding (run by ensure_schema)
+- `scripts/drop_leftovers.py` — one-off (D168): archives, then drops what was left from
+  building the tracker (the zz_legacy tables, version_match, raw KB YAML, old views) and
+  renames the source labels that named people
+- `scripts/build_site.py` — render the GH Pages sites: the open site at the root (the map,
+  Definitions, Accessibility, and "Coming soon" pages), the development site under `dev/` and the admin site under
+  `admin/` (both password-protected)
 - `scripts/admin_page.py` — `admin/admin.html`: Django-admin-style CRUD over every `aa` table,
   populated live from the proxy's `/schema`; viewer = admin-site password, editor = separate
   token prompted for in the browser (never embedded). Supersedes the tracking-tables tab.
 - `proxy/server.js` — the one server: PDF extraction, framework entry, and generic
   `/schema` `/rows` `/distinct` `/save` `/delete` for the admin page; every field change is
-  audited to `aa.entry_audit`; KB-loader and OneGMS-mirror tables are read-only
+  audited to `aa.entry_audit`; the frozen KB-era tables and the mirrors are read-only
+- `proxy/mirror_tables.json` — the mirrors (D154): every table and view ds-cerf-supplement
+  copies into `aa` every day (CERF OneGMS feeds, CBPF OData API, its storm and drought
+  matches), each with what it is copied from. The one list: the proxy refuses writes to them,
+  the admin page labels them "Mirror — read-only" and never offers to edit them,
+  `scripts/apply_entries.py` fails a file that touches one, and the publish run warns
+  (`::warning::`) about any `aa` table neither `schema.py` defines nor this file lists. Any
+  `cbpf_` table counts as a mirror before it is listed. Python reads it through
+  `src/ds_aa_tracking/mirrors.py`; it ships in the proxy's zip, so a change to it needs a
+  proxy redeploy (the admin page's labels follow at the next publish)
 - `scripts/dashboards.py` — dashboards, per-framework pages, explorer, entry forms
 - `scripts/page_model.py` — the Model page. Its trigger timelines ("How much warning do the
   triggers give?") draw `aa.trigger_timeline`: one panel per hazard on its own clock (hours to
@@ -154,19 +185,19 @@ are kept forever (the year-end official state, for the map's time view).
   hand-entered from the framework documents through an entries file (`op: replace` per
   version) — never committed here; until the nightly's one-off `--ensure-schema` run creates
   the table, every framework reads "trigger windows not recorded yet"
-- `scripts/donors.py` — the donor-shares page, admin only (reads `dashboards.funding_series`, so its
-  released / pre-arranged totals are the Funding page's)
 - `scripts/page_media.py` — the Media page: the folder "AA visuals" (OCHA-HFSA SharePoint,
   "(08) External communication"; a Google Drive folder until that was deleted in Oct 2026) as
   it was gathered (photos by country, the social posts of the folder's catalogue), read from
-  `site_src/media.json`. A photo is shown from two renditions published under `media/` on
+  `site_src/media.json`. A photo is shown from two renditions published under `dev/media/` on
   gh-pages (public files, as the Drive renditions were); the page links to neither the
   folder nor the originals.
   `scripts/sync_media.py --from DIR` (DIR = the folder downloaded from SharePoint and
   unzipped) archives every file on the dev blob (`projects/ds-aa-tracking/raw/media/`), makes
   the renditions once (`…/processed/media/web/`) and rewrites the manifest; it is run by hand
   and its diff is read before it is committed (not part of the nightly build). `publish.sh`
-  fetches the renditions with `--fetch`. Not curated yet: no selection, captions or credits
+  fetches the renditions with `--fetch`. Not curated yet: no selection, captions or credits.
+  A post the team adds after the catalogue goes in `site_src/media_posts_added.json` (one
+  per line, same fields as the manifest's posts, plus `added`); a sync never writes it (D173)
 - `scripts/page_climate.py` — two unlisted pages that link only to each other.
   `climate-adaptation.html`: CERF projects coded by hand against climate-adaptation indicators
   (a gate question on climate risk, and activity indicators in seven areas), filterable by
@@ -179,7 +210,8 @@ are kept forever (the year-end official state, for the map's time view).
   only once the nightly's one-off `--ensure-schema` run has created the table.
   The workbooks and the proposals they were coded from never go in git
 - `scripts/mock_unocha.py` — the mock-up of the public site embedded in
-  https://www.unocha.org/anticipatory-action (unlisted, public password): `mock-unocha.html`
+  https://www.unocha.org/anticipatory-action (unlisted, on the development site under its
+  password): `dev/mock-unocha.html`
   and a `mock-unocha-<page>` twin of every page reachable from the map, OCHA's page with ours
   under its photo in place of their section tabs, our CSS scoped to `.aa-embed`. Run by
   `publish.sh` after the build. OCHA's page is a committed snapshot (`site_src/unocha-shell.html`,
@@ -206,16 +238,25 @@ Besides upserts, an item can `"delete"` one row by its full key or `"op": "repla
 version's rows in a table (a re-run backtest). A file that fails stays pending and never
 blocks the others.
 
+**Money released before OneGMS shows it, and money refunded.** A CERF amount that went out
+before OneGMS records the allocation is an `aa.activation_funding` row with
+`match_method: "provisional"` and no `allocation_code` (the activation's key, `fund_code`
+`cerf`, the amount). The nightly job (`scripts/resolve_provisional.py`, after the entries)
+replaces it with OneGMS's code and approved amount once the allocation appears (rules in its
+docstring), and audits the change; when two allocations could fit, or none has come 120 days
+on, it warns and leaves the choice to a person. Money
+an activation sent back after it was paused or stopped is an `aa.activation_refund` row
+(the activation's key, the fund, the allocation when known, the amount): every page counts
+released money net of it.
+
 ## Running
 
 The dev DB is the single source of truth: data is entered and corrected through the
-admin site (`admin/entry.html`, `admin/admin.html`) — there is no spreadsheet ingest and no KB sync any
-more (`scripts/ingest.py` is the retired migration-era loader and refuses to run).
+admin site (`admin/entry.html`, `admin/admin.html`) — there is no spreadsheet ingest and no KB sync.
 DB access via `ocha-stratus` env vars; `PGSSLMODE=require` is set automatically.
 
 ```sh
 uv run python scripts/ensure_schema.py   # idempotent: create missing tables, additive migrations, views
-uv run python scripts/import_kb_pages.py # one-off (done 2026-09-28): KB pages → aa.version_page
 uv run python scripts/build_site.py      # needs graphviz (`brew install graphviz`) for the ERD
 bash scripts/publish.sh                  # build → encrypt → gh-pages; needs ADMIN_PASSWORD (SKIP_BUILD=1 reuses the build, DRY_RUN=1 stops before the commit)
 ```
@@ -236,5 +277,7 @@ Deploy or run the Databricks job with `databricks bundle deploy -t prod -p DEFAU
 `databricks bundle run aa_tracking_nightly -t prod -p DEFAULT` (see `databricks.yml`).
 
 The proxy (`proxy/`) runs as Azure Web App `chd-ds-aa-extract`; app settings hold the
-Anthropic key, the DB write login, `SITE_TOKEN` (viewer) and `EDITOR_TOKEN` (editor).
-Redeploy with `az webapp deploy --type zip` from a zip of `proxy/`.
+Anthropic key, the DB write login, `SITE_TOKEN` (viewer), `EDITOR_TOKEN` (editor) and
+`GITHUB_TOKEN` (Publish changes).
+Redeploy with `az webapp deploy --type zip` from a zip of `proxy/` (`server.js`, `package.json`
+and `mirror_tables.json`: the proxy will not start without the mirror list).

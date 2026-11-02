@@ -35,6 +35,8 @@ os.environ.setdefault("PGSSLMODE", "require")
 
 import ocha_stratus as stratus  # noqa: E402
 
+from ds_aa_tracking.mirrors import mirror_of  # noqa: E402
+
 PAIR = "country_iso3 = :c AND hazard = :h"
 
 
@@ -66,6 +68,7 @@ def main():
             t
             for t in cols
             if not t.startswith("zz_legacy_")
+            and not mirror_of(t)   # D154: a mirror is never written here
             and cols[t].get("country_iso3") == "text"
             and {"hazard", "version"} <= set(cols[t])
         )

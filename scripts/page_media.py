@@ -2,7 +2,8 @@
 
 Two things, both read from site_src/media.json (written by scripts/sync_media.py, by hand,
 never during the build): the photos, folder by folder under their country, and the social
-posts of the catalogue kept with the folder.
+posts of the catalogue kept with the folder — with the posts the team added after it, kept in
+site_src/media_posts_added.json (a sync never writes that file, so they stay).
 
 A photo is shown from two renditions published with the site under media/ (a small one in
 the grid, a large one in the viewer), named by the photo's content; scripts/publish.sh
@@ -19,6 +20,7 @@ page)."""
 
 import html
 import json
+import re
 from datetime import date
 from pathlib import Path
 
@@ -26,6 +28,7 @@ from dashboards import DASH_CSS
 from site_i18n import ATTR, TB, TBC, TBF, TC, TD, TF, T
 
 MANIFEST = Path(__file__).parents[1] / "site_src" / "media.json"
+ADDED = Path(__file__).parents[1] / "site_src" / "media_posts_added.json"   # posts added by hand
 PREVIEW = 12        # photos of a folder, and posts, shown before "show all"
 RENDITION = "media/{key}-w{w}.jpg"      # sync_media.WIDTHS, published by scripts/publish.sh
 THUMB_W = 400       # the viewer's width (1600) is in MEDIA_JS
@@ -78,6 +81,21 @@ button.mmore:hover { border-color:var(--accent); background:#eef4fc; }
 .mpbar .cnt { color:var(--muted); font-size:12.5px; }
 .mposts { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:12px; align-items:start; }
 .mposts.clip > .mpost:nth-of-type(n+13) { display:none; }
+/* the preview: the newest posts in one row that scrolls sideways, with arrows (owner, 2026-10-28:
+   social first, as a carousel); "show all", a platform or a search opens the grid */
+.mpwrap { position:relative; }
+.mposts.clip { grid-template-columns:none; grid-auto-flow:column; grid-auto-columns:minmax(250px, 290px);
+  overflow-x:auto; scroll-snap-type:x mandatory; overscroll-behavior-x:contain; padding:2px 2px 8px; }
+.mposts.clip > .mpost { scroll-snap-align:start; }
+.mposts.clip .pimg img { max-height:170px; }
+.mposts.clip .pt { display:-webkit-box; -webkit-line-clamp:6; -webkit-box-orient:vertical; overflow:hidden; }
+.mpnav { position:absolute; top:42%; width:34px; height:34px; border-radius:50%; border:1px solid #cbd5e1;
+  background:#fff; box-shadow:0 2px 8px rgba(15,37,64,.18); font-size:18px; line-height:1; cursor:pointer; color:#0f2540; z-index:1; }
+.mpnav.l { left:-12px; } .mpnav.r { right:-12px; }
+.mpnav:hover:not(:disabled) { border-color:var(--accent); color:#0b4f8a; }
+.mpnav:disabled { opacity:0; pointer-events:none; }
+.mpnav[hidden] { display:none; }
+@media (max-width:759px) { .mpnav { display:none; } }
 .mpost { background:#fff; border:1px solid #e0e0e0; border-radius:6px; overflow:hidden; display:flex; flex-direction:column; }
 .mpost[hidden] { display:none; }
 /* a post's picture whole, never cropped: most are cards with the message written on them */
@@ -86,10 +104,22 @@ button.mmore:hover { border-color:var(--accent); background:#eef4fc; }
 .mpost .pb { padding:10px 14px 12px; }
 .mpost .ph { display:flex; flex-wrap:wrap; gap:4px 8px; align-items:baseline; font-size:12.5px; }
 .mpost .plat { background:#1f2a44; color:#fff; border-radius:3px; padding:1px 6px; font-size:11px; font-weight:600; }
+/* the head like a post's: the round badge, the account beside it, platform and date under it */
+.mpost .ph { display:grid; grid-template-columns:30px 1fr auto; column-gap:8px; row-gap:2px; align-items:center; }
+.mpost .av { grid-row:span 2; width:30px; height:30px; border-radius:50%; background:#1f69b3; color:#fff;
+  display:grid; place-items:center; font-size:13px; font-weight:700; }
+.mpost .ph b { grid-column:2 / 4; overflow-wrap:anywhere; line-height:1.25; }
+.mpost .ph .plat { justify-self:start; }
+.mpost .ph .d { margin-left:0; }
 .mpost .d { color:var(--muted); margin-left:auto; white-space:nowrap; }
 .mpost .pc { color:var(--muted); font-size:12px; margin-top:4px; }
 .mpost .pt { font-size:13px; line-height:1.45; margin:8px 0 8px; white-space:pre-line; overflow-wrap:anywhere; }
 .mpost .pl { font-size:12.5px; }
+/* X's own embed, once it has come (MEDIA_JS): the card it replaces is hidden */
+.mpost .xemb:empty { display:none; }
+.mpost.embedded { border:0; background:none; overflow:visible; }
+.mpost.embedded > .pimg, .mpost.embedded > .pb { display:none; }
+.mpost .xemb .twitter-tweet { margin:0 !important; }
 """
 
 MEDIA_JS = """
@@ -167,6 +197,22 @@ MEDIA_JS = """
     if (sifted || pbox.dataset.open === '1') hydrate(pbox);
     if (more) { more.hidden = sifted; more.textContent = pbox.dataset.open === '1' ? tr8('Show fewer') : allOf(more); }
     document.getElementById('mpcnt').textContent = sifted ? tr8('{0} of {1} posts', n, posts.length) : '';
+    arrows();
+  }
+  // the strip's arrows: a step of most of its width; at an end the arrow fades
+  const navs = pbox ? [...pbox.parentNode.querySelectorAll('.mpnav')] : [];
+  function arrows() {
+    const strip = pbox.classList.contains('clip'), end = pbox.scrollWidth - pbox.clientWidth - 2;
+    navs.forEach(b => { b.hidden = !strip; b.disabled = b.classList.contains('l') ? pbox.scrollLeft <= 2 : pbox.scrollLeft >= end; });
+  }
+  if (pbox) {
+    pbox.addEventListener('scroll', arrows, {passive: true});
+    addEventListener('resize', arrows);
+    navs.forEach(b => b.addEventListener('click', () => {
+      const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      pbox.scrollBy({left: (b.classList.contains('l') ? -1 : 1) * pbox.clientWidth * 0.85, behavior: calm ? 'auto' : 'smooth'});
+    }));
+    arrows();
   }
   // a language switch: the buttons and the count the script wrote
   document.addEventListener('aalang', () => {
@@ -213,6 +259,28 @@ MEDIA_JS = """
     const t = i.closest('.mt'), p = i.closest('.pimg');
     if (t) t.classList.add('gone'); else if (p) p.remove();
   }, true);
+
+  // X posts as X shows them (owner, 2026-10-30): a card gives way to X's own embed once it
+  // comes into view — X's script loads then, once, with do-not-track on. A post X no longer
+  // serves (deleted, protected), or X's script blocked, keeps its card
+  const xs = [...document.querySelectorAll('.mpost[data-x]')];
+  if (xs.length && 'IntersectionObserver' in window) {
+    let lib = null;
+    const load = () => lib || (lib = new Promise((ok, no) => {
+      const sc = document.createElement('script');
+      sc.src = 'https://platform.twitter.com/widgets.js'; sc.async = true; sc.charset = 'utf-8';
+      sc.onload = () => (window.twttr && twttr.ready ? twttr.ready(ok) : no());
+      sc.onerror = no; document.head.appendChild(sc);
+    }));
+    const lang = (window.aaLang && aaLang()) || 'en';
+    const io = new IntersectionObserver(es => es.forEach(e => {
+      if (!e.isIntersecting) return;
+      const c = e.target; io.unobserve(c);
+      load().then(T => T.widgets.createTweet(c.dataset.x, c.querySelector('.xemb'), {dnt: true, conversation: 'none', lang}))
+        .then(el => { if (el) c.classList.add('embedded'); }).catch(() => {});
+    }), {rootMargin: '300px'});
+    xs.forEach(c => io.observe(c));
+  }
 })();
 """
 
@@ -287,8 +355,12 @@ def _post(p, k):
     words = " ".join(p.get(f, "") for f in ("platform", "account", "country", "theme", "asset", "text")).lower()
     pic = (f'<a class="pimg" href="{_e(p["url"])}" target="_blank" rel="noopener" tabindex="-1" aria-hidden="true">'
            f'<img loading="lazy" referrerpolicy="no-referrer" {attr}="{_e(p["image"])}" alt=""></a>') if p.get("image") else ""
-    return (f'<article class="mpost" data-p="{_e(p["platform"])}" data-q="{_e(words)}">{pic}<div class="pb">'
-            f'<div class="ph"><span class="plat">{_e(p["platform"])}</span><b>{_e(p.get("account", ""))}</b>'
+    # an X post: its id, for X's own embed (MEDIA_JS); the card below stays until the embed has come
+    xid = re.search(r"/status(?:es)?/(\d+)", p.get("url") or "") if p["platform"] == "X" else None
+    xattr, xemb = (f' data-x="{xid.group(1)}"', '<div class="xemb"></div>') if xid else ("", "")
+    return (f'<article class="mpost" data-p="{_e(p["platform"])}" data-q="{_e(words)}"{xattr}>{xemb}{pic}<div class="pb">'
+            f'<div class="ph"><span class="av" aria-hidden="true">{_e((p.get("account") or p["platform"])[:1].upper())}</span>'
+            f'<b>{_e(p.get("account", ""))}</b><span class="plat">{_e(p["platform"])}</span>'
             f'<span class="d">{_day(p.get("date"))}</span></div>'
             + (f'<div class="pc">{_e(where)}</div>' if where else "")
             + (f'<p class="pt">{_e(p["text"])}</p>' if p.get("text") else "")
@@ -309,6 +381,18 @@ def build_media(page):
     """media.html, from the manifest. Without one (or with an empty one) the page says so."""
     m = json.loads(MANIFEST.read_text()) if MANIFEST.exists() else {}
     groups, posts = m.get("groups", []), m.get("posts", [])
+    # the posts added by hand (owner's requests): with the catalogue's, newest first, as
+    # sync_media.read_posts orders them; one already in the catalogue is not shown twice
+    def same(u):     # one post however its address is written (twitter.com / x.com, ?s=…, a final /)
+        return re.sub(r"^https?://(www\.|mobile\.)?(twitter\.com|x\.com)/", "https://x.com/",
+                      str(u).split("?")[0].split("#")[0].rstrip("/").lower())
+    have = {same(p["url"]) for p in posts}
+    added = json.loads(ADDED.read_text()).get("posts", []) if ADDED.exists() else []
+    if bad := [p for p in added if not (p.get("url") and p.get("platform"))]:
+        raise SystemExit(f"FATAL: {ADDED.name}: a post needs at least 'platform' and 'url': {bad[0]}")
+    added = [p for p in added if same(p["url"]) not in have]
+    posts = sorted(posts + [{k: v for k, v in p.items() if k != "added"} for p in added],
+                   key=lambda p: (p.get("date", ""), p["url"]), reverse=True)
     if not groups and not posts:
         page("media.html", "Media & visuals", _empty() + f"<style>{DASH_CSS}</style>")
         return
@@ -325,29 +409,15 @@ def build_media(page):
     tiles = "".join(f"<div class='tile'><div class='v'>{v:,}</div><div class='l'>{T(label)}</div></div>"
                     for v, label in ((n_photos, "photos"), (len(countries), "countries"),
                                      (len(posts), "social posts"), (n_docs, "captions and documents")) if v)
-    jump = "".join(f'<a href="#m-{k}">{TD(c)}<span class="n">{photos(gs):,}</span></a>'
-                   for k, (c, gs) in enumerate(countries.items()))
-    if posts:
-        jump += f'<a href="#posts">{T("Social posts")}<span class="n">{len(posts):,}</span></a>'
+    jump = (f'<a href="#posts">{T("Social posts")}<span class="n">{len(posts):,}</span></a>' if posts else "")
+    jump += "".join(f'<a href="#m-{k}">{TD(c)}<span class="n">{photos(gs):,}</span></a>'
+                    for k, (c, gs) in enumerate(countries.items()))
 
     body = [f"""
 <div class='card'>{TBF("<b>A first collection, shown as it was gathered.</b> Photos of anticipatory action shared by agencies and OCHA teams, and posts about it on social media, from the folder <i>{folder}</i>. Nothing has been selected, captioned or credited yet: a photo carries its file name and the folder it came in.", folder=_e(m["folder"]["title"]))}
 {TBC(lambda w: w("Listed on {d}.").format(d=_day_txt(synced, w))) if _day_txt(synced) else ""}
 <div class='tiles'>{tiles}</div>
 <div class='mjump'>{jump}</div></div>"""]
-
-    if groups:
-        body.append(f"<h2 id='photos'>{T('Photos, by country')}</h2>")
-        for k, (c, gs) in enumerate(countries.items()):
-            body.append(f'<h3 class="mcountry" id="m-{k}">{TD(c)}<span class="n">{_count(photos(gs), "{n} photo", "{n} photos")}</span></h3>')
-            body += [_group(g) for g in gs]
-        body.append(f"""
-<div id="mview" class="mview" hidden>
- <div class="mvbar"><span class="mvcap"><b class="nm"></b><span class="wh"></span></span>
-  <span><button type="button" class="pv" {ATTR("aria-label", "Previous photo")}>‹</button><span class="pos"></span><button type="button" class="nx" {ATTR("aria-label", "Next photo")}>›</button></span>
-  <button type="button" class="cl" {ATTR("aria-label", "Close")}>✕</button></div>
- <div class="mvstage"><img alt=""></div>
-</div>""")
 
     if posts:
         by = {}
@@ -366,13 +436,31 @@ def build_media(page):
                 n=w("{n} post" if len(posts) == 1 else "{n} posts").format(n=f"{len(posts):,}"),
                 span=w(", from {a} to {b}").format(a=years[0], b=years[-1]) if years else "",
                 cat=_e(m.get("catalogue", ""))))
+        if added:
+            posts_note += " " + (T("One of them was added by the team after the catalogue.") if len(added) == 1
+                                 else TF("{n} of them were added by the team after the catalogue.", n=len(added)))
         body.append(f"""
 <h2 id='posts'>{T("Social posts")}</h2>
 <p class='meta'>{posts_note}</p>
 <div class='mpbar'>{chips}<input id='mpq' type='search' {ATTR("placeholder", "search the posts…")} {ATTR("aria-label", "Search the posts")}>
 <span class='cnt' id='mpcnt'></span></div>
-<div class='mposts{clip}' id='mposts'>{"".join(_post(p, k) for k, p in enumerate(posts))}</div>
+<div class='mpwrap'><button type="button" class="mpnav l" {ATTR("aria-label", "Earlier in the row")}>‹</button>
+<div class='mposts{clip}' id='mposts' tabindex='0' {ATTR("aria-label", "Social posts")}>{"".join(_post(p, k) for k, p in enumerate(posts))}</div>
+<button type="button" class="mpnav r" {ATTR("aria-label", "Further along the row")}>›</button></div>
 {f'<button type="button" class="mmore" id="mpmore" data-k="post" data-c="{len(posts)}">{all_}</button>' if clip else ""}""")
+
+    if groups:
+        body.append(f"<h2 id='photos'>{T('Photos, by country')}</h2>")
+        for k, (c, gs) in enumerate(countries.items()):
+            body.append(f'<h3 class="mcountry" id="m-{k}">{TD(c)}<span class="n">{_count(photos(gs), "{n} photo", "{n} photos")}</span></h3>')
+            body += [_group(g) for g in gs]
+        body.append(f"""
+<div id="mview" class="mview" hidden>
+ <div class="mvbar"><span class="mvcap"><b class="nm"></b><span class="wh"></span></span>
+  <span><button type="button" class="pv" {ATTR("aria-label", "Previous photo")}>‹</button><span class="pos"></span><button type="button" class="nx" {ATTR("aria-label", "Next photo")}>›</button></span>
+  <button type="button" class="cl" {ATTR("aria-label", "Close")}>✕</button></div>
+ <div class="mvstage"><img alt=""></div>
+</div>""")
 
     body.append(f"<style>{DASH_CSS}{MEDIA_CSS}</style><script>{MEDIA_JS}</script>")
     page("media.html", "Media & visuals", "".join(body))

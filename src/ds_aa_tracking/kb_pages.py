@@ -4,41 +4,15 @@ Until the KB flip the site read each framework version's YAML frontmatter (geogr
 scope, monitoring months, trigger facets, data sources, agencies, learning links) and
 its "Trigger windows" table straight from the ds-knowledge-base clone. That made the
 KB a source. It is not one any more: the pages were imported once into
-``aa.version_page`` (scripts/import_kb_pages.py) and are edited there; the KB reads
-this DB. ``load_version_pages`` is the one reader the site uses; ``parse_page`` is the
-importer's parser (kept here so a re-import stays byte-for-byte the old behaviour).
+``aa.version_page`` (2026-09-28) and are edited there; the KB reads this DB.
+``load_version_pages`` is the one reader the site uses.
 """
 
 import re
 
 import pandas as pd
-import yaml
 
 REST_RE = re.compile(r"all other|non-endemic|rest of|remaining|elsewhere", re.I)
-
-
-def parse_page(text):
-    """Markdown page -> {fm, fm_text, triggers, tiers, body} or None (no frontmatter)."""
-    m = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
-    if not m:
-        return None
-    try:
-        fm = yaml.safe_load(m.group(1)) or {}
-    except yaml.YAMLError:
-        return None
-    trig = []
-    t = re.search(r"^## Trigger windows\n(.*?)(?=^## |\Z)", text, re.M | re.S)
-    if t:
-        rows = [ln for ln in t.group(1).splitlines() if ln.strip().startswith("|")]
-        if len(rows) >= 3:
-            hdr = [h.strip().lower() for h in rows[0].strip().strip("|").split("|")]
-            for ln in rows[2:]:
-                cells = [c.strip() for c in ln.strip().strip("|").split("|")]
-                if len(cells) != len(hdr) or all(not c or c.startswith("e.g.") for c in cells):
-                    continue
-                trig.append({h: re.sub(r"\*\*(.*?)\*\*", r"\1", c) for h, c in zip(hdr, cells)})
-    return {"fm": fm, "fm_text": m.group(1), "triggers": trig,
-            "tiers": scope_tiers(m.group(1)), "body": text[m.end():].lstrip("\n")}
 
 
 def scope_tiers(front):

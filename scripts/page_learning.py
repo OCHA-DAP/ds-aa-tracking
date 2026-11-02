@@ -82,7 +82,7 @@ FEATURED = [
        "chance of going a day without eating for families who received cash before the "
        "flood peak.",
        "Pople, Hill, Dercon and Brunckhorst, Centre for Disaster Protection (2021)", CDP_2021,
-       chips=[("+3 points", "evacuated livestock"), ("−12%", "interest on loans")],
+       chips=[("+17%", "evacuated livestock"), ("−12%", "interest on loans")],
        vs="similar households on the same lists who could not be reached in time; 8,954 "
           "households surveyed.",
        caveat="Not randomised, and compared with no assistance rather than a later "
@@ -563,7 +563,7 @@ LEARNING_CSS = r"""
 .hl-g { font-size:9px; font-weight:600; color:#556270; border:1px solid #c9d3df; border-radius:3px; padding:0 3px; white-space:nowrap; }
 .hl-b { font-size:16.5px; font-weight:750; line-height:1.15; color:#0f2540; font-variant-numeric:tabular-nums; }
 .hl-t { font-size:11px; line-height:1.32; color:#33435a; }
-.hl-s { font-size:9.5px; color:#6b7a8f; }
+.hl-s { font-size:9.5px; color:#56657a; }
 /* a callout: the findings about one country (or one set of countries), stacked in one card */
 .callout { position:absolute; width:250px; pointer-events:auto; visibility:hidden; transition:opacity .2s; display:flex; flex-direction:column;
   background:#fff; border:1px solid #dfe5ec; border-radius:8px; overflow:hidden; box-shadow:0 1px 2px rgba(15,23,42,.10), 0 6px 16px -8px rgba(15,23,42,.28); }
@@ -584,19 +584,23 @@ LEARNING_CSS = r"""
   pointer-events:none; box-shadow:0 2px 6px rgba(15,23,42,.16), 0 14px 30px -10px rgba(15,23,42,.4); }
 .hcard.pinned { pointer-events:auto; }
 .hc-h { display:flex; align-items:baseline; gap:8px; margin-bottom:6px; }
-.hc-h b { font-size:14px; color:#0f2540; } .hc-h span { font-size:11px; color:#6b7a8f; }
-.hc-x { margin-left:auto; border:0; background:none; font-size:18px; line-height:1; color:#6b7a8f; cursor:pointer; padding:0 2px; }
+.hc-h b { font-size:14px; color:#0f2540; } .hc-h span { font-size:11px; color:#56657a; }
+.hc-x { margin-left:auto; border:0; background:none; font-size:18px; line-height:1; color:#56657a; cursor:pointer; padding:0 2px; }
 .hc-i { width:100%; margin:0 0 6px; box-shadow:none; }
 .hc-i .hl-b { font-size:15px; } .hc-i[data-f] .hl-b { font-size:17px; }
-.hc-k { font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:#6b7a8f; margin:0 0 4px; }
-.hc-hint { font-size:10.5px; color:#6b7a8f; }
+.hc-k { font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:#56657a; margin:0 0 4px; }
+.hc-hint { font-size:10.5px; color:#56657a; }
 .hc-more, .lclear { border:0; background:none; padding:0; font:inherit; font-size:12px; color:#1d5aa8; cursor:pointer; }
 .hc-more:hover, .lclear:hover { text-decoration:underline; }
 .llegend { position:absolute; left:12px; bottom:12px; max-width:262px; background:rgba(255,255,255,.93); border:1px solid #e3e8ef;
   border-radius:8px; padding:8px 10px; font-size:11px; color:#33435a; display:flex; flex-direction:column; gap:3px; }
 .llegend b { font-size:11px; color:#0f2540; }
 .lg-i { display:flex; align-items:center; gap:6px; } .lg-d { width:9px; height:9px; border-radius:50%; flex:none; }
-.lg-h { color:#6b7a8f; font-size:10.5px; line-height:1.3; margin-top:2px; }
+.lg-h { color:#56657a; font-size:10.5px; line-height:1.3; margin-top:2px; }
+/* under the map when the map is too narrow to hold it beside the callouts (runLayout) */
+.llegend.below { position:static; max-width:none; margin-top:8px; flex-direction:row; flex-wrap:wrap; gap:3px 18px; align-items:center; }
+.llegend.below .lg-h { flex-basis:100%; margin-top:0; }
+.lmapbox.compact ~ .llegend { display:none; }
 /* narrow screens: the callouts do not fit on the map, the findings are listed under it */
 .hlstack { display:none; scroll-margin-top:35vh; }
 .lmapbox.compact .lpane, .lmapbox.compact .hcard, .lmapbox.compact .llegend { display:none; }
@@ -615,13 +619,13 @@ table.ldocs td { padding:7px 8px; font-size:13px; max-width:none; }
 table.ldocs tbody tr { cursor:pointer; }
 table.ldocs tbody tr.sel td { background:#e6f0fb; }
 table.ldocs tbody tr:focus-visible { outline:2px solid #2a78d6; outline-offset:-2px; }
-table.ldocs td.lt { width:58%; } .lt-t { font-weight:600; color:#0f2540; } .lt-p { color:#6b7a8f; font-size:12px; margin-left:8px; }
+table.ldocs td.lt { width:58%; } .lt-t { font-weight:600; color:#0f2540; } .lt-p { color:#56657a; font-size:12px; margin-left:8px; }
 table.ldocs td.yr, table.ldocs th.yr { text-align:right; white-space:nowrap; }
 table.ldocs td.lk { white-space:nowrap; }
 table.ldocs td.lk a { color:#1d5aa8; text-decoration:none; } table.ldocs td.lk a:hover { text-decoration:underline; }
 #ysort { border:0; background:none; font:inherit; font-weight:700; color:inherit; cursor:pointer; padding:0; }
 #ysort:hover { color:#1d5aa8; } #yarrow { font-size:9px; }
-.lnone { color:#777; font-style:italic; }
+.lnone { color:#666; font-style:italic; }
 /* the detail panel of a finding or a document. It lives INSIDE the page — over the map, or beside
    its row in the list — and is never fixed to the window: the page may be embedded in a larger one */
 .lmapwrap { position:relative; }
@@ -637,10 +641,10 @@ table.ldocs td.lk a { color:#1d5aa8; text-decoration:none; } table.ldocs td.lk a
 .tpanel { position:absolute; z-index:4; right:0; top:0; width:384px; }
 .lbody.narrow .tpanel { left:0; width:auto; }
 table.ldocs tr.lspacer, table.ldocs tr.lspacer:hover td { cursor:default; background:none; } table.ldocs tr.lspacer td { padding:0; border:0; }
-.sd-x { position:absolute; top:10px; right:12px; border:0; background:none; font-size:24px; line-height:1; color:#6b7a8f; cursor:pointer; }
-.sd-k { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6b7a8f; margin-right:30px; }
+.sd-x { position:absolute; top:10px; right:12px; border:0; background:none; font-size:24px; line-height:1; color:#56657a; cursor:pointer; }
+.sd-k { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#56657a; margin-right:30px; }
 .lpanel h3 { font-size:17px; line-height:1.3; margin:6px 0 4px; color:#0f2540; }
-.lpanel h4 { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#6b7a8f; margin:18px 0 6px; }
+.lpanel h4 { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#56657a; margin:18px 0 6px; }
 .lpanel p { font-size:13.5px; line-height:1.55; margin:0; color:#23364d; }
 .sd-pub { font-size:13px; color:#445; }
 .sd-tags { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
@@ -648,7 +652,7 @@ table.ldocs tr.lspacer, table.ldocs tr.lspacer:hover td { cursor:default; backgr
 .sd-open { display:inline-block; margin-top:14px; padding:8px 14px; border-radius:6px; background:#1d5aa8; color:#fff; font-size:13px;
   font-weight:600; text-decoration:none; }
 .sd-open:hover { background:#174a8a; }
-.sd-nolink { margin-top:14px; font-size:12.5px; color:#777; font-style:italic; }
+.sd-nolink { margin-top:14px; font-size:12.5px; color:#666; font-style:italic; }
 .sd-facts { list-style:none; margin:0; padding:0; }
 .sd-facts li { font-size:13.5px; line-height:1.45; padding:7px 0 7px 12px; border-left:3px solid #2a78d6; background:#f3f8ff; margin:0 0 6px;
   border-radius:0 4px 4px 0; color:#1a1a1a; }
@@ -841,12 +845,19 @@ function runLayout(){
   const k = W / VB.w, was = compact;
   compact = W < 1100;                                     // the cards no longer fit on the map: list them under it
   mapbox.classList.toggle('compact', compact); mapbox.classList.toggle('tight', W < 1300);
+  // a map too narrow for the legend beside the callouts: the legend goes under the map (owner,
+  // 2026-10-30: zoomed in, it covered the findings); by the map's width only, so nothing moves
+  // on a click
+  const below = W < 1300;
+  if(below && legend.parentNode === mapbox) stack.after(legend);
+  else if(!below && legend.parentNode !== mapbox) mapbox.appendChild(legend);
+  legend.classList.toggle('below', below);
   if(compact !== was || !stack.dataset.init){ stack.dataset.init = '1'; unpin(); }
   if(compact || !labels.length) return;
   const feat = new Set(labels.flatMap(Lb => Lb.isos));
   const shaded = Object.entries(C).map(([iso, c]) => ({iso, feat:feat.has(iso), r:rectPx(c, k), x:c.x*k, y:c.y*k}));
   const lr = legend.getBoundingClientRect(), mr = mapbox.getBoundingClientRect();
-  const keepOut = lr.width ? [{x1:lr.left-mr.left-6, y1:lr.top-mr.top-6, x2:lr.right-mr.left+6, y2:lr.bottom-mr.top+6}] : [];
+  const keepOut = lr.width && !below ? [{x1:lr.left-mr.left-6, y1:lr.top-mr.top-6, x2:lr.right-mr.left+6, y2:lr.bottom-mr.top+6}] : [];
   labels.forEach(Lb => { Lb.ps = Lb.isos.map(iso => [C[iso].x*k, C[iso].y*k]);
     Lb.dots = Lb.ps.map(p => grow({x1:p[0], y1:p[1], x2:p[0], y2:p[1]}, 7));
     Lb.w = Lb.el.offsetWidth; Lb.h = Lb.el.offsetHeight; });

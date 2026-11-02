@@ -68,9 +68,16 @@
       const mx = (xa + xb) / 2, c = l.color || s.fill || t.fill || NEUTRAL;
       out += `<path class='sk-l' data-s='${esc(l.s)}' data-t='${esc(l.t)}' data-tip='${esc(s.label)} → ${esc(t.label)}: ${esc(fmt(l.v))}' d='M${xa},${ya}C${mx},${ya} ${mx},${yb} ${xb},${yb}' fill='none' stroke='${c}' stroke-opacity='.35' stroke-width='${Math.max(1, h)}'></path>`;
     });
+    // a node's share of its column: what it gave, for the first column (a donor's share of what
+    // the donors shown gave); what it received, for the others (an agency's share of what the
+    // agencies received). The hover says the amount and the share
+    const amt = (n, i) => i === 0 ? n.out : n.in;
+    const ctot = kept.map((c, i) => c.reduce((s, n) => s + amt(n, i), 0));
     kept.forEach((c, i) => c.forEach(n => {
       const fill = n.fill || '#64748b';
-      const tip = `${n.label}: ${fmt(n.v)}` + (n.in && n.out && Math.abs(n.in - n.out) > 1 ? ` (in ${fmt(n.in)}, out ${fmt(n.out)})` : '') + ' · click to focus';
+      const pc = ctot[i] > 0 && c.length > 1 ? 100 * amt(n, i) / ctot[i] : null;
+      const share = pc == null ? '' : pc < 0.5 ? ' · <1%' : ` · ${Math.round(pc)}%`;
+      const tip = `${n.label}: ${fmt(n.v)}${share}` + (n.in && n.out && Math.abs(n.in - n.out) > 1 ? ` (in ${fmt(n.in)}, out ${fmt(n.out)})` : '') + ' · click to focus';
       out += `<rect class='sk-n' data-id='${esc(n.id)}' data-tip='${esc(tip)}' x='${n.x - 2}' y='${n.y}' width='${nodeW + 4}' height='${n.h}' rx='2' fill='${fill}' stroke='#fff' stroke-width='2'></rect>`;
       const lx = i === nc - 1 ? n.x + nodeW + 4 : (i === 0 ? n.x - 4 : n.x + nodeW + 4);
       const anchor = i === 0 ? 'end' : 'start';
