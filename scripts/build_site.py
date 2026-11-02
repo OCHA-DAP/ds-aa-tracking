@@ -73,11 +73,11 @@ header.adm .tag { background:#f0b429; color:#3b2338; font-size:10.5px; font-weig
 header .tosite { margin-left:auto; margin-right:0; font-size:13px; }
 .devbanner { background:#fff3cd; color:#5c4400; border-bottom:1px solid #e6cf85; padding:7px 28px; font-size:13px; line-height:1.4; text-align:center; }
 .devbanner a { color:#5c4400; text-decoration:underline; }
-.devbanner .devnote { display:block; margin-top:2px; }
-/* the development site's banner: teal, so it is never taken for the public site's yellow one
-   (owner, 2026-11-02: "make the dev banner a different colour so it's a bit clearer") */
-.devbanner.dev { background:#d5efea; color:#0b3b35; border-bottom-color:#7fc3b7; }
-.devbanner.dev a { color:#0b3b35; }
+/* the development site: its own teal strip above the disclaimer, which keeps the public site's
+   yellow (owner, 2026-11-02: "keep the disclaimer banner the same colour in dev, but have the
+   dev-specific banner be separate and be a different colour") */
+.devbanner.devver { background:#d5efea; color:#0b3b35; border-bottom-color:#7fc3b7; }
+.devbanner.devver a { color:#0b3b35; }
 /* the open site's "Coming soon" page: a page-like outline, blurred, under a card. The outline is
    drawn here, not taken from the page: nothing of a page that is not public yet is in it */
 .soon { position:relative; min-height:560px; margin-top:6px; border-radius:8px; overflow:hidden; }
@@ -185,9 +185,9 @@ _BANNER_TEXT = TB("<b>OCHA internal product under development</b>, subject to ch
                   "The figures may be incorrect and should not be used. Questions and corrections: "
                   "<a href='mailto:ocha-datascience@un.org'>ocha-datascience@un.org</a>.")
 BANNER = "<div class='devbanner' role='note'>" + _BANNER_TEXT + "</div>"
-DEV_BANNER = ("<div class='devbanner dev' role='note'>" + _BANNER_TEXT + "<span class='devnote'>"
+DEV_BANNER = ("<div class='devbanner devver' role='note'>"
               + TB("<b>Development version</b>, behind a password: every page, including those not public "
-                   "yet. <a href='../index.html'>Public version</a>.") + "</span></div>")
+                   "yet. <a href='../index.html'>Public version</a>.") + "</div>" + BANNER)
 
 # public nav: the map, then the building blocks of AA (model · plan · financing), learning and
 # media. Donor shares left the public site on 2026-10-15 (the Financing page's money flows,
