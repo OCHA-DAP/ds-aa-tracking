@@ -6,8 +6,9 @@ Every ds-aa-tracking table gets a page with its full contents, plus:
 - CERF-mirror page for the new cerf_project* tables not yet fully documented in the KB
 
 site_build/ is laid out as the site is published (scripts/publish.sh), before encryption:
-  site_build/*.html        the OPEN site, served without a password: the map, and a "Coming soon"
-                           page in place of every other public page (owner, 2026-11-01)
+  site_build/*.html        the OPEN site, served without a password: the map, the Definitions
+                           and Accessibility pages, and a "Coming soon" page in place of every
+                           other public page (owner, 2026-11-01)
   site_build/dev/*.html    the development site: every public page, encrypted with the site
                            password
   site_build/admin/*.html  the admin site, encrypted with its own password
@@ -169,8 +170,11 @@ ADMIN_ASSETS = ("pdf.min.js", "pdf.worker.min.js")    # data entry only
 ADMIN_DIR = "admin"
 # the development site: every public page, behind the site password, under dev/ (owner,
 # 2026-11-01: "The dev version should be the whole site at a different link, behind the same
-# password as before"). The open site at the root is the map, and "Coming soon" for the rest.
+# password as before"). The open site at the root is the map, the two pages it links to for
+# reading it (owner, 2026-11-01: "open accessibility and definitions"), and "Coming soon" for
+# the rest. publish.sh holds the same list and serves no other real page plain.
 DEV_DIR = "dev"
+OPEN_PAGES = ("index.html", "definitions.html", "accessibility.html")
 OPEN_META = '<meta name="aa-site" content="open">'   # publish.sh serves a page unencrypted only with it
 
 _BANNER_TEXT = TB("<b>OCHA internal product under development</b>, subject to change without warning. "
@@ -584,9 +588,10 @@ def write_site():
     """Write every registered page: the open site at the root, the development site under dev/,
     the admin site under admin/.
 
-    Development site: every public page. Open site: the map, as prod_body gave it when it did,
-    and a "Coming soon" page under the name of each other public page, so every link and
-    address of the public site still lands somewhere. Admin site: the rest.
+    Development site: every public page. Open site: the pages of OPEN_PAGES (the map as its
+    prod_body gave it, the others as they are), and a "Coming soon" page under the name of
+    each other public page, so every link and address of the public site still lands
+    somewhere. Admin site: the rest.
 
     Bodies are written as if all pages sat side by side. An admin page reaches the public
     pages and the root scripts through ../dev/ (the development site has them all); a public
@@ -645,12 +650,15 @@ def write_site():
     for name, (title, body) in _PAGES.items():
         if name in public:
             (dev_dir / name).write_text(public_doc(name, title, body, DEV_BANNER))
-            # the open site: the map, and "Coming soon" for the rest (its cleaning is the
+            # the open site: OPEN_PAGES, and "Coming soon" for the rest (its cleaning is the
             # development page's, already reported)
             if name == "index.html":
                 if name not in _OPEN_BODY:      # never the development map by default
                     raise SystemExit("FATAL: the map gave no body for the open site (page(..., prod_body=))")
                 doc = public_doc(name, title, _OPEN_BODY[name], BANNER, record=False, head=OPEN_META)
+            elif name in OPEN_PAGES:            # words only, no figures: the same page as on dev/
+                doc = public_doc(name, title, _OPEN_BODY.get(name, body), BANNER, record=False,
+                                 head=OPEN_META)
             else:
                 doc = public_doc(name, title, _soon_body(name), BANNER, record=False, head=OPEN_META,
                                  policy=False, meta="")
@@ -660,8 +668,8 @@ def write_site():
             (adm_dir / name).write_text(_render(
                 name, title, body, NAV_ADMIN,
                 f"Generated {stamp} from the dev <code>aa</code> schema ({DATA_STAMP}) · admin site"))
-    if "index.html" not in public:
-        raise SystemExit("FATAL: no map (index.html): the open site would have no page")
+    if missing := [n for n in OPEN_PAGES if n not in public]:
+        raise SystemExit(f"FATAL: open-site page(s) not built as public pages: {', '.join(missing)}")
     (adm_dir / "index.html").write_text(_render(
         "admin/index.html", "AA tracking — admin site", _admin_home(admin), NAV_ADMIN,
         f"Generated {stamp} from the dev <code>aa</code> schema ({DATA_STAMP}) · admin site"))
@@ -700,8 +708,8 @@ def write_site():
     for name, gone in sorted(cut.items()):
         # visible in the publish run's summary, not only in its log
         print(f"::warning::public page {name}: link(s) to admin-only page(s) removed: {', '.join(sorted(gone))}")
-    print(f"  public site: {len(public)} pages ({DEV_DIR}/; open at the root: the map, and "
-          f"{len(public) - 1} 'Coming soon' pages) · admin site: {len(admin) + 1} pages ({ADMIN_DIR}/)")
+    print(f"  public site: {len(public)} pages ({DEV_DIR}/; open at the root: {', '.join(OPEN_PAGES)}, and "
+          f"{len(public) - len(OPEN_PAGES)} 'Coming soon' pages) · admin site: {len(admin) + 1} pages ({ADMIN_DIR}/)")
 
 
 _CSV_SEQ = [0]

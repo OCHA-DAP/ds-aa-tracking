@@ -75,14 +75,16 @@ are kept forever (the year-end official state, for the map's time view).
   service principal `ds-aa-tracking-publish`, which `databricks.yml` lets run the job.
 - **open site and development site** (D169, 2026-11-01): the site's address
   (https://ocha-dap.github.io/ds-aa-tracking/) is the **open site**, no password: the map,
-  and in place of every other public page a "Coming soon" page (a drawn outline, blurred,
+  the Definitions page and the accessibility statement (`build_site.OPEN_PAGES`, the map links
+  to both), and in place of every other public page a "Coming soon" page (a drawn outline, blurred,
   nothing of the page itself) linking to that page on the **development site**, `dev/`: every
   public page, behind `SITE_PASSWORD` (the old site's password). The open map leaves out the
   figures it may not show (`landing.withheld_on_open_map`: a people-covered figure from a
   framework document none of whose files is registered as public); the development map shows
   them. `site_build/` is laid out as published: the open site at its top, `dev/`, `admin/`.
   `publish.sh` serves a top-level page plain only if the build marked it for the open site
-  (`OPEN_META`), and a "Coming soon" page only if it is one (and small); everything under
+  (`OPEN_META`), and apart from the pages of its own `OPEN_PAGES` list (the same as the
+  build's) only a "Coming soon" page, and a small one; everything under
   `dev/` and `admin/` must be encrypted. The admin site links to the development site.
 - two sites, one build (2026-10-07): the **public site** is the tabs of its header (map,
   model + historical activations, plan, financing, learning, media) and the
@@ -121,7 +123,7 @@ are kept forever (the year-end official state, for the map's time view).
   building the tracker (the zz_legacy tables, version_match, raw KB YAML, old views) and
   renames the source labels that named people
 - `scripts/build_site.py` — render the GH Pages sites: the open site at the root (the map,
-  and "Coming soon" pages), the development site under `dev/` and the admin site under
+  Definitions, Accessibility, and "Coming soon" pages), the development site under `dev/` and the admin site under
   `admin/` (both password-protected)
 - `scripts/admin_page.py` — `admin/admin.html`: Django-admin-style CRUD over every `aa` table,
   populated live from the proxy's `/schema`; viewer = admin-site password, editor = separate

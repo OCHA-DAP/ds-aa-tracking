@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Publish the three sites: rebuild → encrypt → gh-pages.
-#   open site    top-level *.html  NO password: the map, and a "Coming soon" page in place of
-#                                  every other public page (owner, 2026-11-01)
+#   open site    top-level *.html  NO password: the map, Definitions and Accessibility
+#                                  (OPEN_PAGES), and a "Coming soon" page in place of every
+#                                  other public page (owner, 2026-11-01)
 #   dev site     dev/*.html        password SITE_PASSWORD: every public page
 #   admin site   admin/*.html      password ADMIN_PASSWORD (no default: it must be set)
 # site_build/ is laid out the same way (scripts/build_site.py, write_site). The public pages
@@ -20,8 +21,8 @@
 #   page's photo renditions (<key>-w<width>.jpg, scripts/sync_media.py): any other nested path
 #   aborts before committing, and any other directory in the pushed tree is fatal
 # - every page under dev/ and admin/ is a staticrypt page, and a top-level page is served plain
-#   only if the build marked it for the open site (OPEN_META); a "Coming soon" page that is
-#   not one, or is the size of a real page, aborts before committing
+#   only if the build marked it for the open site (OPEN_META); apart from OPEN_PAGES, a page
+#   that is not a "Coming soon" page, or is the size of a real page, aborts before committing
 # The mock-up of the site on unocha.org (scripts/mock_unocha.py: mock-unocha*.html, unlisted) is
 # made from the dev pages and published with them, under the site password.
 set -euo pipefail
@@ -30,6 +31,9 @@ PW="${SITE_PASSWORD:-anticipation2026}"
 ADMIN_PW="${ADMIN_PASSWORD:-}"
 ADMIN=admin
 DEV=dev
+# the real pages served without a password: the same list as build_site.OPEN_PAGES (a page
+# must be in both to go out plain)
+OPEN_PAGES=" index.html definitions.html accessibility.html "
 [ -n "$ADMIN_PW" ] || { echo "FATAL: ADMIN_PASSWORD is not set (the admin site has no default password)" >&2; exit 1; }
 [ "$ADMIN_PW" != "$PW" ] || { echo "FATAL: the admin password must differ from the public one" >&2; exit 1; }
 
@@ -118,13 +122,13 @@ touch "$WT/.nojekyll"
         if ! grep -q "staticrypt-form" "$f" || grep -q "devbanner" "$f"; then
           echo "FATAL: $f is not an encrypted page — aborting" >&2; exit 1
         fi ;;
-      *)      # the open site: only what the build marked for it, and apart from the map only
+      *)      # the open site: only what the build marked for it, and apart from OPEN_PAGES only
               # "Coming soon" pages (class='soon' is written by build_site._soon_body alone; the
               # size cap only catches the map's data or a long page, not a short real page)
         if ! grep -q '<meta name="aa-site" content="open">' "$f"; then
           echo "FATAL: $f is served without a password but the build did not mark it for the open site — aborting" >&2; exit 1
         fi
-        if [ "$f" != index.html ] && { ! grep -q "class='soon'" "$f" || [ "$(wc -c < "$f")" -gt 250000 ]; }; then
+        if [[ "$OPEN_PAGES" != *" $f "* ]] && { ! grep -q "class='soon'" "$f" || [ "$(wc -c < "$f")" -gt 250000 ]; }; then
           echo "FATAL: $f is served without a password but is not a 'Coming soon' page — aborting" >&2; exit 1
         fi ;;
     esac
