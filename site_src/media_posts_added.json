@@ -1,0 +1,6 @@
+{
+ "about": "Social posts the team added by hand after the catalogue (scripts/page_media.py shows them with the posts of media.json, newest first; scripts/sync_media.py never writes this file). One post per line; added: the day it was added.",
+ "posts": [
+  {"platform": "X", "account": "UN Relief Chief (@UNReliefChief)", "date": "2026-11-02", "country": "Global", "theme": "Insurance / financing", "asset": "Text post", "text": "We're launching the world’s first-of-its-kind humanitarian insurance safety net.\n\nWhen disasters strike and demand overwhelms resources, insurers step in with additional funding.\n\nWith @UNICEF & @WFP, we’re building financial architecture to protect people before the worst hits.", "url": "https://x.com/UNReliefChief/status/2117241570353127808", "added": "2026-11-02"}
+ ]
+}

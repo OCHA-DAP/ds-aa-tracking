@@ -345,6 +345,144 @@ def clean_org_names(df, col="partner_name"):
     return df
 
 
+def _org_words(name):
+    """An organisation's name as words to compare: entities decoded, accents and case ignored,
+    punctuation dropped, and a trailing acronym that spells the name's initials or repeats one
+    of its words dropped ("… Relief-OCHR", "… Foundation (SKS)")."""
+    import html as _html
+    import re as _re
+    import unicodedata as _ud
+    t = _html.unescape(str(name)).strip()
+    if (m := _re.match(r"^(.*\w)(?:\s*[-–(]\s*|\s+)([A-Z]{2,8})\)?$", t)) and any(c.islower() for c in m.group(1)):
+        words = _re.findall(r"[A-Za-z]+", m.group(1))
+        if m.group(2) in ("".join(w[0] for w in words if w[0].isupper()), "".join(w[0].upper() for w in words)) \
+                or m.group(2) in words:
+            t = m.group(1)
+    t = "".join(c for c in _ud.normalize("NFKD", t) if not _ud.combining(c))
+    return [w for w in _re.split(r"[^0-9a-z]+", t.casefold()) if w]
+
+
+def _org_key(name):
+    """One key per organisation however its name is written (_org_words, spaces ignored too:
+    'Goalprime' / 'Goal Prime')."""
+    return "".join(_org_words(name))
+
+
+def _one_typo(a, b):
+    """Two names as _org_words that differ in one word only, by one letter: added or dropped
+    in a word of four letters or more ('Commitee' / 'Committee', 'Syria' / 'Syrian'), changed
+    in a word of six or more ('Kendro' / 'Kendra'), never a digit, in names of three words or
+    more — so 'NW' / 'SW', 'Ituri 1' / 'Ituri 3', 'Child Fund' / 'Chile Fund', 'Hope …' /
+    'Home …' or the acronyms 'HELP' / 'HELPO' stay apart."""
+    if len(a) != len(b) or a == b or len(a) < 3:
+        return False
+    diff = [(x, y) for x, y in zip(a, b) if x != y]
+    if len(diff) != 1:
+        return False
+    x, y = diff[0]
+    if min(len(x), len(y)) < 4 or abs(len(x) - len(y)) > 1 or any(c.isdigit() for c in x + y):
+        return False
+    if len(x) == len(y) and len(x) < 6:      # a changed letter: long words only
+        return False
+    i = 0
+    while i < min(len(x), len(y)) and x[i] == y[i]:
+        i += 1
+    return x[i + 1:] == y[i + 1:] or x[i + 1:] == y[i:] or x[i:] == y[i + 1:]
+
+
+# the spelling to show where _spelling_rank's rules choose a wrong one: a correct word that
+# few other names use (Italian 'Internazionale' next to French 'Internationale'). Each must be
+# one of the organisation's own spellings in the sources; it wins over its other spellings.
+ORG_SPELLING = {
+    "Associazione Volontari per il Servizio Internazionale",
+    "Plan International, Inc.",
+    "Mandhere Relief and Development Organization",
+}
+
+
+def _spelling_rank(name, usd, common):
+    """Which of an organisation's spellings to show: one listed in ORG_SPELLING; then the one
+    with fewest words that hardly any other organisation's name uses (a typo or a cut-off word
+    is one nobody else writes: 'Developmen', 'Ministtère', 'Saomalia' — even if the other
+    spelling is in capitals), and of those, fewest that no other name uses at all
+    ('Strenthening'); then not all in capitals, starting with a capital, with its accents
+    ('Vétérinaires' over 'Veterinaires'), a plain apostrophe; then the most money. (Weighing
+    how common each word is, rather than only the rare ones, picks the commoner variant of a
+    word — 'Organization', French over Italian — not the right one: tried, 2026-11-02.)"""
+    ws = [w for w in _org_words(name) if not w.isdigit()]
+    rare = sum(1 for w in ws if common.get(w, 0) < 3)
+    alone = sum(1 for w in ws if common.get(w, 0) <= 1)
+    listed = " ".join(name.split()) in ORG_SPELLING
+    return (listed, -rare, -alone, any(c.islower() for c in name), name[:1].isupper(),
+            sum(1 for c in name if ord(c) > 127 and c.isalpha()), "`" not in name, usd, name)
+
+
+def _canonical_org_names(d):
+    """Every recipient organisation under one spelling, on every page (owner, 2026-11-02, the
+    money-flow chart: "make sure the spelling is consistent"). The CERF sub-grant reports and the
+    pooled funds write the same partner several ways: 'Trocaire' / 'Trócaire', 'International
+    Rescue Commitee' / '… Committee', '… Relief' / '… Relief-OCHR', 'WORLD VISION' / 'World
+    Vision'. Names with the same _org_key, or one letter apart in one word (_one_typo), are one
+    organisation, shown under one of its own spellings (_spelling_rank), stray spaces removed.
+    Names are not re-cased: a name in capitals stays so. The source tables are not changed."""
+    import re as _re
+    srcs = [(k, col, usd) for k, col, usd in (("subgrant", "partner_name", "subgrant_usd"),
+                                              ("subgrant_aa", "partner_name", "subgrant_usd"),
+                                              ("cbpf_org_name", "org_name", "usd"),
+                                              ("cbpf_proj", "org_name", "budget"))
+            if isinstance(d.get(k), pd.DataFrame) and col in d[k] and len(d[k])]
+    if not srcs:
+        return
+    money = {}
+    for k, col, usd in srcs:
+        for n, v in d[k].groupby(d[k][col].astype(str))[usd].sum().items():
+            if n and n.lower() not in ("nan", "none"):
+                money[n] = money.get(n, 0.0) + float(v or 0)
+    words = {n: _org_words(n) for n in money}
+    key = {n: "".join(w) for n, w in words.items()}
+    common = {}                       # word -> in how many organisations' names (keys) it is
+    for w in {w for n in money for w in set(words[n])}:
+        common[w] = 0
+    for kw in {key[n]: words[n] for n in money}.values():
+        for w in set(kw):
+            common[w] += 1
+    # one letter apart in one word: union the keys (a few thousand names, compared within the
+    # same number of words)
+    kwords = {}
+    for n in sorted(money):
+        kwords.setdefault(key[n], words[n])
+    root = {x: x for x in kwords}
+
+    def find(x):
+        while root[x] != x:
+            root[x] = root[root[x]]
+            x = root[x]
+        return x
+    by_n = {}
+    for x, w in kwords.items():
+        by_n.setdefault((len(w), len(x)), []).append(x)
+    for x, w in kwords.items():
+        for L in (len(x), len(x) + 1):
+            for y in by_n.get((len(w), L), []):
+                if (y > x or L != len(x)) and _one_typo(w, kwords[y]):
+                    root[find(y)] = find(x)
+    groups = {}
+    for n in money:
+        groups.setdefault(find(key[n]), []).append(n)
+    spell = {}
+    for names in groups.values():
+        best = max(names, key=lambda n: _spelling_rank(n, money[n], common))
+        best = _re.sub(r"\s+", " ", best.replace("\xa0", " ")).strip()
+        for n in names:
+            spell[n] = best
+    for k, col, _usd in srcs:
+        d[k][col] = d[k][col].map(lambda n: spell.get(str(n), n) if isinstance(n, str) else n)
+    changed = sorted((n, b) for n, b in spell.items() if n != b)
+    d["org_spelling"] = changed          # (as written, as shown): for a check by hand
+    print(f"  organisation names: {len(changed)} spelling(s) shown as another "
+          f"({len(money)} names, {len(set(spell.values()))} organisations)")
+
+
 def haz(h):
     return h if h in HAZARDS else "other"
 
@@ -1035,6 +1173,7 @@ def _fetch(e):
                              GROUP BY 1, 2, 3, 4""",
          ["year", "fund_code", "org_name", "org_type", "usd"])
     _resolve_pooled_fund(d)
+    _canonical_org_names(d)
     _merge_labels(d)
     return d
 
@@ -1492,7 +1631,7 @@ def _money_flows(d, pre, act):
             for r in cy.itertuples():
                 add(m, y, "d", "d:" + r.donor, "f:" + fc, r.paid_usd / inc * amount, g, fc, rg)
         else:
-            add(m, y, "d", "d:(donors not recorded)", "f:" + fc, amount, g, fc, rg)
+            add(m, y, "d", "d:Not recorded", "f:" + fc, amount, g, fc, rg)
 
     def grantees(m, y, fc, amount, g, rg, c):
         # released money: a CBPF / RhPF grantee implements directly (no sub-grant level), so
@@ -1659,13 +1798,14 @@ FLOW_NOTE = " ".join(TB(x) for x in (
     "amount, to the same organisation in the final column.",
     f"<b>Countries</b> (tick <i>countries</i>): a column between the funds and the agencies — the "
     f"country of the framework (pre-arranged) or of the activation (released). The {FLOW_TOP_COUNTRIES} "
-    "countries receiving the most in the view are named, the rest grouped as <i>other countries</i>; "
+    "countries receiving the most in the view are named, the rest grouped as <i>Other</i>; "
     "a regional fund allocation that names no single country is <i>multi-country / regional</i>. "
     "The grantees of a regional fund carry no country: a country's band from a regional fund reaches "
     "that fund's grantees of the year in all its countries. "
     "Country boxes are grey: a band leaving one takes the colour of the box it reaches.",
     f"<b>Recipients</b>: the {FLOW_TOP_ORGS} partner and grantee organisations receiving the most in "
-    "the view are named, the rest grouped per category (\"other national / local NGOs\"…). Every "
+    "the view are named, the rest grouped in one <i>Other</i> box per column; money whose recipient is "
+    "not recorded (no data yet, or a partner still to be determined) is one <i>Not recorded</i> box. Every "
     "recipient node carries its category colour — UN agency, international NGO, national / local "
     "NGO, government, Red Cross / Red Crescent, other, not recorded — from the sub-grant partner "
     "type or the organisation type recorded by the Country and Regional Funds; a band takes the "
@@ -1675,7 +1815,8 @@ FLOW_NOTE = " ".join(TB(x) for x in (
     "Red Crescent, government, other (untick <i>recipient types</i> to hide it).",
     "<b>Donors → fund</b>: each donor's paid contributions to the fund that year ÷ the fund's total "
     "paid income that year, × the amount — attributed pro rata, since contributions fund the whole "
-    "pool. Top 12 donors, the rest grouped."))
+    "pool. Top 12 donors, the rest grouped as <i>Other</i>; a fund with no donor data for the year, "
+    "<i>Not recorded</i>."))
 
 
 def _flow_panel(donors_on, donor_toggle=True, extra=""):
@@ -1713,15 +1854,19 @@ const CAT_ORDER = ['un','ingo','nngo','gov','rc','oth','nr'];
 // (labels in English: tr8() translates them where they are shown, so a language switch redraws them)
 const CAT_LABEL = {un:'UN agency', ingo:'international NGO', nngo:'national / local NGO', gov:'government',
   rc:'Red Cross / Red Crescent', oth:'other', nr:'not recorded'};
-const CAT_OTHER = {un:'other UN agencies', ingo:'other international NGOs', nngo:'other national / local NGOs',
-  gov:'other government partners', rc:'other Red Cross / Red Crescent', oth:'other partners', nr:'other, type not recorded'};
+// the two catch-alls, one box each per column and spelled the same everywhere (owner, 2026-11-02:
+// "consolidate the 'not recorded' entities … and same for other … just group them all … make sure
+// the spelling is consistent"): who received the money is not recorded (a placeholder, 'to be
+// determined', no grantee or donor data) -> NR; the organisations, donors and countries too small
+// to be named in the view -> OTHER
+const FLOW_NR = 'Not recorded', FLOW_OTHER = 'Other';
 // one colour per category on every level, apart from the fund colours (CERF blue, CBPF orange,
 // RhPF green); the five hues validated as a set (all pairs: CVD dE >= 13.5, normal >= 19.6) and
 // against the fund colours (normal >= 15.6); the two greys are the neutral categories
 const CAT_COLOR = {un:'#65389f', ingo:'#70b6e7', nngo:'#ceaa3e', gov:'#8a4f0e', rc:'#c3518d', oth:'#3a3f47', nr:'#d6dae0'};
 // the recipient-type column: one node per category, the far-right column
 const CAT_GROUP = {un:'UN agencies', ingo:'International NGOs', nngo:'National / local NGOs', gov:'Government',
-  rc:'Red Cross / Red Crescent', oth:'Other', nr:'Type not recorded'};
+  rc:'Red Cross / Red Crescent', oth:FLOW_OTHER, nr:FLOW_NR};
 function flowNode(id){ const m = /^([apk]):([a-z]+)([|~])(.*)$/.exec(id);
   return m ? {p:m[1], cat:m[2], org:m[3]==='~', name:m[4]} : null; }
 function flowRegroup(L, f){ const g = {};
@@ -1737,7 +1882,7 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
   // unchanged) and country -> agency ('c'). Every fund link passes through the column.
   if(showC) R = R.flatMap(r=>r.lv==='f' ? [{...r, t:'c:'+(r.c||'*')}, {...r, lv:'c', s:'c:'+(r.c||'*')}] : [r]);
   let L = flowRegroup(R, x=>x);
-  // the countries receiving the most in this view named, the rest one 'other countries' box
+  // the countries receiving the most in this view named, the rest one 'Other' box
   // (never a box for a single country)
   if(showC){ const ct = {}; L.forEach(l=>{ if(l.lv==='f' && l.t!=='c:*') ct[l.t] = (ct[l.t]||0) + l.v; });
     const ids = Object.keys(ct).sort((a,b)=>ct[b]-ct[a]);
@@ -1746,19 +1891,18 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
     L = flowRegroup(L, x=>x.startsWith('c:') && x!=='c:*' && !topC.has(x) ? 'c:+' : x); }
   // top donors; the rest grouped
   const dt = {}; L.filter(l=>l.lv==='d').forEach(l=>dt[l.s]=(dt[l.s]||0)+l.v);
-  const top = new Set(Object.keys(dt).filter(k=>k!=='d:(donors not recorded)').sort((a,b)=>dt[b]-dt[a]).slice(0,topN||12));
-  top.add('d:(donors not recorded)');
+  const top = new Set(Object.keys(dt).filter(k=>k!=='d:'+FLOW_NR).sort((a,b)=>dt[b]-dt[a]).slice(0,topN||12));
+  top.add('d:'+FLOW_NR);
   if(pick && pick.startsWith('d:')) top.add(pick);
-  L = flowRegroup(L, (x, l)=>l.lv==='d' && x===l.s && !top.has(x) ? 'd:Other donors' : x);
+  L = flowRegroup(L, (x, l)=>l.lv==='d' && x===l.s && !top.has(x) ? 'd:'+FLOW_OTHER : x);
   // organisations: the top ones of THIS view named, by what they receive (sub-grants and CBPF
-  // grants; a grantee's own pass-through to the final column not counted twice), the rest
-  // grouped per category, in the middle and the final column alike
+  // grants; a grantee's own pass-through to the final column not counted twice); the rest are
+  // grouped below, once the recipient-type column has taken each one's own category
   const recv = {};
   L.forEach(l=>{ const t = flowNode(l.t), s = flowNode(l.s); if(!t || !t.org || t.cat==='nr' || (s && s.org && s.name===t.name)) return;
     recv[t.name] = (recv[t.name]||0) + l.v; });
   const named = new Set(Object.keys(recv).sort((a,b)=>recv[b]-recv[a]).slice(0, topOrgs||FLOW_TOP_ORGS));
   if(pick && pick.startsWith('o:')) named.add(pick.slice(2));
-  L = flowRegroup(L, x=>{ const n = flowNode(x); return n && n.org && !named.has(n.name) ? `${n.p}:${n.cat}|${CAT_OTHER[n.cat]}` : x; });
   if(!showD) L = L.filter(l=>l.lv!=='d');
   if(!showP) L = L.filter(l=>l.lv!=='a');
   // recipient types (2026-10-02 meeting): the far-right column (2026-10-19: the final bucket,
@@ -1769,11 +1913,16 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
     const last = showP ? 'p:' : 'a:', lv = showP ? 'a' : showC ? 'c' : 'f', S = [];
     L.forEach(l=>{ S.push(l); const n = l.lv===lv && l.t.startsWith(last) ? flowNode(l.t) : null;
       if(n) S.push({lv:'k', s:l.t, t:`k:${n.cat}|${CAT_GROUP[n.cat]}`, v:l.v}); });
-    L = flowRegroup(S, x=>x);
+    L = S;
   }
+  // the catch-alls, in the agency / grantee column and the final one: every placeholder one
+  // 'Not recorded' box, every organisation not named one 'Other' box (drawn in the 'other'
+  // category's grey; the recipient-type column above keeps each one's own category)
+  L = flowRegroup(L, x=>{ const n = flowNode(x); if(!n || n.p==='k') return x;
+    return n.cat==='nr' && !n.org ? `${n.p}:nr|${FLOW_NR}` : n.org && !named.has(n.name) ? `${n.p}:oth|${FLOW_OTHER}` : x; });
   const lab = id => { const [p, ...rest] = id.split(':'); const n = rest.join(':');
     if(p==='f') return tr8(names[n]||n);
-    if(p==='c') return n==='*' ? tr8('multi-country / regional') : n==='+' ? tr8('other countries') : tr8(names[id]||n);
+    if(p==='c') return n==='*' ? tr8('multi-country / regional') : n==='+' ? tr8(FLOW_OTHER) : tr8(names[id]||n);
     const r = flowNode(id); return tr8(r ? r.name : n); };
   const cols = [];
   const col = pre => { const ids = new Set(); L.forEach(l=>{ [l.s,l.t].forEach(x=>{ if(x.startsWith(pre)) ids.add(x); }); });
@@ -1808,7 +1957,7 @@ function mountFlow(cfg){
     choices = new Map();
     D.flow.filter(r=>r.m===mode && (flY.value==='all' || r.y===+flY.value) && keep(r)).forEach(r=>{
       // each name says what it is: a donor and a country can share one ('Zimbabwe')
-      if(r.lv==='d' && r.s!=='d:(donors not recorded)') choices.set(`${tr8(r.s.slice(2))} (${tr8('donor')})`, r.s);
+      if(r.lv==='d' && r.s!=='d:'+FLOW_NR) choices.set(`${tr8(r.s.slice(2))} (${tr8('donor')})`, r.s);
       if(r.lv==='f' && r.c) choices.set(`${tr8(D.fundNames['c:'+r.c] || r.c)} (${tr8('country')})`, 'c:'+r.c);
       [r.s, r.t].forEach(x=>{ const n = flowNode(x); if(n && n.org) choices.set(`${n.name} (${tr8(CAT_LABEL[n.cat])})`, 'o:'+n.name); });
     });
