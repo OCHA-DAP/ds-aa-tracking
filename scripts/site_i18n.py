@@ -326,7 +326,7 @@ def js_dict(page_text: str) -> dict[str, dict[str, str]]:
             tr(l, k)
     keys = {key(_unesc(m.group(1))) for rx in (_JS_SQ, _JS_DQ) for m in rx.finditer(page_text)}
     keys |= {key(k) for k in _call_literals(page_text)}
-    # node ids carry their label after a prefix ('d:Other donors', 'p:nr|partner not recorded')
+    # node ids carry their label after a prefix ('d:Other', 'p:nr|Not recorded')
     keys |= {k.rsplit("|", 1)[-1].split(":", 1)[-1] for k in keys if "|" in k or ":" in k}
     return {l: {k: TABLES[l][k] for k in sorted(keys) if k in TABLES[l]} for l in LANGS}
 

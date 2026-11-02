@@ -2,7 +2,8 @@
 
 Two things, both read from site_src/media.json (written by scripts/sync_media.py, by hand,
 never during the build): the photos, folder by folder under their country, and the social
-posts of the catalogue kept with the folder.
+posts of the catalogue kept with the folder — with the posts the team added after it, kept in
+site_src/media_posts_added.json (a sync never writes that file, so they stay).
 
 A photo is shown from two renditions published with the site under media/ (a small one in
 the grid, a large one in the viewer), named by the photo's content; scripts/publish.sh
@@ -27,6 +28,7 @@ from dashboards import DASH_CSS
 from site_i18n import ATTR, TB, TBC, TBF, TC, TD, TF, T
 
 MANIFEST = Path(__file__).parents[1] / "site_src" / "media.json"
+ADDED = Path(__file__).parents[1] / "site_src" / "media_posts_added.json"   # posts added by hand
 PREVIEW = 12        # photos of a folder, and posts, shown before "show all"
 RENDITION = "media/{key}-w{w}.jpg"      # sync_media.WIDTHS, published by scripts/publish.sh
 THUMB_W = 400       # the viewer's width (1600) is in MEDIA_JS
@@ -379,6 +381,13 @@ def build_media(page):
     """media.html, from the manifest. Without one (or with an empty one) the page says so."""
     m = json.loads(MANIFEST.read_text()) if MANIFEST.exists() else {}
     groups, posts = m.get("groups", []), m.get("posts", [])
+    # the posts added by hand (owner's requests): with the catalogue's, newest first, as
+    # sync_media.read_posts orders them; one already in the catalogue is not shown twice
+    have = {p["url"] for p in posts}
+    added = [p for p in (json.loads(ADDED.read_text()).get("posts", []) if ADDED.exists() else [])
+             if p.get("url") and p["url"] not in have]
+    posts = sorted(posts + [{k: v for k, v in p.items() if k != "added"} for p in added],
+                   key=lambda p: (p.get("date", ""), p["url"]), reverse=True)
     if not groups and not posts:
         page("media.html", "Media & visuals", _empty() + f"<style>{DASH_CSS}</style>")
         return
@@ -422,6 +431,9 @@ def build_media(page):
                 n=w("{n} post" if len(posts) == 1 else "{n} posts").format(n=f"{len(posts):,}"),
                 span=w(", from {a} to {b}").format(a=years[0], b=years[-1]) if years else "",
                 cat=_e(m.get("catalogue", ""))))
+        if added:
+            posts_note += " " + (T("One of them was added by the team after the catalogue.") if len(added) == 1
+                                 else TF("{n} of them were added by the team after the catalogue.", n=len(added)))
         body.append(f"""
 <h2 id='posts'>{T("Social posts")}</h2>
 <p class='meta'>{posts_note}</p>

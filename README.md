@@ -158,7 +158,9 @@ are kept forever (the year-end official state, for the map's time view).
   unzipped) archives every file on the dev blob (`projects/ds-aa-tracking/raw/media/`), makes
   the renditions once (`…/processed/media/web/`) and rewrites the manifest; it is run by hand
   and its diff is read before it is committed (not part of the nightly build). `publish.sh`
-  fetches the renditions with `--fetch`. Not curated yet: no selection, captions or credits
+  fetches the renditions with `--fetch`. Not curated yet: no selection, captions or credits.
+  A post the team adds after the catalogue goes in `site_src/media_posts_added.json` (one
+  per line, same fields as the manifest's posts, plus `added`); a sync never writes it (D173)
 - `scripts/page_climate.py` — two unlisted pages that link only to each other.
   `climate-adaptation.html`: CERF projects coded by hand against climate-adaptation indicators
   (a gate question on climate risk, and activity indicators in seven areas), filterable by

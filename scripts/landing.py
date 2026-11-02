@@ -1782,6 +1782,8 @@ def tile_figures(countries, layers, year=None):
     ptgt = [x for x in pool if x.get("planned")]
     part = lambda k: sum(((f["pre_parts"] or {}).get(k) or 0) for f in fw)
     return {"n_fw": len(fw),
+            # the countries those frameworks are in (owner, 2026-11-02: "29 frameworks in XX countries")
+            "n_ctry": sum(1 for cd in countries.values() if any(id(f) in {id(g) for g in fw} for f in cd["fws"])),
             "n_active": sum(1 for f in fw if f["disp"] == "active"),
             "n_upd": sum(1 for f in fw if f["disp"] == "updating"),
             "n_dev": sum(1 for f in fw if f["disp"] == "development"),
@@ -1980,6 +1982,10 @@ def build_landing(page, d, e):
         return (f"<div class='tile{' hasnote' if note else ''}' id='{id_}'{attrs}>{tile_key(icon, name)}"
                 f"<div class='v{' vs' if vs else ''}'>{value}</div><div class='l'>{html_escape(lead)}{mark}{sub}{ul}</div>"
                 f"<div class='tnote' id='{id_}-n' role='tooltip'>{html_escape(note)}</div></div>")
+    def fw_lead(n):     # the t-fw set() in LANDING_JS
+        return (f"frameworks in {n} countries on the map today" if n != 1
+                else "frameworks in 1 country on the map today")
+
     def cov_tile(t):
         """The people-covered tile: the open map's leaves out what it withholds."""
         return tile("t-cov", "people", "People covered", _tofixed(t["covered"] / 1e6, 1) + "M" if t["n_fw"] else "—",
@@ -1987,7 +1993,7 @@ def build_landing(page, d, e):
                     note=f"{t['n_cov']} of the {t['n_fw']} frameworks shown have a figure." if t["n_fw"] else "")
     t_open = tile_figures(open_countries, {"framework"}, Y)
     tiles = "".join((
-        tile("t-fw", "doc", "Frameworks", t["n_fw"], "frameworks on the map today",
+        tile("t-fw", "doc", "Frameworks", t["n_fw"], fw_lead(t["n_ctry"]),
              [f"{t['n_active']} active", f"{t['n_upd']} being updated", f"{t['n_dev']} in development"]),
         tile("t-pre", "money", "Pre-arranged", f"${_jsround(t['pre'] / 1e6)}M", "pre-arranged now",
              funds(t["pre_cerf"], t["pre_pooled"], t["pre_all"]),
@@ -3077,7 +3083,11 @@ function updateTiles(){
     if(note){ el.tabIndex = 0; el.setAttribute('aria-describedby', id + '-n'); }
     else { el.removeAttribute('tabindex'); el.removeAttribute('aria-describedby'); } };
   const past = pastY();
-  set('t-fw', fw.length, past ? tr8('frameworks on the map at the end of {0}', YEAR) : YEAR != null ? tr8('frameworks on the map today') : tr8('frameworks on the map'),
+  // '29 frameworks in 25 countries' (owner, 2026-11-02) — fw_lead() in Python
+  const nC = Object.values(L).filter(c => c.fws.some(f => fw.includes(f))).length;
+  set('t-fw', fw.length, past ? (nC === 1 ? tr8('frameworks in 1 country on the map at the end of {0}', YEAR) : tr8('frameworks in {1} countries on the map at the end of {0}', YEAR, nC))
+      : YEAR != null ? (nC === 1 ? tr8('frameworks in 1 country on the map today') : tr8('frameworks in {0} countries on the map today', nC))
+      : (nC === 1 ? tr8('frameworks in 1 country on the map') : tr8('frameworks in {0} countries on the map', nC)),
       {bul: [tr8('{0} active', n('active')), tr8('{0} being updated', n('updating')), tr8('{0} in development', n('development'))],
        drv: past && tr8('Which frameworks existed at 31 December, and their status, are reconstructed from the version dates and status history; a framework whose validity ended during the year still counts as active for that year')});
   const noEnv = []; Object.values(L).forEach(c => c.fws.forEach(f => { if(fw.includes(f) && !f.pre_now) noEnv.push(`${tr8(c.name)} ${tr8(f.hz_label).toLowerCase()}`); }));
