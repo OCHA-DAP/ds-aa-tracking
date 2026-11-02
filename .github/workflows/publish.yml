@@ -115,12 +115,11 @@ jobs:
           uv run python scripts/restore_snapshot.py --snapshot "${{ github.event.inputs.snapshot || 'latest' }}"
       - name: Build, encrypt and publish
         env:
-          # the open layer's document texts come from the PDF archive on the dev blob
-          DSCI_AZ_BLOB_DEV_SAS: ${{ secrets.DSCI_AZ_BLOB_DEV_SAS }}
           EXTRACT_TOKEN: ${{ secrets.EXTRACT_TOKEN }}
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
-          # read-only: the Media page's photo renditions (scripts/sync_media.py --fetch)
+          # read-only: the Media page's photo renditions (scripts/sync_media.py --fetch), and the
+          # framework documents' texts once the open layer publishes them (llm_layer, held for now)
           DSCI_AZ_BLOB_DEV_SAS: ${{ secrets.DSCI_AZ_BLOB_DEV_SAS }}
         run: |
           # never publish pages without the proxy token: the data-entry and admin pages would go dark
