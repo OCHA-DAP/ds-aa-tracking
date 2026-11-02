@@ -369,10 +369,12 @@ def _org_key(name):
 
 
 def _one_typo(a, b):
-    """Two names as _org_words that differ in one word only, by one letter (added, dropped or
-    changed): 'Commitee' / 'Committee', 'Syria' / 'Syrian'. The word has at least four letters
-    and no digit on both sides, so 'NW' / 'SW' or 'Ituri 1' / 'Ituri 3' stay apart."""
-    if len(a) != len(b) or a == b:
+    """Two names as _org_words that differ in one word only, by one letter: added or dropped
+    in a word of four letters or more ('Commitee' / 'Committee', 'Syria' / 'Syrian'), changed
+    in a word of six or more ('Kendro' / 'Kendra'), never a digit, in names of three words or
+    more — so 'NW' / 'SW', 'Ituri 1' / 'Ituri 3', 'Child Fund' / 'Chile Fund', 'Hope …' /
+    'Home …' or the acronyms 'HELP' / 'HELPO' stay apart."""
+    if len(a) != len(b) or a == b or len(a) < 3:
         return False
     diff = [(x, y) for x, y in zip(a, b) if x != y]
     if len(diff) != 1:
@@ -380,19 +382,38 @@ def _one_typo(a, b):
     x, y = diff[0]
     if min(len(x), len(y)) < 4 or abs(len(x) - len(y)) > 1 or any(c.isdigit() for c in x + y):
         return False
+    if len(x) == len(y) and len(x) < 6:      # a changed letter: long words only
+        return False
     i = 0
     while i < min(len(x), len(y)) and x[i] == y[i]:
         i += 1
     return x[i + 1:] == y[i + 1:] or x[i + 1:] == y[i:] or x[i:] == y[i + 1:]
 
 
+# the spelling to show where _spelling_rank's rules choose a wrong one: a correct word that
+# few other names use (Italian 'Internazionale' next to French 'Internationale'). Each must be
+# one of the organisation's own spellings in the sources; it wins over its other spellings.
+ORG_SPELLING = {
+    "Associazione Volontari per il Servizio Internazionale",
+    "Plan International, Inc.",
+    "Mandhere Relief and Development Organization",
+}
+
+
 def _spelling_rank(name, usd, common):
-    """Which of an organisation's spellings to show: the one with fewest words that no other
-    name uses (a typo makes a word nobody else writes: 'Developmen', 'Ministtère'); then not all
-    in capitals, starting with a capital, with its accents ('Vétérinaires' over
-    'Veterinaires'), a plain apostrophe; then the most money."""
-    rare = sum(1 for w in _org_words(name) if not w.isdigit() and common.get(w, 0) < 3)
-    return (-rare, any(c.islower() for c in name), name[:1].isupper(),
+    """Which of an organisation's spellings to show: one listed in ORG_SPELLING; then the one
+    with fewest words that hardly any other organisation's name uses (a typo or a cut-off word
+    is one nobody else writes: 'Developmen', 'Ministtère', 'Saomalia' — even if the other
+    spelling is in capitals), and of those, fewest that no other name uses at all
+    ('Strenthening'); then not all in capitals, starting with a capital, with its accents
+    ('Vétérinaires' over 'Veterinaires'), a plain apostrophe; then the most money. (Weighing
+    how common each word is, rather than only the rare ones, picks the commoner variant of a
+    word — 'Organization', French over Italian — not the right one: tried, 2026-11-02.)"""
+    ws = [w for w in _org_words(name) if not w.isdigit()]
+    rare = sum(1 for w in ws if common.get(w, 0) < 3)
+    alone = sum(1 for w in ws if common.get(w, 0) <= 1)
+    listed = " ".join(name.split()) in ORG_SPELLING
+    return (listed, -rare, -alone, any(c.islower() for c in name), name[:1].isupper(),
             sum(1 for c in name if ord(c) > 127 and c.isalpha()), "`" not in name, usd, name)
 
 
@@ -403,7 +424,7 @@ def _canonical_org_names(d):
     Rescue Commitee' / '… Committee', '… Relief' / '… Relief-OCHR', 'WORLD VISION' / 'World
     Vision'. Names with the same _org_key, or one letter apart in one word (_one_typo), are one
     organisation, shown under one of its own spellings (_spelling_rank), stray spaces removed.
-    A name written only in capitals keeps its capitals. The source tables are not changed."""
+    Names are not re-cased: a name in capitals stays so. The source tables are not changed."""
     import re as _re
     srcs = [(k, col, usd) for k, col, usd in (("subgrant", "partner_name", "subgrant_usd"),
                                               ("subgrant_aa", "partner_name", "subgrant_usd"),
@@ -419,7 +440,7 @@ def _canonical_org_names(d):
                 money[n] = money.get(n, 0.0) + float(v or 0)
     words = {n: _org_words(n) for n in money}
     key = {n: "".join(w) for n, w in words.items()}
-    common = {}                       # word -> how many organisations' names use it
+    common = {}                       # word -> in how many organisations' names (keys) it is
     for w in {w for n in money for w in set(words[n])}:
         common[w] = 0
     for kw in {key[n]: words[n] for n in money}.values():

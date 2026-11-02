@@ -383,9 +383,14 @@ def build_media(page):
     groups, posts = m.get("groups", []), m.get("posts", [])
     # the posts added by hand (owner's requests): with the catalogue's, newest first, as
     # sync_media.read_posts orders them; one already in the catalogue is not shown twice
-    have = {p["url"] for p in posts}
-    added = [p for p in (json.loads(ADDED.read_text()).get("posts", []) if ADDED.exists() else [])
-             if p.get("url") and p["url"] not in have]
+    def same(u):     # one post however its address is written (twitter.com / x.com, ?s=…, a final /)
+        return re.sub(r"^https?://(www\.|mobile\.)?(twitter\.com|x\.com)/", "https://x.com/",
+                      str(u).split("?")[0].split("#")[0].rstrip("/").lower())
+    have = {same(p["url"]) for p in posts}
+    added = json.loads(ADDED.read_text()).get("posts", []) if ADDED.exists() else []
+    if bad := [p for p in added if not (p.get("url") and p.get("platform"))]:
+        raise SystemExit(f"FATAL: {ADDED.name}: a post needs at least 'platform' and 'url': {bad[0]}")
+    added = [p for p in added if same(p["url"]) not in have]
     posts = sorted(posts + [{k: v for k, v in p.items() if k != "added"} for p in added],
                    key=lambda p: (p.get("date", ""), p["url"]), reverse=True)
     if not groups and not posts:
