@@ -997,6 +997,9 @@ def _cerf_reached(codes, _try):
 
 
 PRE_SERIES = {}   # year -> the whole annual pre-arranged series (assemble fills it; the tile label quotes it)
+# the open map's data, its withheld figures and its headline figures (build_landing fills it): the
+# open layer (scripts/llm_layer.py) is written from it, so its files show what the open map shows
+OPEN_MAP = {}
 
 
 def status_at(versions, hist, D):
@@ -1928,7 +1931,8 @@ def build_landing(page, d, e):
         cd["dir"] = DIRECTIONS.get(iso, (0.7, -0.7))
     geo_pass(countries, bboxes)
     # the open site's copy of the map's data: without the figures it may not show
-    open_countries = open_map_countries(countries, withheld_on_open_map(e))
+    withheld = withheld_on_open_map(e)
+    open_countries = open_map_countries(countries, withheld)
 
     # headline tiles follow the map: the same rule as the page's updateTiles() (JS), here
     # for the default layer set AND the default year so the static HTML matches what the page
@@ -2007,6 +2011,9 @@ def build_landing(page, d, e):
                     note=f"{COV_NOTE} Coverage figures are available for {t['n_cov']} of the {t['n_fw']} frameworks shown."
                     if t["n_fw"] else "")
     t_open = tile_figures(open_countries, {"framework"}, Y)
+    OPEN_MAP.clear()
+    OPEN_MAP.update(countries=open_countries, withheld=withheld, year=Y, tiles=t_open,
+                    adhoc=tile_figures(open_countries, {"adhoc"}, Y))
     tiles = "".join((
         tile("t-fw", "doc", "Frameworks", t["n_fw"], fw_lead(t["n_ctry"]),
              [f"{t['n_active']} active", f"{t['n_upd']} being updated", f"{t['n_dev']} in development"]),
