@@ -5,8 +5,14 @@ Every ds-aa-tracking table gets a page with its full contents, plus:
 - reconciliation page (sheet vs KB vs CERF-mirror conflicts)
 - CERF-mirror page for the new cerf_project* tables not yet fully documented in the KB
 
-The output is then encrypted with staticrypt before publishing (see publish step in
-README) — nothing in site_build/ is committed or served unencrypted.
+site_build/ is laid out as the site is published (scripts/publish.sh), before encryption:
+  site_build/*.html        the OPEN site, served without a password: the map, the Definitions
+                           and Accessibility pages, and a "Coming soon" page in place of every
+                           other public page (owner, 2026-11-01)
+  site_build/dev/*.html    the development site: every public page, encrypted with the site
+                           password
+  site_build/admin/*.html  the admin site, encrypted with its own password
+Only the open site's pages are served unencrypted; nothing in site_build/ is committed.
 """
 
 import html
@@ -67,6 +73,24 @@ header.adm .tag { background:#f0b429; color:#3b2338; font-size:10.5px; font-weig
 header .tosite { margin-left:auto; margin-right:0; font-size:13px; }
 .devbanner { background:#fff3cd; color:#5c4400; border-bottom:1px solid #e6cf85; padding:7px 28px; font-size:13px; line-height:1.4; text-align:center; }
 .devbanner a { color:#5c4400; text-decoration:underline; }
+.devbanner .devnote { display:block; margin-top:2px; }
+/* the open site's "Coming soon" page: a page-like outline, blurred, under a card. The outline is
+   drawn here, not taken from the page: nothing of a page that is not public yet is in it */
+.soon { position:relative; min-height:560px; margin-top:6px; border-radius:8px; overflow:hidden; }
+.soon-bg { position:absolute; inset:0; display:grid; grid-template-columns:repeat(4,1fr);
+           grid-template-rows:96px 230px 150px 1fr; gap:16px; padding:4px 0; filter:blur(7px);
+           opacity:.6; pointer-events:none; }
+.soon-bg i { display:block; border-radius:6px; background:#dde4ee; }
+.soon-bg i.c { grid-column:span 3; background:#cfe0f3; } .soon-bg i.s { background:#e7ecf3; }
+.soon-bg i.h { grid-column:span 2; background:#e2e8f1; } .soon-bg i.w { grid-column:span 4; background:#e9eef5; }
+.soon-card { position:relative; max-width:460px; margin:110px auto 0; background:#fff; border:1px solid #d6dde8;
+             border-radius:10px; padding:26px 30px 22px; text-align:center; box-shadow:0 8px 28px rgba(31,42,68,.14); }
+.soon-card h2 { margin:0 0 8px; font-size:24px; color:#1f2a44; }
+.soon-card p { margin:8px 0; font-size:15px; color:#334155; }
+.soon-card a { font-weight:600; color:#0b5cad; }
+.soon-card .pw { color:#64748b; font-size:13px; }
+@media (max-width:759px){ .soon-bg { grid-template-columns:repeat(2,1fr); } .soon-bg i.c, .soon-bg i.w { grid-column:span 2; }
+  .soon-card { margin-top:60px; padding:22px 18px; } }
 ul.adm-list { list-style:none; padding:0; margin:6px 0 0; columns:2 320px; }
 ul.adm-list li { margin:4px 0; font-size:13.5px; break-inside:avoid; } ul.adm-list .d { color:var(--muted); font-size:12px; }
 @media (max-width:759px){ header { padding:10px 16px; } header .t { margin-right:14px; } header nav.pub a { margin-right:12px; } }
@@ -144,11 +168,22 @@ UNLISTED_TABS = ("climate-adaptation.html", "climate-coding-accuracy.html")
 ROOT_ASSETS = ("chart.umd.js", "sankey.js")           # the public pages load these; admin pages through ../
 ADMIN_ASSETS = ("pdf.min.js", "pdf.worker.min.js")    # data entry only
 ADMIN_DIR = "admin"
+# the development site: every public page, behind the site password, under dev/ (owner,
+# 2026-11-01: "The dev version should be the whole site at a different link, behind the same
+# password as before"). The open site at the root is the map, the two pages it links to for
+# reading it (owner, 2026-11-01: "open accessibility and definitions"), and "Coming soon" for
+# the rest. publish.sh holds the same list and serves no other real page plain.
+DEV_DIR = "dev"
+OPEN_PAGES = ("index.html", "definitions.html", "accessibility.html")
+OPEN_META = '<meta name="aa-site" content="open">'   # publish.sh serves a page unencrypted only with it
 
-BANNER = ("<div class='devbanner' role='note'>"
-          + TB("<b>OCHA internal product under development</b>, subject to change without warning. "
-               "The figures may be incorrect and should not be used. Questions and corrections: "
-               "<a href='mailto:ocha-datascience@un.org'>ocha-datascience@un.org</a>.") + "</div>")
+_BANNER_TEXT = TB("<b>OCHA internal product under development</b>, subject to change without warning. "
+                  "The figures may be incorrect and should not be used. Questions and corrections: "
+                  "<a href='mailto:ocha-datascience@un.org'>ocha-datascience@un.org</a>.")
+BANNER = "<div class='devbanner' role='note'>" + _BANNER_TEXT + "</div>"
+DEV_BANNER = ("<div class='devbanner' role='note'>" + _BANNER_TEXT + "<span class='devnote'>"
+              + TB("<b>Development version</b>, behind a password: every page, including those not public "
+                   "yet. <a href='../index.html'>Public version</a>.") + "</span></div>")
 
 # public nav: the map, then the building blocks of AA (model · plan · financing), learning and
 # media. Donor shares left the public site on 2026-10-15 (the Financing page's money flows,
@@ -179,7 +214,7 @@ NAV_ADMIN = """
    <a href="entry.html">Data entry</a>
    <a href="schema.html">DB schema</a>
   </nav>
-  <a class="tosite" href="../index.html">Public site →</a>
+  <a class="tosite" href="../dev/index.html">Site (development version) →</a>
 </header>
 """
 
@@ -197,12 +232,16 @@ ADMIN_HOME = [
 from policy_text import POLICY_CSS, policy_box  # noqa: E402  (plain-language box on top of each page)
 
 _PAGES = {}     # file name -> (title, body), in build order; write_site() writes them
+_OPEN_BODY = {}  # file name -> the body the open site gets instead (the map: prod_body)
 
 
-def page(name, title, body):
+def page(name, title, body, prod_body=None):
     """Register a page. Nothing is written yet: which site it lands on (and so how its links
-    are spelled) is decided in write_site(), once every page is known."""
+    are spelled) is decided in write_site(), once every page is known. prod_body: what the
+    open site shows of the page in its place (the map, without the figures it may not show)."""
     _PAGES[name] = (title, body)
+    if prod_body is not None:
+        _OPEN_BODY[name] = prod_body
     print(f"  {name}")
 
 
@@ -225,10 +264,11 @@ def public_pages():
     return {n for n in _PAGES if n in PUBLIC_TABS or n in on_map}
 
 
-def _render(name, title, body, nav, meta, public=False):
+def _render(name, title, body, nav, meta, public=False, banner=BANNER, policy=True, head=""):
     """A page. A public page follows the language toggle (site_i18n): its head applies the
     stored language and carries the translations its scripts need; the admin site stays
-    English (its pages carry no toggle and ignore the stored choice)."""
+    English (its pages carry no toggle and ignore the stored choice). policy=False: no
+    definition box (a "Coming soon" page); head: extra tags for the head."""
     lang_js, h1 = i18n.LANG_STUB_JS, html.escape(title)
     if public:
         h1 = T(title)
@@ -246,7 +286,7 @@ def _render(name, title, body, nav, meta, public=False):
     foot = f"<footer class='foot'><a href='accessibility.html'>{T('Accessibility')}</a></footer>" if public else ""
     # the page's definition box: at the top, or where the page puts its placeholder (the Map:
     # beside What's new)
-    pb = policy_box(name)
+    pb = policy_box(name) if policy else ""
     body = body.replace("<!--POLICY-->", pb, 1) if "<!--POLICY-->" in body else pb + body
     # a page's own styles go in the head, in order: left in the body they are parsed only
     # after the page data and scripts (1.6 MB on the Map), so the browser paints what the
@@ -258,11 +298,11 @@ def _render(name, title, body, nav, meta, public=False):
     if "<style" in body:  # a styled tag, or one inside a script: the hoist would have missed it
         raise SystemExit(f"FATAL: {name}: a <style> the head hoist did not take")
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1">{head}
 <title>{html.escape(title)}</title><style>{CSS}{POLICY_CSS}</style>{"".join(styles)}
 <script>{lang_js}{FILTER_JS}</script></head><body>
 <a class="skip" href="#main">{skip}</a>
-{BANNER}{nav}<main id="main" tabindex="-1"><h1>{h1}</h1>
+{banner}{nav}<main id="main" tabindex="-1"><h1>{h1}</h1>
 <p class="meta">{meta}</p>
 {body}</main>{foot}</body></html>"""
 
@@ -529,13 +569,35 @@ def _report_cleaned(cleaned):
           "AA_SITE_GUARD=strict fails the build instead")
 
 
+def _soon_body(name):
+    """The open site's page in place of one not public yet: a page-like outline, blurred (drawn
+    here: nothing of the page itself), "Coming soon", and the link to the page on the development
+    site (owner, 2026-11-01: "leave them behind, blurred out or something, saying 'Coming soon',
+    and maybe have a little link to the dev version for that page"). The link keeps the address's
+    #anchor, so a framework link from the map opens the same place there."""
+    outline = "<i class='s'></i>" * 4 + "<i class='c'></i><i class='s'></i><i class='h'></i><i class='h'></i><i class='w'></i>"
+    return (f"<section class='soon'><div class='soon-bg' aria-hidden='true'>{outline}</div>"
+            f"<div class='soon-card'><h2>{T('Coming soon')}</h2>"
+            f"<p>{T('This page is not public yet.')}</p>"
+            f"<p><a class='soon-dev' href='{DEV_DIR}/{name}'>{T('See this page on the development site')}</a>"
+            f"<br><span class='pw'>{T('(password required)')}</span></p></div></section>"
+            "<script>document.querySelectorAll('a.soon-dev').forEach(a => { a.href += location.hash; });</script>")
+
+
 def write_site():
-    """Write every registered page: the public ones at the root, the rest under admin/.
+    """Write every registered page: the open site at the root, the development site under dev/,
+    the admin site under admin/.
+
+    Development site: every public page. Open site: the pages of OPEN_PAGES (the map as its
+    prod_body gave it, the others as they are), and a "Coming soon" page under the name of
+    each other public page, so every link and address of the public site still lands
+    somewhere. Admin site: the rest.
 
     Bodies are written as if all pages sat side by side. An admin page reaches the public
-    pages and the root scripts through ../ ; a public page loses any link to an admin page
-    (a plain link keeps its text, a link carried in the page data points nowhere) and the
-    build says so. A public page carrying the data service's token stops the build."""
+    pages and the root scripts through ../dev/ (the development site has them all); a public
+    page loses any link to an admin page (a plain link keeps its text, a link carried in the
+    page data points nowhere) and the build says so. A public page carrying the data service's
+    token stops the build."""
     public = public_pages()
     admin = set(_PAGES) - public
     for n in UNLISTED_TABS:     # hidden means hidden: no listed page and no header names its file
@@ -543,8 +605,9 @@ def write_site():
                   + (["the header"] if n in NAV else []))
         if linked:
             raise SystemExit(f"FATAL: unlisted page {n} is named on {', '.join(linked)}")
-    adm_dir = OUT / ADMIN_DIR
+    adm_dir, dev_dir = OUT / ADMIN_DIR, OUT / DEV_DIR
     adm_dir.mkdir(exist_ok=True)
+    dev_dir.mkdir(exist_ok=True)
     stamp = date.today().isoformat()
     to_root = _quoted(public | set(ROOT_ASSETS))
     to_admin = _quoted(admin) if admin else None
@@ -553,40 +616,60 @@ def write_site():
         (Path(__file__).parents[1] / ".extract_token").read_text().strip()
         if (Path(__file__).parents[1] / ".extract_token").exists() else "")
     cut, leaks, cleaned = {}, {}, {}
+    # no database wording on a public page (owner, 2026-10-27): the data date, when a snapshot
+    meta = TF("Generated {stamp}", stamp=stamp) + (" · " + TF("data snapshot {at} UTC", at=SNAPSHOT_AT)
+                                                    if SNAPSHOT_AT else "")
+
+    def public_doc(name, title, body, banner, record=True, **kw):
+        """A public page as written, on either site: links to the admin site cut, checked."""
+        if to_admin:
+            def unlink(m, name=name):
+                if m.group(2) not in admin:
+                    return m.group(0)
+                cut.setdefault(name, set()).add(m.group(2))
+                return m.group(3)
+            body = anchor.sub(unlink, body)
+            for n in set(to_admin.findall(body)):
+                cut.setdefault(name, set()).add(n)
+            body = to_admin.sub("#", body)
+        doc = _render(name, title, body, NAV, kw.pop("meta", meta), public=True, banner=banner, **kw)
+        if (token and token in doc) or "x-site-token" in doc:
+            raise SystemExit(f"FATAL: public page {name} carries the data service's token")
+        # the version notes under "What changed" are the curators' bookkeeping (what a sheet
+        # said, what is not entered yet): admin site only (owner, 2026-10-29)
+        doc = re.sub(r"<p class=['\"]vnote['\"]>.*?</p>", "", doc, flags=re.S)
+        if GUARD_STRICT:
+            if hits := _shown_identifiers(doc):
+                leaks[name] = hits
+        else:
+            doc, changes, script_hits = _clean_page(doc)
+            if record and (changes or script_hits):
+                cleaned[name] = (changes, script_hits)
+        return doc
+
     for name, (title, body) in _PAGES.items():
         if name in public:
-            if to_admin:
-                def unlink(m, name=name):
-                    if m.group(2) not in admin:
-                        return m.group(0)
-                    cut.setdefault(name, set()).add(m.group(2))
-                    return m.group(3)
-                body = anchor.sub(unlink, body)
-                for n in set(to_admin.findall(body)):
-                    cut.setdefault(name, set()).add(n)
-                body = to_admin.sub("#", body)
-            # no database wording on a public page (owner, 2026-10-27): the data date, when a snapshot
-            data = " · " + TF("data snapshot {at} UTC", at=SNAPSHOT_AT) if SNAPSHOT_AT else ""
-            doc = _render(name, title, body, NAV, TF("Generated {stamp}", stamp=stamp) + data,
-                          public=True)
-            if (token and token in doc) or "x-site-token" in doc:
-                raise SystemExit(f"FATAL: public page {name} carries the data service's token")
-            # the version notes under "What changed" are the curators' bookkeeping (what a sheet
-            # said, what is not entered yet): admin site only (owner, 2026-10-29)
-            doc = re.sub(r"<p class=['\"]vnote['\"]>.*?</p>", "", doc, flags=re.S)
-            if GUARD_STRICT:
-                if hits := _shown_identifiers(doc):
-                    leaks[name] = hits
+            (dev_dir / name).write_text(public_doc(name, title, body, DEV_BANNER))
+            # the open site: OPEN_PAGES, and "Coming soon" for the rest (its cleaning is the
+            # development page's, already reported)
+            if name == "index.html":
+                if name not in _OPEN_BODY:      # never the development map by default
+                    raise SystemExit("FATAL: the map gave no body for the open site (page(..., prod_body=))")
+                doc = public_doc(name, title, _OPEN_BODY[name], BANNER, record=False, head=OPEN_META)
+            elif name in OPEN_PAGES:            # words only, no figures: the same page as on dev/
+                doc = public_doc(name, title, _OPEN_BODY.get(name, body), BANNER, record=False,
+                                 head=OPEN_META)
             else:
-                doc, changes, script_hits = _clean_page(doc)
-                if changes or script_hits:
-                    cleaned[name] = (changes, script_hits)
+                doc = public_doc(name, title, _soon_body(name), BANNER, record=False, head=OPEN_META,
+                                 policy=False, meta="")
             (OUT / name).write_text(doc)
         else:
-            body = to_root.sub(lambda m: "../" + m.group(1), body)
+            body = to_root.sub(lambda m: f"../{DEV_DIR}/" + m.group(1), body)
             (adm_dir / name).write_text(_render(
                 name, title, body, NAV_ADMIN,
                 f"Generated {stamp} from the dev <code>aa</code> schema ({DATA_STAMP}) · admin site"))
+    if missing := [n for n in OPEN_PAGES if n not in public]:
+        raise SystemExit(f"FATAL: open-site page(s) not built as public pages: {', '.join(missing)}")
     (adm_dir / "index.html").write_text(_render(
         "admin/index.html", "AA tracking — admin site", _admin_home(admin), NAV_ADMIN,
         f"Generated {stamp} from the dev <code>aa</code> schema ({DATA_STAMP}) · admin site"))
@@ -597,22 +680,36 @@ def write_site():
                          "(owner's rule: words only — map the code to its words, see dashboards.code_words):\n"
                          + "\n".join(lines[:60]) + (f"\n  … and {len(lines) - 60} more" if len(lines) > 60 else ""))
     _report_cleaned(cleaned)
-    for asset in ROOT_ASSETS:
-        shutil.copy(Path(__file__).parents[1] / "site_src" / asset, OUT / asset)
+    src = Path(__file__).parents[1] / "site_src"
+    for asset in ROOT_ASSETS:       # the open map loads sankey.js; the development site loads both
+        shutil.copy(src / asset, OUT / asset)
+        shutil.copy(src / asset, dev_dir / asset)
     for asset in ADMIN_ASSETS:
-        shutil.copy(Path(__file__).parents[1] / "site_src" / asset, adm_dir / asset)
+        shutil.copy(src / asset, adm_dir / asset)
         (OUT / asset).unlink(missing_ok=True)
-    # nothing from an earlier build may linger: publish.sh encrypts whatever HTML is here
-    for f in list(OUT.glob("*.html")):
-        if f.name not in public:
+        (dev_dir / asset).unlink(missing_ok=True)
+    # the map's country geometry (landing.py writes it at the root): the development map too
+    geo = {f.name for f in OUT.glob("adm-*.json")}
+    for f in dev_dir.glob("adm-*.json"):
+        if f.name not in geo:
             f.unlink()
+    for g in sorted(geo):
+        shutil.copy(OUT / g, dev_dir / g)
+    # nothing from an earlier build may linger: publish.sh serves what is here (the mock-up's
+    # stylesheet sits beside its pages, in dev/, since 2026-11-01)
+    (OUT / "unocha.css").unlink(missing_ok=True)
+    for d in (OUT, dev_dir):
+        for f in list(d.glob("*.html")):
+            if f.name not in public:
+                f.unlink()
     for f in list(adm_dir.glob("*.html")):
         if f.name not in admin and f.name != "index.html":
             f.unlink()
     for name, gone in sorted(cut.items()):
         # visible in the publish run's summary, not only in its log
         print(f"::warning::public page {name}: link(s) to admin-only page(s) removed: {', '.join(sorted(gone))}")
-    print(f"  public site: {len(public)} pages · admin site: {len(admin) + 1} pages ({ADMIN_DIR}/)")
+    print(f"  public site: {len(public)} pages ({DEV_DIR}/; open at the root: {', '.join(OPEN_PAGES)}, and "
+          f"{len(public) - len(OPEN_PAGES)} 'Coming soon' pages) · admin site: {len(admin) + 1} pages ({ADMIN_DIR}/)")
 
 
 _CSV_SEQ = [0]

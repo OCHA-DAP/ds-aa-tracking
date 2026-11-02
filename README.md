@@ -61,7 +61,7 @@ are kept forever (the year-end official state, for the map's time view).
   not a source any more). It never touches the dev DB: it restores the blob snapshot
   (below) into a Postgres service container and builds against localhost. Needs the org
   blob secret plus repo secrets `EXTRACT_TOKEN` (the proxy site token), `SITE_PASSWORD`
-  (staticrypt, public site) and `ADMIN_PASSWORD` (staticrypt, admin site; no default
+  (staticrypt, development site) and `ADMIN_PASSWORD` (staticrypt, admin site; no default
   anywhere, the publish fails without it).
 - **Publish changes** (D164): an admin-page edit is in the database at once but on the site
   only after the next publish from a fresh copy. The admin page's bar says which copy the
@@ -73,6 +73,19 @@ are kept forever (the year-end official state, for the map's time view).
   the button), and for the workflow the repo variables
   `DATABRICKS_HOST` + `DATABRICKS_CLIENT_ID` and secret `DATABRICKS_CLIENT_SECRET` of the
   service principal `ds-aa-tracking-publish`, which `databricks.yml` lets run the job.
+- **open site and development site** (D169, 2026-11-01): the site's address
+  (https://ocha-dap.github.io/ds-aa-tracking/) is the **open site**, no password: the map,
+  the Definitions page and the accessibility statement (`build_site.OPEN_PAGES`, the map links
+  to both), and in place of every other public page a "Coming soon" page (a drawn outline, blurred,
+  nothing of the page itself) linking to that page on the **development site**, `dev/`: every
+  public page, behind `SITE_PASSWORD` (the old site's password). The open map leaves out the
+  figures it may not show (`landing.withheld_on_open_map`: a people-covered figure from a
+  framework document none of whose files is registered as public); the development map shows
+  them. `site_build/` is laid out as published: the open site at its top, `dev/`, `admin/`.
+  `publish.sh` serves a top-level page plain only if the build marked it for the open site
+  (`OPEN_META`), and apart from the pages of its own `OPEN_PAGES` list (the same as the
+  build's) only a "Coming soon" page, and a small one; everything under
+  `dev/` and `admin/` must be encrypted. The admin site links to the development site.
 - two sites, one build (2026-10-07): the **public site** is the tabs of its header (map,
   model + historical activations, plan, financing, learning, media) and the
   framework pages the map opens — nothing else, and no link to anything else. Every other
@@ -89,9 +102,11 @@ are kept forever (the year-end official state, for the map's time view).
   gets fixed at the source; `AA_SITE_GUARD=strict` stops the build instead (local checks).
   A public page can be **unlisted** (`UNLISTED_TABS`): same password as the
   tabs, but no header link and no link from any page (the build stops if one appears), so
-  only people given its address find it. `scripts/publish.sh` allows exactly one directory on gh-pages (`admin/`,
-  encrypted pages and the two pdf.js files only) and refuses any page that is not
-  encrypted. Every page carries the "internal product under development" banner.
+  only people given its address find it. `scripts/publish.sh` allows three directories on
+  gh-pages (`admin/`: encrypted pages and the two pdf.js files; `dev/`: encrypted pages, the
+  map's geometry and the vendored scripts; `dev/media/`: the Media page's photos) and refuses
+  a page under them that is not encrypted. Every page carries the "internal product under
+  development" banner; the development site's adds that it is the development version.
 - snapshot: the dev DB is losing public network access (2026-09); only Databricks reaches
   it. `databricks.yml` defines one job, **AA Tracking Nightly** (03:30 UTC, Job Compute):
   `databricks/nightly.py` runs `scripts/export_snapshot.py`, which writes every `aa` table (parquet) plus the DDL metadata
@@ -107,8 +122,9 @@ are kept forever (the year-end official state, for the map's time view).
 - `scripts/drop_leftovers.py` — one-off (D168): archives, then drops what was left from
   building the tracker (the zz_legacy tables, version_match, raw KB YAML, old views) and
   renames the source labels that named people
-- `scripts/build_site.py` — render the two password-protected GH Pages sites (public at
-  the root, admin under `admin/`)
+- `scripts/build_site.py` — render the GH Pages sites: the open site at the root (the map,
+  Definitions, Accessibility, and "Coming soon" pages), the development site under `dev/` and the admin site under
+  `admin/` (both password-protected)
 - `scripts/admin_page.py` — `admin/admin.html`: Django-admin-style CRUD over every `aa` table,
   populated live from the proxy's `/schema`; viewer = admin-site password, editor = separate
   token prompted for in the browser (never embedded). Supersedes the tracking-tables tab.
@@ -135,7 +151,7 @@ are kept forever (the year-end official state, for the map's time view).
 - `scripts/page_media.py` — the Media page: the folder "AA visuals" (OCHA-HFSA SharePoint,
   "(08) External communication"; a Google Drive folder until that was deleted in Oct 2026) as
   it was gathered (photos by country, the social posts of the folder's catalogue), read from
-  `site_src/media.json`. A photo is shown from two renditions published under `media/` on
+  `site_src/media.json`. A photo is shown from two renditions published under `dev/media/` on
   gh-pages (public files, as the Drive renditions were); the page links to neither the
   folder nor the originals.
   `scripts/sync_media.py --from DIR` (DIR = the folder downloaded from SharePoint and
@@ -155,7 +171,8 @@ are kept forever (the year-end official state, for the map's time view).
   only once the nightly's one-off `--ensure-schema` run has created the table.
   The workbooks and the proposals they were coded from never go in git
 - `scripts/mock_unocha.py` — the mock-up of the public site embedded in
-  https://www.unocha.org/anticipatory-action (unlisted, public password): `mock-unocha.html`
+  https://www.unocha.org/anticipatory-action (unlisted, on the development site under its
+  password): `dev/mock-unocha.html`
   and a `mock-unocha-<page>` twin of every page reachable from the map, OCHA's page with ours
   under its photo in place of their section tabs, our CSS scoped to `.aa-embed`. Run by
   `publish.sh` after the build. OCHA's page is a committed snapshot (`site_src/unocha-shell.html`,
