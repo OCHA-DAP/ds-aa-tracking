@@ -32,7 +32,9 @@
 # made from the dev pages and published with them, under the site password.
 set -euo pipefail
 OPEN_GLOBS='*.md aa-*.json aa-*.csv pdf-*.txt llms.txt llms-full.txt robots.txt sitemap.xml'
-open_files() { ( cd "$1" && shopt -s nullglob && for g in $OPEN_GLOBS; do for f in $g; do echo "$f"; done; done ); }
+# the open files present in a directory (a literal name the build did not write is skipped: nullglob
+# drops only patterns with a wildcard)
+open_files() { ( cd "$1" && shopt -s nullglob && for g in $OPEN_GLOBS; do for f in $g; do [ -f "$f" ] && echo "$f"; done; done; true ); }
 cd "$(dirname "$0")/.."
 PW="${SITE_PASSWORD:-anticipation2026}"
 ADMIN_PW="${ADMIN_PASSWORD:-}"
