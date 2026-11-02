@@ -3974,7 +3974,9 @@ function fwRows(){
             // ... by fund (owner, 2026-10-30), as pre-arranged is: CERF, Country and Regional Funds
             rel_cerf: rows.some(x => x.usd != null && x.fund === 'cerf') ? rows.reduce((s, x) => s + (x.fund === 'cerf' ? x.usd || 0 : 0), 0) : null,
             rel_pool: rows.some(x => x.usd != null && x.fund !== 'cerf') ? rows.reduce((s, x) => s + (x.fund !== 'cerf' ? x.usd || 0 : 0), 0) : null,
-            months: (v && v.months) || [], am: actMonths(acts)});
+            // the red dots: a row shown as a framework (current or retired) — a pair drawn as a
+            // non-framework allocation gets none, though it counts a retired framework's activation
+            months: (v && v.months) || [], am: lay === 'framework' || lay === 'retired' ? actMonths(acts) : {}});
   }));
   const {k, dir} = FWT;
   const cmp = (a, b) => { const x = a[k], y = b[k];
