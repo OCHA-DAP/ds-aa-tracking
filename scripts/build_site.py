@@ -648,7 +648,9 @@ def write_site():
             # the open site: the map, and "Coming soon" for the rest (its cleaning is the
             # development page's, already reported)
             if name == "index.html":
-                doc = public_doc(name, title, _OPEN_BODY.get(name, body), BANNER, record=False, head=OPEN_META)
+                if name not in _OPEN_BODY:      # never the development map by default
+                    raise SystemExit("FATAL: the map gave no body for the open site (page(..., prod_body=))")
+                doc = public_doc(name, title, _OPEN_BODY[name], BANNER, record=False, head=OPEN_META)
             else:
                 doc = public_doc(name, title, _soon_body(name), BANNER, record=False, head=OPEN_META,
                                  policy=False, meta="")

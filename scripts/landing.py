@@ -1836,13 +1836,17 @@ def withheld_on_open_map(e):
     figures stay off anything public; the development site, behind its password, shows them
     (2026-11-01, when the map was opened). Registering the published document
     (register_documents.py) brings the figure back."""
-    w = _try_sql(e, """SELECT p.country_iso3, p.hazard, p.as_of, p.people_covered FROM aa.people_covered p
-                       WHERE p.source = 'framework-doc' AND p.people_covered IS NOT NULL
-                         AND NOT EXISTS (SELECT 1 FROM aa.version_document vd
-                                         JOIN aa.framework_document f ON f.sha256 = vd.sha256
-                                         WHERE vd.country_iso3 = p.country_iso3 AND vd.hazard = p.hazard
-                                           AND vd.version = p.version AND f.is_public)""",
-                 ["country_iso3", "hazard", "as_of", "people_covered"])
+    # no fallback: if this cannot be read, the open map is not built (the build stops and the
+    # site stays as it was), rather than built with nothing withheld
+    try:
+        w = pd.read_sql("""SELECT p.country_iso3, p.hazard, p.as_of, p.people_covered FROM aa.people_covered p
+                           WHERE p.source = 'framework-doc' AND p.people_covered IS NOT NULL
+                             AND NOT EXISTS (SELECT 1 FROM aa.version_document vd
+                                             JOIN aa.framework_document f ON f.sha256 = vd.sha256
+                                             WHERE vd.country_iso3 = p.country_iso3 AND vd.hazard = p.hazard
+                                               AND vd.version = p.version AND f.is_public)""", e)
+    except Exception as ex:  # noqa: BLE001
+        raise SystemExit(f"FATAL: cannot tell which people-covered figures the open map must leave out: {ex}")
     out = {}
     for x in w.itertuples():
         out.setdefault((x.country_iso3, x.hazard), set()).add((str(x.as_of)[:10], int(x.people_covered)))
@@ -1851,8 +1855,9 @@ def withheld_on_open_map(e):
 
 def open_map_countries(countries, withheld):
     """The map's data for the open site: a copy without the withheld figures (the framework's
-    people covered now, and the year selector's past figures). The development map, and the
-    cross-page figure check, keep them."""
+    people covered now, the year selector's past figures, and a version's people targeted when
+    it is the same figure: the document reader writes one from the other). The development
+    map, and the cross-page figure check, keep them."""
     out = copy.deepcopy(countries)
     n = 0
     for iso, cd in out.items():
@@ -1863,6 +1868,10 @@ def open_map_countries(countries, withheld):
             if f.get("covered") is not None and int(f["covered"]) in {v for _, v in gone}:
                 f["covered"] = None
                 n += 1
+            for v in f.get("versions") or []:
+                if v.get("target_people") is not None and int(v["target_people"]) in {x for _, x in gone}:
+                    v["target_people"] = None
+                    n += 1
             h = f.get("hist") or {}
             if h.get("cov"):
                 keep = [c for c in h["cov"] if (str(c[0])[:10], int(c[1])) not in gone]
@@ -1889,6 +1898,8 @@ def build_landing(page, d, e):
             if cd["lbbox"] else None)
         cd["dir"] = DIRECTIONS.get(iso, (0.7, -0.7))
     geo_pass(countries, bboxes)
+    # the open site's copy of the map's data: without the figures it may not show
+    open_countries = open_map_countries(countries, withheld_on_open_map(e))
 
     # headline tiles follow the map: the same rule as the page's updateTiles() (JS), here
     # for the default layer set AND the default year so the static HTML matches what the page
@@ -1969,6 +1980,12 @@ def build_landing(page, d, e):
         return (f"<div class='tile{' hasnote' if note else ''}' id='{id_}'{attrs}>{tile_key(icon, name)}"
                 f"<div class='v{' vs' if vs else ''}'>{value}</div><div class='l'>{html_escape(lead)}{mark}{sub}{ul}</div>"
                 f"<div class='tnote' id='{id_}-n' role='tooltip'>{html_escape(note)}</div></div>")
+    def cov_tile(t):
+        """The people-covered tile: the open map's leaves out what it withholds."""
+        return tile("t-cov", "people", "People covered", _tofixed(t["covered"] / 1e6, 1) + "M" if t["n_fw"] else "—",
+                    "people covered now by the frameworks shown" if t["n_fw"] else "people covered now: no framework shown",
+                    note=f"{t['n_cov']} of the {t['n_fw']} frameworks shown have a figure." if t["n_fw"] else "")
+    t_open = tile_figures(open_countries, {"framework"}, Y)
     tiles = "".join((
         tile("t-fw", "doc", "Frameworks", t["n_fw"], "frameworks on the map today",
              [f"{t['n_active']} active", f"{t['n_upd']} being updated", f"{t['n_dev']} in development"]),
@@ -1979,9 +1996,7 @@ def build_landing(page, d, e):
         # co-financing beside pre-arranged (owner, 2026-10-30)
         tile("t-cof", "cofin", "Co-financing", f"${_jsround(t['cofin'] / 1e6)}M" if t["n_cofin"] else "—",
              "co-financing pre-arranged now", note=" ".join((COF_NOTE, f"{t['n_cofin']} of the {t['n_fw']} frameworks shown have co-financing recorded."))),
-        tile("t-cov", "people", "People covered", _tofixed(t["covered"] / 1e6, 1) + "M" if t["n_fw"] else "—",
-             "people covered now by the frameworks shown" if t["n_fw"] else "people covered now: no framework shown",
-             note=f"{t['n_cov']} of the {t['n_fw']} frameworks shown have a figure." if t["n_fw"] else ""),
+        "<!--AA_TCOV-->",   # people covered: one per site (cov_tile)
         # activations and the money they released, in one tile (owner, 2026-10-27)
         tile("t-act", "bolt", "Activations", act_sentence(t["released"], t["n_act"]),
              f"framework activations in {Y}" if t["n_act"] else f"no activation in {Y} on the layers shown",
@@ -2065,12 +2080,12 @@ window.YEARS = {json.dumps({"first": YEAR_FIRST, "now": TODAY.year, "today": TOD
     i18n.register_countries((iso, cd.get("name")) for iso, cd in countries.items())
     i18n.register_countries((iso, w.get("n")) for iso, w in wdata.items())
     # the open site's map: the same page without the figures it may not show
-    if body.count("/*AA_L*/null") != 1:
-        raise SystemExit("FATAL: the map's data placeholder is not in its page exactly once")
-    open_json = json.dumps(open_map_countries(countries, withheld_on_open_map(e)), default=str)
+    if body.count("/*AA_L*/null") != 1 or body.count("<!--AA_TCOV-->") != 1:
+        raise SystemExit("FATAL: the map's data or people-covered placeholder is not in its page exactly once")
     page("index.html", "OCHA Anticipatory Action — portfolio",
-         body.replace("/*AA_L*/null", json.dumps(countries, default=str), 1),
-         prod_body=body.replace("/*AA_L*/null", open_json, 1))
+         body.replace("/*AA_L*/null", json.dumps(countries, default=str), 1).replace("<!--AA_TCOV-->", cov_tile(t), 1),
+         prod_body=body.replace("/*AA_L*/null", json.dumps(open_countries, default=str), 1)
+                       .replace("<!--AA_TCOV-->", cov_tile(t_open), 1))
 
 
 LANDING_CSS = r"""

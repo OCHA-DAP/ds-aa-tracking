@@ -118,7 +118,9 @@ touch "$WT/.nojekyll"
         if ! grep -q "staticrypt-form" "$f" || grep -q "devbanner" "$f"; then
           echo "FATAL: $f is not an encrypted page — aborting" >&2; exit 1
         fi ;;
-      *)      # the open site: only what the build marked for it; a "Coming soon" page is small
+      *)      # the open site: only what the build marked for it, and apart from the map only
+              # "Coming soon" pages (class='soon' is written by build_site._soon_body alone; the
+              # size cap only catches the map's data or a long page, not a short real page)
         if ! grep -q '<meta name="aa-site" content="open">' "$f"; then
           echo "FATAL: $f is served without a password but the build did not mark it for the open site — aborting" >&2; exit 1
         fi
