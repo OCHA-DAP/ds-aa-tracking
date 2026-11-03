@@ -244,11 +244,12 @@ def check() -> None:
         usd(r for r in act if r["g"] in ("c", "r")))
     cmp("released to date, non-framework allocations", "Map ↔ Financing", t_ad["released"],
         usd(r for r in act if r["g"] == "a"))
-    # the opening view: current frameworks only, a retired framework's releases included (relOK)
-    t_open = landing.tile_figures(M, {"framework"}, None)
-    cmp("released to date, opening layers", "Map ↔ Financing", t_open["released"],
-        usd(r for r in act if r["g"] in ("c", "r")))
-    cmp("framework activations to date, opening layers vs both framework layers", "Map", t_open["n_act"], t_fr["n_act"], "n")
+    # the map's flows follow the retired layer (D186; all years ticks it on, so the all-years view
+    # is the both-layers figure above): current frameworks alone are the Financing page's current
+    # layer's own money. The Financing page still counts retired money with either layer (D150)
+    t_cur = landing.tile_figures(M, {"framework"}, None)
+    cmp("released to date, current frameworks' own", "Map ↔ Financing", t_cur["released"],
+        usd(r for r in act if r["g"] == "c"))
     f_pre = {}
     for r in now_c:
         f_pre[r["k"]] = f_pre.get(r["k"], 0) + (r["total_usd"] or 0)
