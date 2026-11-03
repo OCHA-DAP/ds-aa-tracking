@@ -701,6 +701,22 @@ DURABLE_TABLES = {
                 (country_iso3, hazard, event_date, window_name, event_label, event_type,
                  fund_code, allocation_code)
         )""",
+    # the projects of a Country or Regional Fund allocation that an activation's money went to,
+    # where the allocation paid for other things too (D192): Ethiopia's 2026 Third Reserve
+    # Allocation put $1M into anticipatory action beside a refugee response and Ebola
+    # preparedness. The money-flow chart takes a release's grantees from the allocation it drew
+    # on (aa.activation_funding.allocation_code): only these projects when the allocation is
+    # listed here, all of its projects when it is not. Project codes as the CBPF mirror writes
+    # them (aa.cbpf_project); entered by hand, with what shows the projects were the release's.
+    "activation_funding_project": """
+        CREATE TABLE IF NOT EXISTS aa.activation_funding_project (
+            allocation_code text NOT NULL, -- cbpf-<fund>-<id>, as in aa.activation_funding
+            project_code text NOT NULL,    -- the pooled fund's project code
+            source text NOT NULL,          -- what shows the project was the activation's
+            note text,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (allocation_code, project_code)
+        )""",
     "entry_audit": """
         CREATE TABLE IF NOT EXISTS aa.entry_audit (
             id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

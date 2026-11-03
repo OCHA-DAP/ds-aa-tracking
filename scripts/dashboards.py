@@ -429,6 +429,7 @@ def _canonical_org_names(d):
     srcs = [(k, col, usd) for k, col, usd in (("subgrant", "partner_name", "subgrant_usd"),
                                               ("subgrant_aa", "partner_name", "subgrant_usd"),
                                               ("cbpf_org_name", "org_name", "usd"),
+                                              ("cbpf_alloc_org", "org_name", "usd"),
                                               ("cbpf_proj", "org_name", "budget"))
             if isinstance(d.get(k), pd.DataFrame) and col in d[k] and len(d[k])]
     if not srcs:
@@ -1172,6 +1173,25 @@ def _fetch(e):
                              WHERE a.aa_keyword AND p.budget IS NOT NULL
                              GROUP BY 1, 2, 3, 4""",
          ["year", "fund_code", "org_name", "org_type", "usd"])
+    # ... and, released, the grantees of the allocation each activation drew on (D192), whatever
+    # its title says: only the listed projects where it paid for other things too
+    # (aa.activation_funding_project; an older snapshot without the table: all its projects)
+    has_afp = pd.read_sql("SELECT to_regclass('aa.activation_funding_project') AS r", e)["r"].iloc[0] is not None
+    listed = """
+                                AND (p.chf_project_code IN (SELECT x.project_code FROM aa.activation_funding_project x
+                                                            WHERE x.allocation_code = f.allocation_code)
+                                     OR NOT EXISTS (SELECT 1 FROM aa.activation_funding_project x
+                                                    WHERE x.allocation_code = f.allocation_code))"""
+    _opt("cbpf_alloc_org", """SELECT f.allocation_code,
+                                     coalesce(p.org_name, 'organisation not recorded') AS org_name, p.org_type,
+                                     sum(p.budget) AS usd
+                              FROM (SELECT DISTINCT allocation_code FROM aa.activation_funding
+                                    WHERE fund_code <> 'cerf' AND allocation_code ~ '^cbpf-[0-9]+-[0-9]+$') f
+                              JOIN aa.cbpf_project p
+                                ON 'cbpf-' || p.pooled_fund_id || '-' || p.allocation_type_id = f.allocation_code
+                              WHERE p.budget IS NOT NULL""" + (listed if has_afp else "") + """
+                              GROUP BY 1, 2, 3""",
+         ["allocation_code", "org_name", "org_type", "usd"])
     _resolve_pooled_fund(d)
     _canonical_org_names(d)
     _merge_labels(d)
@@ -1452,6 +1472,41 @@ def _agency_node(name):
     return ("nr|" if _re.search(r"to be determined|not recorded", n, _re.IGNORECASE) else "un|") + n
 
 
+# a UN agency as the Country and Regional Funds write it ('World Food Programme', 'Programme
+# Alimentaire Mondial', 'The UN Refguee Agency') -> the short name CERF's projects use, so one
+# agency is one box in the money-flow chart (D192). Read on the name folded to lower case.
+UN_SHORT = [
+    (r"\bworld food programme\b|\bprogramme alimentaire mondial\b|^wfp$", "WFP"),
+    (r"\bchildren'?s fund\b|^unicef$", "UNICEF"),
+    (r"\borgani[sz]ation (?:internationale )?(?:for|pour les) migrations?\b|^iom$", "IOM"),
+    (r"\bworld health organi[sz]ation\b|\bpan american health organi[sz]ation\b|^who$|^paho$", "WHO"),
+    (r"\bhigh commissionn?er for refugees\b|\bun ref[a-z]{3,4} agency\b|^unhcr$", "UNHCR"),
+    (r"\bfood and agriculture organi[sz]ation\b|^fao$", "FAO"),
+    (r"\bunited nations population fund\b|^unfpa$", "UNFPA"),
+    (r"\boffice for project services\b|^unops$", "UNOPS"),
+    (r"\bunited nations development programme\b|^undp$", "UNDP"),
+    (r"^un women$", "UN Women"),
+    (r"\brelief and works agency\b|^unrwa$", "UNRWA"),
+    (r"\bhuman settlements programme\b|^un-?habitat$", "UN Habitat"),
+    (r"\bmine action service\b|^unmas$", "UNMAS"),
+    (r"\bdepartment of safety and security\b|^undss$", "UNDSS"),
+    (r"\beducational, scientific and cultural organi[sz]ation\b|^unesco$", "UNESCO"),
+    (r"\binternational labou?r organi[sz]ation\b|^ilo$", "ILO"),
+    (r"\bhigh commissioner for human rights\b|^ohchr$", "OHCHR"),
+]
+
+
+def _un_short(name):
+    """A UN agency's name as a Country or Regional Fund writes it -> CERF's short name for it
+    (AGENCY_ALIAS applied: WHO and PAHO are one box), None when it names no agency above."""
+    import re as _re
+    n = " ".join(str(name).replace("’", "'").casefold().split())
+    for pat, short in UN_SHORT:
+        if _re.search(pat, n):
+            return AGENCY_ALIAS.get(short, short)
+    return None
+
+
 def _layer_of(d):
     """(country, hazard[, version]) -> the map layer its money belongs to: 'r' a retired
     framework, 'c' any other (current frameworks, and the odd AA-tagged CBPF allocation in a
@@ -1531,9 +1586,11 @@ def _money_flows(d, pre, act):
     m 'r' released in year y: activation funding; CERF -> agency from the AA projects
       approved that year (scaled to the released total); agency -> the named partners of the
       CERF AA sub-grants, and the rest -> a final node with the agency's own name (what it
-      implements itself); CBPF / RhPF -> grantee organisation (AA-keyword project budgets),
-      each running on to the same organisation in the final column (grantees implement
-      directly). Every band reaches the last column. Years add up.
+      implements itself); CBPF / RhPF -> grantee organisation: the projects of the allocation
+      the activation drew on (only those aa.activation_funding_project lists, when it does;
+      D192), else the fund's AA-keyword project budgets that year; each running on to the same
+      organisation in the final column (grantees implement directly). Every band reaches the
+      last column. Years add up.
     lv: 'd' donor -> fund (donor share of the fund's paid income that year × the amount),
         'f' fund -> agency / grantee, 'a' agency / grantee -> final recipient.
     c (the 'f' rows only): the country the money went to — the framework's country (pre-arranged),
@@ -1545,7 +1602,8 @@ def _money_flows(d, pre, act):
     Recipient node ids carry their category (_recipient_cat): 'a:<cat>|<agency>' and
     'p:<cat>|<agency>' (always named), 'a:<cat>~<organisation>' and 'p:<cat>~<organisation>'
     (a partner / grantee: FLOW_JS names the top ones of the view and groups the rest per
-    category). One spelling and one category per organisation across CERF and the CBPFs.
+    category). One spelling and one category per organisation across CERF and the CBPFs; a UN
+    agency a pooled fund pays is CERF's node of the agency ('a:un|WFP', _un_short).
     g: the map layer of the money, for the page toggles — 'c' current frameworks, 'r' retired
        frameworks, 'a' non-framework allocations (released only; pass act from
        funding_series(d, released="all") to have them). fu: fund type, 'c' CERF, 'p' CBPF,
@@ -1580,6 +1638,12 @@ def _money_flows(d, pre, act):
         co = d["cbpf_org"].copy()
         co["cat"] = co["org_type"].map(_recipient_cat)
         co["org_name"] = co["cat"].map(lambda c: "Country and Regional Fund grantees — " + RECIPIENT_PLURAL[c])
+    # the grantees of the allocation each pooled-fund release drew on (D192); not in an older
+    # snapshot's type-only fallback (one node per category there)
+    ca = d.get("cbpf_alloc_org")
+    ca = (ca.copy() if named and ca is not None and len(ca)
+          else pd.DataFrame(columns=["allocation_code", "org_name", "org_type", "usd"]))
+    ca["cat"] = ca["org_type"].map(_recipient_cat)
     import html as _html
     import re as _re
     placeholder = _re.compile(r"\b(tbd|to be determined|partner to be determined|not recorded)\b", _re.I)
@@ -1588,13 +1652,15 @@ def _money_flows(d, pre, act):
         return _re.sub(r"[^0-9a-z]+", "", _html.unescape(str(s)).casefold())
     sg["partner_name"] = sg["partner_name"].astype(str).map(_html.unescape)
     co["org_name"] = co["org_name"].astype(str).map(_html.unescape)
+    ca["org_name"] = ca["org_name"].astype(str).map(_html.unescape)
     # a national society typed only 'Others' (the CBPF org type of the Nigerian and Vanuatu Red
     # Cross Societies) is still Red Cross / Red Crescent
     rc_name = r"red cross|red crescent|croix[- ]rouge|cruz roja|croissant[- ]rouge"
-    for f_, ncol in ((sg, "partner_name"), (co, "org_name")):
+    for f_, ncol in ((sg, "partner_name"), (co, "org_name"), (ca, "org_name")):
         f_.loc[f_["cat"].isin(["oth", "nr"]) & f_[ncol].astype(str).str.contains(rc_name, case=False), "cat"] = "rc"
     reg = pd.concat([sg[["partner_name", "cat", "subgrant_usd"]].set_axis(["name", "cat", "usd"], axis=1),
-                     co[["org_name", "cat", "usd"]].set_axis(["name", "cat", "usd"], axis=1)])
+                     co[["org_name", "cat", "usd"]].set_axis(["name", "cat", "usd"], axis=1),
+                     ca[["org_name", "cat", "usd"]].set_axis(["name", "cat", "usd"], axis=1)])
     reg["k"] = reg["name"].map(fold)
     spell = reg.groupby(["k", "name"])["usd"].sum().reset_index().sort_values("usd").groupby("k")["name"].last()
     kcat = reg.groupby(["k", "cat"])["usd"].sum().reset_index().sort_values("usd").groupby("k")["cat"].last()
@@ -1605,11 +1671,15 @@ def _money_flows(d, pre, act):
     for k in spell.index:
         if placeholder.search(str(spell[k])) or kcat[k] == "nr":
             org_node[k] = "nr|partner not recorded"
+        elif named and kcat[k] == "un" and _un_short(spell[k]):
+            org_node[k] = "un|" + _un_short(spell[k])     # CERF's box of the agency
     sg["node"] = sg["partner_name"].map(fold).map(org_node)
     co["node"] = co["org_name"].map(fold).map(org_node)
     sg["rg"] = sg["country_iso3"].map(rg_of).fillna("?")
     sgm = sg.groupby(["year", "rg", "agency", "node"])["subgrant_usd"].sum()
     co = co.groupby(["fund_code", "year", "node"])["usd"].sum()
+    ca["node"] = ca["org_name"].map(fold).map(org_node)
+    ca_by = {ac: g.groupby("node")["usd"].sum() for ac, g in ca.groupby("allocation_code")}
     split = d["split_all"].copy()
     split["version"] = split["version"].astype(str)
     fvm = d["fv_meta"].copy()
@@ -1633,21 +1703,26 @@ def _money_flows(d, pre, act):
         else:
             add(m, y, "d", "d:Not recorded", "f:" + fc, amount, g, fc, rg)
 
-    def grantees(m, y, fc, amount, g, rg, c):
+    def grantees(m, y, fc, amount, g, rg, c, ac=""):
         # released money: a CBPF / RhPF grantee implements directly (no sub-grant level), so
         # its band runs on, same amount, to the same organisation in the final column — every
-        # band then reaches the last column and each grantee node stays balanced (in = out)
+        # band then reaches the last column and each grantee node stays balanced (in = out).
+        # The grantees: the projects of the allocation the release drew on (ac, D192), else the
+        # fund's AA-keyword projects that year
         def on(node, v, final):
             add(m, y, "f", "f:" + fc, "a:" + node, v, g, fc, rg, c)
             if m == "r":
                 add(m, y, "a", "a:" + node, "p:" + final, v, g, fc, rg)
-        o = co[(co.index.get_level_values(0) == fc) & (co.index.get_level_values(1) == y)] if len(co) else co
+        o = ca_by.get(ac) if ac else None
+        if o is None or float(o.sum()) <= 0:
+            o = (co[(co.index.get_level_values(0) == fc) & (co.index.get_level_values(1) == y)].droplevel([0, 1])
+                 if len(co) else co)
         osum = float(o.sum()) if len(o) else 0.0
         if osum <= 0:
             on("nr|Country and Regional Fund grantees not recorded", amount, "nr|grantee not recorded")
             return
-        for (_f, _a, node), v in o.items():
-            cat = node.split(sep)[0]
+        for node, v in o.items():
+            cat = _re.split(r"[|~]", node)[0]
             final = node if named else f"{cat}|{RECIPIENT_PLURAL[cat]}"
             on(node, v / osum * amount, final)
 
@@ -1695,7 +1770,11 @@ def _money_flows(d, pre, act):
     R = act[act["amount_usd"].fillna(0) > 0]
     R = R.assign(g=["a" if et == "adhoc_aa" else layer(c, h, v)     # v: an old version -> retired
                     for et, c, h, v in zip(R["event_type"], R["country_iso3"], R["hazard"], R["version"])],
-                 rg=R["country_iso3"].map(rg_of).fillna("?"), c=R["country_iso3"].fillna(""))
+                 rg=R["country_iso3"].map(rg_of).fillna("?"), c=R["country_iso3"].fillna(""),
+                 # a pooled fund's allocation, for its grantees ('' = none recorded; CERF's
+                 # split is by country and year, never by allocation)
+                 ac=[a if isinstance(a, str) and f != "cerf" else ""
+                     for a, f in zip(R.get("allocation_code", pd.Series(None, index=R.index)), R["fund_code"])])
     for (fc, y, g, rg), amount in R.groupby(["fund_code", "year", "g", "rg"])["amount_usd"].sum().items():
         donors("r", int(y), fc, amount, g, rg)
     # CERF -> agency -> partner, per country (the countries column shows the country's own
@@ -1705,10 +1784,10 @@ def _money_flows(d, pre, act):
     ag_r = _by_key(ag, 2)
     sg_c = _by_key(sg.groupby(["year", "country_iso3", "agency", "node"])["subgrant_usd"].sum(), 3)
     sg_r = _by_key(sgm, 3)
-    for (fc, y, g, rg, c), amount in R.groupby(["fund_code", "year", "g", "rg", "c"])["amount_usd"].sum().items():
+    for (fc, y, g, rg, c, ac), amount in R.groupby(["fund_code", "year", "g", "rg", "c", "ac"])["amount_usd"].sum().items():
         y = int(y)
         if fc != "cerf":
-            grantees("r", y, fc, amount, g, rg, c)
+            grantees("r", y, fc, amount, g, rg, c, ac)
             continue
         key, a_, subs = (y, c), ag_c.get((y, c)), sg_c
         if a_ is None or float(a_.sum()) <= 0:
@@ -1793,8 +1872,10 @@ FLOW_NOTE = " ".join(TB(x) for x in (
     "CERF → agency uses the AA projects approved that year in the same country (in the same region "
     "where the country has none that year), scaled to the released total; agency → partner uses the "
     "CERF AA sub-grants in that country, and the rest goes to a final node with the agency's own "
-    "name — what it implements itself. Country and Regional Funds go to their grantee organisations "
-    "from the AA-keyword project budgets; a grantee implements directly, so its band runs on, same "
+    "name — what it implements itself. Country and Regional Funds go to the grantee organisations "
+    "of the allocation the activation drew on (only its anticipatory action projects, where the "
+    "allocation also paid for other things), or, where no allocation is recorded, of the fund's "
+    "projects marked AA that year; a grantee implements directly, so its band runs on, same "
     "amount, to the same organisation in the final column.",
     f"<b>Countries</b> (tick <i>countries</i>): a column between the funds and the agencies — the "
     f"country of the framework (pre-arranged) or of the activation (released). The {FLOW_TOP_COUNTRIES} "
