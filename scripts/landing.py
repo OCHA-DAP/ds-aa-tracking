@@ -2445,6 +2445,14 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
   box-shadow:0 4px 12px -4px rgba(0,0,0,.35); display:none; z-index:6; text-transform:none; letter-spacing:0; }
 .info:hover::after, .info:focus::after, .info:focus-visible::after { display:block; }
 .info.left::after { left:auto; right:-4px; transform:none; }
+/* the glossary's and the legend's tips, placed by the script (placeTip) in one box on the page,
+   kept inside the window: a tip drawn by ::after was cut off by the side panel, which scrolls,
+   and by the window's edge (owner, 2026-11-03). Without the script the ::after tips stay. */
+.ftip { position:fixed; z-index:50; display:none; width:max-content; max-width:min(240px, calc(100vw - 16px)); pointer-events:none;
+  background:rgba(15,37,64,.95); color:#fff; font-size:11.5px; font-weight:400; line-height:1.35; padding:6px 9px; border-radius:6px;
+  text-align:left; white-space:normal; box-shadow:0 4px 12px -4px rgba(0,0,0,.35); }
+.ftip.wide { max-width:min(300px, calc(100vw - 16px)); }
+.jstip .info::after, .jstip .hasdef::after { display:none !important; }
 abbr[title] { text-decoration:underline dotted #94a3b8; text-underline-offset:2px; cursor:help; }
 /* partners */
 .pgrp { margin:6px 0 2px; font-weight:650; color:#16324f; font-size:12px; }
@@ -4125,6 +4133,41 @@ function fwCSV(){
 document.addEventListener('click', e => { const t = e.target.closest && e.target.closest('.tile.hasnote, .ctile.hasnote, .hasdef'); if(t && document.activeElement !== t) t.focus(); });
 document.addEventListener('keydown', e => { const a = document.activeElement;
   if(e.key === 'Escape' && a && a.matches && a.matches('.tile.hasnote, .ctile.hasnote, .hasdef, .maplegend .info')) a.blur(); });
+// glossary and legend tips (.info, .hasdef): one box on the page, placed beside the marker and
+// kept inside the window, on hover or focus as the CSS tips were (a tap focuses: the handlers
+// above). The ::after tips were cut off by the side panel, which scrolls, and by the window's
+// edge (owner, 2026-11-03: the 'trigger' tip in a framework's Model box). Above the marker, or
+// below when there is no room; a .down marker (the year note) prefers below. The tip is for the
+// eye: the marker carries its text for a screen reader (aria-label, or a .sr span).
+const FTIP = document.createElement('div'); FTIP.className = 'ftip'; FTIP.setAttribute('aria-hidden', 'true');
+document.body.appendChild(FTIP); document.documentElement.classList.add('jstip');
+const TIPS = '.info[data-tip], .hasdef[data-tip]';
+let tipFor = null;
+function placeTip(el){ const t = el.dataset.tip; if(!t) return;
+  tipFor = el; FTIP.textContent = t; FTIP.classList.toggle('wide', el.classList.contains('down')); FTIP.style.display = 'block';
+  const r = el.getBoundingClientRect(), w = FTIP.offsetWidth, h = FTIP.offsetHeight, m = 8, g = 6;
+  const x = Math.max(m, Math.min(r.left + r.width / 2 - w / 2, innerWidth - w - m));
+  const up = r.top - g - h, down = r.bottom + g, roomUp = up >= m, roomDown = down + h <= innerHeight - m;
+  const y = el.classList.contains('down') ? (roomDown || !roomUp ? down : up) : (roomUp ? up : down);
+  FTIP.style.left = x + 'px'; FTIP.style.top = Math.max(m, y) + 'px'; }
+function dropTip(el){ if(el && el !== tipFor) return; tipFor = null; FTIP.style.display = 'none'; }
+const tipOf = e => e.target && e.target.closest ? e.target.closest(TIPS) : null;
+// a marker redrawn under the pointer (the panel re-renders) sends no mouseout: the next move
+// elsewhere closes its tip
+document.addEventListener('mouseover', e => { const el = tipOf(e);
+  if(el){ if(el !== tipFor) placeTip(el); } else if(tipFor && (!tipFor.isConnected || document.activeElement !== tipFor)) dropTip(); });
+document.addEventListener('mouseout', e => { const el = tipOf(e);
+  if(el && !el.contains(e.relatedTarget) && document.activeElement !== el) dropTip(el); });
+document.addEventListener('focusin', e => { const el = tipOf(e); if(el) placeTip(el); });
+document.addEventListener('focusout', e => { const el = tipOf(e); if(el && !el.matches(':hover')) dropTip(el); });
+// it is fixed to the window: on a scroll (the page's or a panel's; a keyboard focus scrolls its
+// marker into view) or a resize it follows its marker, and hides while the marker is out of view
+function followTip(){ if(!tipFor) return; if(!tipFor.isConnected) return dropTip();
+  const r = tipFor.getBoundingClientRect();
+  if(!r.width || r.bottom < 0 || r.top > innerHeight){ FTIP.style.display = 'none'; return; }
+  placeTip(tipFor); }
+addEventListener('scroll', followTip, true); addEventListener('resize', followTip);
+document.addEventListener('keydown', e => { if(e.key === 'Escape') dropTip(); });
 // ---------- keyboard (WCAG 2.1.1): an element the script makes clickable with an onclick — a framework
 // card, a pillar, a link without an address, a list entry — is a button for the keyboard too:
 // focusable, and Enter or Space activates it. Applied to whatever the script writes (an observer).
