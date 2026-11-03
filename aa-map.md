@@ -2,7 +2,7 @@
 
 > OCHA internal product under development, subject to change without warning. The figures may be incorrect and should not be used.
 >
-> Data snapshot 2026-11-03 17:11 UTC · generated 2026-11-03 · index: https://ocha-dap.github.io/ds-aa-tracking/llms.txt · HTML page: https://ocha-dap.github.io/ds-aa-tracking/
+> Data snapshot 2026-11-03 19:48 UTC · generated 2026-11-03 · index: https://ocha-dap.github.io/ds-aa-tracking/llms.txt · HTML page: https://ocha-dap.github.io/ds-aa-tracking/
 
 
 The map at https://ocha-dap.github.io/ds-aa-tracking/ (open, no password) shows the anticipatory action frameworks OCHA supports, with headline figures, a frameworks table and a panel per country. This file is its data in text: the headline figures as the map opens (the current-frameworks layer, 2026 as of today), the frameworks it shows and this year's activations. Other years and layers can be worked out from the data files listed in https://ocha-dap.github.io/ds-aa-tracking/llms.txt (pre-arranged money per year in aa-prearranged-funding, every activation in aa-activations), with the counting rules given there.
