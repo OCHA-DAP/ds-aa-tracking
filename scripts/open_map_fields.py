@@ -108,6 +108,8 @@ MAP_FIELDS = {
         "prearranged_doc": "the pre-arranged envelope the document states",
         "envelope": "the version's pre-arranged envelope as recorded, all funds",
         "env_cerf": "its CERF part",
+        "env_funds": "the envelope by fund: [{fund (a fund code: cerf, a country or regional pooled fund, or "
+                     "all = a total not split by fund), usd}]",
         "pool_spent": "its Country or Regional Fund envelope was released by an activation",
         "cofin": "co-financing the document states",
         "cofin_sources": "who provides it, as the document says",

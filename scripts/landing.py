@@ -1302,6 +1302,12 @@ def assemble(d, e):
     # counts N times (prearranged_now; owner, 2026-10-28: a pooled-fund envelope counts once)
     env_cerf = {(r.country_iso3, r.hazard, r.version): float(r.total_usd)
                 for r in ebf_[ebf_["fund_code"] == "cerf"].itertuples()}
+    # each version's envelope by fund (the same rows): the panel's CERF / Country and Regional
+    # Funds breakdown of its pre-arranged figure (owner, 2026-11-03)
+    env_funds = {}
+    for r in ebf_.sort_values("total_usd", ascending=False).itertuples():
+        env_funds.setdefault((r.country_iso3, r.hazard, r.version), []).append(
+            {"fund": _s(r.fund_code) or "unspecified", "usd": float(r.total_usd)})
     pre_parts = {}                        # pair -> pre-arranged now by fund, and the version it comes from
     for (c_, h_, v_), parts in _envelope_parts(d["vfund"]).items():
         p = pre_parts.setdefault((c_, h_), {"version": v_})
@@ -1508,6 +1514,7 @@ def assemble(d, e):
                 # funds) — the sidebar compares the agency x sector split total against it
                 "envelope": envelope.get((c, h, v.version)),
                 "env_cerf": env_cerf.get((c, h, v.version)),
+                "env_funds": env_funds.get((c, h, v.version)) or [],
                 # its Country or Regional Fund envelope released by an activation (dashboards.pooled_spent)
                 "pool_spent": (c, h, str(v.version)) in (d.get("pool_spent") or set()),
                 "analysis_ref": _s(v.analysis_ref), "analysis_url": _analysis_url(_s(v.analysis_ref)),
@@ -2450,6 +2457,7 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
   vertical-align:2px; font:700 9px/1 Georgia,serif; color:#fff; background:#64748b; }
 .ctiles .ctile:focus { outline:none; } .ctiles .ctile:focus-visible { outline:2px solid var(--ocha); outline-offset:1px; }
 .ctiles .ctile.hasnote:hover .tnote, .ctiles .ctile.hasnote:focus .tnote { display:block; }
+.ctiles .ctile ul.cb { margin:2px 0 0; padding-left:13px; font-size:10px; color:#475569; } .ctiles .ctile ul.cb li { margin:0; }
 .ctiles .ccap { grid-column:1 / -1; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:#1a5fa0; font-weight:700; margin-bottom:-2px; }
 @media (max-width:759px){ .ctiles { grid-template-columns:repeat(2,1fr); } }
 /* map layer toggles (world legend) */
@@ -3577,6 +3585,9 @@ function actMonths(acts){
 function countryTiles(c){
   const fws = vis(c), fw = fws.filter(f=>visLayer(f)==='framework');
   const pre = fw.reduce((s,f)=>s+(f.pre_now||0),0), cov = fw.reduce((s,f)=>s+(f.covered||0),0), nCov = fw.filter(f=>f.covered).length;
+  // pre-arranged now by fund, as the global tile (a past year has no split by fund there either)
+  const part = k => fw.reduce((s, f) => s + ((f.pre_parts || {})[k] || 0), 0);
+  const preBul = pastY() || !pre ? [] : fundBullets(part('cerf'), part('pooled'), part('all'));
   const F = flowFigures(c.fws);   // the global tiles' rule, this country (a retired pin's releases while that layer is on)
   const kind = F.nAd && F.nAd === F.n ? 'non-framework allocation' : F.nAd ? 'activation' : 'framework activation', one = F.n === 1;
   const ACT = {'non-framework allocation': one ? ['non-framework allocation to date', 'non-framework allocation in {0}'] : ['non-framework allocations to date', 'non-framework allocations in {0}'],
@@ -3592,13 +3603,14 @@ function countryTiles(c){
   const reachL = !F.nCerf && !F.nPool ? tr8('people reached or targeted') : estR ? tr8('people reached or targeted — estimate')
     : F.nRep ? tr8('people reached') : tr8('people reached or targeted: no figure yet');
   let k = 0;
-  const tile = (v, l, note) => { const nt = (note || []).filter(Boolean).join(' '), id = `ctn${++k}`;
+  const tile = (v, l, note, bul) => { const nt = (note || []).filter(Boolean).join(' '), id = `ctn${++k}`;
+    if(bul && bul.length) l += `<ul class='cb'>${bul.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
     return nt ? `<div class='ctile hasnote' tabindex='0' aria-describedby='${id}'><div class='v'>${v}</div><div class='l'>${l}</div><div class='tnote' id='${id}' role='tooltip'>${esc(nt)}</div></div>`
               : `<div class='ctile'><div class='v'>${v}</div><div class='l'>${l}</div></div>`; };
   return `<div class='ctiles'><div class='ccap'>${esc(tr8('{0} only', tr8(c.name)))}</div>`
     + tile(fw.length, esc(tr8(fw.length === 1 ? 'framework' : 'frameworks')) + (fws.length>fw.length?' · ' + esc(tr8('{0} other', fws.length-fw.length)):''))
     + tile(pre ? money(pre) : '—', esc(pastY() ? tr8('pre-arranged in {0}', YEAR) : tr8('pre-arranged now')),
-           fw.length ? [preNote()].concat(apyTileNotes(apyFw), [noEnv.length ? tr8('No figure for {0}: {1}.', YEAR, noEnv.join(', ')) : '']) : [])
+           fw.length ? [preNote()].concat(apyTileNotes(apyFw), [noEnv.length ? tr8('No figure for {0}: {1}.', YEAR, noEnv.join(', ')) : '']) : [], preBul)
     + tile(cov?num(cov):'—', esc(tr8(pastY() ? 'people covered' : 'people covered now')), pastY() && !cov ? [] : covNote(nCov, fw.length, false))
     + tile(F.n, esc(actL))
     + tile(F.n?money(F.usd):'—', esc(yr('released to date', 'released in {0}')), actNote(F))
@@ -3664,6 +3676,21 @@ function renderSide(){
 const verPre = v => { if(!(v.envelope > 0)) return null;
   const c = v.env_cerf || 0, x = (v.pool_spent ? 0 : v.envelope - c) + c * (v.apy > 1 ? v.apy : 1);
   return x > 0.5 ? x : null; };
+// verPre's figure by fund (owner, 2026-11-03: "put the CERF / country/regional breakdown in the
+// per-framework panel"): CERF (counted N times when N activations a year are allowed, as verPre),
+// the Country and Regional Funds with the funds named, a total not split by fund. Its parts add up
+// to verPre: a Country or Regional Fund envelope an activation released is no longer counted
+function preSplit(v){
+  const ef = v.env_funds || []; if(verPre(v) == null || !ef.length) return [];
+  const sum = xs => xs.reduce((t, x) => t + x.usd, 0);
+  const cerf = sum(ef.filter(x => x.fund === 'cerf')) * (v.apy > 1 ? v.apy : 1);
+  const pf = v.pool_spent ? [] : ef.filter(x => x.fund !== 'cerf' && x.fund !== 'all');
+  const all = v.pool_spent ? 0 : sum(ef.filter(x => x.fund === 'all'));
+  const names = pf.map(x => fundName(x.fund)).filter(x => x && x !== 'unspecified');
+  return [cerf > 0.5 && `CERF ${money(cerf)}`,
+          pf.length && `${tr8('Country and Regional Funds')} ${money(sum(pf))}${names.length ? ` (${names.join(', ')})` : ''}`,
+          all > 0.5 && `${tr8('not split by fund')} ${money(all)}`].filter(Boolean);
+}
 // ---------- the building blocks of AA: model · plan · funding · learning (always shown)
 const PILLARS = ['model', 'plan', 'funding', 'learning'];
 function pillarsBar(f, v){
@@ -3696,7 +3723,8 @@ function pillarBody(f, v){
   const c = L[state.iso];
   if(state.pillar==='funding'){
     if(v.pool_spent && v.envelope > (v.env_cerf || 0)) rows.push([tr8('Released, no longer committed'), `${money(v.envelope - (v.env_cerf || 0))} <span class='muted'>${esc(tr8('the Country or Regional Fund envelope an activation drew on'))}</span>`]);
-    rows.push([tr8('Pre-arranged'), `${verPre(v) == null ? '—' : money(verPre(v))}${v.apy > 1 && verPre(v) != null ? apyMark(v.apy) + ` <span class='muted'>· ${esc(apyNote(v.apy))}</span>` : ''}${v.regional?` <span class='muted'>· ${esc(tr8('regional document total (all countries)'))}</span>`:''}${v.all_in===false?` <span class='muted'>· ${esc(tr8('split budget per window'))}</span>`:v.all_in===true?` <span class='muted'>· ${esc(tr8('all-in'))}</span>`:''}`]);
+    const ps = preSplit(v);
+    rows.push([tr8('Pre-arranged'), `${verPre(v) == null ? '—' : money(verPre(v))}${v.apy > 1 && verPre(v) != null ? apyMark(v.apy) + ` <span class='muted'>· ${esc(apyNote(v.apy))}</span>` : ''}${v.regional?` <span class='muted'>· ${esc(tr8('regional document total (all countries)'))}</span>`:''}${v.all_in===false?` <span class='muted'>· ${esc(tr8('split budget per window'))}</span>`:v.all_in===true?` <span class='muted'>· ${esc(tr8('all-in'))}</span>`:''}${ps.length ? `<div class='small muted'>${esc(ps.join(' · '))}</div>` : ''}`]);
     // the document's own figure, where it differs from the envelope counted (or there is none)
     if(v.prearranged_doc!=null && (!(v.envelope > 0) || Math.abs(v.envelope - v.prearranged_doc) > 0.01*Math.max(v.envelope, v.prearranged_doc))) rows.push([tr8('In the framework document'), `${money(v.prearranged_doc)} <span class='muted'>${esc(tr8("the figure the document states; the tiles, the table and the Financing page count the envelope recorded for the version"))}${v.regional?' · '+esc(tr8('regional document total (all countries)')):''}</span>`]);
     // the page's co-financing figure, else the document's co-financing lines (the split's, kept apart)
