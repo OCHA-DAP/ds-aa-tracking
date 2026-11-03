@@ -2,7 +2,7 @@
 
 > OCHA internal product under development, subject to change without warning. The figures may be incorrect and should not be used.
 >
-> Data snapshot 2026-11-03 14:42 UTC · generated 2026-11-03 · index: https://ocha-dap.github.io/ds-aa-tracking/llms.txt · HTML page: https://ocha-dap.github.io/ds-aa-tracking/
+> Data snapshot 2026-11-03 16:27 UTC · generated 2026-11-03 · index: https://ocha-dap.github.io/ds-aa-tracking/llms.txt · HTML page: https://ocha-dap.github.io/ds-aa-tracking/
 
 
 The map at https://ocha-dap.github.io/ds-aa-tracking/ (open, no password) shows the anticipatory action frameworks OCHA supports, with headline figures, a frameworks table and a panel per country. This file is its data in text: the headline figures as the map opens (the current-frameworks layer, 2026 as of today), the frameworks it shows and this year's activations. Other years and layers can be worked out from the data files listed in https://ocha-dap.github.io/ds-aa-tracking/llms.txt (pre-arranged money per year in aa-prearranged-funding, every activation in aa-activations), with the counting rules given there.
@@ -14,8 +14,8 @@ Each figure as the map's tile shows it, to the dollar, followed by the map's own
 - **Frameworks: 29** in 23 countries on the map today: 17 active, 11 being updated, 1 in development.
 - **Pre-arranged now: $174,972,974** (CERF $158,702,640; Country and Regional Funds $16,270,334); the CERF envelope counted once per activation for Cuba tropical cyclone, Haiti tropical cyclone, Philippines tropical cyclone.
   - *The map's note:* Total funding recorded for the frameworks shown, including those being updated or developed. This is funding arranged ahead of possible activations, rather than funding already released. For some tropical cyclone frameworks (Cuba, Haiti, Philippines), the total allows for two activations per year, each with its own CERF envelope.
-- **Co-financing pre-arranged now: $48,164,538**, recorded for 21 of the 29 frameworks shown.
-  - *The map's note:* Additional funding pre-arranged for the frameworks outside OCHA-managed pooled funds (CERF and country-based and regional pooled funds). This is additional to the $175M pre-arranged. Co-financing is recorded for 21 of the 29 frameworks shown. A missing figure does not necessarily mean that no co-financing exists.
+- **Co-financing pre-arranged now: $49,310,038**, recorded for 22 of the 29 frameworks shown.
+  - *The map's note:* Additional funding pre-arranged for the frameworks outside OCHA-managed pooled funds (CERF and country-based and regional pooled funds). This is additional to the $175M pre-arranged. Co-financing is recorded for 22 of the 29 frameworks shown. A missing figure does not necessarily mean that no co-financing exists.
 - **People covered now: 6,493,808**, figures for 28 of the 29 frameworks shown.
   - *The map's note:* The combined number of people the current frameworks plan to assist if activated. This describes planned coverage, rather than people already reached. Coverage figures are available for 28 of the 29 frameworks shown.
 - **Activations in 2026: $43,249,951 released in 14 framework activations** (CERF $41,249,951; Country and Regional Funds $2,000,000); $4,000,000 returned after activations stopped, deducted; $1,000,000 of it estimated, not yet in OCHA's grant management system.
@@ -58,7 +58,7 @@ The frameworks the headline figures count. `prearranged_usd`: pre-arranged now, 
 | Philippines | storm | active | 2026-10-22 | $12,000,000 | $12,000,000 | 2 | $4,000,000 | 332,957 | 3.2 | stated in the framework | Oct, Nov, Dec |
 | Somalia | drought | development | 2026 | $10,000,000 | $10,000,000 | 1 |  |  |  |  |  |
 | Somalia | flood | updating | 2026-10-03 | $7,000,000 | $7,000,000 | 1 | $4,800,000 | 617,290 | 3.2 | stated in the framework | Oct, Nov, Dec |
-| Vanuatu | storm | active | 2026-10-15 | $2,700,334 | $1,500,000 | 1 |  | 12,376 | 4.4 | historical simulation | Jan, Feb, Mar, Apr, May, Oct, Nov, Dec |
+| Vanuatu | storm | active | 2026-10-15 | $2,700,334 | $1,500,000 | 1 | $1,145,500 | 12,376 | 3.5 | stated in the framework | Jan, Feb, Mar, Apr, May, Oct, Nov, Dec |
 
 ## On the map's other layers (22)
 

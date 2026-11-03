@@ -1,6 +1,6 @@
 # OCHA anticipatory action — portfolio tracking
 
-> The tracking record of OCHA's anticipatory action (AA) portfolio, as the open pages of https://ocha-dap.github.io/ds-aa-tracking/ show it: every framework on the map (a country and a hazard), its versions, pre-arranged funding and co-financing, activations and the money they released, and the people reached or targeted. Maintained by the data science team of OCHA's Centre for Humanitarian Data. Data snapshot 2026-11-03 14:42 UTC; files generated 2026-11-03.
+> The tracking record of OCHA's anticipatory action (AA) portfolio, as the open pages of https://ocha-dap.github.io/ds-aa-tracking/ show it: every framework on the map (a country and a hazard), its versions, pre-arranged funding and co-financing, activations and the money they released, and the people reached or targeted. Maintained by the data science team of OCHA's Centre for Humanitarian Data. Data snapshot 2026-11-03 16:27 UTC; files generated 2026-11-03.
 
 **Caveat.** OCHA internal product under development, subject to change without warning. The figures may be incorrect and should not be used.
 
