@@ -1,4 +1,5 @@
 country_iso3,hazard,year,version,financier,amount_usd,source,layer,replaced_framework,in_gho
+BFA,flood,2025,2025-08,,1000000.0,tracking-sheets,current,False,True
 BGD,flood,2025,2025-04-25,,2000000.0,tracking-sheets,current,False,False
 BGD,storm,2025,2025-04-25,,5951987.0,tracking-sheets,current,False,False
 CUB,storm,2025,2025-08-26,,217540.0,tracking-sheets,current,False,False

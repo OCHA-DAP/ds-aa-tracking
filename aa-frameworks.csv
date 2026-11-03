@@ -46,7 +46,7 @@ TLS,Timor-Leste,,drought,,,,,,,,,,,,,,,,,,,,,,,,adhoc
 TON,Tonga,Pacific,storm,pipeline,advanced_conversations,False,True,,,,,0,0,False,,,,,,,,,1,,,,tech
 TUV,Tuvalu,Pacific,storm,pipeline,,False,True,,,,,0,0,False,,,,,,,,,1,,,,tech
 UGA,Uganda,Eastern & Southern Africa,flood,pipeline,,False,False,,,,,0,0,False,,,,,,,,,1,,,,adhoc
-VUT,Vanuatu,Pacific,storm,active,active,False,False,2026-10-15,endorsed,2026-10-15,,1,0,False,4.4,historical simulation,,4.4,2700334,1500000,2026,2026-10-15,1,,,10; 11; 12,framework
+VUT,Vanuatu,Pacific,storm,active,active,False,False,2026-10-15,endorsed,2026-10-15,,1,0,False,4.4,historical simulation,,4.4,2700334,1500000,2026,2026-10-15,1,,12376,1; 2; 3; 4; 5; 10; 11; 12,framework
 VEN,Venezuela,Latin America & Caribbean,drought,pipeline,,False,True,,,,,0,0,False,,,,,,,,,1,,,,tech
 YEM,Yemen,MENA,flood,retired,retired,True,False,2023,endorsed,2023,2023-11-30,2,0,False,,,,,,,,,1,,,4; 5; 6; 7; 8,retired; adhoc
 ZWE,Zimbabwe,Eastern & Southern Africa,drought,pipeline,advanced_conversations,False,True,,,,,0,0,False,,,,,,,,,1,,,,adhoc; tech

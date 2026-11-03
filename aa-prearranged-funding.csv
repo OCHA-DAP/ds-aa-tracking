@@ -48,8 +48,6 @@ TCD,flood,2024,2024-09-26,cerf,,5000000.0,1,version-inferred,current,False,False
 AFG,drought,2025,,cbpf-afg,Afghanistan,7360768.0,1,onegms-mirror,current,False,True
 AFG,drought,2025,2025-04-17,cerf,,10000000.0,1,tracking-sheets,current,False,True
 BFA,drought,2025,2025-02-28,cerf,,15000000.0,1,tracking-sheets,current,False,True
-BFA,flood,2025,2025-08,cerf,,0.0,1,version-inferred,current,False,True
-BFA,flood,2025,2025-08,rhpf-wca-bfa,,1000000.0,1,version-inferred,current,False,True
 BGD,flood,2025,2025-04-25,cerf,,6000000.0,1,tracking-sheets,current,False,False
 BGD,storm,2025,2025-04-25,cerf,,4000000.0,1,tracking-sheets,current,False,False
 COD,cholera,2025,2025-03-11,cerf,,3000000.0,1,tracking-sheets,current,False,True
