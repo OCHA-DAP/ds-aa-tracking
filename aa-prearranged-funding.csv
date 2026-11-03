@@ -25,7 +25,8 @@ NPL,flood,2023,2023-09,cerf,,6487475.0,1,version-inferred,current,False,False
 PHL,storm,2023,2023-10-03,cerf,,7495011.0,1,version-inferred,current,False,False
 TCD,drought,2023,2022-10-24,cerf,,10000000.0,1,version-inferred,current,False,False
 YEM,flood,2023,2023,cbpf-yem,,3000000.0,1,version-inferred,retired,False,False
-AFG,drought,2024,2025-04-17,all,,20000000.0,1,tracking-sheets,current,False,False
+AFG,drought,2024,2025-04-17,cbpf-afg,,10000000.0,1,tracking-sheets,current,False,False
+AFG,drought,2024,2025-04-17,cerf,,10000000.0,1,tracking-sheets,current,False,False
 BFA,drought,2024,2024-02,cerf,,15000000.0,1,version-inferred,current,False,False
 BGD,flood,2024,2023-10-24,cerf,,7869441.0,1,version-inferred,current,False,False
 COD,cholera,2024,2022-12-07,cerf,,3000000.0,1,version-inferred,current,False,False
