@@ -2555,8 +2555,10 @@ function statusAt(f, D){
 // old framework WAS the pair's framework in 2020), so there no activation is old.
 const isOld = a => !!a.old && !pastY();
 // the framework activations a pin's dots stand for: the year view's filter, as applyYear() counts
-// them; a replaced framework's ones while the retired layer is on
-function dotActs(f){ return f.activations.filter(a => a.type === 'framework_aa' && (!isOld(a) || LAYERS.retired)
+// them; a framework's since retired (a retired pair's, or a replaced framework's) while the retired
+// layer is on, as flowActs counts them (D186) — a retired pair drawn on another layer has no dot
+function dotActs(f){ const ret = !f.layers.includes('framework') && f.layers.includes('retired');
+  return f.activations.filter(a => a.type === 'framework_aa' && (!(isOld(a) || ret) || LAYERS.retired)
   && (YEAR == null || String(a.date).slice(0, 4) === String(YEAR))); }
 // ---------- flow figures: activations, money released, people reached (all 'to date', or in the year shown)
 // What a pair contributes: its framework activations while its own framework layer is on, its

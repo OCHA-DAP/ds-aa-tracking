@@ -17,8 +17,8 @@ name their layers explicitly either way):
   * people covered now, and co-financing pre-arranged now: Map ↔ Financing
   * released this year by fund (current frameworks): Map ↔ Financing
   * released to date, framework activations and non-framework allocations, and the number of
-    each: Map ↔ Financing ↔ History; and on the pages' opening layers (current frameworks), where
-    a framework since retired still brings what it released (owner, 2026-10-30)
+    each: Map ↔ Financing ↔ History; and the current frameworks' own (the Map's released follows
+    the Retired box, D186; the Financing page counts a retired framework's with either layer, D150)
   * people reached, CERF allocations of framework activations to date: Map ↔ Activities
   * the open layer (scripts/llm_layer.py, the files as written) ↔ the OPEN map (its own copy, its
     tiles as it opens): every headline figure recomputed from the files' rows, each framework's
@@ -112,7 +112,8 @@ def open_layer(out, om) -> tuple[int, list[str]]:
     if len(mf) != len(fw):
         bad.append(f"pairs — {len(fw)} in aa-frameworks, {len(mf)} on the open map")
 
-    # flow tiles: the year's activations, by the map's rule (_flow_acts)
+    # flow tiles: the year's activations, by the map's rule (_flow_acts) for the open map's layer
+    # (current frameworks): a retired or replaced framework's need the Retired layer (D186)
     def flows(kind):
         acts = []
         for a in T["activations"]:
@@ -120,7 +121,7 @@ def open_layer(out, om) -> tuple[int, list[str]]:
                 continue
             L = layers.get((a["country_iso3"], a["hazard"]), set())
             own = "framework" if "framework" in L else "retired" if "retired" in L else None
-            if kind == "adhoc_aa" or a["replaced_framework"] or own is not None:
+            if kind == "adhoc_aa" or (not a["replaced_framework"] and own == "framework"):
                 acts.append(a)
         rows = [x for a in acts for x in a["funding"]]
         cerf = [x for x in rows if x["fund_code"] == "cerf" and not x["allocation_shared"]]
