@@ -2445,6 +2445,17 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
   box-shadow:0 4px 12px -4px rgba(0,0,0,.35); display:none; z-index:6; text-transform:none; letter-spacing:0; }
 .info:hover::after, .info:focus::after, .info:focus-visible::after { display:block; }
 .info.left::after { left:auto; right:-4px; transform:none; }
+/* the glossary's and the legend's tips, placed by the script (placeTip) in one box on the page,
+   kept inside the window: a tip drawn by ::after was cut off by the side panel, which scrolls,
+   and by the window's edge (owner, 2026-11-03). Without the script the ::after tips stay. */
+.ftip { position:fixed; z-index:50; display:none; width:max-content; max-width:min(240px, calc(100% - 16px));
+  background:rgba(15,37,64,.95); color:#fff; font-size:11.5px; font-weight:400; line-height:1.35; padding:6px 9px; border-radius:6px;
+  text-align:left; white-space:normal; box-shadow:0 4px 12px -4px rgba(0,0,0,.35); }
+.ftip.wide { max-width:min(300px, calc(100% - 16px)); }
+/* the pointer crosses the 6px gap to the tip without leaving it */
+.ftip::before { content:''; position:absolute; left:0; right:0; height:8px; top:-8px; }
+.ftip.above::before { top:auto; bottom:-8px; }
+.jstip .info::after, .jstip .hasdef::after { display:none !important; }
 abbr[title] { text-decoration:underline dotted #94a3b8; text-underline-offset:2px; cursor:help; }
 /* partners */
 .pgrp { margin:6px 0 2px; font-weight:650; color:#16324f; font-size:12px; }
@@ -3447,7 +3458,7 @@ svg.addEventListener('click', ev => {
 back.addEventListener('click', goWorld);
 document.addEventListener('keydown', e => { if(e.key !== 'Escape' || !state.iso) return;
   const a = document.activeElement;   // an open tile note or legend definition: this Escape closes it
-  if(a && a.matches && a.matches('.tile.hasnote, .ctile.hasnote, .hasdef, .maplegend .info')) return;
+  if(a && a.matches && a.matches('.tile.hasnote, .ctile.hasnote, .hasdef, .info')) return;
   goWorld(); });
 
 function goWorld(){
@@ -4124,7 +4135,63 @@ function fwCSV(){
 // (touch screens have no hover; a tap elsewhere blurs it) and Escape closes it
 document.addEventListener('click', e => { const t = e.target.closest && e.target.closest('.tile.hasnote, .ctile.hasnote, .hasdef'); if(t && document.activeElement !== t) t.focus(); });
 document.addEventListener('keydown', e => { const a = document.activeElement;
-  if(e.key === 'Escape' && a && a.matches && a.matches('.tile.hasnote, .ctile.hasnote, .hasdef, .maplegend .info')) a.blur(); });
+  if(e.key === 'Escape' && a && a.matches && a.matches('.tile.hasnote, .ctile.hasnote, .hasdef, .info')) a.blur(); });
+// glossary and legend tips (.info, .hasdef): one box on the page, placed beside the marker and
+// kept inside the window, on hover or focus as the CSS tips were (a tap focuses: the handlers
+// above). The ::after tips were cut off by the side panel, which scrolls, and by the window's
+// edge (owner, 2026-11-03: the 'trigger' tip in a framework's Model box). Above the marker, or
+// below when there is no room; a .down marker (the year note) prefers below. The tip is for the
+// eye: the marker carries its text for a screen reader (aria-label, or a .sr span). The pointer
+// can move onto the tip without closing it (WCAG 1.4.13); its ::before bridges the gap.
+const FTIP = document.createElement('div'); FTIP.className = 'ftip'; FTIP.setAttribute('aria-hidden', 'true');
+document.body.appendChild(FTIP); document.documentElement.classList.add('jstip');
+const TIPS = '.info[data-tip], .hasdef[data-tip]';
+let tipFor = null;
+// the window less its scrollbars
+const viewW = () => document.documentElement.clientWidth, viewH = () => document.documentElement.clientHeight;
+// the marker can be seen: inside the window and inside every box around it that clips (the side
+// panel scrolls); a tip whose marker is scrolled out of sight hides
+function seen(el){ const r = el.getBoundingClientRect();
+  if(!r.width || r.bottom < 0 || r.top > viewH() || r.right < 0 || r.left > viewW()) return false;
+  for(let p = el.parentElement; p && p !== document.body; p = p.parentElement){
+    const cs = getComputedStyle(p); if(cs.overflowX === 'visible' && cs.overflowY === 'visible') continue;
+    const q = p.getBoundingClientRect(); if(r.bottom <= q.top || r.top >= q.bottom || r.right <= q.left || r.left >= q.right) return false; }
+  return true; }
+function placeTip(el){ const t = el.dataset.tip; if(!t) return;
+  tipFor = el; FTIP.textContent = t; FTIP.classList.toggle('wide', el.classList.contains('down'));
+  if(!seen(el)){ FTIP.style.display = 'none'; return; }
+  FTIP.style.display = 'block';
+  const r = el.getBoundingClientRect(), w = FTIP.offsetWidth, h = FTIP.offsetHeight, m = 8, g = 6, W = viewW(), H = viewH();
+  const x = Math.max(m, Math.min(r.left + r.width / 2 - w / 2, W - w - m));
+  const up = r.top - g - h, down = r.bottom + g, roomUp = up >= m, roomDown = down + h <= H - m;
+  const above = el.classList.contains('down') ? !(roomDown || !roomUp) : roomUp;
+  FTIP.classList.toggle('above', above);
+  FTIP.style.left = x + 'px'; FTIP.style.top = Math.max(m, above ? up : down) + 'px'; }
+// closing a tip: the focused marker, if any, gets its own back (a hover elsewhere had replaced it)
+function dropTip(el){ if(el && el !== tipFor) return; tipFor = null; FTIP.style.display = 'none';
+  const a = document.activeElement; if(el && a && a !== el && a.matches && a.matches(TIPS)) placeTip(a); }
+const tipOf = e => e.target && e.target.closest ? e.target.closest(TIPS) : null;
+const onTip = n => !!n && (n === FTIP || FTIP.contains(n));
+// stays open while the pointer is on the marker or the tip, or the marker has focus
+const keep = n => tipFor && (onTip(n) || tipFor.contains(n) || document.activeElement === tipFor);
+// a marker redrawn under the pointer (the panel re-renders) sends no mouseout: the next move
+// elsewhere closes its tip
+document.addEventListener('mouseover', e => { if(onTip(e.target)) return; const el = tipOf(e);
+  if(el){ if(el !== tipFor) placeTip(el); } else if(tipFor && (!tipFor.isConnected || document.activeElement !== tipFor)) dropTip(tipFor); });
+document.addEventListener('mouseout', e => {
+  if(onTip(e.target)){ if(!keep(e.relatedTarget)) dropTip(tipFor); return; }
+  const el = tipOf(e); if(el && el === tipFor && !keep(e.relatedTarget)) dropTip(el); });
+document.addEventListener('focusin', e => { const el = tipOf(e); if(el) placeTip(el); });
+document.addEventListener('focusout', e => { const el = tipOf(e);
+  if(el && !el.matches(':hover') && !FTIP.matches(':hover')) dropTip(el); });
+// it is fixed to the window: on a scroll (the page's or a panel's; a keyboard focus scrolls its
+// marker into view) it follows its marker. A resize moves things again once the map's layout has
+// run (scheduleLayout, lockTiles: up to 600 ms later), so it follows again then.
+function followTip(){ if(!tipFor) return; if(!tipFor.isConnected) return dropTip(tipFor); placeTip(tipFor); }
+let tipTimer = 0;
+addEventListener('scroll', followTip, true);
+addEventListener('resize', () => { followTip(); clearTimeout(tipTimer); tipTimer = setTimeout(followTip, 700); });
+document.addEventListener('keydown', e => { if(e.key === 'Escape'){ tipFor = null; FTIP.style.display = 'none'; } });
 // ---------- keyboard (WCAG 2.1.1): an element the script makes clickable with an onclick — a framework
 // card, a pillar, a link without an address, a list entry — is a button for the keyboard too:
 // focusable, and Enter or Space activates it. Applied to whatever the script writes (an observer).
