@@ -62,9 +62,10 @@ table.data tr:hover td { background:#f2f7fc; }
 .xscroll { overflow-x:auto; }   /* a wide table scrolls inside its box, never the page */
 input.filter { padding:6px 10px; width:340px; margin:10px 0; border:1px solid #bbb;
                border-radius:4px; font-size:13px; }
-button.dl { padding:6px 12px; border:1px solid #2a78d6; color:#1d5aa8; background:#fff;
+button.dl, a.dl { padding:6px 12px; border:1px solid #2a78d6; color:#1d5aa8; background:#fff;
             border-radius:4px; font-size:12.5px; cursor:pointer; white-space:nowrap; }
-button.dl:hover { background:#eef4fc; }
+a.dl { display:inline-block; text-decoration:none; line-height:normal; }
+button.dl:hover, a.dl:hover { background:#eef4fc; }
 .card { background:#fff; border:1px solid #e0e0e0; border-radius:6px; padding:16px 20px;
         margin:14px 0; }
 .badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11.5px;
