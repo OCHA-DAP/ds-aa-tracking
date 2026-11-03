@@ -13,6 +13,9 @@ site_build/ is laid out as the site is published (scripts/publish.sh), before en
                            password
   site_build/admin/*.html  the admin site, encrypted with its own password
 Only the open site's pages are served unencrypted; nothing in site_build/ is committed.
+The open layer (scripts/llm_layer.py) is written beside the open site's pages, unencrypted by
+design: llms.txt, robots.txt, sitemap.xml and the data behind the pages the open site serves
+(OPEN_PAGES: today the map's), so fetch-based tools and LLMs can read the open figures.
 """
 
 import html
@@ -236,6 +239,7 @@ ADMIN_HOME = [
 from policy_text import POLICY_CSS, policy_box  # noqa: E402  (plain-language box on top of each page)
 
 _PAGES = {}     # file name -> (title, body), in build order; write_site() writes them
+_DATA = {}      # "d": the dashboards' frames, "e": the engine — for the open layer written beside the pages
 _OPEN_BODY = {}  # file name -> the body the open site gets instead (the map: prod_body)
 
 
@@ -620,6 +624,21 @@ def write_site():
         (Path(__file__).parents[1] / ".extract_token").read_text().strip()
         if (Path(__file__).parents[1] / ".extract_token").exists() else "")
     cut, leaks, cleaned = {}, {}, {}
+    # the open layer (scripts/llm_layer.py): unencrypted by design, and only the data of the pages
+    # the open site serves (OPEN_PAGES: the data of a page goes live with the page; the rest is not
+    # written at all). It must carry no token either.
+    import llm_layer
+    open_files = (llm_layer.build(_DATA["d"], _DATA["e"], set(OPEN_PAGES), OUT, SNAPSHOT_AT)
+                  if _DATA.get("d") is not None else set())
+    for n in sorted(open_files):
+        doc = (OUT / n).read_text()
+        if (token and token in doc) or "x-site-token" in doc:
+            raise SystemExit(f"FATAL: open file {n} carries the data service's token")
+    # the open pages say where it is, for programs: the map's own Markdown, and the index
+    open_head = OPEN_META + ("\n<link rel='help' type='text/plain' href='llms.txt' "
+                             "title='Machine-readable data, no password'>" if "llms.txt" in open_files else "")
+    map_alt = (open_head + "\n<link rel='alternate' type='text/markdown' href='aa-map.md' "
+               "title='This page as Markdown'>") if "aa-map.md" in open_files else open_head
     # no database wording on a public page (owner, 2026-10-27): the data date, when a snapshot
     meta = TF("Generated {stamp}", stamp=stamp) + (" · " + TF("data snapshot {at} UTC", at=SNAPSHOT_AT)
                                                     if SNAPSHOT_AT else "")
@@ -659,10 +678,10 @@ def write_site():
             if name == "index.html":
                 if name not in _OPEN_BODY:      # never the development map by default
                     raise SystemExit("FATAL: the map gave no body for the open site (page(..., prod_body=))")
-                doc = public_doc(name, title, _OPEN_BODY[name], BANNER, record=False, head=OPEN_META)
+                doc = public_doc(name, title, _OPEN_BODY[name], BANNER, record=False, head=map_alt)
             elif name in OPEN_PAGES:            # words only, no figures: the same page as on dev/
                 doc = public_doc(name, title, _OPEN_BODY.get(name, body), BANNER, record=False,
-                                 head=OPEN_META)
+                                 head=open_head)
             else:
                 doc = public_doc(name, title, _soon_body(name), BANNER, record=False, head=OPEN_META,
                                  policy=False, meta="")
@@ -706,6 +725,12 @@ def write_site():
         for f in list(d.glob("*.html")):
             if f.name not in public:
                 f.unlink()
+    # the open layer's files that this build did not write (a page taken off the open site loses
+    # its data with it): publish.sh publishes whatever open files are here
+    for f in list(OUT.glob("*.md")) + list(OUT.glob("aa-*.json")) + list(OUT.glob("aa-*.csv")) + list(OUT.glob("pdf-*.txt")) + [
+            OUT / "llms.txt", OUT / "llms-full.txt", OUT / "robots.txt", OUT / "sitemap.xml"]:
+        if f.exists() and f.name not in open_files:
+            f.unlink()
     for f in list(adm_dir.glob("*.html")):
         if f.name not in admin and f.name != "index.html":
             f.unlink()
@@ -713,7 +738,8 @@ def write_site():
         # visible in the publish run's summary, not only in its log
         print(f"::warning::public page {name}: link(s) to admin-only page(s) removed: {', '.join(sorted(gone))}")
     print(f"  public site: {len(public)} pages ({DEV_DIR}/; open at the root: {', '.join(OPEN_PAGES)}, and "
-          f"{len(public) - len(OPEN_PAGES)} 'Coming soon' pages) · admin site: {len(admin) + 1} pages ({ADMIN_DIR}/)")
+          f"{len(public) - len(OPEN_PAGES)} 'Coming soon' pages) · admin site: {len(admin) + 1} pages ({ADMIN_DIR}/) · "
+          f"open layer: {len(open_files)} files (the data of {', '.join(sorted(OPEN_PAGES))})")
 
 
 _CSV_SEQ = [0]
@@ -786,7 +812,8 @@ def main():
 
     # ---------- the site's pages
     import dashboards
-    dashboards.build_all(e, page, tbl)
+    _DATA["d"] = dashboards.build_all(e, page, tbl)
+    _DATA["e"] = e
     import admin_page
     for t in undescribed(e):   # D154: another writer's new table is editable until it is listed
         print(f"::warning::aa.{t} is neither defined in schema.py nor listed in "

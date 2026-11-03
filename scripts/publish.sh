@@ -23,9 +23,18 @@
 # - every page under dev/ and admin/ is a staticrypt page, and a top-level page is served plain
 #   only if the build marked it for the open site (OPEN_META); apart from OPEN_PAGES, a page
 #   that is not a "Coming soon" page, or is the size of a real page, aborts before committing
+# - the OPEN LAYER (scripts/llm_layer.py) is published unencrypted on purpose, at the top level:
+#   llms.txt, robots.txt, sitemap.xml and the data behind the pages the open site serves
+#   (build_site.OPEN_PAGES: today the map's aa-map.md and aa-*.json / aa-*.csv tables), for
+#   fetch-based tools and LLMs. The build writes nothing else (the data of the pages not open
+#   yet is not written at all); never a page, never anything from dev/ or admin/.
 # The mock-up of the site on unocha.org (scripts/mock_unocha.py: mock-unocha*.html, unlisted) is
 # made from the dev pages and published with them, under the site password.
 set -euo pipefail
+OPEN_GLOBS='*.md aa-*.json aa-*.csv pdf-*.txt llms.txt llms-full.txt robots.txt sitemap.xml'
+# the open files present in a directory (a literal name the build did not write is skipped: nullglob
+# drops only patterns with a wildcard)
+open_files() { ( cd "$1" && shopt -s nullglob && for g in $OPEN_GLOBS; do for f in $g; do [ -f "$f" ] && echo "$f"; done; done; true ); }
 cd "$(dirname "$0")/.."
 PW="${SITE_PASSWORD:-anticipation2026}"
 ADMIN_PW="${ADMIN_PASSWORD:-}"
@@ -78,6 +87,7 @@ trap 'git worktree remove --force "$WT" 2>/dev/null || true' EXIT
 # admin site, must not linger at its old address
 rm -f "$WT"/*.html "$WT"/adm-*.json "$WT"/pdf.min.js "$WT"/pdf.worker.min.js "$WT"/chart.umd.js \
       "$WT"/sankey.js "$WT"/unocha.css
+for f in $(open_files "$WT"); do rm -f "$WT/$f"; done
 rm -rf "${WT:?}/$ADMIN" "${WT:?}/$DEV" "${WT:?}/media"
 mkdir "$WT/$ADMIN" "$WT/$DEV" "$WT/$DEV/media"
 # the Media page is on the dev site only, so are its photos
@@ -100,12 +110,15 @@ done
 # per-country admin-boundary geometry for the map, open and dev (public CODAB data, not encrypted)
 cp site_build/adm-*.json "$WT"/
 cp site_build/adm-*.json "$WT/$DEV"/
+# the open layer (unencrypted by design; the build already checked it for the proxy token)
+for f in $(open_files site_build); do cp "site_build/$f" "$WT/$f"; done
 touch "$WT/.nojekyll"
 (
   cd "$WT"
   git add -u .                   # tracked files only: what changed and what went away
   for f in *.html adm-*.json chart.umd.js sankey.js .nojekyll; do git add -f "./$f"; done
   for f in $DEV/*.html $DEV/adm-*.json $DEV/chart.umd.js $DEV/sankey.js $DEV/unocha.css; do git add -f "./$f"; done
+  for f in $(open_files .); do git add -f "./$f"; done
   for f in $ADMIN/*.html $ADMIN/pdf.min.js $ADMIN/pdf.worker.min.js; do git add -f "./$f"; done
   if [ -n "$(ls -A $DEV/media)" ]; then git add -f ./$DEV/media; fi
   # the tree about to be committed (not just what changed)
@@ -134,11 +147,18 @@ touch "$WT/.nojekyll"
     esac
   done
   [ -f "$ADMIN/index.html" ] || { echo "FATAL: the admin site has no index.html — aborting" >&2; exit 1; }
+  # the open files are plain data: never a token, never a page
+  for f in $(open_files .); do
+    if grep -q "x-site-token\|staticrypt" "$f"; then
+      echo "FATAL: open file $f carries a token or a page — aborting" >&2; exit 1
+    fi
+  done
+  [ -f llms.txt ] || { echo "FATAL: the open layer is missing (no llms.txt) — aborting" >&2; exit 1; }
   [ -f "$DEV/index.html" ] || { echo "FATAL: the dev site has no index.html — aborting" >&2; exit 1; }
   if git diff --cached --quiet; then
     echo "nothing changed — not publishing"
   elif [ -n "${DRY_RUN:-}" ]; then
-    echo "DRY_RUN: would publish $(git ls-files | grep -c -v "/") top-level files, $(git ls-files "$DEV" | grep -c -v "^$DEV/media/") under $DEV/, $(git ls-files "$DEV/media" | wc -l | tr -d ' ') under $DEV/media/ and $(git ls-files "$ADMIN" | wc -l | tr -d ' ') under $ADMIN/"
+    echo "DRY_RUN: would publish $(git ls-files | grep -c -v "/") top-level files ($(open_files . | wc -l | tr -d ' ') of the open layer), $(git ls-files "$DEV" | grep -c -v "^$DEV/media/") under $DEV/, $(git ls-files "$DEV/media" | wc -l | tr -d ' ') under $DEV/media/ and $(git ls-files "$ADMIN" | wc -l | tr -d ' ') under $ADMIN/"
     git diff --cached --stat | tail -1
   else
     git commit -q -m "Publish review site $(date +%F)"

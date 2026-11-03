@@ -82,12 +82,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Restore boundary caches (FieldMaps COD-AB, Natural Earth)
+      - name: Restore caches (FieldMaps COD-AB, Natural Earth, framework document texts)
         uses: actions/cache@v4
         with:
           path: |
             data/fieldmaps
             data/world
+            data/framework_documents
           key: geo-${{ github.run_id }}
           restore-keys: geo-
       - name: "Restore the Media page's photo renditions (named by content: a cache never goes stale)"
@@ -117,7 +118,8 @@ jobs:
           EXTRACT_TOKEN: ${{ secrets.EXTRACT_TOKEN }}
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
-          # read-only: the Media page's photo renditions (scripts/sync_media.py --fetch)
+          # read-only: the Media page's photo renditions (scripts/sync_media.py --fetch), and the
+          # framework documents' texts once the open layer publishes them (llm_layer, held for now)
           DSCI_AZ_BLOB_DEV_SAS: ${{ secrets.DSCI_AZ_BLOB_DEV_SAS }}
         run: |
           # never publish pages without the proxy token: the data-entry and admin pages would go dark
