@@ -41,6 +41,7 @@ CUB,storm,2026,2026-08-24,WHO (incl. PAHO),200000.0,co-financing-now,current,Fal
 CUB,storm,2026,2026-08-24,UNFPA,8000.0,co-financing-now,current,False,False
 CUB,storm,2026,2026-08-24,WFP,217540.0,co-financing-now,current,False,False
 CUB,storm,2026,2025-08-26,not recorded,4074460.0,co-financing-now,current,False,False
+ETH,drought,2026,2026-06-09,not recorded,4500000.0,co-financing-now,current,False,False
 FJI,storm,2026,2025-12-17,ADRA,18046.97,co-financing-now,current,False,False
 FJI,storm,2026,2025-12-17,UNFPA,185097.15,co-financing-now,current,False,False
 FJI,storm,2026,2025-12-17,UN Women,46274.29,co-financing-now,current,False,False
@@ -81,7 +82,6 @@ MOZ,storm,2026,2026-01-09,WFP,172410.0,co-financing-now,current,False,
 NER,drought,2026,2026-06-03,WFP,1000000.0,co-financing-now,current,False,True
 NER,drought,2026,2024-10-24,not recorded,1500000.0,co-financing-now,current,False,True
 NER,flood,2026,2025-11-04,FAO,100000.0,co-financing-now,current,False,True
-NER,flood,2026,2025-11-04,not recorded,600000.0,co-financing-now,current,False,True
 NGA,flood,2026,2026-07-27,WFP,2000000.0,co-financing-now,current,False,
 NPL,flood,2026,2026-09-10,DFAT,250000.0,co-financing-now,current,False,False
 NPL,flood,2026,2026-09-10,SDC,1000000.0,co-financing-now,current,False,False
@@ -92,5 +92,3 @@ SOM,flood,2026,2026-10-03,IOM,400000.0,co-financing-now,current,False,
 SOM,flood,2026,2026-10-03,UNICEF,700000.0,co-financing-now,current,False,
 SOM,flood,2026,2026-10-03,WFP,1000000.0,co-financing-now,current,False,
 SOM,flood,2026,2026-10-03,WHO (incl. PAHO),800000.0,co-financing-now,current,False,
-TCD,drought,2026,2025-03-03,not recorded,3550000.0,co-financing-now,current,False,True
-TCD,flood,2026,2025-07-31,not recorded,1300000.0,co-financing-now,current,False,True
