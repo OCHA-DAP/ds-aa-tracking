@@ -71,18 +71,35 @@ def code_words(vocab, code, what="code"):
     return None
 
 
+# a regional fund's acronym in the registry's names -> the region in its label
+_FUND_REGION = {"AP-RHPF": "AP", "RHPF-AP": "AP", "ESAHF": "ESA", "RHPF-LAC": "LAC", "RHPF-WCA": "WCA"}
+
+
 def fund_label(fc):
     """A fund as the pages name it ('CERF', 'CBPF AFG', 'RHPF ESA UGA'; the map's form), never its
-    code; a financier recorded in words (an agency's co-financing) is shown as written."""
+    code; a financier recorded in words (an agency's co-financing) is shown as written. A
+    regional fund's window filed under a cbpf- code is named as the regional fund it is (owner,
+    2026-11-03: "VUT has financing from the regional fund too"; 'cbpf-vut', the AP-RhPF's
+    Vanuatu window, read "CBPF VUT"; D191): 'RHPF AP VUT', the region from the registry's name."""
     if not isinstance(fc, str) or not fc:
         return ""
     if fc == "cerf":
         return "CERF"
     if fc == "cbpf-unspecified":
         return "CBPF"
+    if fc in REGIONAL_FUNDS and fc.startswith("cbpf-"):
+        acr = re.search(r"\(([^)]+)\)\s*$", REGIONAL_FUND_NAMES.get(fc) or "")
+        reg = _FUND_REGION.get(acr.group(1).upper()) if acr else None
+        return " ".join(x for x in ("RHPF", reg, fc[5:].upper()) if x)
     if re.fullmatch(r"(cbpf|rhpf)(-[a-z]+)+", fc):
         return fc.upper().replace("-", " ")
     return fc
+
+
+def regional_fund_labels():
+    """{code: label} of the regional fund windows filed under cbpf- codes, for the pages' scripts
+    (fundName in the map's script names a fund as fund_label does)."""
+    return {fc: fund_label(fc) for fc in sorted(REGIONAL_FUNDS) if fc.startswith("cbpf-")}
 
 
 def hazard_word(h):
@@ -222,6 +239,8 @@ table.hist td.use, table.data tr:hover td.use { background:#fbf6ee; }
 .usetag { display:inline-block; padding:0 6px; border-radius:8px; font-size:10px; font-weight:600;
           background:#f6ead3; color:#7a5a17; margin-left:4px; vertical-align:1px; }
 .sw.use, p.legend .sw.use { display:inline-block; width:14px; height:12px; background:#fbf6ee; border:1px solid #eadcc0;
+          vertical-align:middle; margin:0 2px; }
+.sw.na, p.legend .sw.na { display:inline-block; width:14px; height:12px; background:#eef1f5; border:1px solid #d5dbe3;
           vertical-align:middle; margin:0 2px; }
 p.legend { font-size:12px; color:#555; margin:6px 0 0; }
 table.acts { width:100%; table-layout:fixed; }
@@ -1142,6 +1161,11 @@ def _fetch(e):
         print(f"  sim: unavailable ({exc.__class__.__name__})")
         d["sim"] = pd.DataFrame(columns=["country_iso3", "hazard", "version", "window_name",
                                          "event_year", "event_label", *SIM_DATED])
+    try:   # every event a backtest tested, met or not (D189); empty before the schema pass
+        d["bt_events"] = read_backtest_events(e)
+    except Exception as exc:
+        print(f"  bt_events: unavailable ({exc.__class__.__name__})")
+        d["bt_events"] = pd.DataFrame(columns=BT_EVENT_COLS)
     _opt("wact", """SELECT country_iso3, hazard, event_date::text AS event_date, window_name,
                            full_activation FROM aa.window_activation""",
          ["country_iso3", "hazard", "event_date", "window_name", "full_activation"])
@@ -1161,6 +1185,9 @@ def _fetch(e):
     d["fund_names"] = pd.read_sql("SELECT fund_code, fund_type, name, country_iso3 FROM aa.fund", e)
     REGIONAL_FUNDS.clear()
     REGIONAL_FUNDS.update(d["fund_names"].loc[d["fund_names"]["fund_type"] == "regional_fund", "fund_code"])
+    REGIONAL_FUND_NAMES.clear()
+    REGIONAL_FUND_NAMES.update({r.fund_code: (r.name if isinstance(r.name, str) else "") for r in d["fund_names"].itertuples()
+                                if r.fund_type == "regional_fund"})
     # Financing money flows: CBPF AA project budgets by grantee organisation (named grantees;
     # cbpf_org above keeps the type-only split for an older snapshot)
     _opt("cbpf_org_name", """SELECT p.allocation_year AS year, fu.fund_code,
@@ -1544,6 +1571,7 @@ def _layer_of(d):
 # fund windows carry cbpf-* codes (Vanuatu, Fiji, Bangladesh under the AP-RhPF; Kenya, Uganda
 # under the ESAHF), so the type comes from the registry, the rhpf- prefix only as a fallback
 REGIONAL_FUNDS = set()
+REGIONAL_FUND_NAMES = {}   # their registry names ('Vanuatu (AP-Rhpf)'), for fund_label
 
 
 def _ft(fc):
@@ -3396,7 +3424,7 @@ def backtest_span(ss, wv, vf_y):
     return y0, y1, (y1 - y0 + 1) if recorded else None
 
 
-def untested_windows(ss, wv):
+def untested_windows(ss, wv, ev=None):
     """The windows of a version that were never backtested — no simulated year and no analysed
     period recorded — while another of its windows was: Vanuatu storm's readiness trigger ("not
     assessed", its document says), Nigeria flood's monitoring-only flash-flood trigger, Burkina
@@ -3404,14 +3432,67 @@ def untested_windows(ss, wv):
     backtest grid and the History page's timeline leave them out and the grid's note names them
     (owner, 2026-11-03: show when each specific trigger went off; leave out readiness, for which
     there is no information). Empty when no window of the version was backtested: the views say
-    so already. `ss` is sim_before_start's output; `wv` the version's d["windows"] rows."""
+    so already. `ss` is sim_before_start's output; `wv` the version's d["windows"] rows; `ev`
+    its tested events (aa.backtest_event), when any."""
     if not len(wv):
         return set()
     names = {str(x) for x in wv["window_name"].dropna()}
     spanned = {str(r.window_name) for r in wv.itertuples()
                if pd.notna(getattr(r, "analysis_start", None)) or pd.notna(getattr(r, "analysis_end", None))}
-    tested = spanned | ({str(x) for x in ss["window_name"].dropna()} if len(ss) else set())
+    tested = (spanned | ({str(x) for x in ss["window_name"].dropna()} if len(ss) else set())
+              | ({str(x) for x in ev["window_name"].dropna()} if ev is not None and len(ev) else set()))
     return (names - tested) if tested else set()
+
+
+BT_EVENT_COLS = ["country_iso3", "hazard", "version", "window_name", "event_year", "event_label",
+                 "met", "value", "unit", "source_note"]
+
+
+def read_backtest_events(e):
+    """aa.backtest_event: every event a version's backtest tested, met or not (D189). Empty on a
+    DB the schema pass has not reached yet, so a build never depends on the table existing."""
+    if pd.read_sql("SELECT to_regclass('aa.backtest_event') AS r", e)["r"].iloc[0] is None:
+        return pd.DataFrame(columns=BT_EVENT_COLS)
+    return pd.read_sql(
+        """SELECT country_iso3, hazard, version::text AS version, window_name, event_year,
+                  event_label, met, value::float AS value, unit, source_note
+           FROM aa.backtest_event""", e)
+
+
+def tested_rows(ev, ss, vf_y=None, where=""):
+    """The backtest grid's rows for the events a version's backtest tested (owner, 2026-11-03:
+    "include the full record we tested (i.e. including the storms we would NOT have activated
+    for)"). `ev` is the version's aa.backtest_event rows, `ss` its simulated rows
+    (sim_before_start's output). -> (rows, covered, units):
+    rows {(year, label): {"fired": set, "na": set, "vals": {window: value}}} — "na" holds the
+    windows the event could not be tested on (met NULL: no forecast record); covered, the
+    (window, year) pairs whose simulated activation those rows already draw; units {window: unit}.
+    Warns when a window's met years and its simulated years differ: the return periods count
+    the simulated ones."""
+    rows, units = {}, {}
+    if not len(ev):
+        return rows, set(), units
+    for r in ev.itertuples():
+        y = int(r.event_year)
+        if vf_y and y >= vf_y:          # a backtest is fixed before the version takes effect
+            continue
+        w = str(r.window_name)
+        x = rows.setdefault((y, str(r.event_label)), {"fired": set(), "na": set(), "vals": {}})
+        if r.met is None or pd.isna(r.met):
+            x["na"].add(w)
+        elif bool(r.met):
+            x["fired"].add(w)
+        if r.value is not None and pd.notna(r.value):
+            x["vals"][w] = float(r.value)
+        if isinstance(r.unit, str) and r.unit.strip():
+            units.setdefault(w, r.unit.strip())
+    met = {(w, y) for (y, _), x in rows.items() for w in x["fired"]}
+    sims = ({(str(r.window_name), int(r.sim_year)) for r in ss.itertuples()} if len(ss) else set())
+    tested_w = {str(w) for w in ev["window_name"]}
+    off = sorted(p for p in met ^ {s for s in sims if s[0] in tested_w})
+    if off:
+        print(f"  ? {where}: tested events and simulated activations disagree on {off}")
+    return rows, met & sims, units
 
 
 def sim_after_note(n, vf_y):
@@ -3457,23 +3538,49 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
     vf_txt = str(vf.dropna().astype(str).max())[:10] if len(vf.dropna()) else str(vf_y)
     win = d["windows"]
     wv = win[(win["country_iso3"] == c) & (win["hazard"] == h) & (win["version"].astype(str) == str(shown))]
-    wins = sorted(set(ss["window_name"].dropna()) | set(wv["window_name"].dropna()))
+    # every event the backtest tested, met or not (D189): one row each
+    bte = d.get("bt_events")
+    ev = (bte[(bte["country_iso3"] == c) & (bte["hazard"] == h) & (bte["version"].astype(str) == str(shown))]
+          if bte is not None and len(bte) and shown else pd.DataFrame(columns=BT_EVENT_COLS))
+    t_rows, covered, units = tested_rows(ev, ss, vf_y, f"{c} {h} {shown}")
+    wins = sorted(set(ss["window_name"].dropna()) | set(wv["window_name"].dropna())
+                  | set(ev["window_name"].dropna()))
     # backtest range: N analysed years ending at the later of the last simulated year and
     # the year before the version took effect
     n_years = None
     rows = {}   # (year, label) -> {'cell': [...], window: [...]}
     sim_years = set()   # years the historical simulation covers; others are greyed out
     use_years = set()   # from the version's start year: real activations only
-    if len(ss) or n_after:
+    if len(ss) or n_after or t_rows:
         y0, y1, n_years = backtest_span(ss, wv, vf_y)
         labelled = ss[ss["event_label"].fillna("").astype(str) != ""]
         sim_years = set(range(y0, y1 + 1))
         if vf_y:
             use_years = set(range(vf_y, max(vf_y, pd.Timestamp.now().year) + 1))
         for y in sorted(sim_years | use_years):
-            if not (labelled["sim_year"] == y).any():
+            if not (labelled["sim_year"] == y).any() and not any(k[0] == y for k in t_rows):
                 rows[(y, "")] = {}
+        num = lambda v: f"{v:,.0f}" if float(v).is_integer() else f"{v:,.2f}"   # noqa: E731
+        for (y, lab), x in t_rows.items():
+            cells = rows.setdefault((y, lab), {})
+            for w in sorted(set(x["vals"]) | x["fired"] | x["na"]):
+                val = (f" · {num(x['vals'][w])}" + (f" {units[w]}" if units.get(w) else "")
+                       if w in x["vals"] else "")
+                if w in x["na"]:
+                    cells.setdefault("__na", {})[w] = ATTRC("title", lambda t, w=w, lab=lab: f"{w}, {lab}: "
+                                                         + t("no record to test this trigger against"))
+                elif w in x["fired"]:
+                    cells.setdefault(w, []).append(
+                        f"<span class='dot sim' style='background:{col}' "
+                        + ATTRC("title", lambda t, w=w, y=y, val=val: f"{w}: " + t(
+                            "would have activated in {0} (simulation)").replace("{0}", str(y)) + val)
+                        + "></span>")
+                else:
+                    cells.setdefault("__tip", {})[w] = ATTRC("title", lambda t, w=w, val=val: f"{w}: "
+                                                          + t("would not have activated") + val)
         for r in ss.itertuples():
+            if (str(r.window_name), int(r.sim_year)) in covered:   # drawn on the tested event's row
+                continue
             key = (int(r.sim_year), str(r.event_label) if isinstance(r.event_label, str) else "")
             rows.setdefault(key, {}).setdefault(r.window_name, []).append(
                 f"<span class='dot sim' style='background:{col}' {_sim_tip(r.window_name, r)}></span>")
@@ -3492,7 +3599,7 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
                            ann=lk["ann"], other=lk["other"], cerf=lk["cerf"],
                            partial=full.get((ed, wn)) is False))
     # a window never backtested gets no column, unless a real activation sits on it
-    untested = [w for w in wins if w in untested_windows(ss, wv)
+    untested = [w for w in wins if w in untested_windows(ss, wv, ev)
                 and not any(_loose(w, ev["win"]) for ev in events)]
     wins = [w for w in wins if w not in untested]
     for ev in events:
@@ -3540,7 +3647,10 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
             if y in use_years:
                 tds = "".join(f"<td class='use' {_use(y)}>{inner(w)}</td>" for w in wins)
             elif y in sim_years or not sim_years:
-                tds = "".join(f"<td>{inner(w)}</td>" for w in wins)
+                na, tip = cells.get("__na", {}), cells.get("__tip", {})
+                tds = "".join(f"<td class='na' {na[w]}>{inner(w)}</td>" if w in na
+                              else f"<td {tip[w]}>{inner(w)}</td>" if w in tip
+                              else f"<td>{inner(w)}</td>" for w in wins)
             else:
                 tds = "".join(f"<td class='na' {ATTR('title', '{y} is not covered by the historical simulation', y=y)}>{inner(w)}</td>"
                               for w in wins)
@@ -3560,7 +3670,10 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
                        .format(d=esc(vf_txt), y=vf_y) if use_years else "") + ". "
                     + (esc(w(sim_after_note(n_after, vf_y))) + " " if n_after else "")
                     + (w("Not backtested, so no column: {w}.").format(w=esc(", ".join(untested))) + " "
-                       if untested else ""))
+                       if untested else "")
+                    + (w("All {n} events tested are listed, including those that would not have activated "
+                         "(hover a cell for the trigger's value).").format(n=len(t_rows)) + " "
+                       if t_rows else ""))
         if n_after:   # the note, registered in every language (it is looked up above)
             _register_after_note(n_after, vf_y)
         hist = (f"<p class='meta'>{TBC(vnote)}"
@@ -3572,6 +3685,8 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
                 f"<span class='dot old'></span> "
                 + T("activated under an earlier version" if str(shown) == str(version) else "activated under a different version (hover for which)")
                 + (f" · <span class='sw use'></span> {T('version in use: real activations only')}" if use_years else "")
+                + (f" · <span class='sw na'></span> {T('no record to test this trigger against')}"
+                   if any(x["na"] for x in t_rows.values()) else "")
                 + "</p>")
     # ---- actual activations table
     if not events:

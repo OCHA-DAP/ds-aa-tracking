@@ -49,7 +49,7 @@ GROUPS = [
     ("Data entry (entered values win)", "ds-aa-tracking", [
         "entered_version", "entered_window", "entered_window_funding", "entry_audit"]),
     ("Backtests (owned here since 2026-10-05; edited as errors are found — see v_trk_backtest_check)",
-     "ds-aa-tracking", ["window", "simulated_activation", "version_performance_reported"]),
+     "ds-aa-tracking", ["window", "simulated_activation", "backtest_event", "version_performance_reported"]),
     ("KB-era record (read-only, frozen 2026-10-05)", "ds-aa-tracking", [
         "funding_breakdown", "actual_activation", "activation_allocation"]),
     ("Mirrors — copied in every day, read-only", MIRRORS["repo"],

@@ -134,7 +134,10 @@ MAP_FIELDS = {
         "backtest": "the historical simulation of the trigger: {start, end (years analysed), in_use_from, "
                     "in_use_to (the years the version was in use: from then on only real activations "
                     "count), windows, rows [{year, label, fired (the windows that would have activated), "
-                    "when}], per_event, n_after, after_note}",
+                    "when, and for an event the backtest tested (aa.backtest_event): tested, na (the windows "
+                    "it could not be tested on: no record), vals {window: the trigger's value for it}}], "
+                    "per_event, n_after, after_note, and when events were tested: n_tested (how many, met or "
+                    "not), units {window: what `vals` measures}}",
         "rp": "the overall return period the map's table shows, in years (any window activating in a year)",
         "rp_st": "the return period the document states",
         "rp_bt": "the one from the backtest",
@@ -150,7 +153,8 @@ MAP_FIELDS = {
         "learning": "lessons the version's record lists",
         "admin_level": "the administrative level of the geographic scope",
         "scope": "the areas drawn: {pcodes, unmatched (scope entries not matched to a map area), national, "
-                 "tiers}",
+                 "tiers [{label, pcodes, rest (a tier covering the rest of the country), whole (rest that "
+                 "covers the whole country, the named areas included)}]}",
         "scope_raw": "the geographic scope as the document words it",
         "scope_tiers_raw": "the document's tiers of areas, as worded",
         "analysis_ref": "where the trigger analysis lives: repository@branch:path in the OCHA-DAP GitHub "
