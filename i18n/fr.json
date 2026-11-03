@@ -1804,7 +1804,9 @@
  "Not backtested, so no column: {w}.": "Sans backtest, donc sans colonne : {w}.",
  "no record to test this trigger against": "aucune donnée pour tester ce déclencheur",
  "would not have activated": "ne se serait pas activé",
- "All {n} events tested are listed, including those that would not have activated (hover a cell for the trigger's value).": "Les {n} événements testés figurent tous, y compris ceux qui n’auraient pas déclenché (survoler une case pour la valeur du déclencheur).",
- "All {0} storms tested are listed, including those that would not have activated (hover a cell for the trigger's value).": "Les {0} tempêtes testées figurent toutes, y compris celles qui n’auraient pas déclenché (survoler une case pour la valeur du déclencheur).",
- "the whole country, the areas above included": "tout le pays, zones ci-dessus comprises"
+ "the whole country, the areas above included": "tout le pays, zones ci-dessus comprises",
+ "Co-financing, not in the split:": "Cofinancement, hors répartition :",
+ "The {0} storms the framework document lists from its backtest are shown, including those that would not have activated.": "Les {0} tempêtes que le document du cadre liste dans son backtest figurent toutes, y compris celles qui n’auraient pas déclenché.",
+ "The {n} events the framework document lists from its backtest are shown, including those that would not have activated.": "Les {n} événements que le document du cadre liste dans son backtest figurent tous, y compris ceux qui n’auraient pas déclenché.",
+ "Hover a cell for the trigger's value.": "Survoler une case pour la valeur du déclencheur."
 }

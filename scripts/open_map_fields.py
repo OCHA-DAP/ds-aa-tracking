@@ -108,6 +108,8 @@ MAP_FIELDS = {
         "prearranged_doc": "the pre-arranged envelope the document states",
         "envelope": "the version's pre-arranged envelope as recorded, all funds",
         "env_cerf": "its CERF part",
+        "env_funds": "the envelope by fund: [{fund (a fund code: cerf, a country or regional pooled fund, or "
+                     "all = a total not split by fund), usd}]",
         "pool_spent": "its Country or Regional Fund envelope was released by an activation",
         "cofin": "co-financing the document states",
         "cofin_sources": "who provides it, as the document says",
@@ -145,7 +147,8 @@ MAP_FIELDS = {
         "apy": "activations a year the document allows",
         "funding": "the version's pre-arranged budget split: {src (kb: the document; sheet: the team's "
                    "sheet), agency [{agency, fund, usd}], sector [{sector, fund, usd}], fund [{fund, usd}], "
-                   "pair [{agency, sector, usd}]}",
+                   "pair [{agency, sector, usd}], cofin [{from (the financier), usd}]: the document's "
+                   "co-financing lines, kept out of the split}",
         "partners": "organisations the document names: [{name, acronym, group, roles (tags), parent (the UN "
                     "agency a sub-grantee works under), usd (the budget the document attaches, which can "
                     "include its own co-financing)}]",

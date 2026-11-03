@@ -3671,8 +3671,9 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
                     + (esc(w(sim_after_note(n_after, vf_y))) + " " if n_after else "")
                     + (w("Not backtested, so no column: {w}.").format(w=esc(", ".join(untested))) + " "
                        if untested else "")
-                    + (w("All {n} events tested are listed, including those that would not have activated "
-                         "(hover a cell for the trigger's value).").format(n=len(t_rows)) + " "
+                    + (w("The {n} events the framework document lists from its backtest are shown, including "
+                         "those that would not have activated.").format(n=len(t_rows)) + " "
+                       + (w("Hover a cell for the trigger's value.") + " " if any(x["vals"] for x in t_rows.values()) else "")
                        if t_rows else ""))
         if n_after:   # the note, registered in every language (it is looked up above)
             _register_after_note(n_after, vf_y)

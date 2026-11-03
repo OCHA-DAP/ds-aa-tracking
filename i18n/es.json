@@ -1694,7 +1694,9 @@
  "Not backtested, so no column: {w}.": "Sin backtest, por eso sin columna: {w}.",
  "no record to test this trigger against": "sin datos para probar este disparador",
  "would not have activated": "no se habría activado",
- "All {n} events tested are listed, including those that would not have activated (hover a cell for the trigger's value).": "Se listan los {n} eventos probados, incluidos los que no habrían activado (pase el cursor sobre una celda para ver el valor del disparador).",
- "All {0} storms tested are listed, including those that would not have activated (hover a cell for the trigger's value).": "Se listan las {0} tormentas probadas, incluidas las que no habrían activado (pase el cursor sobre una celda para ver el valor del disparador).",
- "the whole country, the areas above included": "todo el país, incluidas las zonas de arriba"
+ "the whole country, the areas above included": "todo el país, incluidas las zonas de arriba",
+ "Co-financing, not in the split:": "Cofinanciación, fuera del desglose:",
+ "The {0} storms the framework document lists from its backtest are shown, including those that would not have activated.": "Se muestran las {0} tormentas que el documento del marco lista en su backtest, incluidas las que no habrían activado.",
+ "The {n} events the framework document lists from its backtest are shown, including those that would not have activated.": "Se muestran los {n} eventos que el documento del marco lista en su backtest, incluidos los que no habrían activado.",
+ "Hover a cell for the trigger's value.": "Pase el cursor sobre una celda para ver el valor del disparador."
 }
