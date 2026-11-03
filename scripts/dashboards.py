@@ -1192,6 +1192,14 @@ def _fetch(e):
                               WHERE p.budget IS NOT NULL""" + (listed if has_afp else "") + """
                               GROUP BY 1, 2, 3""",
          ["allocation_code", "org_name", "org_type", "usd"])
+    if has_afp:   # a listed project that is not one of its allocation's would drop out unseen
+        for r in pd.read_sql("""SELECT x.allocation_code, x.project_code FROM aa.activation_funding_project x
+                                WHERE NOT EXISTS (SELECT 1 FROM aa.cbpf_project p
+                                                  WHERE p.chf_project_code = x.project_code
+                                                    AND 'cbpf-' || p.pooled_fund_id || '-' || p.allocation_type_id
+                                                        = x.allocation_code)""", e).itertuples():
+            print(f"::warning::money flows: listed project {r.project_code} is not a project of "
+                  f"allocation {r.allocation_code} in the mirror")
     _resolve_pooled_fund(d)
     _canonical_org_names(d)
     _merge_labels(d)
@@ -1477,7 +1485,7 @@ def _agency_node(name):
 # agency is one box in the money-flow chart (D192). Read on the name folded to lower case.
 UN_SHORT = [
     (r"\bworld food programme\b|\bprogramme alimentaire mondial\b|^wfp$", "WFP"),
-    (r"\bchildren'?s fund\b|^unicef$", "UNICEF"),
+    (r"\bunited nations children'?s fund\b|^unicef$", "UNICEF"),
     (r"\borgani[sz]ation (?:internationale )?(?:for|pour les) migrations?\b|^iom$", "IOM"),
     (r"\bworld health organi[sz]ation\b|\bpan american health organi[sz]ation\b|^who$|^paho$", "WHO"),
     (r"\bhigh commissionn?er for refugees\b|\bun ref[a-z]{3,4} agency\b|^unhcr$", "UNHCR"),
@@ -1775,6 +1783,14 @@ def _money_flows(d, pre, act):
                  # split is by country and year, never by allocation)
                  ac=[a if isinstance(a, str) and f != "cerf" else ""
                      for a, f in zip(R.get("allocation_code", pd.Series(None, index=R.index)), R["fund_code"])])
+    # an allocation that paid for more than the release (its projects well over the amount) is a
+    # mixed one: list the release's own projects (aa.activation_funding_project), or its
+    # grantees take a share of every project's money
+    for ac_, rel in R[R["ac"] != ""].groupby("ac")["amount_usd"].sum().items():
+        got = float(ca_by[ac_].sum()) if ac_ in ca_by else 0.0
+        if got > 1.1 * float(rel):
+            print(f"::warning::money flows: allocation {ac_} has ${got:,.0f} of projects for "
+                  f"${float(rel):,.0f} released: list the release's projects if it paid for other things too")
     for (fc, y, g, rg), amount in R.groupby(["fund_code", "year", "g", "rg"])["amount_usd"].sum().items():
         donors("r", int(y), fc, amount, g, rg)
     # CERF -> agency -> partner, per country (the countries column shows the country's own
@@ -1874,8 +1890,8 @@ FLOW_NOTE = " ".join(TB(x) for x in (
     "CERF AA sub-grants in that country, and the rest goes to a final node with the agency's own "
     "name — what it implements itself. Country and Regional Funds go to the grantee organisations "
     "of the allocation the activation drew on (only its anticipatory action projects, where the "
-    "allocation also paid for other things), or, where no allocation is recorded, of the fund's "
-    "projects marked AA that year; a grantee implements directly, so its band runs on, same "
+    "allocation also paid for other things), or, where no allocation is recorded, to the grantees "
+    "of the fund's projects marked AA that year; a grantee implements directly, so its band runs on, same "
     "amount, to the same organisation in the final column.",
     f"<b>Countries</b> (tick <i>countries</i>): a column between the funds and the agencies — the "
     f"country of the framework (pre-arranged) or of the activation (released). The {FLOW_TOP_COUNTRIES} "
