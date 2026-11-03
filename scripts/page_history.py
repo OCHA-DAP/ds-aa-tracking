@@ -43,7 +43,8 @@ from datetime import date
 import pandas as pd
 import site_i18n as i18n
 from dashboards import (HAZARDS, backtest_span, LIFE_LABEL, PAL, _dash_page, _event_href,
-                        _event_links, _fmt_usd, _loose, fund_label, haz, hazard_word, sim_before_start, sim_when, version_start)
+                        _event_links, _fmt_usd, _loose, fund_label, haz, hazard_word, sim_before_start, sim_when,
+                        untested_windows, version_start)
 from site_i18n import ATTR, ATTRC, OPT, TB, TBC, TBF, TC, TF, T
 
 LIVE = ["active", "updating", "development"]
@@ -323,7 +324,9 @@ def _tl_detail(d, f):
             y0, y1, n = backtest_span(ss, wv, vf_y)
             g["cover"] = [y0, y1] if n is not None else None
         g.update(bt=True, n_after=g["n_after"] + n_after, vf_y=vf_y, sv=sv)
-        for w in sorted({_str(x) for x in wv["window_name"]} - {""}):
+        # a window never backtested gets no lane of its own (dashboards.untested_windows); a
+        # real activation on it still opens one below
+        for w in sorted({_str(x) for x in wv["window_name"]} - {""} - untested_windows(ss, wv)):
             lane(g, _nofire(w))
         for r in ss.sort_values("sim_year").itertuples():
             lane(g, _nofire(_str(r.window_name)) or "window not recorded")["sims"].append(
