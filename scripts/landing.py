@@ -1206,7 +1206,8 @@ def assemble(d, e):
                   agency, sector, amount_usd, provenance
            FROM aa.v_window_funding_split
            WHERE amount_usd IS NOT NULL AND (agency IS NOT NULL OR sector IS NOT NULL)""", e)
-    from dashboards import EXCLUDED_EVENT_TYPES, funding_sql, read_simulated, sim_before_start, sim_when
+    from dashboards import (EXCLUDED_EVENT_TYPES, _loose, funding_sql, read_simulated, sim_before_start,
+                            sim_when, untested_windows)
     sim = read_simulated(e)   # with event_date / event_time when the DB has them
     psb = fb.iloc[0:0]                                    # folded into window_funding
     excl = ", ".join(f"'{t}'" for t in EXCLUDED_EVENT_TYPES)
@@ -1375,6 +1376,12 @@ def assemble(d, e):
             backtest = None
             if len(s_v) or n_after:
                 wins_bt = list(dict.fromkeys(w.window_name for w in w_v.itertuples())) or sorted(s_v["window_name"].unique())
+                # a window never backtested gets no column (dashboards.untested_windows, D184), unless
+                # a real framework activation sits on it
+                fired = [_s(a.window_name) for a in a_f.itertuples()
+                         if a.event_type == "framework_aa" and _s(a.window_name)]
+                gone = untested_windows(s_v, w_v)
+                wins_bt = [w for w in wins_bt if w not in gone or any(_loose(w, x) for x in fired)]
                 per_event = bool(s_v["event_label"].notna().any())   # numpy bool -> str under default=str
                 rows, when = {}, {}
                 for sr in s_v.itertuples():
