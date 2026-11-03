@@ -1,0 +1,52 @@
+country_iso3,country_name,region,hazard,lifecycle,status,retired,technical_support,latest_version,latest_version_status,current_version,valid_until,n_windows,n_windows_triggered,fully_triggered,return_period_years,return_period_basis,return_period_stated_years,return_period_backtest_years,prearranged_usd,prearranged_cerf_usd,prearranged_year,prearranged_version,activations_per_year,cofinancing_usd,people_covered,monitoring_months,map_layers
+AFG,Afghanistan,Asia,drought,active,active,False,False,2026-04-04,endorsed,2026-04-04,2027-12-31,2,0,False,3.91,stated in the framework,3.91,3.58,22000000,12000000,2026,2026-04-04,1,,392816,3; 4,framework
+BGD,Bangladesh,Asia,flood,active,active,False,False,2025-04-25,endorsed,2025-04-25,2027-04-25,4,0,False,4.18,historical simulation,,4.18,6002640,6002640,2026,2025-04-25,1,4000000,433962,6; 7; 8; 9,framework
+BGD,Bangladesh,Asia,storm,active,active,False,False,2025-04-25,endorsed,2025-04-25,2027-04-25,2,0,False,6.71,historical simulation,,6.71,4720000,4000000,2026,2025-04-25,1,5949999.999999999,179948,4; 5; 6; 10; 11,framework
+BFA,Burkina Faso,West & Central Africa,drought,active,active,False,False,2026-04-17,endorsed,2026-04-17,2027-12-31,2,0,False,3.2,stated in the framework,3.2,3.25,8000000,8000000,2026,2026-04-17,1,2000000,400000,4; 8; 9,framework
+BFA,Burkina Faso,West & Central Africa,flood,updating,active,False,False,2025-08,endorsed,2025-08,2027-12-31,4,4,True,1.24,historical simulation,,1.24,,,,,1,1000000,35000,7; 8; 9,framework
+TCD,Chad,West & Central Africa,drought,updating,activated_implementing,False,False,2025-03-03,endorsed,2025-03-03,2027-03-31,3,3,True,4.5,stated in the framework,4.5,4.5,8000000,8000000,2026,2025-03-03,1,3550000,400000,3; 4; 5; 6; 9,framework
+TCD,Chad,West & Central Africa,flood,active,active,False,False,2025-07-31,endorsed,2025-07-31,2026-12-31,2,0,False,3.0,stated in the framework,3.0,3.14,4000000,4000000,2026,2025-07-31,1,1300000,152000,7; 8; 9; 10,framework
+COL,Colombia,Latin America & Caribbean,drought,pipeline,,False,True,,,,,0,0,False,,,,,,,,,1,,,,tech
+COD,Congo DR,West & Central Africa,cholera,active,active,False,False,2026-06-24,endorsed,2026-06-24,2028-06-30,2,0,False,,,,,4000000,4000000,2026,2026-06-24,1,480000,500000,1; 2; 3; 4; 5; 6; 7; 8; 9; 10; 11; 12,framework
+CUB,Cuba,Latin America & Caribbean,storm,active,active,False,False,2026-08-24,endorsed,2026-08-24,2027-12-31,0,0,False,3.4,stated in the framework,3.4,,9000000,9000000,2026,2026-08-24,2,4500000,260705,6; 7; 8; 9; 10; 11; 12,framework
+SLV,El Salvador,Latin America & Caribbean,drought,updating,activated_implementing,False,False,2026-03-13,endorsed,2026-03-13,2027-12-31,1,1,True,2.9,stated in the framework,2.9,3.89,2500000,2500000,2026,2026-03-13,1,,20000,3; 4; 5; 7; 8; 9,framework
+ERI,Eritrea,Eastern & Southern Africa,drought,pipeline,,False,True,,,,,0,0,False,,,,,,,,,1,,,,tech
+ERI,Eritrea,Eastern & Southern Africa,locusts,,,,,,,,,,,,,,,,,,,,,,,,adhoc
+ETH,Ethiopia,Eastern & Southern Africa,drought,updating,activated_implementing,False,False,2026-06-09,development,2020-12-07,2022-12-07,2,2,True,2.0,historical simulation,,2.0,10000000,10000000,2026,2026-06-09,1,,400000,2; 4; 5; 8; 9,framework; adhoc
+ETH,Ethiopia,Eastern & Southern Africa,flood,retired,retired,True,False,2026,development,,,0,0,False,,,,,,,,,1,,,1; 2; 3; 4; 11; 12,retired
+FJI,Fiji,Pacific,storm,active,active,False,False,2025-12-17,endorsed,2025-12-17,2027-12-31,3,0,False,3.1,stated in the framework,3.1,3.13,2750000,2400000,2026,2025-12-17,1,1500000,47500,10; 11; 12; 1; 2; 3; 4; 5,framework
+GMB,Gambia,West & Central Africa,flood,pipeline,,False,True,,,,,0,0,False,,,,,,,,,1,,,,tech
+GTM,Guatemala,Latin America & Caribbean,drought,updating,activated_implementing,False,False,2026-03-13,endorsed,2026-03-13,2027-12-31,1,1,True,2.9,stated in the framework,2.9,3.5,4000000,4000000,2026,2026-03-13,1,372463.9,60000,3; 4; 5; 7; 8; 9,framework
+HTI,Haiti,Latin America & Caribbean,storm,active,active,False,False,2026-10-16,endorsed,2026-10-16,,0,0,False,2.4,stated in the framework,2.4,,9000000,8000000,2026,2026-10-16,2,2500000,82000,6; 7; 8; 9; 10; 11,framework
+HND,Honduras,Latin America & Caribbean,drought,updating,activated_implementing,False,False,2026-03-13,endorsed,2026-03-13,2027-12-31,1,1,True,2.92,stated in the framework,2.92,3.5,4000000,4000000,2026,2026-03-13,1,147000,65000,3; 4; 5; 7; 8; 9,framework
+KEN,Kenya,Eastern & Southern Africa,drought,active,active,False,False,2026-07-30,endorsed,2026-07-30,2027-12-31,2,0,False,4.3,stated in the framework,4.3,4.33,5000000,5000000,2026,2026-07-30,1,3700000,123750,7; 8; 9,framework
+MDG,Madagascar,Eastern & Southern Africa,drought,pipeline,early_conversations,False,False,,,,,0,0,False,,,,,,,,,1,,,,adhoc
+MDG,Madagascar,Eastern & Southern Africa,locusts,,,,,,,,,,,,,,,,,,,,,,,,adhoc
+MDG,Madagascar,Eastern & Southern Africa,plague,retired,retired,True,False,,,,,0,0,False,,,,,,,,,1,,,,retired
+MDG,Madagascar,Eastern & Southern Africa,storm,updating,active,False,False,2024-12-13,endorsed,2024-12-13,2026-12-31,1,1,True,3.67,historical simulation,,3.67,3000000,3000000,2026,2024-12-13,1,,67773,11; 12; 1; 2; 3; 4,framework
+MWI,Malawi,Eastern & Southern Africa,drought,retired,retired,True,True,2021-10-19,endorsed,2021-10-19,2022-12-31,2,0,False,,,,,,,,,1,,,11; 12; 1; 2; 3,retired; tech
+MRT,Mauritania,West & Central Africa,drought,updating,activated_implementing,False,False,2026-04-17,endorsed,2026-04-17,2027-12-31,2,2,True,3.7,stated in the framework,3.7,3.71,2500000,2500000,2026,2026-04-17,1,,120621,2; 3; 4; 5; 7; 8,framework
+MOZ,Mozambique,Eastern & Southern Africa,cholera,active,active,False,False,2026-05-22,endorsed,2026-05-22,2028-05-31,1,0,False,2.8,stated in the framework,2.8,2.0,1500000,1500000,2026,2026-05-22,1,493000,50000,1; 2; 3; 4; 5; 6; 7; 8; 9; 10; 11; 12,framework
+MOZ,Mozambique,Eastern & Southern Africa,storm,updating,active,False,False,2026-01-09,endorsed,2026-01-09,2027-12-31,2,2,True,4.2,stated in the framework,4.2,6.71,4500000,4500000,2026,2026-01-09,1,1172074,314910,11; 12; 1; 2; 3; 4,framework
+MMR,Myanmar,Asia,storm,active,active,False,False,2026,endorsed,2026,,2,0,False,4.5,historical simulation,,4.5,7000000,5000000,2026,2026,1,1200000,230980,4; 10; 11,framework
+NPL,Nepal,Asia,flood,active,active,False,False,2026-09-10,endorsed,2026-09-10,,4,0,False,,,,,2800000,2800000,2026,2026-09-10,1,1250000,236067,6; 7; 8; 9; 10,framework
+NIC,Nicaragua,Latin America & Caribbean,drought,retired,retired,True,True,2024-03-22,endorsed,2024-03-22,2026-03-31,2,0,False,,,,,,,,,1,,,3; 4; 5; 6; 7; 8,retired; tech
+NER,Niger,West & Central Africa,drought,active,active,False,False,2026-06-03,endorsed,2026-06-03,,0,0,False,3.3,stated in the framework,3.3,,8000000,8000000,2026,2026-06-03,1,2500000,100000,2; 3; 4; 5; 6; 8,framework
+NER,Niger,West & Central Africa,flood,updating,activated_implementing,False,False,2025-11-04,endorsed,2025-11-04,2027-12-31,2,2,True,3.0,stated in the framework,3.0,3.13,5000000,5000000,2026,2025-11-04,1,700000,93289,7; 8; 9; 11; 12; 1; 2,framework
+NGA,Nigeria,West & Central Africa,flood,active,active,False,False,2026-07-27,endorsed,2026-07-27,2028-06-30,3,0,False,3.0,stated in the framework,3.0,3.0,6000000,5000000,2026,2026-07-27,1,2000000,764864,6; 7; 8; 9; 10; 11; 12,framework
+PLW,Palau,Pacific,storm,pipeline,advanced_conversations,False,True,,,,,0,0,False,,,,,,,,,1,,,,tech
+PHL,Philippines,Asia,storm,active,active,False,False,2026-10-22,endorsed,2026-10-22,,3,0,False,3.2,stated in the framework,3.2,,12000000,12000000,2026,2026-10-22,2,4000000,332957,10; 11; 12,framework
+SOM,Somalia,Eastern & Southern Africa,drought,development,under_development,False,False,2026,development,,,0,0,False,,,,,10000000,10000000,2026,2026,1,,,,framework; retired; adhoc
+SOM,Somalia,Eastern & Southern Africa,flood,updating,active,False,False,2026-10-03,endorsed,2026-10-03,2028-09-30,8,1,True,3.2,stated in the framework,3.2,,7000000,7000000,2026,2026-10-03,1,4800000,617290,10; 11; 12,framework; adhoc
+SSD,South Sudan,Eastern & Southern Africa,flood,retired,retired,True,True,2022-05,endorsed,2022-05,2022-12-31,0,0,True,,,,,,,,,1,,5097767,1; 2; 3; 4; 10; 11; 12,retired; adhoc; tech
+SSD,South Sudan,Eastern & Southern Africa,food_insecurity,,,,,,,,,,,,,,,,,,,,,,,,adhoc
+SDN,Sudan,Eastern & Southern Africa,cholera,pipeline,,False,False,,,,,0,0,False,,,,,,,,,1,,,,adhoc
+SDN,Sudan,Eastern & Southern Africa,drought,pipeline,,False,False,,,,,0,0,False,,,,,,,,,1,,,,adhoc
+TLS,Timor-Leste,,drought,,,,,,,,,,,,,,,,,,,,,,,,adhoc
+TON,Tonga,Pacific,storm,pipeline,advanced_conversations,False,True,,,,,0,0,False,,,,,,,,,1,,,,tech
+TUV,Tuvalu,Pacific,storm,pipeline,,False,True,,,,,0,0,False,,,,,,,,,1,,,,tech
+UGA,Uganda,Eastern & Southern Africa,flood,pipeline,,False,False,,,,,0,0,False,,,,,,,,,1,,,,adhoc
+VUT,Vanuatu,Pacific,storm,active,active,False,False,2026-10-15,endorsed,2026-10-15,,1,0,False,4.4,historical simulation,,4.4,2700334,1500000,2026,2026-10-15,1,,,10; 11; 12,framework
+VEN,Venezuela,Latin America & Caribbean,drought,pipeline,,False,True,,,,,0,0,False,,,,,,,,,1,,,,tech
+YEM,Yemen,MENA,flood,retired,retired,True,False,2023,endorsed,2023,2023-11-30,2,0,False,,,,,,,,,1,,,4; 5; 6; 7; 8,retired; adhoc
+ZWE,Zimbabwe,Eastern & Southern Africa,drought,pipeline,advanced_conversations,False,True,,,,,0,0,False,,,,,,,,,1,,,,adhoc; tech

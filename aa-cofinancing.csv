@@ -1,0 +1,96 @@
+country_iso3,hazard,year,version,financier,amount_usd,source,layer,replaced_framework,in_gho
+BGD,flood,2025,2025-04-25,,2000000.0,tracking-sheets,current,False,False
+BGD,storm,2025,2025-04-25,,5951987.0,tracking-sheets,current,False,False
+CUB,storm,2025,2025-08-26,,217540.0,tracking-sheets,current,False,False
+FJI,storm,2025,2025-12-17,,1539732.0,tracking-sheets,current,False,False
+GTM,drought,2025,2025-02,,1295238.0952380951,tracking-sheets,current,False,True
+HND,drought,2025,2025-02,,1295238.0952380951,tracking-sheets,current,False,True
+HTI,storm,2025,2024-08-23,,2500000.0,tracking-sheets,current,False,True
+MOZ,storm,2025,2025-01-09,,979000.0,tracking-sheets,current,False,True
+NER,drought,2025,2024-10-24,,4099659.0,tracking-sheets,current,False,True
+NER,flood,2025,2025-11-04,,100000.0,tracking-sheets,current,False,True
+NGA,flood,2025,2025-08-11,,100000.0,tracking-sheets,current,False,True
+NPL,flood,2025,2025-08-25,,425822.0,tracking-sheets,current,False,False
+SLV,drought,2025,2025-02,,809523.8095238095,tracking-sheets,current,False,True
+BFA,drought,2026,2026-04-17,FAO,285714.29,co-financing-now,current,False,True
+BFA,drought,2026,2026-04-17,WFP,1714285.71,co-financing-now,current,False,True
+BFA,flood,2026,2025-08,not recorded,1000000.0,co-financing-now,current,False,True
+BGD,flood,2026,2025-04-25,WFP,1402434.98,co-financing-now,current,False,False
+BGD,flood,2026,2025-04-25,WFP,601043.56,co-financing-now,current,False,False
+BGD,flood,2026,2025-04-25,BDRCS,442718.67,co-financing-now,current,False,False
+BGD,flood,2026,2025-04-25,BDRCS,22135.43,co-financing-now,current,False,False
+BGD,flood,2026,2025-04-25,BRAC,16929.39,co-financing-now,current,False,False
+BGD,flood,2026,2025-04-25,CARE,250434.82,co-financing-now,current,False,False
+BGD,flood,2026,2025-04-25,Concern Worldwide,37172.54,co-financing-now,current,False,False
+BGD,flood,2026,2025-04-25,Save the Children,100173.93,co-financing-now,current,False,False
+BGD,flood,2026,2025-04-25,Start Network,1126956.68,co-financing-now,current,False,False
+BGD,storm,2026,2025-04-25,BDRCS,21854.63,co-financing-now,current,False,False
+BGD,storm,2026,2025-04-25,BRAC,8406.77,co-financing-now,current,False,False
+BGD,storm,2026,2025-04-25,IFRC DREF,437102.42,co-financing-now,current,False,False
+BGD,storm,2026,2025-04-25,"ECHO, GFFO and SC Humanitarian Fund",148354.71,co-financing-now,current,False,False
+BGD,storm,2026,2025-04-25,Islamic Relief,63298.01,co-financing-now,current,False,False
+BGD,storm,2026,2025-04-25,Start Network,1755530.72,co-financing-now,current,False,False
+BGD,storm,2026,2025-04-25,STEP,38087.6,co-financing-now,current,False,False
+BGD,storm,2026,2025-04-25,UNFPA,15755.27,co-financing-now,current,False,False
+BGD,storm,2026,2025-04-25,UNICEF,1879159.65,co-financing-now,current,False,False
+BGD,storm,2026,2025-04-25,WFP,1582450.22,co-financing-now,current,False,False
+COD,cholera,2026,2026-06-24,UNICEF,200000.0,co-financing-now,current,False,
+COD,cholera,2026,2026-06-24,WHO (incl. PAHO),120000.0,co-financing-now,current,False,
+COD,cholera,2026,2026-06-24,WHO (incl. PAHO),160000.0,co-financing-now,current,False,
+CUB,storm,2026,2026-08-24,WHO (incl. PAHO),200000.0,co-financing-now,current,False,False
+CUB,storm,2026,2026-08-24,UNFPA,8000.0,co-financing-now,current,False,False
+CUB,storm,2026,2026-08-24,WFP,217540.0,co-financing-now,current,False,False
+CUB,storm,2026,2025-08-26,not recorded,4074460.0,co-financing-now,current,False,False
+FJI,storm,2026,2025-12-17,ADRA,18046.97,co-financing-now,current,False,False
+FJI,storm,2026,2025-12-17,UNFPA,185097.15,co-financing-now,current,False,False
+FJI,storm,2026,2025-12-17,UN Women,46274.29,co-financing-now,current,False,False
+FJI,storm,2026,2025-12-17,WHO (incl. PAHO),27764.57,co-financing-now,current,False,False
+FJI,storm,2026,2025-12-17,FAO,185097.15,co-financing-now,current,False,False
+FJI,storm,2026,2025-12-17,WFP,462742.87,co-financing-now,current,False,False
+FJI,storm,2026,2025-12-17,UNICEF,370194.29,co-financing-now,current,False,False
+FJI,storm,2026,2025-12-17,IFRC DREF,129782.33,co-financing-now,current,False,False
+FJI,storm,2026,2025-12-17,ADRA,949.84,co-financing-now,current,False,False
+FJI,storm,2026,2025-12-17,UNFPA,9741.96,co-financing-now,current,False,False
+FJI,storm,2026,2025-12-17,UN Women,2435.49,co-financing-now,current,False,False
+FJI,storm,2026,2025-12-17,WHO (incl. PAHO),1461.29,co-financing-now,current,False,False
+FJI,storm,2026,2025-12-17,FAO,9741.96,co-financing-now,current,False,False
+FJI,storm,2026,2025-12-17,WFP,24354.89,co-financing-now,current,False,False
+FJI,storm,2026,2025-12-17,UNICEF,19483.91,co-financing-now,current,False,False
+FJI,storm,2026,2025-12-17,IFRC DREF,6831.04,co-financing-now,current,False,False
+GTM,drought,2026,2026-03-13,FAO,35463.9,co-financing-now,current,False,
+GTM,drought,2026,2026-03-13,WFP,337000.0,co-financing-now,current,False,
+HND,drought,2026,2026-03-13,FAO,60000.0,co-financing-now,current,False,
+HND,drought,2026,2026-03-13,not recorded,87000.0,co-financing-now,current,False,
+HTI,storm,2026,2026-10-16,"WFP, UNICEF, IOM",1065000.0,co-financing-now,current,False,True
+HTI,storm,2026,2024-08-23,not recorded,1435000.0,co-financing-now,current,False,True
+KEN,drought,2026,2026-07-30,FAO,497483.67,co-financing-now,current,False,False
+KEN,drought,2026,2026-07-30,UNFPA,68369.18,co-financing-now,current,False,False
+KEN,drought,2026,2026-07-30,UNICEF,99496.73,co-financing-now,current,False,False
+KEN,drought,2026,2026-07-30,WFP,2984902.04,co-financing-now,current,False,False
+KEN,drought,2026,2026-07-30,WHO (incl. PAHO),49748.38,co-financing-now,current,False,False
+MMR,storm,2026,2026,"UN Women, FAO, IOM, UNFPA",1200000.0,co-financing-now,current,False,True
+MOZ,cholera,2026,2026-05-22,UNICEF,150000.0,co-financing-now,current,False,
+MOZ,cholera,2026,2026-05-22,UNICEF,100000.0,co-financing-now,current,False,
+MOZ,cholera,2026,2026-05-22,WHO (incl. PAHO),128000.0,co-financing-now,current,False,
+MOZ,cholera,2026,2026-05-22,WHO (incl. PAHO),115000.0,co-financing-now,current,False,
+MOZ,storm,2026,2026-01-09,UNHCR,35000.0,co-financing-now,current,False,
+MOZ,storm,2026,2026-01-09,UNICEF,37500.0,co-financing-now,current,False,
+MOZ,storm,2026,2026-01-09,UNICEF,62500.0,co-financing-now,current,False,
+MOZ,storm,2026,2026-01-09,WFP,864664.0,co-financing-now,current,False,
+MOZ,storm,2026,2026-01-09,WFP,172410.0,co-financing-now,current,False,
+NER,drought,2026,2026-06-03,WFP,1000000.0,co-financing-now,current,False,True
+NER,drought,2026,2024-10-24,not recorded,1500000.0,co-financing-now,current,False,True
+NER,flood,2026,2025-11-04,FAO,100000.0,co-financing-now,current,False,True
+NER,flood,2026,2025-11-04,not recorded,600000.0,co-financing-now,current,False,True
+NGA,flood,2026,2026-07-27,WFP,2000000.0,co-financing-now,current,False,
+NPL,flood,2026,2026-09-10,DFAT,250000.0,co-financing-now,current,False,False
+NPL,flood,2026,2026-09-10,SDC,1000000.0,co-financing-now,current,False,False
+PHL,storm,2026,2025-10-03,not recorded,4000000.0,co-financing-now,current,False,False
+SOM,flood,2026,2026-10-03,Education Cannot Wait,900000.0,co-financing-now,current,False,
+SOM,flood,2026,2026-10-03,FAO,1000000.0,co-financing-now,current,False,
+SOM,flood,2026,2026-10-03,IOM,400000.0,co-financing-now,current,False,
+SOM,flood,2026,2026-10-03,UNICEF,700000.0,co-financing-now,current,False,
+SOM,flood,2026,2026-10-03,WFP,1000000.0,co-financing-now,current,False,
+SOM,flood,2026,2026-10-03,WHO (incl. PAHO),800000.0,co-financing-now,current,False,
+TCD,drought,2026,2025-03-03,not recorded,3550000.0,co-financing-now,current,False,True
+TCD,flood,2026,2025-07-31,not recorded,1300000.0,co-financing-now,current,False,True

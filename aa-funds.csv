@@ -1,0 +1,15 @@
+fund_code,fund_type,name,country_iso3
+cbpf-afg,cbpf,Afghanistan,AFG
+cbpf-bgd,regional_fund,Bangladesh (AP-RHPF),BGD
+cbpf-eth,cbpf,Ethiopia,ETH
+cbpf-fji,regional_fund,Fiji (AP-Rhpf),FJI
+cbpf-mmr,cbpf,Myanmar,MMR
+cbpf-nga,cbpf,Nigeria,NGA
+cbpf-sdn,cbpf,Sudan,SDN
+cbpf-som,cbpf,Somalia,SOM
+cbpf-ssd,cbpf,South Sudan,SSD
+cbpf-vut,regional_fund,Vanuatu (AP-Rhpf),VUT
+cbpf-yem,cbpf,Yemen,YEM
+cerf,cerf,Central Emergency Response Fund,
+rhpf-lac-hti,regional_fund,Haiti (RhPF-LAC),HTI
+rhpf-wca-bfa,regional_fund,Burkina Faso (RhPF-WCA),BFA
