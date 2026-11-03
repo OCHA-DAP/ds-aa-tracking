@@ -114,9 +114,10 @@ Counting rules (an LLM summing these files without them gets wrong totals):
   and the current year: its stock figures (frameworks, pre-arranged, co-financing, people
   covered) count the frameworks on that layer (`map_layers` contains `framework` in
   aa-frameworks); its flow figures (activations, money released, people reached or targeted)
-  count the year's framework activations, those of frameworks since retired included (money
-  released stays released), and non-framework allocations only when that layer is on. Add up
-  the layers the question needs, and say which.
+  count the year's framework activations of the frameworks on that layer; those of frameworks
+  since retired count when the retired layer is on (the map's "All years, to today" switches it
+  on), and non-framework allocations only when that layer is on. Add up the layers the question
+  needs, and say which.
 - A framework is one (country, hazard) pair. Regional frameworks do not exist: the Central
   America Dry Corridor is four national frameworks (El Salvador, Guatemala, Honduras and the
   retired Nicaragua), even where a document title calls it regional or one document serves
