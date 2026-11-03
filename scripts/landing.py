@@ -1729,20 +1729,19 @@ def geo_pass(countries, bboxes):
 def _flow_acts(f, layers, year=None):
     """The activation records a pair contributes to the flow tiles (activations, money released,
     people reached) — mirrors flowActs() in LANDING_JS: those of `year` (None: all years, to
-    today), its framework activations while its own framework layer is on, and its non-framework
-    allocations while the non-framework layer is on. Money released stays released (owner,
-    2026-10-30: "the retired frameworks disbursed funding should STILL show up in the total
-    disbursed to date"): the activations of a framework since retired — a retired pair's, or
-    those of an earlier framework a pair replaced (`old`) — count while EITHER framework layer is
-    on; the retired layer alone draws the retired pins. A current pair that hosts a replaced
-    framework is on both layers: its own activations stay current. The Financing page's rule:
-    same layers, same total on both pages."""
+    today), its framework activations while its own framework layer is on, its non-framework
+    allocations while the non-framework layer is on, and the activations of a framework since
+    retired — a retired pair's, or those of an earlier framework a pair replaced (`old`) — while
+    the retired layer is on (owner, 2026-11-03: the tiles "can follow the box ticking on and off
+    now"; all years ticks it on, D185, amending D150 for the map). A current pair that hosts a
+    replaced framework is on both layers: its own activations stay current. A pair whose
+    activations count is always listed in the frameworks table, so the tiles are its totals.
+    `year` is today's or None here (a past year is reconstructed in JS, where `old` is false)."""
     own = next((k for k in ("framework", "retired") if k in f["layers"]), None)
-    fw_any = "framework" in layers or "retired" in layers
     return [a for a in f["activations"]
             if (year is None or str(a["date"])[:4] == str(year))
             and ("adhoc" in layers if a["type"] == "adhoc_aa"
-                 else fw_any if (a["old"] or own == "retired") else own in layers)]
+                 else "retired" in layers if (a["old"] or own == "retired") else own in layers)]
 
 
 # headline tile icons (24x24 strokes; coloured by CSS)
@@ -1792,8 +1791,8 @@ def tile_figures(countries, layers, year=None):
     now, people covered now) count pairs shown ON the framework layer; the flow figures
     (activations, released, people reached) count _flow_acts(): to date, or of `year` — the
     current year only: the stock figures are today's (a past year is reconstructed in JS).
-    The flows are taken over every pair, shown or not: a retired framework's releases count under
-    the current-frameworks layer although its pin is drawn only on the retired one."""
+    The flows are taken over every pair: a retired framework's releases count while the retired
+    layer is on (_flow_acts)."""
     shown = [f for cd in countries.values() for f in cd["fws"] if set(f["layers"]) & set(layers)]
     fw = [f for f in shown if "framework" in layers and "framework" in f["layers"]]
     acts = [a for cd in countries.values() for f in cd["fws"] for a in _flow_acts(f, layers, year)]
@@ -1946,9 +1945,10 @@ def build_landing(page, d, e):
     t = tile_figures(countries, {"framework"}, Y)
     n_shown = t["n_fw"]
     # the flow tiles name what the layers switched off would add (updateTiles: notShown): the
-    # non-framework allocations — a retired framework's releases already count under current
-    # frameworks (_flow_acts), and the note says so
+    # non-framework allocations, then the activations of frameworks since retired (_flow_acts;
+    # none in the current year so far, but the page's rule is mirrored)
     ad = tile_figures(countries, {"adhoc"}, Y)
+    rt = tile_figures(countries, {"retired"}, Y)
 
     def not_shown(*xs):
         xs = [x for x in xs if x]
@@ -1958,8 +1958,10 @@ def build_landing(page, d, e):
         return ("~" if g["n_tgt"] or g["n_ptgt"] else "") + _people(g["reached"] + g["targeted"] + g["ptargeted"])
     def usd(g):   # ' ($17M)' after a count of activations the layers switched off would add
         return f" ({_money(g['released'])})" if g["released"] >= 5e4 else ""
-    ns_act = not_shown(ad["n_act"] and f"{ad['n_act']} non-framework allocation{'s' if ad['n_act'] > 1 else ''}{usd(ad)}")
-    ns_reach = not_shown((ad["n_rep"] or ad["n_tgt"] or ad["n_ptgt"]) and f"non-framework allocations {est(ad)}")
+    ns_act = not_shown(ad["n_act"] and f"{ad['n_act']} non-framework allocation{'s' if ad['n_act'] > 1 else ''}{usd(ad)}",
+                       rt["n_act"] and f"{rt['n_act']} on retired frameworks{usd(rt)}")
+    ns_reach = not_shown((ad["n_rep"] or ad["n_tgt"] or ad["n_ptgt"]) and f"non-framework allocations {est(ad)}",
+                         (rt["n_rep"] or rt["n_tgt"] or rt["n_ptgt"]) and f"retired frameworks {est(rt)}")
 
     def funds(cerf, pooled, other=0):   # fundBullets() in LANDING_JS
         return [x for x in (cerf >= 5e4 and f"CERF {_money(cerf)}",
@@ -2094,7 +2096,7 @@ def build_landing(page, d, e):
  <p class='fwt-cap' id='fwtcap'></p>
  <div class='fwt-scroll'><table class='fwtab' id='fwtab'></table></div>
  <p class='fwt-note' id='fwtfoot' hidden></p>
- <p class='fwt-note'>{TB("<b>Return period</b>: how often the framework's latest version would activate (any of its trigger windows, in a year), as the framework states it where it does, otherwise from its historical simulation. <b>Pre-arranged (OCHA-managed funds)</b>: for each framework, the envelope of its most recent version that has one, from CERF and the Country and Regional Funds; a framework being updated keeps its last envelope, and one in development shows the envelope recorded for it so far. <b>Co-financing</b>: money from outside the OCHA-managed funds pre-arranged for the framework, as reported for the year (the Financing page's figure). <b>Activations</b> and <b>released from OCHA</b> count the framework activations of the frameworks listed; non-framework allocations and retired frameworks are not listed. Released money is split by fund as pre-arranged money is, and is net of money refunded after an activation was stopped; a CERF amount that OneGMS has not recorded yet is provisional. Click a country to open it on the map; click a column heading to sort.")}</p>
+ <p class='fwt-note'>{TB("<b>Return period</b>: how often the framework's latest version would activate (any of its trigger windows, in a year), as the framework states it where it does, otherwise from its historical simulation. <b>Pre-arranged (OCHA-managed funds)</b>: for each framework, the envelope of its most recent version that has one, from CERF and the Country and Regional Funds; a framework being updated keeps its last envelope, and one in development shows the envelope recorded for it so far. <b>Co-financing</b>: money from outside the OCHA-managed funds pre-arranged for the framework, as reported for the year (the Financing page's figure). <b>Activations</b> and <b>released from OCHA</b> count the activations of the rows listed. Non-framework allocations and retired frameworks are listed while their layer is on in the map legend; <b>All years, to today</b> switches retired frameworks on. Released money is split by fund as pre-arranged money is, and is net of money refunded after an activation was stopped; a CERF amount that OneGMS has not recorded yet is provisional. Click a country to open it on the map; click a column heading to sort.")}</p>
 </section>
 <!-- 2026-10-02 meeting: the internal links that sat here (dashboards, explorer, data entry,
      data & schema review) were easy to miss below the map; they all live in the Internal menu -->
@@ -2447,6 +2449,17 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
   box-shadow:0 4px 12px -4px rgba(0,0,0,.35); display:none; z-index:6; text-transform:none; letter-spacing:0; }
 .info:hover::after, .info:focus::after, .info:focus-visible::after { display:block; }
 .info.left::after { left:auto; right:-4px; transform:none; }
+/* the glossary's and the legend's tips, placed by the script (placeTip) in one box on the page,
+   kept inside the window: a tip drawn by ::after was cut off by the side panel, which scrolls,
+   and by the window's edge (owner, 2026-11-03). Without the script the ::after tips stay. */
+.ftip { position:fixed; z-index:50; display:none; width:max-content; max-width:min(240px, calc(100% - 16px));
+  background:rgba(15,37,64,.95); color:#fff; font-size:11.5px; font-weight:400; line-height:1.35; padding:6px 9px; border-radius:6px;
+  text-align:left; white-space:normal; box-shadow:0 4px 12px -4px rgba(0,0,0,.35); }
+.ftip.wide { max-width:min(300px, calc(100% - 16px)); }
+/* the pointer crosses the 6px gap to the tip without leaving it */
+.ftip::before { content:''; position:absolute; left:0; right:0; height:8px; top:-8px; }
+.ftip.above::before { top:auto; bottom:-8px; }
+.jstip .info::after, .jstip .hasdef::after { display:none !important; }
 abbr[title] { text-decoration:underline dotted #94a3b8; text-underline-offset:2px; cursor:help; }
 /* partners */
 .pgrp { margin:6px 0 2px; font-weight:650; color:#16324f; font-size:12px; }
@@ -2544,28 +2557,27 @@ function statusAt(f, D){
 // old framework WAS the pair's framework in 2020), so there no activation is old.
 const isOld = a => !!a.old && !pastY();
 // the framework activations a pin's dots stand for: the year view's filter, as applyYear() counts
-// them; a replaced framework's ones while the retired layer is on
-function dotActs(f){ return f.activations.filter(a => a.type === 'framework_aa' && (!isOld(a) || LAYERS.retired)
+// them; a framework's since retired (a retired pair's, or a replaced framework's) while the retired
+// layer is on, as flowActs counts them (D185) — a retired pair drawn on another layer has no dot
+function dotActs(f){ const ret = !f.layers.includes('framework') && f.layers.includes('retired');
+  return f.activations.filter(a => a.type === 'framework_aa' && (!(isOld(a) || ret) || LAYERS.retired)
   && (YEAR == null || String(a.date).slice(0, 4) === String(YEAR))); }
 // ---------- flow figures: activations, money released, people reached (all 'to date', or in the year shown)
 // What a pair contributes: its framework activations while its own framework layer is on, its
-// ad hoc allocations while the ad hoc layer is on. Money released stays released (owner,
-// 2026-10-30): the activations of a framework since retired — a retired pair's, or a replaced
-// framework's (isOld) — count while EITHER framework layer is on; the retired layer alone draws
-// the retired pins. A current pair that hosts a replaced framework is on both layers, its own
-// activations stay current. The Financing page's rule, so both pages give the same total for
-// the same layers. Mirrored by _flow_acts() / tile_figures() in Python. LY: a layer set other
-// than the one shown. Callers pass every pair, shown or not (a retired pin is not drawn while
-// its money counts).
+// ad hoc allocations while the ad hoc layer is on, and the activations of a framework since
+// retired — a retired pair's, or a replaced framework's (isOld) — while the RETIRED layer is on
+// (owner, 2026-11-03: the tiles "can follow the box ticking on and off now", all years ticking it
+// on — yearLayers; D185, amending D150 for the map). A current pair that hosts a replaced
+// framework is on both layers, its own activations stay current; in a past year isOld is false (the
+// framework replaced since was current then). So a pair whose activations count is always listed
+// in the table (fwRows: visLayer), and the tiles are the table's totals. Mirrored by _flow_acts() /
+// tile_figures() in Python. LY: a layer set other than the one shown.
 function flowActs(f, LY){
   LY = LY || LAYERS;
   const own = ['framework', 'retired'].find(k => f.layers.includes(k)), fwOn = !!(own && LY[own]);
-  const anyFw = !!(LY.framework || LY.retired);
   return f.activations.filter(a => (YEAR == null || String(a.date).slice(0, 4) === String(YEAR))
-    && (a.type === 'adhoc_aa' ? !!LY.adhoc : (isOld(a) || own === 'retired') ? anyFw : fwOn));
+    && (a.type === 'adhoc_aa' ? !!LY.adhoc : (isOld(a) || own === 'retired') ? !!LY.retired : fwOn));
 }
-// a framework activation counted for a framework since retired (see flowActs)
-const retAct = (f, a) => a.type !== 'adhoc_aa' && (isOld(a) || !f.layers.includes('framework'));
 function flowFigures(fs, LY){ return flowFiguresOf(fs.flatMap(f => flowActs(f, LY))); }
 function flowFiguresOf(acts){
   const rows = acts.flatMap(a => a.funding || []);
@@ -2691,8 +2703,13 @@ function lockTiles(){
 }
 let lockT = null;
 window.addEventListener('resize', () => { clearTimeout(lockT); lockT = setTimeout(lockTiles, 200); });
+// all years, to today ticks the retired layer on (owner, 2026-11-03: "automatically tick ON the
+// 'retired' box when we select all years to today on the map, to make sure that the table shows
+// the retired versions too which should still count towards the total disbursed"; D185). Only
+// on: the reader may untick it, and another year leaves it as it is
+function yearLayers(){ if(YEAR == null) LAYERS.retired = true; }
 function setYear(y){
-  YEAR = (y === '' || y == null) ? null : +y; applyYear(); syncYearUI();
+  YEAR = (y === '' || y == null) ? null : +y; yearLayers(); applyYear(); syncYearUI();
   if(state.iso){ state.ver = null; if(state.hz && !c_has(state.iso, state.hz)) state.hz = null; }
   applyLayers();
   const h = hashFor(state.iso ? [state.iso, state.hz, state.ver] : []);
@@ -3210,16 +3227,16 @@ function updateTiles(){
       {mark: past && cov > 0 && nCov < fw.length,
        note: past && !cov ? [] : covNote(nCov, fw.length)});
   // the flows: every activation to date (or of the year shown) on the layers shown — over every
-  // pair: a framework since retired brings its releases while either framework layer is on
+  // pair: a framework since retired brings its releases while the retired layer is on (flowActs)
   const all = Object.values(L).flatMap(c=>c.fws);
   const F = flowFigures(all), what = flowWhat(F);
   // what the layers switched off would ADD: named in each tile's note, so no figure is taken for
-  // the whole (switching the retired layer on adds nothing while current frameworks are on)
+  // the whole (the retired layer adds the releases of the frameworks since retired)
   const cur = new Set(all.flatMap(f => flowActs(f)));
   const offs = [['adhoc','non-framework allocations'],['retired','retired frameworks'],['framework','current frameworks']]
+    // each layer adds its own (flowActs: a framework since retired is the retired layer's only)
     .filter(([k]) => !LAYERS[k]).map(([k, lab]) => [lab, flowFiguresOf(all.flatMap(f => flowActs(f, {...LAYERS, [k]: true})
-      // the current frameworks' own: a retired framework's releases are named under 'retired' (no double listing)
-      .filter(a => !cur.has(a) && (k !== 'framework' || !retAct(f, a)))))]);
+      .filter(a => !cur.has(a))))]);
   const notShown = fn => { const xs = offs.map(([lab, G]) => fn(lab, G)).filter(Boolean); return xs.length ? tr8('Not shown: {0}.', xs.join(', ')) : ''; };
   // the non-framework allocations counted, while their layer is on: a line of their own under the
   // framework activations, with the countries they are in (owner, 2026-11-02: "the headline figures
@@ -3449,7 +3466,7 @@ svg.addEventListener('click', ev => {
 back.addEventListener('click', goWorld);
 document.addEventListener('keydown', e => { if(e.key !== 'Escape' || !state.iso) return;
   const a = document.activeElement;   // an open tile note or legend definition: this Escape closes it
-  if(a && a.matches && a.matches('.tile.hasnote, .ctile.hasnote, .hasdef, .maplegend .info')) return;
+  if(a && a.matches && a.matches('.tile.hasnote, .ctile.hasnote, .hasdef, .info')) return;
   goWorld(); });
 
 function goWorld(){
@@ -3527,8 +3544,7 @@ function actMonths(acts){
 function countryTiles(c){
   const fws = vis(c), fw = fws.filter(f=>visLayer(f)==='framework');
   const pre = fw.reduce((s,f)=>s+(f.pre_now||0),0), cov = fw.reduce((s,f)=>s+(f.covered||0),0), nCov = fw.filter(f=>f.covered).length;
-  const F = flowFigures(c.fws);   // the global tiles' rule, this country (a retired pin's releases too)
-  const RU = LAYERS.retired ? 0 : flowFiguresOf(c.fws.flatMap(f => flowActs(f).filter(a => retAct(f, a)))).usd;
+  const F = flowFigures(c.fws);   // the global tiles' rule, this country (a retired pin's releases while that layer is on)
   const kind = F.nAd && F.nAd === F.n ? 'non-framework allocation' : F.nAd ? 'activation' : 'framework activation', one = F.n === 1;
   const ACT = {'non-framework allocation': one ? ['non-framework allocation to date', 'non-framework allocation in {0}'] : ['non-framework allocations to date', 'non-framework allocations in {0}'],
                'activation': one ? ['activation to date', 'activation in {0}'] : ['activations to date', 'activations in {0}'],
@@ -3552,7 +3568,7 @@ function countryTiles(c){
            fw.length ? [preNote()].concat(apyTileNotes(apyFw), [noEnv.length ? tr8('No figure for {0}: {1}.', YEAR, noEnv.join(', ')) : '']) : [])
     + tile(cov?num(cov):'—', esc(tr8(pastY() ? 'people covered' : 'people covered now')), pastY() && !cov ? [] : covNote(nCov, fw.length, false))
     + tile(F.n, esc(actL))
-    + tile(F.n?money(F.usd):'—', esc(yr('released to date', 'released in {0}')) + (RU >= 5e4 ? ' ' + esc(tr8('· includes {0} released by frameworks since retired', money(RU))) : ''), actNote(F))
+    + tile(F.n?money(F.usd):'—', esc(yr('released to date', 'released in {0}')), actNote(F))
     + tile(hasR ? (estR ? '~' : '') + num(F.reached + F.targeted + F.ptargeted) : '—', esc(reachL), reachNote(F))
     + `</div>`;
 }
@@ -4126,7 +4142,63 @@ function fwCSV(){
 // (touch screens have no hover; a tap elsewhere blurs it) and Escape closes it
 document.addEventListener('click', e => { const t = e.target.closest && e.target.closest('.tile.hasnote, .ctile.hasnote, .hasdef'); if(t && document.activeElement !== t) t.focus(); });
 document.addEventListener('keydown', e => { const a = document.activeElement;
-  if(e.key === 'Escape' && a && a.matches && a.matches('.tile.hasnote, .ctile.hasnote, .hasdef, .maplegend .info')) a.blur(); });
+  if(e.key === 'Escape' && a && a.matches && a.matches('.tile.hasnote, .ctile.hasnote, .hasdef, .info')) a.blur(); });
+// glossary and legend tips (.info, .hasdef): one box on the page, placed beside the marker and
+// kept inside the window, on hover or focus as the CSS tips were (a tap focuses: the handlers
+// above). The ::after tips were cut off by the side panel, which scrolls, and by the window's
+// edge (owner, 2026-11-03: the 'trigger' tip in a framework's Model box). Above the marker, or
+// below when there is no room; a .down marker (the year note) prefers below. The tip is for the
+// eye: the marker carries its text for a screen reader (aria-label, or a .sr span). The pointer
+// can move onto the tip without closing it (WCAG 1.4.13); its ::before bridges the gap.
+const FTIP = document.createElement('div'); FTIP.className = 'ftip'; FTIP.setAttribute('aria-hidden', 'true');
+document.body.appendChild(FTIP); document.documentElement.classList.add('jstip');
+const TIPS = '.info[data-tip], .hasdef[data-tip]';
+let tipFor = null;
+// the window less its scrollbars
+const viewW = () => document.documentElement.clientWidth, viewH = () => document.documentElement.clientHeight;
+// the marker can be seen: inside the window and inside every box around it that clips (the side
+// panel scrolls); a tip whose marker is scrolled out of sight hides
+function seen(el){ const r = el.getBoundingClientRect();
+  if(!r.width || r.bottom < 0 || r.top > viewH() || r.right < 0 || r.left > viewW()) return false;
+  for(let p = el.parentElement; p && p !== document.body; p = p.parentElement){
+    const cs = getComputedStyle(p); if(cs.overflowX === 'visible' && cs.overflowY === 'visible') continue;
+    const q = p.getBoundingClientRect(); if(r.bottom <= q.top || r.top >= q.bottom || r.right <= q.left || r.left >= q.right) return false; }
+  return true; }
+function placeTip(el){ const t = el.dataset.tip; if(!t) return;
+  tipFor = el; FTIP.textContent = t; FTIP.classList.toggle('wide', el.classList.contains('down'));
+  if(!seen(el)){ FTIP.style.display = 'none'; return; }
+  FTIP.style.display = 'block';
+  const r = el.getBoundingClientRect(), w = FTIP.offsetWidth, h = FTIP.offsetHeight, m = 8, g = 6, W = viewW(), H = viewH();
+  const x = Math.max(m, Math.min(r.left + r.width / 2 - w / 2, W - w - m));
+  const up = r.top - g - h, down = r.bottom + g, roomUp = up >= m, roomDown = down + h <= H - m;
+  const above = el.classList.contains('down') ? !(roomDown || !roomUp) : roomUp;
+  FTIP.classList.toggle('above', above);
+  FTIP.style.left = x + 'px'; FTIP.style.top = Math.max(m, above ? up : down) + 'px'; }
+// closing a tip: the focused marker, if any, gets its own back (a hover elsewhere had replaced it)
+function dropTip(el){ if(el && el !== tipFor) return; tipFor = null; FTIP.style.display = 'none';
+  const a = document.activeElement; if(el && a && a !== el && a.matches && a.matches(TIPS)) placeTip(a); }
+const tipOf = e => e.target && e.target.closest ? e.target.closest(TIPS) : null;
+const onTip = n => !!n && (n === FTIP || FTIP.contains(n));
+// stays open while the pointer is on the marker or the tip, or the marker has focus
+const keep = n => tipFor && (onTip(n) || tipFor.contains(n) || document.activeElement === tipFor);
+// a marker redrawn under the pointer (the panel re-renders) sends no mouseout: the next move
+// elsewhere closes its tip
+document.addEventListener('mouseover', e => { if(onTip(e.target)) return; const el = tipOf(e);
+  if(el){ if(el !== tipFor) placeTip(el); } else if(tipFor && (!tipFor.isConnected || document.activeElement !== tipFor)) dropTip(tipFor); });
+document.addEventListener('mouseout', e => {
+  if(onTip(e.target)){ if(!keep(e.relatedTarget)) dropTip(tipFor); return; }
+  const el = tipOf(e); if(el && el === tipFor && !keep(e.relatedTarget)) dropTip(el); });
+document.addEventListener('focusin', e => { const el = tipOf(e); if(el) placeTip(el); });
+document.addEventListener('focusout', e => { const el = tipOf(e);
+  if(el && !el.matches(':hover') && !FTIP.matches(':hover')) dropTip(el); });
+// it is fixed to the window: on a scroll (the page's or a panel's; a keyboard focus scrolls its
+// marker into view) it follows its marker. A resize moves things again once the map's layout has
+// run (scheduleLayout, lockTiles: up to 600 ms later), so it follows again then.
+function followTip(){ if(!tipFor) return; if(!tipFor.isConnected) return dropTip(tipFor); placeTip(tipFor); }
+let tipTimer = 0;
+addEventListener('scroll', followTip, true);
+addEventListener('resize', () => { followTip(); clearTimeout(tipTimer); tipTimer = setTimeout(followTip, 700); });
+document.addEventListener('keydown', e => { if(e.key === 'Escape'){ tipFor = null; FTIP.style.display = 'none'; } });
 // ---------- keyboard (WCAG 2.1.1): an element the script makes clickable with an onclick — a framework
 // card, a pillar, a link without an address, a list entry — is a button for the keyboard too:
 // focusable, and Enter or Space activates it. Applied to whatever the script writes (an observer).
@@ -4152,7 +4224,7 @@ const HASH0 = (function(){ let [p, y] = decodeURIComponent(location.hash.replace
   const year = y === 'all' ? null : +y >= YEARS.first && +y <= YEARS.now ? +y : YEARS.now;
   return {path: (p || '').split('/'), year}; })();
 snapLive();
-YEAR = HASH0.year; applyYear(); syncYearUI();
+YEAR = HASH0.year; yearLayers(); applyYear(); syncYearUI();
 fixHeight(); buildWorld(); syncOn(); worldLegend(); updateTiles(); buildNews(); buildFwTable(); buildCallouts(); runLayout();
 if(isMobile()){ maprow.classList.add('open'); renderWorldList(); }
 buildOverview();

@@ -17,8 +17,8 @@ name their layers explicitly either way):
   * people covered now, and co-financing pre-arranged now: Map ↔ Financing
   * released this year by fund (current frameworks): Map ↔ Financing
   * released to date, framework activations and non-framework allocations, and the number of
-    each: Map ↔ Financing ↔ History; and on the pages' opening layers (current frameworks), where
-    a framework since retired still brings what it released (owner, 2026-10-30)
+    each: Map ↔ Financing ↔ History; and the current frameworks' own (the Map's released follows
+    the Retired box, D185; the Financing page counts a retired framework's with either layer, D150)
   * people reached, CERF allocations of framework activations to date: Map ↔ Activities
   * the open layer (scripts/llm_layer.py, the files as written) ↔ the OPEN map (its own copy, its
     tiles as it opens): every headline figure recomputed from the files' rows, each framework's
@@ -112,7 +112,8 @@ def open_layer(out, om) -> tuple[int, list[str]]:
     if len(mf) != len(fw):
         bad.append(f"pairs — {len(fw)} in aa-frameworks, {len(mf)} on the open map")
 
-    # flow tiles: the year's activations, by the map's rule (_flow_acts)
+    # flow tiles: the year's activations, by the map's rule (_flow_acts) for the open map's layer
+    # (current frameworks): a retired or replaced framework's need the Retired layer (D185)
     def flows(kind):
         acts = []
         for a in T["activations"]:
@@ -120,7 +121,7 @@ def open_layer(out, om) -> tuple[int, list[str]]:
                 continue
             L = layers.get((a["country_iso3"], a["hazard"]), set())
             own = "framework" if "framework" in L else "retired" if "retired" in L else None
-            if kind == "adhoc_aa" or a["replaced_framework"] or own is not None:
+            if kind == "adhoc_aa" or (not a["replaced_framework"] and own == "framework"):
                 acts.append(a)
         rows = [x for a in acts for x in a["funding"]]
         cerf = [x for x in rows if x["fund_code"] == "cerf" and not x["allocation_shared"]]
@@ -244,11 +245,12 @@ def check() -> None:
         usd(r for r in act if r["g"] in ("c", "r")))
     cmp("released to date, non-framework allocations", "Map ↔ Financing", t_ad["released"],
         usd(r for r in act if r["g"] == "a"))
-    # the opening view: current frameworks only, a retired framework's releases included (relOK)
-    t_open = landing.tile_figures(M, {"framework"}, None)
-    cmp("released to date, opening layers", "Map ↔ Financing", t_open["released"],
-        usd(r for r in act if r["g"] in ("c", "r")))
-    cmp("framework activations to date, opening layers vs both framework layers", "Map", t_open["n_act"], t_fr["n_act"], "n")
+    # the map's flows follow the retired layer (D185; all years ticks it on, so the all-years view
+    # is the both-layers figure above): current frameworks alone are the Financing page's current
+    # layer's own money. The Financing page still counts retired money with either layer (D150)
+    t_cur = landing.tile_figures(M, {"framework"}, None)
+    cmp("released to date, current frameworks' own", "Map ↔ Financing", t_cur["released"],
+        usd(r for r in act if r["g"] == "c"))
     f_pre = {}
     for r in now_c:
         f_pre[r["k"]] = f_pre.get(r["k"], 0) + (r["total_usd"] or 0)

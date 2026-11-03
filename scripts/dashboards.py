@@ -3317,6 +3317,24 @@ def backtest_span(ss, wv, vf_y):
     return y0, y1, (y1 - y0 + 1) if recorded else None
 
 
+def untested_windows(ss, wv):
+    """The windows of a version that were never backtested — no simulated year and no analysed
+    period recorded — while another of its windows was: Vanuatu storm's readiness trigger ("not
+    assessed", its document says), Nigeria flood's monitoring-only flash-flood trigger, Burkina
+    Faso flood's deferred scenarios. An empty column for them would read as "never fired", so the
+    backtest grid and the History page's timeline leave them out and the grid's note names them
+    (owner, 2026-11-03: show when each specific trigger went off; leave out readiness, for which
+    there is no information). Empty when no window of the version was backtested: the views say
+    so already. `ss` is sim_before_start's output; `wv` the version's d["windows"] rows."""
+    if not len(wv):
+        return set()
+    names = {str(x) for x in wv["window_name"].dropna()}
+    spanned = {str(r.window_name) for r in wv.itertuples()
+               if pd.notna(getattr(r, "analysis_start", None)) or pd.notna(getattr(r, "analysis_end", None))}
+    tested = spanned | ({str(x) for x in ss["window_name"].dropna()} if len(ss) else set())
+    return (names - tested) if tested else set()
+
+
 def sim_after_note(n, vf_y):
     """The small note under a backtest when rows dated after the version's start were left out."""
     return (f"{n} simulated row{'' if n == 1 else 's'} dated after the version's start ({vf_y} or later) "
@@ -3394,6 +3412,10 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
                            version=str(r.version) if pd.notna(r.version) else "", fund=lk["fund"],
                            ann=lk["ann"], other=lk["other"], cerf=lk["cerf"],
                            partial=full.get((ed, wn)) is False))
+    # a window never backtested gets no column, unless a real activation sits on it
+    untested = [w for w in wins if w in untested_windows(ss, wv)
+                and not any(_loose(w, ev["win"]) for ev in events)]
+    wins = [w for w in wins if w not in untested]
     for ev in events:
         amt = "; ".join(f"{fund_label(x.fund_code)} {_m(x.amount_usd)}" for x in ev["fund"].itertuples()
                         if pd.notna(x.amount_usd))
@@ -3457,7 +3479,9 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
                     + (", " + w("{n} years analysed").format(n=int(n_years)) if n_years and pd.notna(n_years) else "")
                     + ("; " + w("the version took effect {d}, so from {y} on the rows show real activations only")
                        .format(d=esc(vf_txt), y=vf_y) if use_years else "") + ". "
-                    + (esc(w(sim_after_note(n_after, vf_y))) + " " if n_after else ""))
+                    + (esc(w(sim_after_note(n_after, vf_y))) + " " if n_after else "")
+                    + (w("Not backtested, so no column: {w}.").format(w=esc(", ".join(untested))) + " "
+                       if untested else ""))
         if n_after:   # the note, registered in every language (it is looked up above)
             _register_after_note(n_after, vf_y)
         hist = (f"<p class='meta'>{TBC(vnote)}"
