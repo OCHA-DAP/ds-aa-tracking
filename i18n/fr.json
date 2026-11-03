@@ -334,6 +334,7 @@
  "Current version of each framework. Pin colour = status; each red dot = one past activation. Shaded countries have at least one framework. Click a pin for detail (activation dates link to the announcement where one exists).": "Version actuelle de chaque cadre. Couleur de l’épingle = statut ; chaque point rouge = une activation passée. Les pays ombrés comptent au moins un cadre. Cliquez sur une épingle pour le détail (les dates d’activation renvoient à l’annonce lorsqu’elle existe).",
  "Current version of each operational framework; multi-country frameworks are split to one row per country. Click a column header to sort; type in the per-column boxes to filter.": "Version actuelle de chaque cadre opérationnel ; les cadres multi-pays sont répartis en une ligne par pays. Cliquez sur un en-tête de colonne pour trier ; tapez dans les cases de chaque colonne pour filtrer.",
  "Data and models": "Données et modèles",
+ "Data for programs and AI assistants, no password: <a href='llms.txt'>llms.txt</a>": "Données pour les programmes et les assistants d’IA, sans mot de passe : <a href='llms.txt'>llms.txt</a>",
  "Data sources": "Sources de données",
  "Data sources: {x}": "Sources de données : {x}",
  "Date": "Date",

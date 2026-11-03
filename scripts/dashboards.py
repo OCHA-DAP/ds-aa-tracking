@@ -100,7 +100,7 @@ def current_source(s):
     return re.sub(r"^yakubu-", "cerf-workbook-", re.sub(r"^julia-", "aa-workbook-", s))
 
 
-# the latest CERF sheet first: CERF's October 2026 co-financing tab replaces its June figures (D183)
+# the latest CERF sheet first: CERF's October 2026 co-financing tab replaces its June figures (D184)
 SOURCE_PRIORITY = [
     "cerf-workbook-cofinancing-oct2026",
     "cerf-workbook-prearranged-jun2026", "cerf-workbook-cofinancing-jun2026",
