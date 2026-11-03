@@ -729,7 +729,9 @@ def build(d, e, live, out, snapshot_at):
                 "OCHA-managed pre-arranged money. Past years: the yearly totals as reported for the year. "
                 "The current year (`source` co-financing-now): each framework's co-financing now, as the map "
                 "counts it: its yearly total, split by co-financer in the proportions its latest framework "
-                "document states, or the document's own lines where no total is recorded. `financier`: who "
+                "document states, or the document's own lines where no total is recorded; a framework whose "
+                "pre-arranged money was all released by an activation has none now (its co-financing stays "
+                "with its version in the database). `financier`: who "
                 "provides it (`not recorded` where no one is named). How much of it was disbursed is not "
                 "recorded.")
     yr_pre = pre.groupby(["year", "fund_code", "layer"])["amount_usd"].sum()
