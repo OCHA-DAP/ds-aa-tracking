@@ -2088,7 +2088,7 @@ def build_landing(page, d, e):
  {TB("<b>Keyboard.</b> Tab to a country name or a pin, Enter opens it, Escape goes back to the world; the table under the map lists the same frameworks. A dashed pin border = in development, a two-tone pin = being updated. <a href='accessibility.html'>Accessibility statement</a>.")}</p>
 <section class='fwt' id='fwt'>
  <div class='fwt-head'><h2>{T("Frameworks and allocations on the map")}</h2>
-  <button type='button' class='dl' onclick='fwCSV()'>{T("Download CSV")}</button></div>
+  {T("Download CSV").join(("<button type='button' class='dl' onclick='fwCSV()'>", "</button>"))}</div>
  <p class='fwt-cap' id='fwtcap'></p>
  <div class='fwt-scroll'><table class='fwtab' id='fwtab'></table></div>
  <p class='fwt-note' id='fwtfoot' hidden></p>
@@ -2116,10 +2116,18 @@ window.YEARS = {json.dumps({"first": YEAR_FIRST, "now": TODAY.year, "today": TOD
     # the open site's map: the same page without the figures it may not show
     if body.count("/*AA_L*/null") != 1 or body.count("<!--AA_TCOV-->") != 1:
         raise SystemExit("FATAL: the map's data or people-covered placeholder is not in its page exactly once")
+    # the open map's "Download CSV" is a link to the open layer's table, so a program reading the
+    # page finds a file behind it (owner, 2026-11-03); a click still downloads the table as the map
+    # shows it (fwCSV: the year and layers chosen). The development map keeps its button
+    csv_btn = f"<button type='button' class='dl' onclick='fwCSV()'>{T('Download CSV')}</button>"
+    csv_link = (f"<a class='dl' href='aa-frameworks.csv' download onclick='fwCSV(); return false;'>"
+                f"{T('Download CSV')}</a>")
+    if body.count(csv_btn) != 1:
+        raise SystemExit("FATAL: the map's Download CSV button is not in its page exactly once")
     page("index.html", "OCHA Anticipatory Action — portfolio",
          body.replace("/*AA_L*/null", json.dumps(countries, default=str), 1).replace("<!--AA_TCOV-->", cov_tile(t), 1),
          prod_body=body.replace("/*AA_L*/null", json.dumps(open_countries, default=str), 1)
-                       .replace("<!--AA_TCOV-->", cov_tile(t_open), 1))
+                       .replace("<!--AA_TCOV-->", cov_tile(t_open), 1).replace(csv_btn, csv_link, 1))
 
 
 LANDING_CSS = r"""
