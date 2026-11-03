@@ -1201,7 +1201,7 @@ def assemble(d, e):
     # the agency x sector split of each version's funding, per window (KB pages, sheets,
     # entered) — window_funding split rows; fund_source = pooled fund or financier
     fb = pd.read_sql(
-        """SELECT country_iso3, hazard, version, window_name,
+        """SELECT country_iso3, hazard, version, window_name, kind,
                   coalesce(fund_code, financier, 'unspecified') AS fund_source,
                   agency, sector, amount_usd, provenance
            FROM aa.v_window_funding_split
@@ -1428,6 +1428,11 @@ def assemble(d, e):
             # budget breakdown: KB funding_breakdown for this version, else sheet sector budget
             f_v = fb[(fb["country_iso3"] == c) & (fb["hazard"] == h)
                      & (fb["version"] == v.version)]
+            # the split is of the pre-arranged money, as on the framework page; an agency's own
+            # co-financing lines are listed apart (owner, 2026-11-03: the panel mixed them in with
+            # the funds, and its split total then exceeded the envelope)
+            co_v = f_v[f_v["kind"] == "cofinancing"] if "kind" in f_v else f_v.iloc[0:0]
+            f_v = f_v[f_v["kind"] != "cofinancing"] if "kind" in f_v else f_v
             fund_src = "kb"
             if not len(f_v):
                 p_v = psb[(psb["country_iso3"] == c) & (psb["hazard"] == h)
@@ -1489,6 +1494,9 @@ def assemble(d, e):
                              for x in by_fund.itertuples()],
                     "pair": [{"agency": _s(x.agency), "sector": _s(x.sector), "usd": float(x.amount_usd)}
                              for x in by_pair.itertuples()],
+                    "cofin": [{"from": _s(k), "usd": float(u)} for k, u in
+                              (co_v.groupby("fund_source")["amount_usd"].sum().sort_values(ascending=False).items()
+                               if len(co_v) else [])],
                 },
                 "admin_level": fm.get("admin_level") if isinstance(fm.get("admin_level"), int) else None,
                 "scope_raw": [str(x) for x in scope_raw],
@@ -3691,7 +3699,10 @@ function pillarBody(f, v){
     rows.push([tr8('Pre-arranged'), `${verPre(v) == null ? '—' : money(verPre(v))}${v.apy > 1 && verPre(v) != null ? apyMark(v.apy) + ` <span class='muted'>· ${esc(apyNote(v.apy))}</span>` : ''}${v.regional?` <span class='muted'>· ${esc(tr8('regional document total (all countries)'))}</span>`:''}${v.all_in===false?` <span class='muted'>· ${esc(tr8('split budget per window'))}</span>`:v.all_in===true?` <span class='muted'>· ${esc(tr8('all-in'))}</span>`:''}`]);
     // the document's own figure, where it differs from the envelope counted (or there is none)
     if(v.prearranged_doc!=null && (!(v.envelope > 0) || Math.abs(v.envelope - v.prearranged_doc) > 0.01*Math.max(v.envelope, v.prearranged_doc))) rows.push([tr8('In the framework document'), `${money(v.prearranged_doc)} <span class='muted'>${esc(tr8("the figure the document states; the tiles, the table and the Financing page count the envelope recorded for the version"))}${v.regional?' · '+esc(tr8('regional document total (all countries)')):''}</span>`]);
-    if(v.cofin) rows.push([tr8('Co-financing'), `${money(v.cofin)}${v.cofin_sources.length?` <span class='muted'>${esc(v.cofin_sources.join(', '))}</span>`:''}`]);
+    // the page's co-financing figure, else the document's co-financing lines (the split's, kept apart)
+    const coL = (v.funding && v.funding.cofin) || [], coT = v.cofin || coL.reduce((t, x) => t + x.usd, 0) || null;
+    const coS = v.cofin_sources.length ? v.cofin_sources : v.cofin ? [] : coL.map(x => fundName(x.from));
+    if(coT) rows.push([tr8('Co-financing'), `${money(coT)}${coS.length?` <span class='muted'>${esc(coS.join(', '))}</span>`:''}`]);
     if(f.tech) rows.push([tr8('OCHA role'), `<span class='badge b-tech'>${esc(tr8('technical support'))}</span> <span class='muted'>${esc(tr8('no funding commitment'))}</span>`]);
     return miniTable(rows) + fundingBlock(v);
   }
@@ -3851,13 +3862,16 @@ function triggersBlock(v){
 function fundName(x){ return x === 'cerf' ? 'CERF' : x === 'cbpf-unspecified' ? 'CBPF'
   : (window.FUNDLAB || {})[x] || (/^(cbpf|rhpf)(-[a-z]+)+$/.test(x || '') ? x.toUpperCase().replace(/-/g, ' ') : x); }
 function fundingBlock(v){
-  const F = v.funding; if(!F.agency.length && !F.sector.length && !F.fund.length) return '';
+  const F = v.funding, CO = F.cofin || []; if(!F.agency.length && !F.sector.length && !F.fund.length && !CO.length) return '';
   // budget sanity: the split rows (one source per version, v_window_funding_split) must not
   // add up to more than the version's envelope — a flag here is a genuine data problem
   const splitTot = F.fund.reduce((s,x)=>s+x.usd,0), env = v.envelope ?? v.prearranged_doc;
   const over = env != null && splitTot > env * 1.01;
-  let html = `<div class='small' style='margin:8px 0 4px'>${esc(tr8('Split total'))} <b>${money(splitTot)}</b>${env!=null?' ' + esc(tr8('of a {0} envelope', money(env))):' — ' + esc(tr8('no envelope recorded'))}${F.src==='sheet'?` <span class="muted">${esc(tr8('(tracking sheet)'))}</span>`:''}${over?`<span class='warntag' title='${esc(tr8('the agency × sector split adds up to more than the version envelope'))}'>${esc(tr8('split exceeds envelope'))}</span>`:''}</div>`;
+  // no split of the pre-arranged money (only co-financing lines): no split line either
+  let html = !F.fund.length ? '' : `<div class='small' style='margin:8px 0 4px'>${esc(tr8('Split total'))} <b>${money(splitTot)}</b>${env!=null?' ' + esc(tr8('of a {0} envelope', money(env))):' — ' + esc(tr8('no envelope recorded'))}${F.src==='sheet'?` <span class="muted">${esc(tr8('(tracking sheet)'))}</span>`:''}${over?`<span class='warntag' title='${esc(tr8('the agency × sector split adds up to more than the version envelope'))}'>${esc(tr8('split exceeds envelope'))}</span>`:''}</div>`;
   if(F.fund.length > 1) html += `<div class='small muted'>${esc(tr8('By fund:'))} ${F.fund.map(x=>`${esc(fundName(x.fund))} ${money(x.usd)}`).join(' · ')}</div>`;
+  // an agency's own co-financing: beside the split, never in it (the split is the pre-arranged money)
+  if(CO.length) html += `<div class='small muted'>${esc(tr8('Co-financing, not in the split:'))} ${CO.map(x=>`${esc(fundName(x.from))} ${money(x.usd)}`).join(' · ')}</div>`;
   const CW = Math.max(280, Math.min(560, (side.clientWidth || 420) - 36));
   const bars = (rows, label) => { const m = groupBy(rows, x=>x[label], x=>x.usd);
     return hbarsSVG(Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([k,u])=>({label:k, v:u})), {width:CW, fmt:money, label:tr8(label === 'agency' ? 'budget by agency' : 'budget by sector'), colorBy: label==='agency' ? 'a' : null, color:'#64748b'}); };
