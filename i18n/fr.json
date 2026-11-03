@@ -1801,5 +1801,10 @@
  "⚠️ <b>Work in progress.</b> Auto-generated from an internal knowledge base; figures are indicative, not authoritative.": "⚠️ <b>Travail en cours.</b> Généré automatiquement à partir d’une base de connaissances interne ; les chiffres sont indicatifs, sans valeur officielle.",
  "⚠️ <b>Work in progress.</b> This site is in active development and is auto-generated from an internal knowledge base. Details may be incomplete, out of date, or inaccurate — treat figures and statuses as indicative, not authoritative.": "⚠️ <b>Travail en cours.</b> Ce site est en cours de développement et est généré automatiquement à partir d’une base de connaissances interne. Les détails peuvent être incomplets, obsolètes ou inexacts — considérez les chiffres et les statuts comme indicatifs, sans valeur officielle.",
  "🛠 The current version of this framework is an in-development redesign — not yet endorsed. Details below describe the design being built; the last endorsed design is under <a href=\"#prev\">previous versions</a>.": "🛠 La version actuelle de ce cadre est une refonte en cours de développement — pas encore approuvée. Les détails ci-dessous décrivent la conception en cours ; la dernière conception approuvée figure sous <a href=\"#prev\">versions précédentes</a>.",
- "Not backtested, so no column: {w}.": "Sans backtest, donc sans colonne : {w}."
+ "Not backtested, so no column: {w}.": "Sans backtest, donc sans colonne : {w}.",
+ "no record to test this trigger against": "aucune donnée pour tester ce déclencheur",
+ "would not have activated": "ne se serait pas activé",
+ "All {n} events tested are listed, including those that would not have activated (hover a cell for the trigger's value).": "Les {n} événements testés figurent tous, y compris ceux qui n’auraient pas déclenché (survoler une case pour la valeur du déclencheur).",
+ "All {0} storms tested are listed, including those that would not have activated (hover a cell for the trigger's value).": "Les {0} tempêtes testées figurent toutes, y compris celles qui n’auraient pas déclenché (survoler une case pour la valeur du déclencheur).",
+ "the whole country, the areas above included": "tout le pays, zones ci-dessus comprises"
 }

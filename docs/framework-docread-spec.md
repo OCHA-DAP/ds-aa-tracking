@@ -45,12 +45,20 @@ one JSON file per version into this folder; the lead turns them into database ro
    `kind: cofinancing` with `financier` set.
 5. **Windows.** One row per distinct activation window/trigger component (template's counting
    rule). Use the doc's own window names. Each funding row names its window when the doc ties
-   money to a window.
+   money to a window. When the triggers cover different areas, give `scope_tiers`: one tier per
+   area, labelled by the triggers it serves, its admin names in `items`; a tier for the whole
+   country, the named areas included, is `"rest": true, "whole": true` (Vanuatu's observational
+   trigger; D190).
 6. **Backtest / historical analysis.** If the doc lists the years (or events/storms) in which the
    trigger would have activated in its historical analysis, record each as a
    `simulated_activations` row with its window, and record the analysed period
    (`analysis_start`/`analysis_end`) per window. Only what the doc states — a return period
    alone is not a list of years. Storm names / dates go in `event_label` / `event_date`.
+   When the doc lists every event it TESTED, met or not (a per-storm table such as Vanuatu's
+   Annex 2), also record each event per window in `tested_events`: `met` true / false, or null
+   when it could not be tested ("no record"); `value` and `unit` the trigger's indicator as the
+   table gives it. Every met event must fall in a `simulated_activations` year of its window
+   (D189). The loader re-enters them as a set (`aa.backtest_event`).
 7. **Dates.** `valid_from` = the endorsement / approval / signature date of THIS version as the doc
    or its cover states it (else the doc date, and say so). `valid_until` ONLY when the document
    states an end of validity/coverage; set `framework_version.valid_until_basis` to `stated`. If you
@@ -101,6 +109,8 @@ one JSON file per version into this folder; the lead turns them into database ro
   "funding_rows": [{"window": "|null", "kind": "prearranged|cofinancing", "fund": "CERF|...|null", "financier": "|null",
                     "agency": "|null", "sector": "|null", "amount_usd": 0, "currency": "USD", "page": 0}],
   "simulated_activations": [{"window": "...", "event_year": 0, "event_date": "YYYY-MM-DD|null", "event_label": "|null", "page": 0}],
+  "tested_events": [{"window": "...", "event_year": 0, "event_label": "...", "met": "true|false|null", "value": 0, "unit": "...", "note": "|null", "page": 0}],
+  "scope_tiers": [{"label": "the triggers this area is for", "items": ["admin names"], "rest": false, "whole": false}],
   "partners": [{"name": "...", "acronym": "|null", "org_type": "UN|INGO|NNGO|government|Red Cross|other", "roles": "..."}],
   "evidence": [{"field": "path.to.value", "value": "...", "page": 0, "quote": "verbatim"}],
   "issues": ["mismatches, ambiguities, things the lead must decide"],
