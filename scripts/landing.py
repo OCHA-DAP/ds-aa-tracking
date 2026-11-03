@@ -2177,7 +2177,7 @@ LANDING_CSS = r"""
 .yearbar button:focus-visible, .backbtn:focus-visible, table.fwtab .sortbtn:focus-visible { outline:2px solid var(--ocha); outline-offset:2px; }
 /* reduced motion (WCAG 2.3.3): no zoom morph (animate()), no sliding panel, no fades */
 @media (prefers-reduced-motion: reduce) {
-  .maprow, .maprow .side, .maprow.open .side, .cty, #adm, .labelpane, .gtiles, .maplegend, .iconbox, .fcardx, .pillar { transition:none !important; }
+  .maprow, .maprow .side, .maprow.open .side, .cty, #adm, .labelpane, .gtiles, .gtiles .tile > *, .gtiles .gcap, .maplegend, .iconbox, .fcardx, .pillar { transition:none !important; }
   .iconbox:hover { transform:none; }
 }
 .mapbox { background:linear-gradient(180deg,#eef3f8 0%,#e9eff5 100%); border-radius:12px; box-shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px -12px rgba(16,24,40,.18); position:relative; overflow:hidden; border:1px solid #e6eaef; height:var(--maph); }
@@ -2337,7 +2337,7 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
 .drv { display:inline-block; margin-left:5px; padding:0 5px; border:1px dashed #b45309; border-radius:6px; font-size:10px; font-weight:600; color:#b45309; vertical-align:1px; cursor:help; }
 /* six figures in one row: three as at now (frameworks, pre-arranged, people covered), then three
    to date (activations, released, people reached); the labels wrap inside equal columns */
-.gtiles { position:relative; transition: opacity .3s; display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); gap:10px; }
+.gtiles { position:relative; display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); gap:10px; }
 .gtiles .tile { min-width:0; padding:10px 14px; }
 .gtiles .tile .k { display:flex; align-items:center; gap:7px; font-size:15px; font-weight:700; color:#0f2540; line-height:1.2; margin-bottom:3px; }
 .gtiles .tile .k svg { width:22px; height:22px; flex:0 0 auto; fill:none; stroke:var(--ocha); stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
@@ -2398,7 +2398,13 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
 .hasdef:hover::after, .hasdef:focus::after { display:block; }
 .maplegend .deflink { display:block; margin-top:6px; font-size:12px; color:var(--ocha); text-decoration:none; } .maplegend .deflink:hover { text-decoration:underline; }
 .sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; }
-.gtiles.global { opacity:.72; } .gtiles.global .tile { background:#f6f8fa; border-style:dashed; box-shadow:none; }
+/* a country open: the world's tiles fade. The fade is on their parts, not on the row: opacity on
+   the row made it a layer of its own, painted under the map card that follows it, so a tile's
+   note opened behind the map, and at the row's 72% (owner, 2026-11-03). The note keeps full
+   strength; the background and border carry the fade in their colours. */
+.gtiles.global .tile { background:rgba(246,248,250,.72); border-color:rgba(230,234,239,.72); border-style:dashed; box-shadow:none; }
+.gtiles .gcap, .gtiles .tile > :not(.tnote) { transition:opacity .3s; }
+.gtiles.global .gcap, .gtiles.global .tile > :not(.tnote) { opacity:.72; }
 .gtiles.global .tile .v { font-size:18px; color:#475569; } .gtiles.global .tile .k { color:#475569; } .gtiles.global .tile .k svg { stroke:#64748b; } .gtiles.global .gcap { color:#b45309; font-weight:700; }
 .ctiles { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin:8px 0 4px; }
 .ctiles .ctile { background:#eef5fc; border:1px solid #cfe1f3; border-radius:8px; padding:6px 8px; }
