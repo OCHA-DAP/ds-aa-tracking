@@ -114,9 +114,10 @@ table.data tr:hover td { background:#f2f7fc; }
 .xscroll { overflow-x:auto; }   /* a wide table scrolls inside its box, never the page */
 input.filter { padding:6px 10px; width:340px; margin:10px 0; border:1px solid #bbb;
                border-radius:4px; font-size:13px; }
-button.dl { padding:6px 12px; border:1px solid #2a78d6; color:#1d5aa8; background:#fff;
+button.dl, a.dl { padding:6px 12px; border:1px solid #2a78d6; color:#1d5aa8; background:#fff;
             border-radius:4px; font-size:12.5px; cursor:pointer; white-space:nowrap; }
-button.dl:hover { background:#eef4fc; }
+a.dl { display:inline-block; text-decoration:none; line-height:normal; }
+button.dl:hover, a.dl:hover { background:#eef4fc; }
 .card { background:#fff; border:1px solid #e0e0e0; border-radius:6px; padding:16px 20px;
         margin:14px 0; }
 .badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11.5px;
@@ -183,6 +184,8 @@ ADMIN_DIR = "admin"
 DEV_DIR = "dev"
 OPEN_PAGES = ("index.html", "definitions.html", "accessibility.html")
 OPEN_META = '<meta name="aa-site" content="open">'   # publish.sh serves a page unencrypted only with it
+# the open pages' pointer to the open layer, in their visible text (scripts/llm_layer.py)
+LLMS_LINE = "Data for programs and AI assistants, no password: <a href='llms.txt'>llms.txt</a>"
 
 _BANNER_TEXT = TB("<b>OCHA internal product under development</b>, subject to change without warning. "
                   "The figures may be incorrect and should not be used. Questions and corrections: "
@@ -639,6 +642,9 @@ def write_site():
                              "title='Machine-readable data, no password'>" if "llms.txt" in open_files else "")
     map_alt = (open_head + "\n<link rel='alternate' type='text/markdown' href='aa-map.md' "
                "title='This page as Markdown'>") if "aa-map.md" in open_files else open_head
+    # and in their visible text, at the top: a tool that reads a page as text drops the head's links
+    # (a web-fetch reader never found the files, 2026-11-03; owner: "yup do the changes")
+    llms_line = (" · " + TB(LLMS_LINE)) if "llms.txt" in open_files else ""
     # no database wording on a public page (owner, 2026-10-27): the data date, when a snapshot
     meta = TF("Generated {stamp}", stamp=stamp) + (" · " + TF("data snapshot {at} UTC", at=SNAPSHOT_AT)
                                                     if SNAPSHOT_AT else "")
@@ -678,10 +684,11 @@ def write_site():
             if name == "index.html":
                 if name not in _OPEN_BODY:      # never the development map by default
                     raise SystemExit("FATAL: the map gave no body for the open site (page(..., prod_body=))")
-                doc = public_doc(name, title, _OPEN_BODY[name], BANNER, record=False, head=map_alt)
+                doc = public_doc(name, title, _OPEN_BODY[name], BANNER, record=False, head=map_alt,
+                                 meta=meta + llms_line)
             elif name in OPEN_PAGES:            # words only, no figures: the same page as on dev/
                 doc = public_doc(name, title, _OPEN_BODY.get(name, body), BANNER, record=False,
-                                 head=open_head)
+                                 head=open_head, meta=meta + llms_line)
             else:
                 doc = public_doc(name, title, _soon_body(name), BANNER, record=False, head=OPEN_META,
                                  policy=False, meta="")

@@ -300,6 +300,7 @@
  "Current frameworks, by activation record": "Marcos actuales, según su historial de activación",
  "Current frameworks, by what their triggers watch": "Marcos actuales, según lo que vigilan sus disparadores",
  "Data and models": "Datos y modelos",
+ "Data for programs and AI assistants, no password: <a href='llms.txt'>llms.txt</a>": "Datos para programas y asistentes de IA, sin contraseña: <a href='llms.txt'>llms.txt</a>",
  "Data sources": "Fuentes de datos",
  "Data sources: {x}": "Fuentes de datos: {x}",
  "Dec": "dic",
