@@ -100,7 +100,7 @@ def current_source(s):
     return re.sub(r"^yakubu-", "cerf-workbook-", re.sub(r"^julia-", "aa-workbook-", s))
 
 
-# the latest CERF sheet first: CERF's October 2026 co-financing tab replaces its June figures (D184)
+# the latest CERF sheet first: CERF's October 2026 co-financing tab replaces its June figures (D187)
 SOURCE_PRIORITY = [
     "cerf-workbook-cofinancing-oct2026",
     "cerf-workbook-prearranged-jun2026", "cerf-workbook-cofinancing-jun2026",
@@ -1377,7 +1377,7 @@ def cofinancing_now(d, cof, cy):
     Co-financing is part of what a framework has pre-arranged: a live framework whose LATEST
     version's pre-arranged money was all released by an activation (a Country or Regional Fund
     envelope, D134) and that holds no pre-arranged money now has no co-financing now either. Its
-    co-financing stays recorded on its version (D185: Burkina Faso floods). A pooled envelope spent
+    co-financing stays recorded on its version (D188: Burkina Faso floods). A pooled envelope spent
     under an earlier version does not count (Nigeria floods, Afghanistan drought: their new versions
     have envelopes of their own), nor does a retired framework, whose co-financing the Financing page
     keeps (D150). Rows: country_iso3, hazard, version, who, detail (the line as recorded), amount_usd."""
