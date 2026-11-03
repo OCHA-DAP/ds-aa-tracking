@@ -20,6 +20,10 @@ name their layers explicitly either way):
     each: Map ↔ Financing ↔ History; and on the pages' opening layers (current frameworks), where
     a framework since retired still brings what it released (owner, 2026-10-30)
   * people reached, CERF allocations of framework activations to date: Map ↔ Activities
+  * the open layer (scripts/llm_layer.py, the files as written) ↔ the OPEN map (its own copy, its
+    tiles as it opens): every headline figure recomputed from the files' rows, each framework's
+    pre-arranged, people-covered and co-financing figure, and the figures aa-map.md states
+    (open_layer(); llm_layer runs it while it writes the files, and says the result in llms.txt)
 Deliberate differences are not checked here — they are labelled on the pages: a past year on the
 map shows the frameworks as they stood then (Financing classifies pre-arranged money by today's
 status, and with the current-frameworks layer off a past year's releases differ too: labelled on the
@@ -42,9 +46,136 @@ def _fmt(v, kind):
     return f"${v:,.0f}" if kind == "usd" else f"{v:,.0f}"
 
 
+def open_layer(out, om) -> tuple[int, list[str]]:
+    """The open layer's files (`out`: the directory they were written to) against the open map's own
+    figures (`om`: landing.OPEN_MAP). Recomputes every headline tile from the files' rows by the
+    map's rule (landing.tile_figures, _flow_acts), compares each framework's figures, and checks that
+    aa-map.md states the headline figures. Returns (comparisons, mismatch lines); KEY["open"] keeps
+    them for check()."""
+    import json
+    from pathlib import Path
+    out = Path(out)
+    T = {}
+    for n in ("frameworks", "activations", "prearranged-funding", "cofinancing"):
+        f = out / f"aa-{n}.json"
+        T[n] = json.loads(f.read_text())["rows"] if f.exists() else None
+    t, ad, y = om["tiles"], om.get("adhoc") or {}, str(om["year"])
+    bad, n = [], [0]
+
+    def cmp(figure, a, b, kind="usd"):
+        n[0] += 1
+        a0, b0 = (0.0 if x is None else float(x) for x in (a, b))
+        if math.isnan(a0) or math.isnan(b0) or abs(a0 - b0) > (1.0 if kind == "usd" else 0.5):
+            bad.append(f"{figure} — open files {_fmt(a, kind)}, open map {_fmt(b, kind)}")
+
+    missing = [k for k, v in T.items() if v is None]
+    if missing:
+        bad.append(f"open layer: no {', '.join('aa-' + k for k in missing)} to compare")
+        return n[0], bad
+    fw = T["frameworks"]
+    layers = {(r["country_iso3"], r["hazard"]): set(r["map_layers"] or []) for r in fw}
+    on = [r for r in fw if "framework" in layers[(r["country_iso3"], r["hazard"])]]
+    pairs = {(r["country_iso3"], r["hazard"]) for r in on}
+    s_ = lambda rows, k: sum(r[k] or 0 for r in rows)      # noqa: E731
+    # stock tiles
+    cmp("frameworks", len(on), t["n_fw"], "n")
+    cmp("their countries", len({c for c, _ in pairs}), t["n_ctry"], "n")
+    for k, lc in (("n_active", "active"), ("n_upd", "updating"), ("n_dev", "development")):
+        cmp(f"frameworks {lc}", sum(r["lifecycle"] == lc for r in on), t[k], "n")
+    cmp("pre-arranged now", s_(on, "prearranged_usd"), t["pre"])
+    cmp("pre-arranged now, CERF", s_(on, "prearranged_cerf_usd"), t["pre_cerf"])
+    cmp("pre-arranged now, other than CERF", s_(on, "prearranged_usd") - s_(on, "prearranged_cerf_usd"),
+        t["pre_pooled"] + t["pre_all"])
+    cmp("pre-arranged now, aa-prearranged-funding's current-year rows",
+        sum(r["amount_usd"] or 0 for r in T["prearranged-funding"] if str(r["year"]) == y
+            and r["source"] == "framework-record" and (r["country_iso3"], r["hazard"]) in pairs), t["pre"])
+    cmp("co-financing now", s_(on, "cofinancing_usd"), t["cofin"])
+    cmp("frameworks with co-financing", sum(r["cofinancing_usd"] is not None for r in on), t["n_cofin"], "n")
+    cmp("co-financing now, aa-cofinancing's current-year rows",
+        sum(r["amount_usd"] or 0 for r in T["cofinancing"] if str(r["year"]) == y
+            and (r["country_iso3"], r["hazard"]) in pairs), t["cofin"])
+    cmp("people covered now", s_(on, "people_covered"), t["covered"], "n")
+    cmp("frameworks with people covered", sum(bool(r["people_covered"]) for r in on), t["n_cov"], "n")
+    # each framework, against the map's own record of it
+    mf = {(iso, f["hazard"]): f for iso, cd in om["countries"].items() for f in cd["fws"]}
+    import landing
+    for r in fw:
+        f = mf.get((r["country_iso3"], r["hazard"]))
+        lab = f"{r['country_iso3']} {r['hazard']}"
+        if f is None:
+            bad.append(f"{lab} — in aa-frameworks, not on the open map")
+            continue
+        cmp(f"{lab} pre-arranged now", r["prearranged_usd"], f.get("pre_now") if "framework" in f["layers"]
+            else r["prearranged_usd"])
+        cmp(f"{lab} people covered", r["people_covered"], f.get("covered"), "n")
+        cmp(f"{lab} co-financing now", r["cofinancing_usd"], landing.cof_of(f))
+    if len(mf) != len(fw):
+        bad.append(f"pairs — {len(fw)} in aa-frameworks, {len(mf)} on the open map")
+
+    # flow tiles: the year's activations, by the map's rule (_flow_acts)
+    def flows(kind):
+        acts = []
+        for a in T["activations"]:
+            if str(a["event_date"] or "")[:4] != y or a["event_type"] != kind:
+                continue
+            L = layers.get((a["country_iso3"], a["hazard"]), set())
+            own = "framework" if "framework" in L else "retired" if "retired" in L else None
+            if kind == "adhoc_aa" or a["replaced_framework"] or own is not None:
+                acts.append(a)
+        rows = [x for a in acts for x in a["funding"]]
+        cerf = [x for x in rows if x["fund_code"] == "cerf" and not x["allocation_shared"]]
+        tgt = [x for x in cerf if x["people_reached"] is None and x["people_planned"]]
+        seen, pool = set(), []
+        for x in rows:
+            if x["fund_code"] != "cerf" and not (x["allocation_code"] and x["allocation_code"] in seen):
+                seen.add(x["allocation_code"])
+                pool.append(x)
+        ptgt = [x for x in pool if x["people_planned"]]
+        return {"n_act": len(acts), "released": s_(rows, "amount_usd"),
+                "released_cerf": sum(x["amount_usd"] or 0 for x in rows if x["fund_code"] == "cerf"),
+                "refund": s_(rows, "refund_usd"), "prov": sum(x["amount_usd"] or 0 for x in rows if x["provisional"]),
+                "reached": s_(cerf, "people_reached"), "n_rep": sum(x["people_reached"] is not None for x in cerf),
+                "targeted": s_(tgt, "people_planned"), "n_tgt": len(tgt),
+                "ptargeted": s_(ptgt, "people_planned"), "n_ptgt": len(ptgt)}
+    for kind, tiles, what in (("framework_aa", t, "framework activations"), ("adhoc_aa", ad, "non-framework allocations")):
+        if not tiles:
+            continue
+        g = flows(kind)
+        for k, unit in (("n_act", "n"), ("released", "usd"), ("released_cerf", "usd"), ("refund", "usd"),
+                        ("prov", "usd"), ("reached", "n"), ("n_rep", "n"), ("targeted", "n"), ("n_tgt", "n"),
+                        ("ptargeted", "n"), ("n_ptgt", "n")):
+            cmp(f"{what} {y}: {k}", g[k], tiles.get(k), unit)
+
+    # aa-map.md states the headline figures as the map shows them
+    md = (out / "aa-map.md").read_text() if (out / "aa-map.md").exists() else ""
+    for figure, text in (("pre-arranged now", f"${t['pre']:,.0f}"), ("people covered", f"{int(t['covered']):,}"),
+                         ("released this year", f"${t['released']:,.0f}"),
+                         ("co-financing now", f"${t['cofin']:,.0f}" if t["n_cofin"] else None)):
+        n[0] += 1
+        if text and text not in md:
+            bad.append(f"aa-map.md does not state the {figure} the map shows ({text})")
+    KEY["open"] = (n[0], bad)
+    return n[0], bad
+
+
+def _report_open() -> None:
+    """The open layer's comparisons (open_layer), in the publish run's summary."""
+    if "open" not in KEY:
+        return
+    n, bad = KEY["open"]
+    if not bad:
+        print(f"  figure check (open layer): the open files agree with the open map ({n} comparisons)")
+        return
+    for b in bad[:25]:
+        print(f"::warning::figure check (open layer): {b}")
+    print(f"::warning::figure check (open layer): {len(bad)} of {n} figures of the open files disagree with "
+          "the open map — scripts/figure_check.py open_layer() says what each compares")
+
+
 def check() -> None:
     """Compare the shared figures; print a summary line, or one ::warning:: per mismatch."""
     import landing
+    _report_open()
     need = ("map", "financing", "history", "activities", "fw")
     gone = [k for k in need if k not in KEY]
     if gone:

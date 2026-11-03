@@ -9,8 +9,12 @@ put the data live for the one page that is actually going live ... the map one. 
 other data live later"). Opening a page (adding it to OPEN_PAGES) puts its data live with it.
 
 The map (index.html), open since 2026-11-01:
-- llms.txt                the index: what the site is, the caveat, the counting rules, every file
-- aa-map.md               the map in text: its headline figures as it opens, its frameworks
+- llms.txt                the index: what the site is, the caveat, the counting rules, every file,
+                          the dictionary of the map's data, and the result of the figure check
+- aa-map.md               the map in text: its headline figures as it opens, each with the map's own
+                          note on it (quoted, so a change to a note follows), its frameworks
+- aa-map-data.json        the open map's own data, as its page embeds it (without the drawing):
+                          whatever the map shows is in it, without this module knowing of it
 - aa-<name>.json / .csv   frameworks, versions, activations, prearranged-funding, cofinancing,
                           funds: the frameworks the open map shows, with its figures. Every row
                           carries every column; the money rows carry the map's layer (current /
@@ -26,6 +30,16 @@ aa-trigger-timelines, aa-trigger-windows and aa-windows (Model), aa-simulated-ac
 (historical activations), and with the framework pages fw-<iso3>-<hazard>.md, the structured reads
 of the framework documents doc-<kb_framework>-<version>.md, their full texts pdf-<sha256>.txt and
 llms-full.txt.
+
+Kept in step with the map, as the data and the site change (owner, 2026-11-02: "make sure the
+LLM stuff is always up to date as I make edits to the site, but even more importantly that it
+stays up to date as the data itself is updated"): the files are written in the same build as the
+map, from the map's own data, on every publish (nightly, on each push to main, from the admin's
+Publish changes); figure_check.open_layer() recomputes every headline figure and each framework's
+figures from the files as written and compares them with the open map's (a mismatch is a warning
+in the publish run, and llms.txt says so); _map_field_alarm() warns when the map's data gains a
+field open_map_fields.py does not describe, or the map a tile aa-map.md does not state; and the
+build warns when a page is opened whose data no file carries.
 
 A reader that knows nothing about the site has to be able to use it (tested 2026-10-09 with
 readers given only the URL): the figures agree across files to the dollar, a coded window name
@@ -144,6 +158,7 @@ LAYER = {"c": "current", "r": "retired", "a": "non_framework"}
 MAP = "index.html"
 HOME = {
     "map": (MAP,),                                         # aa-map.md
+    "map-data": (MAP,),                                    # aa-map-data.json: the map's own data
     "frameworks": (MAP, "fw"), "versions": (MAP, "fw"), "activations": (MAP, "fw"),
     "prearranged-funding": (MAP, "dash-funding.html"), "cofinancing": (MAP, "dash-funding.html"),
     "funds": (MAP, "dash-funding.html"),
@@ -500,8 +515,20 @@ def build(d, e, live, out, snapshot_at):
                 "page_markdown": SITE_URL + f"fw-{r.country_iso3.lower()}-{r.hazard}.md" if page else None}
                if on("documents") else {}),
         })
+    # the pairs the map draws only for a non-framework allocation have no registry row: one each,
+    # so the table lists every pair on the map
+    have = {(x["country_iso3"], x["hazard"]) for x in fw_rows}
+    for (c, h), f in sorted(map_fw.items()):
+        if (c, h) not in have:
+            cd = om["countries"][c]
+            fw_rows.append({"country_iso3": c, "country_name": cd.get("name"), "region": cd.get("region"),
+                            "hazard": h, "people_covered": _cell(f.get("covered")),
+                            "cofinancing_usd": _cell(landing.cof_of(f)), "map_layers": f.get("layers") or None})
+    fw_rows.sort(key=lambda x: (x["country_name"] or "", x["hazard"]))
     write_table("frameworks", fw_rows,
-                "The frameworks on the map: one row per (country, hazard) pair the open map shows, "
+                "The frameworks on the map: one row per (country, hazard) pair the open map shows (a pair "
+                "drawn only for a non-framework allocation has no framework: its lifecycle and versions are "
+                "blank), "
                 "with its lifecycle, latest version, the return period of that version as the map's table "
                 "shows it, the pre-arranged funding in place now (`prearranged_usd`, all funds; "
                 "`prearranged_cerf_usd` its CERF part; the envelope of `prearranged_version`, counted "
@@ -821,14 +848,21 @@ def build(d, e, live, out, snapshot_at):
     if on("map"):
         (out / "aa-map.md").write_text(_map_md(om, fw_rows, a_rows, snapshot_at, stamp))
         written.add("aa-map.md")
-        # the tables against the map's own tiles (a difference is a bug here, not on the map)
-        t = om["tiles"]
-        fwl = [x for x in fw_rows if "framework" in (x["map_layers"] or [])]
-        for what, mine_, theirs in (("pre-arranged now", sum(x["prearranged_usd"] or 0 for x in fwl), t["pre"]),
-                                    ("people covered", sum(x["people_covered"] or 0 for x in fwl), t["covered"]),
-                                    ("frameworks", len(fwl), t["n_fw"])):
-            if round(mine_) != round(theirs):
-                print(f"::warning::open layer: {what} {mine_:,.0f} in aa-frameworks, {theirs:,.0f} on the open map")
+    if on("map-data"):
+        (out / "aa-map-data.json").write_text(_map_data(om, snapshot_at, stamp))
+        written.add("aa-map-data.json")
+    if on("map") or on("map-data"):
+        _map_field_alarm(om)
+
+    # ---- the withheld figures: none may be left in a live file (the build stops). The map's data
+    # file is the open copy, which open_map_countries already cleared: checked all the same
+    leak = [f"{c} {h}" for (c, h), f in map_fw.items()
+            if gone(c, h, f.get("covered"))
+            or any(gone(c, h, v.get("target_people")) for v in f.get("versions") or [])
+            or any(gone(c, h, x[1]) for x in (f.get("hist") or {}).get("cov") or [])]
+    if leak and on("map-data"):
+        raise SystemExit(f"FATAL: open layer: the map's data carries a people figure from an unpublished "
+                         f"framework document ({', '.join(leak)})")
 
     # ---- the withheld figures: none may be left in a live file (the build stops)
     for rows, cols in ((fw_rows, ("people_covered",)), (v_rows, ("target_people",))):
@@ -836,6 +870,18 @@ def build(d, e, live, out, snapshot_at):
             if any(gone(x["country_iso3"], x["hazard"], x.get(c)) for c in cols):
                 raise SystemExit(f"FATAL: open layer: {x['country_iso3']} {x['hazard']} carries a people figure "
                                  "from an unpublished framework document")
+
+    # ---- the figure check: the files as written against the open map's own figures (figure_check;
+    # a mismatch is a warning in the publish run, and llms.txt says so)
+    n_cmp, bad = 0, []
+    if on("map"):
+        import figure_check
+        n_cmp, bad = figure_check.open_layer(out, om)
+    # an open page whose data no file carries (a page opened before its data was given a file)
+    for pg in sorted(live - WORDS_ONLY):
+        if not any(pg in h for h in HOME.values()) and not pg.startswith("fw-"):
+            print(f"::warning::open layer: {pg} is served without a password, but no file of the open layer "
+                  f"carries its data (llm_layer.HOME)")
 
     # ---- llms.txt, llms-full.txt, robots.txt, sitemap.xml
     stamp_line = f"Data snapshot {snapshot_at} UTC; files generated {stamp}." if snapshot_at else f"Files generated {stamp}."
@@ -849,15 +895,29 @@ def build(d, e, live, out, snapshot_at):
            f"their addresses a \"Coming soon\" page links to the development version of the site, behind a "
            f"password. These files carry the data of the open pages, and only theirs (today: the map's); the "
            f"data of the other pages will be added as those pages open. They are published openly on purpose: "
-           f"they are the interface for programs and AI assistants, need no password and carry the same "
-           f"figures as the map. Every file is regenerated from the database with each nightly publish. The "
-           f"pages read in English, French and Spanish; these files are in English.\n",
+           f"they are the interface for programs and AI assistants and need no password. Every file is "
+           f"regenerated from the database with each publish (nightly, and whenever the site or its data "
+           f"changes), in the same build as the map. The pages read in English, French and Spanish; these "
+           f"files are in English.\n",
+           (f"**Checked against the map.** At this build, every figure here was compared with the map's own "
+            f"({n_cmp} comparisons: each headline figure recomputed from the tables, each framework's figures, "
+            f"the figures aa-map.md states): all agree.\n" if on("map") and not bad else
+            f"**Checked against the map: {len(bad)} of {n_cmp} figures disagree at this build.** The map's "
+            f"own figures are those of aa-map.md and aa-map-data.json; the tables below may be off for: "
+            + "; ".join(bad[:10]) + (" (and more)" if len(bad) > 10 else "") + ".\n" if on("map") else ""),
            rules]
     idx.append("## The map\n")
     if on("map"):
         idx.append(f"- [The map in text]({SITE_URL}aa-map.md): its headline figures as it opens (pre-arranged "
                    f"money, co-financing, people covered, this year's activations and the people reached or "
-                   f"targeted), its frameworks and this year's activations.")
+                   f"targeted), with the map's own notes on them, its frameworks and this year's activations.")
+    if on("map-data"):
+        idx.append(f"- [The map's own data]({SITE_URL}aa-map-data.json) (JSON, large): exactly what the map's "
+                   f"page carries, without the drawing: every country, framework, version and activation, the "
+                   f"country panels (trigger tables and windows, backtests, budget splits, partners, learning "
+                   f"documents, sub-grantees) and the year selector's past years, with the headline figures "
+                   f"(`headline`, `headline_non_framework`). Every field is described under \"The map's data\" "
+                   f"below. The tables are easier to read; this file has everything the map shows.")
     if portfolio:
         idx.append(f"- [Portfolio overview]({SITE_URL}aa-portfolio.md): every framework with its lifecycle, "
                    f"latest version and envelope; the annual pre-arranged and released series.")
@@ -894,6 +954,9 @@ def build(d, e, live, out, snapshot_at):
     for name, desc, cols in files:
         idx.append(f"- [aa-{name}.json]({SITE_URL}aa-{name}.json) · [CSV]({SITE_URL}aa-{name}.csv): {desc} "
                    f"Columns: {', '.join(cols)}.")
+    if on("map-data"):
+        idx.append("\n## The map's data (aa-map-data.json)\n")
+        idx.append(_map_dictionary(om))
     idx.append("\n## Vocabulary\n")
     idx.append(_vocabulary(has))
     idx.append("\n## Related\n\n- Code and schema (public repository): https://github.com/OCHA-DAP/ds-aa-tracking\n"
@@ -1054,38 +1117,36 @@ def _map_md(om, fw_rows, a_rows, snapshot_at, stamp):
                f"layers can be worked out from the data files listed in {SITE_URL}llms.txt (pre-arranged "
                f"money per year in aa-prearranged-funding, every activation in aa-activations), with the "
                f"counting rules given there.\n")
-    out.append(f"## Headline figures ({y}, as of today)\n")
+    out.append(f"## Headline figures ({y}, as of today)\n\nEach figure as the map's tile shows it, to the "
+               "dollar, followed by the map's own note on it (the text its tile shows on hover).\n")
+    notes = om.get("notes") or {}
+    note = lambda tid: f"\n  - *The map's note:* {notes[tid]}" if notes.get(tid) else ""      # noqa: E731
     funds = lambda cerf, pooled, other=0: "; ".join(x for x in (     # noqa: E731
         cerf and f"CERF {_m(cerf)}", pooled and f"Country and Regional Funds {_m(pooled)}",
         other and f"not split by fund {_m(other)}") if x)
     lines = [f"- **Frameworks: {t['n_fw']}** in {t['n_ctry']} countries on the map today: {t['n_active']} "
-             f"active, {t['n_upd']} being updated, {t['n_dev']} in development."]
+             f"active, {t['n_upd']} being updated, {t['n_dev']} in development." + note("t-fw")]
     if t["n_fw"]:
         twice = sorted({f"{name} {'tropical cyclone' if hz == 'storm' else hz.replace('_', ' ')}"
                         for _, name, hz, _ in t["apy"]})
-        lines.append(f"- **Pre-arranged now: {_m(t['pre'])}** ({funds(t['pre_cerf'], t['pre_pooled'], t['pre_all'])}): "
-                     "funding arranged ahead of possible activations for the frameworks shown, those being "
-                     "updated or developed included, rather than funding already released."
-                     + (f" It counts the CERF envelope once per activation for the frameworks allowing two "
-                        f"activations a year ({', '.join(twice)})." if twice else ""))
+        lines.append(f"- **Pre-arranged now: {_m(t['pre'])}** ({funds(t['pre_cerf'], t['pre_pooled'], t['pre_all'])})"
+                     + (f"; the CERF envelope counted once per activation for {', '.join(twice)}" if twice else "")
+                     + "." + note("t-pre"))
         lines.append(f"- **Co-financing pre-arranged now: {_m(t['cofin']) if t['n_cofin'] else 'none recorded'}**"
-                     + (f", recorded for {t['n_cofin']} of the {t['n_fw']} frameworks shown: funding outside the "
-                        f"OCHA-managed pooled funds, additional to the {_m(t['pre'])} pre-arranged (a missing figure "
-                        f"does not mean there is none)." if t["n_cofin"] else "."))
-        lines.append(f"- **People covered now: {n(t['covered'])}**, the combined number of people the current "
-                     f"frameworks plan to assist if activated (planned coverage, not people reached); figures for "
-                     f"{t['n_cov']} of the {t['n_fw']} frameworks shown.")
+                     + (f", recorded for {t['n_cofin']} of the {t['n_fw']} frameworks shown" if t["n_cofin"] else "")
+                     + "." + note("t-cof"))
+        lines.append(f"- **People covered now: {n(t['covered'])}**, figures for {t['n_cov']} of the {t['n_fw']} "
+                     f"frameworks shown." + note("t-cov"))
     if t["n_act"]:
-        notes = [x for x in (t["refund"] and f"net of {_m(t['refund'])} returned after activations stopped",
-                             t["prov"] and f"{_m(t['prov'])} of it estimated from recent activations not yet "
-                                           f"recorded in OCHA's grant management system",
-                             t["n_nousd"] and f"{t['n_nousd']} of the {t['n_act']} have no amount recorded") if x]
+        extra = [x for x in (t["refund"] and f"{_m(t['refund'])} returned after activations stopped, deducted",
+                             t["prov"] and f"{_m(t['prov'])} of it estimated, not yet in OCHA's grant management system",
+                             t["n_nousd"] and f"{t['n_nousd']} of the {t['n_act']} with no amount recorded") if x]
         lines.append(f"- **Activations in {y}: {_m(t['released'])} released in {t['n_act']} framework "
                      f"activation{'s' if t['n_act'] != 1 else ''}** "
                      f"({funds(t['released_cerf'], t['released'] - t['released_cerf'])})"
-                     + (f"; {'; '.join(notes)}" if notes else "") + ".")
+                     + (f"; {'; '.join(extra)}" if extra else "") + "." + note("t-act"))
     else:
-        lines.append(f"- **Activations in {y}: none** on the current-frameworks layer.")
+        lines.append(f"- **Activations in {y}: none** on the current-frameworks layer." + note("t-act"))
     est = t["reached"] + t["targeted"] + t["ptargeted"]
     if t["n_rep"] or t["n_tgt"] or t["n_ptgt"]:
         parts = [x for x in (t["n_rep"] and f"{n(t['reached'])} reported reached by CERF for {t['n_rep']} "
@@ -1094,13 +1155,11 @@ def _map_md(om, fw_rows, a_rows, snapshot_at, stamp):
                              t["n_tgt"] and f"{n(t['targeted'])} planned or targeted for {t['n_tgt']} CERF "
                                             f"allocation{'s' if t['n_tgt'] != 1 else ''} awaiting reports",
                              t["n_ptgt"] and f"{n(t['ptargeted'])} targeted by {t['n_ptgt']} Country and Regional "
-                                             f"Fund allocation{'s' if t['n_ptgt'] != 1 else ''} (their results are "
-                                             f"not available yet)") if x]
+                                             f"Fund allocation{'s' if t['n_ptgt'] != 1 else ''}") if x]
         lines.append(f"- **Reached or targeted by the {y} releases: {'about ' if t['n_tgt'] or t['n_ptgt'] else ''}"
-                     f"{n(est)} people**: {'; '.join(parts)}. Allocations without either figure are left out; "
-                     f"the figure changes as reports come in.")
+                     f"{n(est)} people**: {'; '.join(parts)}." + note("t-reach"))
     else:
-        lines.append(f"- **Reached or targeted by the {y} releases: no figure yet.**")
+        lines.append(f"- **Reached or targeted by the {y} releases: no figure yet.**" + note("t-reach"))
     if ad.get("n_act"):
         a_est = ad["reached"] + ad["targeted"] + ad["ptargeted"]
         lines.append(f"- Not counted above (the non-framework layer is off when the map opens): {ad['n_act']} "
@@ -1358,6 +1417,99 @@ def _framework_md(d, r, fw, page, v_rows, trig_rows, w_rows, s_rows, a_rows, p_r
             out.append(line)
         out.append("")
     return "\n".join(out)
+
+
+# the tiles aa-map.md states (a tile the map gains is warned about: _map_field_alarm)
+MAP_TILES = ("t-fw", "t-pre", "t-cof", "t-cov", "t-act", "t-reach")
+# open pages that hold words only, no figures: no data file to give them
+WORDS_ONLY = {"definitions.html", "accessibility.html"}
+
+
+def _map_keys(om):
+    """The fields the open map's data carries, by level (open_map_fields.MAP_FIELDS's levels)."""
+    seen = {"country": set(), "fw": set(), "hist": set(), "version": set(), "activation": set(), "funding": set()}
+    for cd in om["countries"].values():
+        seen["country"] |= set(cd)
+        for f in cd["fws"]:
+            seen["fw"] |= set(f)
+            seen["hist"] |= set(f.get("hist") or {})
+            for v in f.get("versions") or []:
+                seen["version"] |= set(v)
+            for a in f.get("activations") or []:
+                seen["activation"] |= set(a)
+                for x in a.get("funding") or []:
+                    seen["funding"] |= set(x)
+    return seen
+
+
+def _map_field_alarm(om):
+    """Warn when the open map shows something the open layer does not describe: a field of its data
+    with no line in open_map_fields (aa-map-data.json carries it already, llms.txt cannot explain it),
+    a headline figure, or a tile that aa-map.md does not state. The way a change to the map reaches
+    the open layer: the warning names what to add."""
+    import open_map_fields as F
+    seen = _map_keys(om)
+    new = [f"{lv}.{k}" for lv, ks in seen.items() for k in sorted(ks)
+           if k not in F.MAP_FIELDS[lv] and k not in F.OMIT.get(lv, set())]
+    new += [f"headline.{k}" for k in sorted(set(om.get("tiles") or {}) - set(F.TILE_FIELDS))]
+    if new:
+        print(f"::warning::open layer: the map's data has field(s) llms.txt does not describe yet: {', '.join(new)} "
+              "— add a line for each to scripts/open_map_fields.py (aa-map-data.json carries them already)")
+    tiles = sorted(set(om.get("notes") or {}) - set(MAP_TILES))
+    if tiles:
+        print(f"::warning::open layer: the map has tile(s) aa-map.md does not state: {', '.join(tiles)} "
+              "— add them to llm_layer._map_md and MAP_TILES")
+
+
+def _clean(v):
+    """Strict JSON: NaN and infinities become null (the page's script accepts them, JSON does not)."""
+    if isinstance(v, float) and (v != v or v in (float("inf"), float("-inf"))):
+        return None
+    if isinstance(v, dict):
+        return {k: _clean(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_clean(x) for x in v]
+    return v
+
+
+def _map_data(om, snapshot_at, stamp):
+    """aa-map-data.json: the open map's own data (landing.OPEN_MAP: the copy the open page embeds,
+    without the figures it withholds), minus the fields that only draw the map, with its headline
+    figures. Whatever the map shows is here, without the open layer having to know of it."""
+    import open_map_fields as F
+    countries = {}
+    for iso, cd in sorted(om["countries"].items()):
+        c = {k: v for k, v in cd.items() if k not in F.OMIT["country"]}
+        c["fws"] = [{k: v for k, v in f.items() if k not in F.OMIT["fw"]} for f in cd["fws"]]
+        countries[iso] = c
+    obj = {"title": "The open map's data",
+           "description": "Exactly what the map's page carries (without the drawing): every country, framework, "
+                          "version and activation, the country panels, the year selector's past years and the "
+                          "headline figures as the map opens. Every field is described in llms.txt, under "
+                          "\"The map's data\".",
+           "generated": stamp, "snapshot_at": snapshot_at or None, "caveat": CAVEAT, "site": SITE_URL,
+           "dictionary": SITE_URL + "llms.txt", "year": om["year"],
+           "headline": om["tiles"], "headline_non_framework": om.get("adhoc"), "countries": countries}
+    return json.dumps(_clean(obj), ensure_ascii=False, default=str, allow_nan=False)
+
+
+def _map_dictionary(om):
+    """The dictionary of aa-map-data.json, for llms.txt: the fields the map's data carries today."""
+    import open_map_fields as F
+    seen = _map_keys(om)
+    out = ["One JSON object: `year`; `headline` (the headline figures as the map opens, for the current year, "
+           "on the current-frameworks layer) and `headline_non_framework` (the same figures for the non-framework "
+           "allocations of the year); `countries` {ISO3: country}. Amounts in US dollars as recorded (not "
+           "rounded). Fields by level:\n"]
+    for lv, path in (("country", "countries.ISO3"), ("fw", "countries.ISO3.fws[] (one per pair)"),
+                     ("hist", "fws[].hist"), ("version", "fws[].versions[]"), ("activation", "fws[].activations[]"),
+                     ("funding", "fws[].activations[].funding[]")):
+        out.append(f"**{path}**\n")
+        out += [f"- `{k}`: {d}" for k, d in F.MAP_FIELDS[lv].items() if k in seen[lv]]
+        out.append("")
+    out.append("**headline**\n")
+    out += [f"- `{k}`: {d}" for k, d in F.TILE_FIELDS.items() if k in (om.get("tiles") or {})]
+    return "\n".join(out) + "\n"
 
 
 def _portfolio_md(fw_rows, y_rows, md_pages, snapshot_at, stamp, gaps=(), unsplit=(), rules=""):

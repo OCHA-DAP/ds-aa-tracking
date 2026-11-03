@@ -114,13 +114,21 @@ are kept forever (the year-end official state, for the map's time view).
   is actually going live … the map one. we will put the other data live later"): each file has a
   home page (`llm_layer.HOME`) and is written only while that page is open, so opening a page
   puts its data live with it. Today, the map: at the site root `llms.txt` (the index: what the
-  site is, the caveat, the counting rules, every file), `aa-map.md` (the map's headline figures
-  as it opens, its frameworks, this year's activations), `aa-<table>.json` + `.csv` (frameworks,
+  site is, the caveat, the counting rules, every file, the dictionary of the map's data,
+  `scripts/open_map_fields.py`), `aa-map.md` (the map's headline figures as it opens with the
+  map's own notes on them, its frameworks, this year's activations), `aa-map-data.json` (the open
+  map's own data as its page embeds it, minus the drawing: whatever the map shows, including the
+  country panels and the year selector's past years), `aa-<table>.json` + `.csv` (frameworks,
   versions, activations, prearranged-funding, cofinancing, funds: the frameworks the open map
   shows), `robots.txt` and `sitemap.xml` (these files and the open pages). The figures are the
   open map's own (`landing.OPEN_MAP`: its tiles, its people reached or targeted, its co-financing
   now) and so is its withholding: a people-covered figure from an unpublished framework document
   stays out (`landing.withheld_on_open_map`), and the build stops if a file still carries one.
+  Kept in step on every publish, as the data and the site change: `figure_check.open_layer()`
+  recomputes every headline figure and each framework's figures from the files as written and
+  compares them with the open map's (warnings in the publish run's summary; `llms.txt` states the
+  result), the build warns when the map's data gains a field `open_map_fields.py` does not describe
+  or the map a tile `aa-map.md` does not state, and when a page is opened whose data no file carries.
   Held until their pages open, code kept but nothing written: the framework pages' Markdown
   (`fw-<iso3>-<hazard>.md`), the structured reads of the framework documents
   (`doc-<kb_framework>-<version>.md`), their full texts (`pdf-<sha256>.txt`, pypdf, cached under

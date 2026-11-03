@@ -2042,6 +2042,10 @@ def build_landing(page, d, e):
              else f"people reached with the {Y} releases: no report yet for the CERF allocation" if n_cerf == 1
              else f"people reached with the {Y} releases: no report yet for the {n_cerf} CERF allocations",
              note=reach_note)))
+    # the tiles' notes as the open map shows them first (the open layer quotes them: llm_layer)
+    OPEN_MAP["notes"] = {m.group(1): html_unescape(re.sub(r"<[^>]+>", "", m.group(2))).strip()
+                         for m in re.finditer(r"<div class='tnote' id='(t-[\w-]+?)-n' role='tooltip'>(.*?)</div>",
+                                              tiles.replace("<!--AA_TCOV-->", cov_tile(t_open), 1), re.S)}
 
     # What's new sits beside the definition box (owner, 2026-10-30); build_site puts the box at
     # the placeholder
