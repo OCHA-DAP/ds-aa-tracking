@@ -1731,7 +1731,7 @@ def _flow_acts(f, layers, year=None):
     allocations while the non-framework layer is on, and the activations of a framework since
     retired — a retired pair's, or those of an earlier framework a pair replaced (`old`) — while
     the retired layer is on (owner, 2026-11-03: the tiles "can follow the box ticking on and off
-    now"; all years ticks it on, D186, amending D150 for the map). A current pair that hosts a
+    now"; all years ticks it on, D185, amending D150 for the map). A current pair that hosts a
     replaced framework is on both layers: its own activations stay current. A pair whose
     activations count is always listed in the frameworks table, so the tiles are its totals.
     `year` is today's or None here (a past year is reconstructed in JS, where `old` is false)."""
@@ -2556,7 +2556,7 @@ function statusAt(f, D){
 const isOld = a => !!a.old && !pastY();
 // the framework activations a pin's dots stand for: the year view's filter, as applyYear() counts
 // them; a framework's since retired (a retired pair's, or a replaced framework's) while the retired
-// layer is on, as flowActs counts them (D186) — a retired pair drawn on another layer has no dot
+// layer is on, as flowActs counts them (D185) — a retired pair drawn on another layer has no dot
 function dotActs(f){ const ret = !f.layers.includes('framework') && f.layers.includes('retired');
   return f.activations.filter(a => a.type === 'framework_aa' && (!(isOld(a) || ret) || LAYERS.retired)
   && (YEAR == null || String(a.date).slice(0, 4) === String(YEAR))); }
@@ -2565,7 +2565,7 @@ function dotActs(f){ const ret = !f.layers.includes('framework') && f.layers.inc
 // ad hoc allocations while the ad hoc layer is on, and the activations of a framework since
 // retired — a retired pair's, or a replaced framework's (isOld) — while the RETIRED layer is on
 // (owner, 2026-11-03: the tiles "can follow the box ticking on and off now", all years ticking it
-// on — yearLayers; D186, amending D150 for the map). A current pair that hosts a replaced
+// on — yearLayers; D185, amending D150 for the map). A current pair that hosts a replaced
 // framework is on both layers, its own activations stay current; in a past year isOld is false (the
 // framework replaced since was current then). So a pair whose activations count is always listed
 // in the table (fwRows: visLayer), and the tiles are the table's totals. Mirrored by _flow_acts() /
@@ -2703,7 +2703,7 @@ let lockT = null;
 window.addEventListener('resize', () => { clearTimeout(lockT); lockT = setTimeout(lockTiles, 200); });
 // all years, to today ticks the retired layer on (owner, 2026-11-03: "automatically tick ON the
 // 'retired' box when we select all years to today on the map, to make sure that the table shows
-// the retired versions too which should still count towards the total disbursed"; D186). Only
+// the retired versions too which should still count towards the total disbursed"; D185). Only
 // on: the reader may untick it, and another year leaves it as it is
 function yearLayers(){ if(YEAR == null) LAYERS.retired = true; }
 function setYear(y){

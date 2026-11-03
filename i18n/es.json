@@ -1690,5 +1690,6 @@
  "— opens {page}": " — abre {page}",
  "← The headline findings": "← Los principales hallazgos",
  "← world": "← mundo",
- "≤ 1-in-3": "≤ 1 en 3"
+ "≤ 1-in-3": "≤ 1 en 3",
+ "Not backtested, so no column: {w}.": "Sin backtest, por eso sin columna: {w}."
 }

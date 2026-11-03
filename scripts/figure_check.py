@@ -18,7 +18,7 @@ name their layers explicitly either way):
   * released this year by fund (current frameworks): Map ↔ Financing
   * released to date, framework activations and non-framework allocations, and the number of
     each: Map ↔ Financing ↔ History; and the current frameworks' own (the Map's released follows
-    the Retired box, D186; the Financing page counts a retired framework's with either layer, D150)
+    the Retired box, D185; the Financing page counts a retired framework's with either layer, D150)
   * people reached, CERF allocations of framework activations to date: Map ↔ Activities
   * the open layer (scripts/llm_layer.py, the files as written) ↔ the OPEN map (its own copy, its
     tiles as it opens): every headline figure recomputed from the files' rows, each framework's
@@ -113,7 +113,7 @@ def open_layer(out, om) -> tuple[int, list[str]]:
         bad.append(f"pairs — {len(fw)} in aa-frameworks, {len(mf)} on the open map")
 
     # flow tiles: the year's activations, by the map's rule (_flow_acts) for the open map's layer
-    # (current frameworks): a retired or replaced framework's need the Retired layer (D186)
+    # (current frameworks): a retired or replaced framework's need the Retired layer (D185)
     def flows(kind):
         acts = []
         for a in T["activations"]:
@@ -245,7 +245,7 @@ def check() -> None:
         usd(r for r in act if r["g"] in ("c", "r")))
     cmp("released to date, non-framework allocations", "Map ↔ Financing", t_ad["released"],
         usd(r for r in act if r["g"] == "a"))
-    # the map's flows follow the retired layer (D186; all years ticks it on, so the all-years view
+    # the map's flows follow the retired layer (D185; all years ticks it on, so the all-years view
     # is the both-layers figure above): current frameworks alone are the Financing page's current
     # layer's own money. The Financing page still counts retired money with either layer (D150)
     t_cur = landing.tile_figures(M, {"framework"}, None)
