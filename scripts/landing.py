@@ -1136,7 +1136,9 @@ def _year_history(d, e, excl, _try):
     cof = {}
     cf = pre[(pre["kind"] == "cofinancing") & pre["amount_usd"].notna() & pre["year"].notna()]
     for (c, h, y), g in cf.groupby(["country_iso3", "hazard", "year"]):
-        cof.setdefault((c, h), {})[str(int(y))] = float(g["amount_usd"].sum())
+        if int(y) != TODAY.year:   # the current year is co-financing now, below, and nothing else: a
+            # framework with none now (its money released, D188) must not keep its yearly total
+            cof.setdefault((c, h), {})[str(int(y))] = float(g["amount_usd"].sum())
     for (c, h), g in cofinancing_now(d, cf, TODAY.year).groupby(["country_iso3", "hazard"]):
         cof.setdefault((c, h), {})[str(TODAY.year)] = float(g["amount_usd"].sum())
     pre = pre[(pre["kind"] == "prearranged") & pre["amount_usd"].notna()

@@ -117,7 +117,9 @@ def current_source(s):
     return re.sub(r"^yakubu-", "cerf-workbook-", re.sub(r"^julia-", "aa-workbook-", s))
 
 
+# the latest CERF sheet first: CERF's October 2026 co-financing tab replaces its June figures (D187)
 SOURCE_PRIORITY = [
+    "cerf-workbook-cofinancing-oct2026",
     "cerf-workbook-prearranged-jun2026", "cerf-workbook-cofinancing-jun2026",
     "aa-workbook-planning-2026", "aa-workbook-reporting-2025", "cerf-workbook-insurance-2026",
     "aa-workbook-gho-2026", "cerf-workbook-new-extended-2025",
@@ -1426,8 +1428,22 @@ def cofinancing_now(d, cof, cy):
     entered), so a document read twice is not counted twice — but a later entry of other lines
     for the same version under a new source would hide the earlier set: enter a version's lines
     together, under one source. A dated row that also carries an agency is in neither the
-    totals (aa.prearranged_funding) nor the lines (undated): none is recorded today. Rows:
-    country_iso3, hazard, version, who, detail (the line as recorded), amount_usd."""
+    totals (aa.prearranged_funding) nor the lines (undated): none is recorded today.
+    Co-financing is part of what a framework has pre-arranged: a live framework whose LATEST
+    version's pre-arranged money was all released by an activation (a Country or Regional Fund
+    envelope, D134) and that holds no pre-arranged money now has no co-financing now either. Its
+    co-financing stays recorded on its version (D188: Burkina Faso floods). A pooled envelope spent
+    under an earlier version does not count (Nigeria floods, Afghanistan drought: their new versions
+    have envelopes of their own), nor does a retired framework, whose co-financing the Financing page
+    keeps (D150). Rows: country_iso3, hazard, version, who, detail (the line as recorded), amount_usd."""
+    released = set()
+    if "vfund" in d and "current" in d and d.get("pool_spent"):
+        cur = d["current"]
+        live_latest = {(c, h, str(v)) for c, h, v, lc in zip(cur["country_iso3"], cur["hazard"],
+                                                           cur["latest_version"], cur["lifecycle"])
+                       if lc in ("active", "updating", "development")}
+        released = ({(c, h) for c, h, v in d["pool_spent"] if (c, h, str(v)) in live_latest}
+                    - set(zip(d["vfund"]["country_iso3"], d["vfund"]["hazard"])))
     ln = d["cof_lines"].copy()
     ln = ln[[not (_cof_base(f).lower() in COF_GROUP and not isinstance(a, str))
              for f, a in zip(ln["financier"], ln["agency"])]]
@@ -1437,6 +1453,8 @@ def cofinancing_now(d, cof, cy):
     tot = cof[(cof["kind"] == "cofinancing") & (cof["year"] == cy) & cof["amount_usd"].notna()]
     out = []
     for c, h in sorted(set(zip(tot["country_iso3"], tot["hazard"])) | set(zip(ln["country_iso3"], ln["hazard"]))):
+        if (c, h) in released:
+            continue
         t = tot[(tot["country_iso3"] == c) & (tot["hazard"] == h)]
         lk = ln[(ln["country_iso3"] == c) & (ln["hazard"] == h)]
         if len(lk) and lk["amount_usd"].sum() > 0:
