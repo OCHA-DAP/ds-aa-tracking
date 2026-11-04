@@ -1546,15 +1546,15 @@ def assemble(d, e):
             if not x["partners"] and with_p:
                 src = with_p[-1]
                 x["partners"], x["partners_from"] = src["partners"], src["v"]
-        # activities, the same way: a version without its own lines shows the latest version of the
-        # same framework that has them, and says which
-        own_a = [(x, (c, h, str(x["v"])) in old_v) for x in versions if x["activities"]]
+        # activities are NOT borrowed like partners: what an agency does changes between versions (an
+        # older version's agencies differ: Bangladesh floods 2020 had no UNICEF), so a version without
+        # lines of its own points to the latest version of the same framework that has them
+        own_a = [(x["v"], (c, h, str(x["v"])) in old_v) for x in versions if x["activities"]]
         for x in versions:
             x_old = (c, h, str(x["v"])) in old_v
             with_a = [y for y, y_old in own_a if y_old == x_old]
             if not x["activities"] and with_a:
-                src = with_a[-1]
-                x["activities"], x["activities_from"] = src["activities"], src["v"]
+                x["activities_from"] = with_a[-1]
 
         activations = []
         for a in a_f.itertuples():
@@ -3821,19 +3821,19 @@ function partnersBlock(c, f, v){
   return html;
 }
 // Activities: what each organisation does under the version, in a line or two (aa.framework_activity,
-// D196), read from its public framework document; largest budget first. A version without its own
-// lines shows the latest version of the same framework that has them, and says so
+// D196), read from its public framework document; largest budget first, a line for a group (a
+// fund's NGO partners, government and partners) after the organisations named. A version without
+// lines of its own points to the version of the same framework that has them (activities_from)
+const GROUP_LINE = /^(NGO partners|Government and partners|All agencies)\b/;
 function activitiesBlock(f, v){
   const A = (v && v.activities) || [];
   let html = `<h4>${esc(tr8('What each organisation does'))}</h4>`;
-  if(!A.length) return html + `<div class='muted small'>${esc(tr8('No summary of the activities yet.'))}</div>`;
+  if(!A.length) return html + `<div class='muted small'>${esc(tr8('No summary of the activities yet.'))}${v && v.activities_from ? ` <a onclick='selectVersion("${esc(v.activities_from)}")' style='cursor:pointer'>${esc(tr8('See version {0}', v.activities_from))}</a>` : ''}</div>`;
   const usd = groupBy(v.funding.agency, x => x.agency, x => x.usd);
-  const rows = [...A].sort((a, b) => (usd[b.agency] || 0) - (usd[a.agency] || 0) || a.agency.localeCompare(b.agency));
-  const from = v.activities_from ? f.versions.find(x => x.v === v.activities_from) : v;
-  if(v.activities_from) html += `<div class='small muted'>${esc(tr8('(from version {0} — none recorded for {1})', v.activities_from, v.v))}</div>`;
+  const rows = [...A].sort((a, b) => (usd[b.agency] || 0) - (usd[a.agency] || 0)
+    || GROUP_LINE.test(a.agency) - GROUP_LINE.test(b.agency) || a.agency.localeCompare(b.agency));
   html += rows.map(a => `<div class='act'><span class='ag'>${esc(a.agency)}</span>${a.sector ? ` <span class='muted'>· ${esc(a.sector)}</span>` : ''}<div>${esc(a.text)}</div></div>`).join('');
-  const url = from && from.doc_url;
-  return html + `<div class='tm' style='margin-top:4px'>${url ? `<a href='${esc(url)}' target='_blank' rel='noopener'>${esc(tr8('Summarised from the framework document'))} ↗</a>` : esc(tr8('Summarised from the framework document'))}</div>`;
+  return html + `<div class='tm' style='margin-top:4px'>${v.doc_url ? `<a href='${esc(v.doc_url)}' target='_blank' rel='noopener'>${esc(tr8('Summarised from the framework document'))} ↗</a>` : esc(tr8('Summarised from the framework document'))}</div>`;
 }
 function miniTable(rows){ return rows.length ? `<table class='mini' style='margin-top:4px'>${rows.map(([k,val])=>`<tr><td class='lbl'>${esc(k)}</td><td>${val}</td></tr>`).join('')}</table>` : ''; }
 function sectorBlock(v){

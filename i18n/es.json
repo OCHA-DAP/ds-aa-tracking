@@ -8,7 +8,7 @@
  "(derived from the endorsed {v} version — sheets last said “{s}”)": "(deducido de la versión aprobada {v} — las hojas indicaban por última vez \"{s}\")",
  "(donors not recorded)": "(donantes no registrados)",
  "(for v{v})": "(para la v{v})",
- "(from version {0} — none recorded for {1})": "(de la versión {0} — ninguno registrado para la {1})",
+ "See version {0}": "Ver la versión {0}",
  "What each organisation does": "Lo que hace cada organización",
  "No summary of the activities yet.": "Aún no hay resumen de las actividades.",
  "Summarised from the framework document": "Resumen del documento del marco",
