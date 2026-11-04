@@ -29,6 +29,8 @@
  *                    the admin page's "Publish changes"; about 15 minutes to the live site)
  *   GET  /publish    the workflow's recent runs, for the page's status line
  *
+ *   GET  /usage      ?since=YYYY-MM-DD -> the open site's daily page counts (aa.page_count) and the
+ *                    names of the countries they mention: the admin site's Site usage page, live (D197)
  *   POST /hit        the open site's page counts (D197): {page, event, detail, lang, device,
  *                    referrer} -> + 1 on that day's row of aa.page_count. The one endpoint
  *                    that needs no token (the open pages carry none): it can only add 1 to a
@@ -866,6 +868,31 @@ async function hit(req, res) {
   }
 }
 
+// -------------------------------------------------------------------- /usage
+// The admin site's Site usage page reads the counts here, live, with the viewer token (D197):
+// the day rows (page names without '.html', as the page embeds its fallback copy) and the
+// country names the map's details mention. Daily totals only: nothing here identifies a reader.
+async function usage(req, res, qs) {
+  if (limited(req, res, "read")) return;
+  const since = qs.get("since") || "";
+  if (since && !/^\d{4}-\d{2}-\d{2}$/.test(since)) return send(res, 400, { error: "since: YYYY-MM-DD" });
+  try {
+    const at = new Date().toISOString();
+    if (!(await pool.query("SELECT to_regclass('aa.page_count') IS NOT NULL AS ok")).rows[0].ok)
+      return send(res, 200, { ok: true, rows: [], names: {}, at });
+    const r = await pool.query(
+      `SELECT day::text AS day, page, event, detail, lang, device, referrer, n::int AS n FROM aa.page_count
+       ${since ? "WHERE day >= $1::date" : ""} ORDER BY day LIMIT 500000`, since ? [since] : []);
+    const isos = [...new Set(r.rows.map((x) => x.detail.split("/")[0]).filter((x) => /^[A-Z]{3}$/.test(x)))];
+    const nm = isos.length ? await pool.query(
+      "SELECT country_iso3, max(country_name) AS name FROM aa.country_hazard WHERE country_iso3 = ANY($1) GROUP BY 1",
+      [isos]) : { rows: [] };
+    send(res, 200, { ok: true, at,
+      rows: r.rows.map((x) => [x.day, x.page.replace(/\.html$/, ""), x.event, x.detail, x.lang, x.device, x.referrer, x.n]),
+      names: Object.fromEntries(nm.rows.map((x) => [x.country_iso3, x.name])) });
+  } catch (e) { send(res, 502, { error: String(e.message || e) }); }
+}
+
 // ------------------------------------------------------------------- server
 const server = http.createServer(async (req, res) => {
   const allowed = cors(req, res);
@@ -883,11 +910,12 @@ const server = http.createServer(async (req, res) => {
   if (!r) return send(res, 401, { error: "bad site token" });
   if (req.method === "GET" && url.pathname === "/whoami") return send(res, 200, { ok: true, role: r });
   if (req.method === "GET" && url.pathname === "/framework") return framework(req, res, url.searchParams);
-  if (!pool && ["/schema", "/rows", "/distinct", "/save", "/delete"].includes(url.pathname))
+  if (!pool && ["/schema", "/rows", "/distinct", "/save", "/delete", "/usage"].includes(url.pathname))
     return send(res, 500, { error: "DB not configured" });
   if (req.method === "GET" && url.pathname === "/schema") return adminSchema(req, res, url.searchParams);
   if (req.method === "GET" && url.pathname === "/rows") return adminRows(req, res, url.searchParams);
   if (req.method === "GET" && url.pathname === "/distinct") return adminDistinct(req, res, url.searchParams);
+  if (req.method === "GET" && url.pathname === "/usage") return usage(req, res, url.searchParams);
   if (req.method === "GET" && url.pathname === "/publish") return publishStatus(req, res);
   if (r !== "editor" && ["/extract", "/entry", "/save", "/delete", "/publish"].includes(url.pathname))
     return send(res, 401, { error: "editor token required" });   // 401: pages prompt for it

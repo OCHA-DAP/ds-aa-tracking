@@ -1,10 +1,11 @@
 """Site usage (usage.html, admin site): how the open site is used, from its daily page counts
 (aa.page_count, D197; owner, 2026-11-04: "is there an analytics dashboard? put one in the admin site").
 
-Built like every page, from the data snapshot (D17): up to a day behind the counts, which the
-admin table browser (admin.html#page_count) shows live. The page carries the day rows and does
-the sums in the browser, so the period can change without a rebuild: last 7, 30 or 90 days, or
-everything. One chart per question (views per day; frameworks viewed on the map), one colour
+Live (owner, 2026-11-04: "yeah do the live one, w/o hours"): the page loads the counts from the
+proxy's GET /usage when it opens, with the admin pages' viewer token, and again every minute while
+the tab is in view. It also carries the snapshot's rows, built like every page (D17), and shows
+those, saying so, when the proxy cannot be reached. The sums are done in the browser, so the
+period can change without a rebuild: last 7, 30 or 90 days, or everything. One chart per question (views per day; frameworks viewed on the map), one colour
 (the site's accent: a single series needs no legend), every chart with its table beside it, and
 plain tables for the lists (pages, referring sites, languages, devices, downloads, links out).
 """
@@ -48,6 +49,11 @@ CSS = """
 .us-card details { margin-top:8px; font-size:13px; } .us-card details summary { cursor:pointer; color:#444; }
 .us-card details .xscroll { max-height:320px; overflow-y:auto; margin-top:6px; }
 .us-empty { color:#666; font-style:italic; padding:6px 0; }
+.us-live { font-size:12.5px; color:#555; margin:-4px 0 10px; min-height:1.2em; }
+.us-live::before { content:''; display:inline-block; width:8px; height:8px; border-radius:50%;
+  background:#9e9e9e; margin-right:6px; vertical-align:1px; }
+.us-live.on::before { background:#1c7c3c; } .us-live.off { color:#8a5c0a; }
+.us-live.off::before { background:#c27c0e; }
 """
 
 
@@ -63,6 +69,7 @@ def _rows(e):
 
 
 def build(e, page, stamp):
+    from admin_page import PROXY_URL, site_token
     df, names = _rows(e)
     # page names travel without '.html': the admin build rewrites any quoted public page name in a
     # page (to its ../dev/ address), the data included
@@ -70,14 +77,15 @@ def build(e, page, stamp):
             for r in df.itertuples()]
     used = {d.split("/")[0] for d in df["detail"] if d} if len(df) else set()
     payload = {"rows": data, "names": {k: v for k, v in names.items() if k in used},
-               "hazards": HAZARD_WORDS, "today": date.today().isoformat()}
+               "hazards": HAZARD_WORDS, "today": date.today().isoformat(), "stamp": stamp}
     js = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
     body = f"""<style>{CSS}</style>
 <p class='us-intro'>How readers use the open site (the pages at the root of the site, never
-<code>dev/</code> or <code>admin/</code>), from its daily counts (D197). Built from the {stamp}, so up
-to a day behind; the <a href='admin.html#page_count'>page_count table</a> shows the counts live.
-The counts are indicative, never audited: they hold no IP address or identifier, so they cannot
-tell readers apart or say how many people visited.</p>
+<code>dev/</code> or <code>admin/</code>), from its daily counts (D197), loaded live from the database
+when this page opens and every minute while it is in view (the rows: the
+<a href='admin.html#page_count'>page_count table</a>). The counts are indicative, never audited: they
+hold no IP address or identifier, so they cannot tell readers apart or say how many people visited.</p>
+<p class='us-live' id='us-live' role='status'></p>
 <div class='us-filter' role='group' aria-label='Period'>
  <span class='lab' id='us-plab'>Period</span>
  <span class='us-seg' aria-labelledby='us-plab'>
@@ -88,6 +96,8 @@ tell readers apart or say how many people visited.</p>
 <div id='us-body'></div>
 <script src='chart.umd.js'></script>
 <script>
+window.PROXY = new URLSearchParams(location.search).get('proxy') || '{PROXY_URL}';
+window.SITE_TOKEN = '{site_token()}';
 const USAGE = {js};
 {SCRIPT}
 </script>"""
@@ -98,7 +108,10 @@ SCRIPT = r"""
 (function(){
 const ACCENT = '#007ce0', INK = '#52514e', GRID = '#ececec';
 const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
-const R = USAGE.rows.map(r => ({day: r[0], page: r[1] + '.html', event: r[2], detail: r[3], lang: r[4], device: r[5], ref: r[6], n: r[7]}));
+const toRows = rows => rows.map(r => ({day: r[0], page: r[1] + '.html', event: r[2], detail: r[3], lang: r[4], device: r[5], ref: r[6], n: r[7]}));
+// the snapshot's rows until the live ones arrive (and if they never do)
+let R = toRows(USAGE.rows), NAMES = Object.assign({}, USAGE.names), TODAY = USAGE.today;
+let period = 30, liveSpan = 90, sig = '', isLive = false;
 const LANGS = {en: 'English', fr: 'French', es: 'Spanish'};
 const DEV = {phone: 'Phone', desktop: 'Desktop or tablet'};
 const fmt = n => n.toLocaleString('en-US');
@@ -109,7 +122,7 @@ const dec = u => { try { return decodeURI(u); } catch(e){ return u; } };
 const iso = d => d.toISOString().slice(0, 10);
 const dayLabel = s => dOf(s).toLocaleDateString('en-GB', {weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC'});
 const tick = s => dOf(s).toLocaleDateString('en-GB', {day: 'numeric', month: 'short', timeZone: 'UTC'});
-function place(d){ const [iso3, hz] = d.split('/'); const c = USAGE.names[iso3] || iso3;
+function place(d){ const [iso3, hz] = d.split('/'); const c = NAMES[iso3] || iso3;
   return hz ? c + ' · ' + (USAGE.hazards[hz] || hz) : c + ' (country)'; }
 function sum(rows, key){ const m = new Map(); rows.forEach(r => m.set(key(r), (m.get(key(r)) || 0) + r.n)); return m; }
 function top(m, k){ return [...m.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]))).slice(0, k); }
@@ -119,9 +132,11 @@ function table(head, rows, empty){
     + rows.map(r => `<tr>${r.map((c, i) => `<td class='${head[i].num ? 'num' : ''}${head[i].wrap ? ' w' : ''}'>${esc(c)}</td>`).join('')}</tr>`).join('')
     + `</tbody></table></div>`; }
 let charts = [];
-function draw(days){
+function draw(days, quiet){
+  // a redraw keeps the reader's place: the tables they opened stay open, nothing animates
+  const opened = [...document.querySelectorAll('#us-body details')].map(d => d.open);
   charts.forEach(c => c.destroy()); charts = [];
-  const end = USAGE.today, first = R.length ? R[0].day : end;
+  const end = TODAY, first = R.length ? R[0].day : end;
   const start = days === 'all' ? (first < end ? first : end) : iso(new Date(dOf(end) - (days - 1) * 864e5));
   const P = R.filter(r => r.day >= start && r.day <= end);
   const span = [];
@@ -158,11 +173,11 @@ function draw(days){
 </div>
 <div class='card us-card'><h2>Page views per day</h2><p class='sub'>Every page of the open site, UTC days.</p>
  <div class='us-chart'><canvas id='us-c1' role='img' aria-label='Page views per day; the same figures are in the table below'></canvas></div>
- <details><summary>As a table</summary>${table([{t: 'Day'}, {t: 'Page views', num: true}], span.slice().reverse().map(d => [dayLabel(d), fmt(perDay.get(d) || 0)]))}</details>
+ <details id='us-d1'><summary>As a table</summary>${table([{t: 'Day'}, {t: 'Page views', num: true}], span.slice().reverse().map(d => [dayLabel(d), fmt(perDay.get(d) || 0)]))}</details>
 </div>
 <div class='card us-card'><h2>Frameworks viewed on the map</h2><p class='sub'>Panels opened on the map, and the map opened at a framework by a shared link; the ${fwTop.length < fwAll.length ? fwTop.length + ' most viewed of ' + fwAll.length : fwAll.length || 'none'}.</p>
  ${fwAll.length ? `<div class='us-chart tall'><canvas id='us-c2' role='img' aria-label='Frameworks viewed on the map; the same figures are in the table below'></canvas></div>` : `<div class='us-empty'>No panel opened in this period.</div>`}
- <details><summary>As a table</summary>${table([{t: 'Framework or country'}, {t: 'Opened on the map', num: true}, {t: 'From a shared link', num: true}, {t: 'Total', num: true}],
+ <details id='us-d2'><summary>As a table</summary>${table([{t: 'Framework or country'}, {t: 'Opened on the map', num: true}, {t: 'From a shared link', num: true}, {t: 'Total', num: true}],
    fwAll.map(x => [x.label, fmt(x.open), fmt(x.link), fmt(x.n)]))}</details>
 </div>
 <div class='us-grid'>
@@ -179,10 +194,11 @@ function draw(days){
  <div class='card us-card'><h2>Links followed out</h2><p class='sub'>Links to other sites readers clicked, the 20 most used.</p>
   ${table([{t: 'Link (site and path)', wrap: true}, {t: 'Clicks', num: true}], byOut.map(([u, n]) => [dec(u), fmt(n)]))}</div>
 </div>`;
+  document.querySelectorAll('#us-body details').forEach((d, i) => { if(opened[i]) d.open = true; });
   if(typeof Chart === 'undefined') return;
   Chart.defaults.font.family = "-apple-system,'Segoe UI',Roboto,sans-serif";
   Chart.defaults.color = INK;
-  if(RM) Chart.defaults.animation = false;
+  Chart.defaults.animation = RM || quiet ? false : {};
   const tip = {backgroundColor: '#1f2a44', padding: 8, displayColors: false, titleFont: {weight: '600'}};
   charts.push(new Chart(document.getElementById('us-c1'), {type: 'bar',
     data: {labels: span, datasets: [{data: span.map(d => perDay.get(d) || 0), backgroundColor: ACCENT,
@@ -207,10 +223,35 @@ function draw(days){
                  y: {grid: {display: false}, border: {display: false}}}}}));
   }
 }
+// ---------- live: GET /usage on the proxy, the last 90 days (every period but All) or everything
+const liveEl = document.getElementById('us-live');
+function say(text, cls){ liveEl.textContent = text; liveEl.className = 'us-live ' + (cls || ''); }
+const hhmm = s => new Date(s).toISOString().slice(11, 16);
+async function live(){
+  const since = liveSpan === 'all' ? '' : iso(new Date(Date.now() - (liveSpan - 1) * 864e5));
+  try {
+    const r = await fetch(PROXY + '/usage' + (since ? '?since=' + since : ''), {headers: {'x-site-token': SITE_TOKEN}, cache: 'no-store'});
+    const j = await r.json().catch(() => ({}));
+    if(!r.ok || !j.ok) throw new Error(j.error || 'HTTP ' + r.status);
+    const s = liveSpan + '|' + j.rows.length + '|' + j.rows.reduce((a, x) => a + x[7], 0) + '|' + j.at.slice(0, 10);
+    Object.assign(NAMES, j.names); TODAY = j.at.slice(0, 10); isLive = true;
+    say(`Live: the counts as of ${hhmm(j.at)} UTC, refreshed every minute while this page is in view.`, 'on');
+    if(s !== sig){ sig = s; R = toRows(j.rows); draw(period, true); }
+  } catch(e){
+    say(isLive ? `The last refresh failed (${e.message}); showing the counts loaded before.`
+               : `Showing the ${USAGE.stamp}: the live counts could not be loaded (${e.message}).`, 'off');
+  }
+}
 const seg = document.querySelectorAll('.us-seg button');
 seg.forEach(b => b.addEventListener('click', () => {
   seg.forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
-  draw(b.dataset.d === 'all' ? 'all' : +b.dataset.d); }));
+  period = b.dataset.d === 'all' ? 'all' : +b.dataset.d;
+  draw(period);
+  if(period === 'all' && liveSpan !== 'all'){ liveSpan = 'all'; live(); } }));
+say(`Loading the live counts… (showing the ${USAGE.stamp} meanwhile)`);
 draw(30);
+live();
+setInterval(() => { if(document.visibilityState === 'visible') live(); }, 60000);
+document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'visible') live(); });
 })();
 """
