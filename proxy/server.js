@@ -29,6 +29,12 @@
  *                    the admin page's "Publish changes"; about 15 minutes to the live site)
  *   GET  /publish    the workflow's recent runs, for the page's status line
  *
+ *   POST /hit        the open site's page counts (D197): {page, event, detail, lang, device,
+ *                    referrer} -> + 1 on that day's row of aa.page_count. The one endpoint
+ *                    that needs no token (the open pages carry none): it can only add 1 to a
+ *                    counter, through its own DB login when COUNT_DB_UID is set (INSERT and
+ *                    UPDATE on aa.page_count, nothing else). No IP or identifier is stored.
+ *
  * Two roles, two shared secrets in header x-site-token: SITE_TOKEN (viewer —
  * embedded only in the pages of the admin site (admin/, its own staticrypt
  * password), so "has the admin-site password" = viewer) and EDITOR_TOKEN (editor — never embedded; the pages prompt for it
@@ -52,7 +58,9 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ||
   "https://ocha-dap.github.io").split(",");
 const MODELS = new Set(["claude-opus-5"]);
 const MAX_BODY = 45 * 1024 * 1024;
-const RATE = { extract: 20, entry: 60, read: 1200, write: 600, publish: 30, windowMs: 60 * 60 * 1000 };
+// hit: per address and hour, generous for an office behind one address (each reader sends a view
+// and a few panel opens), low enough that one script cannot flood the counts
+const RATE = { extract: 20, entry: 60, read: 1200, write: 600, publish: 30, hit: 3000, windowMs: 60 * 60 * 1000 };
 // GitHub: a fine-grained token for this repo only, Actions read and write — it can start the
 // publish workflow and read its runs, nothing else. Unset -> the page hides the button.
 const GH_TOKEN = process.env.GITHUB_TOKEN || "";
@@ -75,6 +83,8 @@ const READONLY_TABLES = new Set([
   // the KB-era record, frozen 2026-10-05 (superseded by window_funding / window_activation /
   // activation_funding); the backtest tables the KB used to load are editable here
   "funding_breakdown", "actual_activation", "activation_allocation",
+  // the open site's daily counts: written only by POST /hit (D197)
+  "page_count",
 ]);
 const READONLY_PREFIXES = ["zz_legacy_"];
 const TABLE_OWNER = (t) =>
@@ -98,6 +108,19 @@ const pool = process.env.DSCI_AZ_DB_DEV_HOST
       max: 3,
     })
   : null;
+// POST /hit writes through its own login when one is set (COUNT_DB_UID / COUNT_DB_PW: INSERT and
+// UPDATE on aa.page_count only), so the one anonymous endpoint cannot reach anything else even
+// through a bug; without one it falls back to the write login above
+const countPool = process.env.DSCI_AZ_DB_DEV_HOST && process.env.COUNT_DB_UID
+  ? new Pool({
+      host: process.env.DSCI_AZ_DB_DEV_HOST,
+      user: process.env.COUNT_DB_UID,
+      password: process.env.COUNT_DB_PW,
+      database: "postgres",
+      ssl: process.env.DB_SSL === "disable" ? false : { rejectUnauthorized: false },
+      max: 2,
+    })
+  : pool;
 
 const HAZARDS = new Set(["drought", "flood", "storm", "cholera", "plague", "locusts", "other"]);
 const VERSION_RE = /^\d{4}(-\d{2}(-\d{2})?)?$/;
@@ -227,13 +250,19 @@ function limited(req, res, kind) {
   rec.push(now); hits.set(ip, rec);
   return false;
 }
+// the rate limiter's memory: addresses not seen for an hour are forgotten (the open pages bring
+// many addresses, each kept only while it counts against its limit)
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, rec] of hits) if (!rec.length || now - rec[rec.length - 1] >= RATE.windowMs) hits.delete(k);
+}, 10 * 60 * 1000).unref();
 
-function readBody(req, res) {
+function readBody(req, res, max = MAX_BODY) {
   return new Promise((resolve) => {
     let size = 0; const chunks = [];
     req.on("data", (c) => {
       size += c.length;
-      if (size > MAX_BODY) { send(res, 413, { error: "body too large" }); req.destroy(); resolve(null); }
+      if (size > max) { send(res, 413, { error: "body too large" }); req.destroy(); resolve(null); }
       else chunks.push(c);
     });
     req.on("end", () => {
@@ -796,6 +825,47 @@ async function publishStart(req, res) {
   } catch (e) { send(res, 502, { error: String(e.message || e) }); }
 }
 
+// --------------------------------------------------------------------- /hit
+// The open site's page counts (D197). The page sends one small JSON per event with
+// navigator.sendBeacon (text/plain, so no preflight); the answer is never read. Everything is
+// checked against a fixed shape and anything else is refused, so the table holds only what the
+// open pages send. Bots that say so are not counted.
+const HIT_DETAIL = {
+  view: /^([A-Z]{3}(\/[a-z]+)?)?$/,                 // the map's ISO/hazard of a deep link, or ''
+  panel: /^[A-Z]{3}(\/[a-z]+)?$/,                   // the map's country or framework opened
+  lang: /^(en|fr|es)$/,                             // the language switched to
+  download: /^[A-Za-z0-9._-]{1,100}$/,              // a file of the site
+  out: /^[a-z0-9.-]+\.[a-z]{2,}(\/[^\s]{0,150})?$/i,  // host/path of a link followed out
+};
+const BOT_UA = /bot|crawl|spider|slurp|headless|lighthouse|preview|monitor|curl|wget|python|node-fetch/i;
+async function hit(req, res) {
+  const done = (code) => { res.writeHead(code); res.end(); };
+  if (!ALLOWED_ORIGINS.includes(req.headers.origin || "")) return done(403);
+  if (limited(req, res, "hit")) return;
+  const b = await readBody(req, res, 2048);
+  if (!b) return;
+  if (BOT_UA.test(req.headers["user-agent"] || "")) return done(204);
+  const s = (x) => (typeof x === "string" ? x : "");
+  const page = s(b.page), event = s(b.event), detail = s(b.detail), lang = s(b.lang) || "en";
+  const device = s(b.device), referrer = event === "view" ? s(b.referrer).toLowerCase() : "";
+  if (!/^[a-z0-9-]{1,60}\.html$/.test(page) || !Object.hasOwn(HIT_DETAIL, event) || !HIT_DETAIL[event].test(detail)
+      || !/^(en|fr|es)$/.test(lang) || !/^(phone|desktop)$/.test(device)
+      || !/^([a-z0-9-]{1,63}\.)*[a-z0-9-]{1,63}$|^$/.test(referrer) || referrer.length > 100)
+    return send(res, 400, { error: "not a page count" });
+  if (!countPool) return send(res, 500, { error: "DB not configured" });
+  try {
+    await countPool.query(
+      `INSERT INTO aa.page_count AS c (day, page, event, detail, lang, device, referrer, n)
+       VALUES ((now() AT TIME ZONE 'UTC')::date, $1, $2, $3, $4, $5, $6, 1)
+       ON CONFLICT (day, page, event, detail, lang, device, referrer) DO UPDATE SET n = c.n + 1`,
+      [page, event, detail, lang, device, referrer]);
+    done(204);
+  } catch (e) {
+    console.error("hit:", e.message);
+    send(res, 500, { error: "not counted" });
+  }
+}
+
 // ------------------------------------------------------------------- server
 const server = http.createServer(async (req, res) => {
   const allowed = cors(req, res);
@@ -807,6 +877,8 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, { ok: true, db, llm: !!API_KEY });
   }
   if (!allowed && req.headers.origin) return send(res, 403, { error: "origin not allowed" });
+  // the open site's counts: no token (the open pages carry none), checked in hit()
+  if (req.method === "POST" && url.pathname === "/hit") return hit(req, res);
   const r = role(req);
   if (!r) return send(res, 401, { error: "bad site token" });
   if (req.method === "GET" && url.pathname === "/whoami") return send(res, 200, { ok: true, role: r });

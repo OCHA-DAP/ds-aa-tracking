@@ -1812,5 +1812,18 @@
  "Co-financing, not in the split:": "Cofinancement, hors répartition :",
  "The {0} storms the framework document lists from its backtest are shown, including those that would not have activated.": "Les {0} tempêtes que le document du cadre liste dans son backtest figurent toutes, y compris celles qui n’auraient pas déclenché.",
  "The {n} events the framework document lists from its backtest are shown, including those that would not have activated.": "Les {n} événements que le document du cadre liste dans son backtest figurent tous, y compris ceux qui n’auraient pas déclenché.",
- "Hover a cell for the trigger's value.": "Survoler une case pour la valeur du déclencheur."
+ "Hover a cell for the trigger's value.": "Survoler une case pour la valeur du déclencheur.",
+ "Privacy": "Confidentialité",
+ "This site counts how it is used, to learn which pages and frameworks readers look at and what to improve. It does so without cookies, and keeps nothing that could tell one reader from another.": "Ce site compte la façon dont il est utilisé, pour savoir quelles pages et quels cadres les lecteurs consultent et ce qu’il faut améliorer. Il le fait sans cookies et ne conserve rien qui permettrait de distinguer un lecteur d’un autre.",
+ "What is counted": "Ce qui est compté",
+ "Each page view, each country or framework opened on the map, each change of language, each file downloaded and each link followed to another website.": "Chaque page vue, chaque pays ou cadre ouvert sur la carte, chaque changement de langue, chaque fichier téléchargé et chaque lien suivi vers un autre site web.",
+ "With each: the page, the language it was read in, whether the screen was a phone's or larger and, for a page view, the name of the website the reader came from (the site, not the page).": "Avec chacun : la page, la langue dans laquelle elle a été lue, si l’écran était celui d’un téléphone ou plus grand et, pour une page vue, le nom du site web d’où venait le lecteur (le site, pas la page).",
+ "What is not kept": "Ce qui n’est pas conservé",
+ "No cookie is set, and nothing is stored in your browser for counting.": "Aucun cookie n’est déposé, et rien n’est enregistré dans votre navigateur pour le comptage.",
+ "No IP address, identifier, time of day or browser details are recorded. The counting service holds the address a count comes from in memory for about an hour, only to limit how many counts one address can send, and then forgets it.": "Aucune adresse IP, aucun identifiant, aucune heure ni aucun détail du navigateur n’est enregistré. Le service de comptage garde en mémoire l’adresse d’où vient un comptage pendant environ une heure, uniquement pour limiter le nombre de comptages qu’une même adresse peut envoyer, puis l’oublie.",
+ "Only daily totals are kept, for example: 12 views of the map in French on phones on 4 November.": "Seuls des totaux quotidiens sont conservés, par exemple : 12 vues de la carte en français sur téléphone le 4 novembre.",
+ "Where the counts are kept": "Où les comptages sont conservés",
+ "In the database OCHA's data science team runs for this site, beside the data the site shows. They are not passed to any analytics company or advertiser, and are used only to improve the site.": "Dans la base de données que l’équipe de science des données d’OCHA gère pour ce site, à côté des données que le site présente. Ils ne sont transmis à aucune société d’analyse d’audience ni à aucun annonceur, et ne servent qu’à améliorer le site.",
+ "Questions about this note: <a href='mailto:ocha-datascience@un.org'>ocha-datascience@un.org</a>.": "Questions sur cette note : <a href='mailto:ocha-datascience@un.org'>ocha-datascience@un.org</a>.",
+ "This note was last updated on {d}.": "Cette note a été mise à jour pour la dernière fois le {d}."
 }

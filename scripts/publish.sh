@@ -44,7 +44,7 @@ ADMIN=admin
 DEV=dev
 # the real pages served without a password: the same list as build_site.OPEN_PAGES (a page
 # must be in both to go out plain)
-OPEN_PAGES=" index.html definitions.html accessibility.html "
+OPEN_PAGES=" index.html definitions.html accessibility.html privacy.html "
 [ -n "$ADMIN_PW" ] || { echo "FATAL: ADMIN_PASSWORD is not set (the admin site has no default password)" >&2; exit 1; }
 [ "$ADMIN_PW" != "$PW" ] || { echo "FATAL: the admin password must differ from the public one" >&2; exit 1; }
 

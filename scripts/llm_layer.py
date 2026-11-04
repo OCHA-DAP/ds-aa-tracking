@@ -1425,7 +1425,7 @@ def _framework_md(d, r, fw, page, v_rows, trig_rows, w_rows, s_rows, a_rows, p_r
 # the tiles aa-map.md states (a tile the map gains is warned about: _map_field_alarm)
 MAP_TILES = ("t-fw", "t-pre", "t-cof", "t-cov", "t-act", "t-reach")
 # open pages that hold words only, no figures: no data file to give them
-WORDS_ONLY = {"definitions.html", "accessibility.html"}
+WORDS_ONLY = {"definitions.html", "accessibility.html", "privacy.html"}
 
 
 def _map_keys(om):
