@@ -1285,6 +1285,31 @@ def assemble(d, e):
                   amount_usd FROM aa.framework_partner ORDER BY org_type, name""",
         ["country_iso3", "hazard", "version", "name", "acronym", "org_type", "roles",
          "agency_parent", "amount_usd"])
+    # what each organisation does under a version (aa.framework_activity, D196): only lines read
+    # from a document that is still public, so a document made internal takes its lines off the map
+    fw_act = _try(
+        """SELECT a.country_iso3, a.hazard, a.version, a.agency, a.summary, a.sector
+           FROM aa.framework_activity a JOIN aa.framework_document d USING (sha256)
+           WHERE d.is_public ORDER BY a.agency""",
+        ["country_iso3", "hazard", "version", "agency", "summary", "sector"])
+    # ...and say which lines that leaves out, or which name a document that is not the version's own
+    for r in _try(
+            """SELECT a.country_iso3, a.hazard, a.version, count(*) AS n,
+                      bool_or(d.sha256 IS NULL) AS unregistered, bool_or(NOT d.is_public) AS internal,
+                      bool_or(NOT EXISTS (SELECT 1 FROM aa.version_document vd
+                                          WHERE vd.sha256 = a.sha256 AND vd.country_iso3 = a.country_iso3
+                                            AND vd.hazard = a.hazard AND vd.version = a.version)) AS other_doc
+               FROM aa.framework_activity a LEFT JOIN aa.framework_document d USING (sha256)
+               GROUP BY 1, 2, 3
+               HAVING bool_or(d.sha256 IS NULL OR NOT d.is_public) OR bool_or(NOT EXISTS (
+                   SELECT 1 FROM aa.version_document vd WHERE vd.sha256 = a.sha256
+                     AND vd.country_iso3 = a.country_iso3 AND vd.hazard = a.hazard
+                     AND vd.version = a.version))""",
+            ["country_iso3", "hazard", "version", "n", "unregistered", "internal", "other_doc"]).itertuples():
+        why = ", ".join(w for w, on in (("its document is not registered", r.unregistered),
+                                        ("its document is not public: left off the map", r.internal),
+                                        ("its document is not one of the version's", r.other_doc)) if on)
+        print(f"  ! activities {r.country_iso3} {r.hazard} {r.version}: {why}")
     # the CERF AA sub-grants of the framework pages and the Financing page (d["subgrant_aa"]: the
     # allocations the activation record draws on, amounts recorded) — the sheet's own AA flag
     # missed four allocations (2026-10-28)
@@ -1524,6 +1549,10 @@ def assemble(d, e):
                                                    & (partners["hazard"] == h)
                                                    & (partners["version"] == v.version)]),
                 "partners_from": None,
+                "activities": [{"agency": _s(x.agency), "text": _s(x.summary), "sector": _s(x.sector)}
+                               for x in fw_act[(fw_act["country_iso3"] == c) & (fw_act["hazard"] == h)
+                                               & (fw_act["version"] == v.version)].itertuples()],
+                "activities_from": None,
             })
         # partners: a version without its own list borrows the latest version that has one — of
         # the same framework: never across a replaced framework (old_versions: Somalia drought
@@ -1535,6 +1564,15 @@ def assemble(d, e):
             if not x["partners"] and with_p:
                 src = with_p[-1]
                 x["partners"], x["partners_from"] = src["partners"], src["v"]
+        # activities are NOT borrowed like partners: what an agency does changes between versions (an
+        # older version's agencies differ: Bangladesh floods 2020 had no UNICEF), so a version without
+        # lines of its own points to the latest version of the same framework that has them
+        own_a = [(x["v"], (c, h, str(x["v"])) in old_v) for x in versions if x["activities"]]
+        for x in versions:
+            x_old = (c, h, str(x["v"])) in old_v
+            with_a = [y for y, y_old in own_a if y_old == x_old]
+            if not x["activities"] and with_a:
+                x["activities_from"] = with_a[-1]
 
         activations = []
         for a in a_f.itertuples():
@@ -2505,6 +2543,8 @@ abbr[title] { text-decoration:underline dotted #94a3b8; text-underline-offset:2p
 /* partners */
 .pgrp { margin:6px 0 2px; font-weight:650; color:#16324f; font-size:12px; }
 .prow { font-size:12px; padding:2px 0 2px 8px; }
+.act { font-size:12px; margin:5px 0 0; line-height:1.4; }
+.act .ag { font-weight:650; color:#16324f; }
 .rtag { display:inline-block; font-size:10px; padding:0 6px; border-radius:8px; background:#eef2f7; color:#4a5670; margin-left:4px; vertical-align:1px; }
 .dtag { display:inline-block; font-size:10px; padding:0 6px; border-radius:8px; background:#f3e8ff; color:#6b21a8; margin-left:4px; vertical-align:1px; }
 .warntag { display:inline-block; font-size:10.5px; padding:0 7px; border-radius:8px; background:#fde2e1; color:#b3261e; font-weight:600; margin-left:6px; }
@@ -3748,7 +3788,7 @@ function pillarBody(f, v){
     if(v.agencies.length) rows.push([tr8('Agencies'), esc(v.agencies.join(', '))]);
     if(v.target_people) rows.push([tr8('People targeted'), num(v.target_people)]);
     if(f.covered && f.current===v.v) rows.push([tr8('People covered'), `${num(f.covered)} <span class='muted'>${esc(tr8('(tracking sheet)'))}</span>`]);
-    return miniTable(rows) + partnersBlock(c, f, v) + sectorBlock(v);
+    return miniTable(rows) + activitiesBlock(f, v) + partnersBlock(c, f, v) + sectorBlock(v);
   }
   return learningBlock(f, v);
 }
@@ -3797,6 +3837,25 @@ function partnersBlock(c, f, v){
       a.partners.map(p=>`<div class='prow'>${esc(p.name)}${p.acronym&&p.acronym!==p.name?` (${esc(p.acronym)})`:''}${p.type?`<span class='rtag'>${esc(p.type)}</span>`:''}${p.usd?` <span class='muted'>· ${money(p.usd)}</span>`:''}</div>`).join('')).join('');
   }
   return html;
+}
+// Activities: what each organisation does under the version, in a line or two (aa.framework_activity,
+// D196), read from its public framework document: the organisations named first, by budget (largest
+// first; alphabetical where no split is recorded), then a line for a group (GROUP_LINE: a fund's NGO
+// partners, government and partners, all agencies). A version without
+// lines of its own points to the version of the same framework that has them (activities_from)
+const GROUP_LINE = /^(NGO partners|Government and partners|All agencies)\b/;
+function activitiesBlock(f, v){
+  const A = (v && v.activities) || [];
+  let html = `<h4>${esc(tr8('What each organisation does'))}</h4>`;
+  if(!A.length){
+    if(f.disp === 'retired' && !(v && v.activities_from)) return '';   // a retired framework: nothing to come
+    return html + `<div class='muted small'>${esc(tr8('No summary of the activities yet.'))}${v && v.activities_from ? ` <a href='#' onclick='selectVersion("${esc(v.activities_from)}"); return false;'>${esc(tr8('See version {0}', v.activities_from))}</a>` : ''}</div>`;
+  }
+  const usd = groupBy(v.funding.agency, x => x.agency, x => x.usd);
+  const rows = [...A].sort((a, b) => GROUP_LINE.test(a.agency) - GROUP_LINE.test(b.agency)
+    || (usd[b.agency] || 0) - (usd[a.agency] || 0) || a.agency.localeCompare(b.agency));
+  html += rows.map(a => `<div class='act'><span class='ag'>${esc(a.agency)}</span>${a.sector ? ` <span class='muted'>· ${esc(a.sector)}</span>` : ''}<div>${esc(a.text)}</div></div>`).join('');
+  return html + `<div class='muted small' style='margin-top:4px'>${v.doc_url ? `<a href='${esc(v.doc_url)}' target='_blank' rel='noopener'>${esc(tr8('Summarised from the framework document'))} ↗</a>` : esc(tr8('Summarised from the framework document'))}</div>`;
 }
 function miniTable(rows){ return rows.length ? `<table class='mini' style='margin-top:4px'>${rows.map(([k,val])=>`<tr><td class='lbl'>${esc(k)}</td><td>${val}</td></tr>`).join('')}</table>` : ''; }
 function sectorBlock(v){

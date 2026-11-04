@@ -153,6 +153,12 @@ MAP_FIELDS = {
                     "agency a sub-grantee works under), usd (the budget the document attaches, which can "
                     "include its own co-financing)}]",
         "partners_from": "the version whose list `partners` shows, where this one has none of its own",
+        "activities": "what each organisation does under the version once the trigger is met, in a line or "
+                      "two read from the version's public framework document (not the document's own "
+                      "words; no amounts or counts of people): [{agency, text, sector (as the document "
+                      "names it)}]",
+        "activities_from": "where this version has no lines of its own: the latest version of the same "
+                           "framework that has them (its lines are not repeated here)",
         "learning": "lessons the version's record lists",
         "admin_level": "the administrative level of the geographic scope",
         "scope": "the areas drawn: {pcodes, unmatched (scope entries not matched to a map area), national, "
