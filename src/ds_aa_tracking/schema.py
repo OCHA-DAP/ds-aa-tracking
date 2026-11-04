@@ -728,6 +728,25 @@ DURABLE_TABLES = {
             old_value text,
             new_value text
         )""",
+    # ------------------------------------------------- the open site's usage (D197)
+    # Daily totals of what readers of the open site (the root pages, never dev/ or admin/) do:
+    # page views, the map panels they open, language switches, downloads, links followed out.
+    # Written only by the proxy's anonymous POST /hit, one row per day and combination, n + 1
+    # per event: no IP address, no identifier, no time of day is stored, so no reader can be
+    # told apart. Counts are indicative (an anonymous endpoint can be inflated), never audited.
+    "page_count": """
+        CREATE TABLE IF NOT EXISTS aa.page_count (
+            day date NOT NULL,             -- UTC
+            page text NOT NULL,            -- the open page's file name: index.html, definitions.html…
+            event text NOT NULL,           -- view | panel | lang | download | out
+            detail text NOT NULL DEFAULT '',  -- view/panel: the map's ISO/hazard ('' = the world);
+                                           -- lang: en/fr/es; download: the file; out: host/path
+            lang text NOT NULL DEFAULT 'en',  -- the page's language at the time: en | fr | es
+            device text NOT NULL DEFAULT '',  -- phone (the site's narrow layout) | desktop
+            referrer text NOT NULL DEFAULT '',  -- view only: the referring site's host name
+            n bigint NOT NULL DEFAULT 0,
+            PRIMARY KEY (day, page, event, detail, lang, device, referrer)
+        )""",
     # ------------------------------------------- backtests (simulated activations)
     # Written by the knowledge base's load_aa_performance.py until 2026-10-05 (from its
     # gsheet / insurance-Excel crosswalk); owned here since. Shapes are the live ones.

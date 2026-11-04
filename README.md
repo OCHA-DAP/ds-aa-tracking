@@ -288,7 +288,9 @@ Deploy or run the Databricks job with `databricks bundle deploy -t prod -p DEFAU
 `databricks bundle run aa_tracking_nightly -t prod -p DEFAULT` (see `databricks.yml`).
 
 The proxy (`proxy/`) runs as Azure Web App `chd-ds-aa-extract`; app settings hold the
-Anthropic key, the DB write login, `SITE_TOKEN` (viewer), `EDITOR_TOKEN` (editor) and
-`GITHUB_TOKEN` (Publish changes).
+Anthropic key, the DB write login, `SITE_TOKEN` (viewer), `EDITOR_TOKEN` (editor),
+`GITHUB_TOKEN` (Publish changes) and `COUNT_DB_UID` / `COUNT_DB_PW`: the login of the open
+site's page counts (D197: `POST /hit`, the one endpoint without a token, adds 1 to a day's row of
+`aa.page_count`; that login can only read and add to that table; unset, the write login is used).
 Redeploy with `az webapp deploy --type zip` from a zip of `proxy/` (`server.js`, `package.json`
 and `mirror_tables.json`: the proxy will not start without the mirror list).

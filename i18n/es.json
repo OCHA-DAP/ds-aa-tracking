@@ -1698,5 +1698,18 @@
  "Co-financing, not in the split:": "Cofinanciación, fuera del desglose:",
  "The {0} storms the framework document lists from its backtest are shown, including those that would not have activated.": "Se muestran las {0} tormentas que el documento del marco lista en su backtest, incluidas las que no habrían activado.",
  "The {n} events the framework document lists from its backtest are shown, including those that would not have activated.": "Se muestran los {n} eventos que el documento del marco lista en su backtest, incluidos los que no habrían activado.",
- "Hover a cell for the trigger's value.": "Pase el cursor sobre una celda para ver el valor del disparador."
+ "Hover a cell for the trigger's value.": "Pase el cursor sobre una celda para ver el valor del disparador.",
+ "Privacy": "Privacidad",
+ "This site counts how it is used, to learn which pages and frameworks readers look at and what to improve. It does so without cookies, and keeps nothing that could tell one reader from another.": "Este sitio cuenta cómo se usa, para saber qué páginas y marcos consultan los lectores y qué mejorar. Lo hace sin cookies y no guarda nada que permita distinguir a un lector de otro.",
+ "What is counted": "Qué se cuenta",
+ "Each page view, each country or framework opened on the map, each change of language, each file downloaded and each link followed to another website.": "Cada página vista, cada país o marco abierto en el mapa, cada cambio de idioma, cada archivo descargado y cada enlace seguido hacia otro sitio web.",
+ "With each: the page, the language it was read in, whether the screen was a phone's or larger and, for a page view, the name of the website the reader came from (the site, not the page).": "Con cada uno: la página, el idioma en que se leyó, si la pantalla era la de un teléfono o más grande y, para una página vista, el nombre del sitio web del que venía el lector (el sitio, no la página).",
+ "What is not kept": "Qué no se guarda",
+ "No cookie is set, and nothing is stored in your browser for counting.": "No se instala ninguna cookie y no se guarda nada en su navegador para el conteo.",
+ "No IP address, identifier, time of day or browser details are recorded. The counting service holds the address a count comes from in memory for about an hour, only to limit how many counts one address can send, and then forgets it.": "No se registra ninguna dirección IP, identificador, hora del día ni detalle del navegador. El servicio de conteo mantiene en memoria la dirección de la que procede un conteo durante una hora aproximadamente, solo para limitar cuántos conteos puede enviar una misma dirección, y después la olvida.",
+ "Only daily totals are kept, for example: 12 views of the map in French on phones on 4 November.": "Solo se guardan totales diarios, por ejemplo: 12 vistas del mapa en francés en teléfonos el 4 de noviembre.",
+ "Where the counts are kept": "Dónde se guardan los conteos",
+ "In the database OCHA's data science team runs for this site, beside the data the site shows. They are not passed to any analytics company or advertiser, and are used only to improve the site.": "En la base de datos que el equipo de ciencia de datos de OCHA gestiona para este sitio, junto a los datos que muestra el sitio. No se transmiten a ninguna empresa de analítica ni a anunciantes, y se usan solo para mejorar el sitio.",
+ "Questions about this note: <a href='mailto:ocha-datascience@un.org'>ocha-datascience@un.org</a>.": "Preguntas sobre esta nota: <a href='mailto:ocha-datascience@un.org'>ocha-datascience@un.org</a>.",
+ "This note was last updated on {d}.": "Esta nota se actualizó por última vez el {d}."
 }

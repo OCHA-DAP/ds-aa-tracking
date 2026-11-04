@@ -167,8 +167,9 @@ function dlcsv(id, name) {
 # to the admin site, and never carries the data service's token.
 PUBLIC_TABS = ("index.html", "pillar-model.html", "pillar-history.html", "pillar-plan.html",
                "dash-funding.html", "pillar-learning.html", "media.html", "definitions.html",
-               "climate-adaptation.html", "climate-coding-accuracy.html", "accessibility.html")
-              # definitions and accessibility: public and linked (the legend, the foot), not tabs
+               "climate-adaptation.html", "climate-coding-accuracy.html", "accessibility.html",
+               "privacy.html")
+              # definitions, accessibility and privacy: public and linked (the legend, the foot), not tabs
 # public, so behind the same password as the tabs, but deliberately NOT in NAV nor linked
 # from any listed page: reached only by their links (they may link to each other), until
 # they are ready to be tabs (user, 2026-10-19)
@@ -182,8 +183,53 @@ ADMIN_DIR = "admin"
 # reading it (owner, 2026-11-01: "open accessibility and definitions"), and "Coming soon" for
 # the rest. publish.sh holds the same list and serves no other real page plain.
 DEV_DIR = "dev"
-OPEN_PAGES = ("index.html", "definitions.html", "accessibility.html")
+OPEN_PAGES = ("index.html", "definitions.html", "accessibility.html", "privacy.html")
 OPEN_META = '<meta name="aa-site" content="open">'   # publish.sh serves a page unencrypted only with it
+# The open site's page counts (D197; owner, 2026-11-04: "we only need it for the prod site"):
+# every page at the root carries this, no page under dev/ or admin/ does (write_site checks).
+# One small JSON per event, by navigator.sendBeacon, to the proxy's POST /hit, which adds 1 to
+# that day's row of aa.page_count: a page view (with the map's country/framework of a deep link
+# and the referring site's host), a map panel opened (the URL's #ISO/hazard changing), a language
+# switch (the count's lang is the one left, its detail the one chosen), a file downloaded, a link
+# followed out. With each, the page's language and phone or
+# desktop. No cookie, nothing kept in the browser, no IP or identifier stored (privacy.html).
+# Only on the site's own address: a local preview counts nothing.
+COUNT_URL = "https://chd-ds-aa-extract.azurewebsites.net/hit"
+COUNT_MARK = "/*aa-count*/"
+COUNT_HEAD = ("<script>" + COUNT_MARK + r"""(function(){
+if (location.hostname !== 'ocha-dap.github.io' || !navigator.sendBeacon || !window.JSON) return;
+var page = location.pathname.split('/').pop() || 'index.html', last;
+function lang(){ return window.aaLang ? aaLang() : 'en'; }
+function phone(){ return !!(window.matchMedia && matchMedia('(max-width: 759px)').matches); }
+function count(event, detail, referrer){
+  try { navigator.sendBeacon('""" + COUNT_URL + r"""', JSON.stringify({page: page, event: event,
+    detail: detail || '', lang: lang(), device: phone() ? 'phone' : 'desktop', referrer: referrer || ''})); } catch(e){}
+}
+function place(){ var p = '';
+  try { p = decodeURIComponent(location.hash.slice(1)).split('|')[0]; } catch(e){}
+  var m = /^([A-Z]{3})(\/([a-z]+))?/.exec(p); return m ? m[1] + (m[3] ? '/' + m[3] : '') : ''; }
+// a deep link is the view's detail, not a panel opened: the map rewrites the hash as it boots,
+// before the page has loaded, so the starting place is taken now, in the head
+last = place();
+var first = last;
+function view(){ var r = '';
+  try { r = document.referrer ? new URL(document.referrer).hostname : ''; } catch(e){}
+  count('view', first, r === location.hostname ? '' : r); }
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', view); else view();
+window.addEventListener('hashchange', function(){ var p = place(); if (p && p !== last) count('panel', p); last = p; });
+// clicks, before the page's own handlers: the language toggle (a reader's switch; the stored
+// language re-applied at load is not one), downloads and links out
+document.addEventListener('click', function(e){
+  var t = e.target && e.target.closest ? e.target : null, a, u; if (!t) return;
+  var b = t.closest('.aa-lang button[data-l]');
+  if (b) { if (b.getAttribute('data-l') !== lang()) count('lang', b.getAttribute('data-l')); return; }
+  a = t.closest('a[href]'); if (!a) return;
+  try { u = new URL(a.getAttribute('href'), location.href); } catch(x){ return; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return;
+  if (u.hostname !== location.hostname) count('out', (u.hostname + u.pathname).slice(0, 160));
+  else if (/\.(csv|json|md|txt|pdf)$/i.test(u.pathname)) count('download', u.pathname.split('/').pop());
+}, true);
+})();</script>""")
 # the open pages' pointer to the open layer, in their visible text (scripts/llm_layer.py)
 LLMS_LINE = "Data for programs and AI assistants, no password: <a href='llms.txt'>llms.txt</a>"
 
@@ -294,7 +340,9 @@ def _render(name, title, body, nav, meta, public=False, banner=BANNER, policy=Tr
                                nav[i:], count=1)
     skip = T("Skip to content") if public else "Skip to content"
     # the accessibility statement, from the foot of every public page (owner, 2026-10-29)
-    foot = f"<footer class='foot'><a href='accessibility.html'>{T('Accessibility')}</a></footer>" if public else ""
+    # and the privacy note (D197: what the open site counts), beside it
+    foot = (f"<footer class='foot'><a href='accessibility.html'>{T('Accessibility')}</a> · "
+            f"<a href='privacy.html'>{T('Privacy')}</a></footer>") if public else ""
     # the page's definition box: at the top, or where the page puts its placeholder (the Map:
     # beside What's new)
     pb = policy_box(name) if policy else ""
@@ -684,13 +732,13 @@ def write_site():
             if name == "index.html":
                 if name not in _OPEN_BODY:      # never the development map by default
                     raise SystemExit("FATAL: the map gave no body for the open site (page(..., prod_body=))")
-                doc = public_doc(name, title, _OPEN_BODY[name], BANNER, record=False, head=map_alt,
+                doc = public_doc(name, title, _OPEN_BODY[name], BANNER, record=False, head=map_alt + COUNT_HEAD,
                                  meta=meta + llms_line)
             elif name in OPEN_PAGES:            # words only, no figures: the same page as on dev/
                 doc = public_doc(name, title, _OPEN_BODY.get(name, body), BANNER, record=False,
-                                 head=open_head, meta=meta + llms_line)
+                                 head=open_head + COUNT_HEAD, meta=meta + llms_line)
             else:
-                doc = public_doc(name, title, _soon_body(name), BANNER, record=False, head=OPEN_META,
+                doc = public_doc(name, title, _soon_body(name), BANNER, record=False, head=OPEN_META + COUNT_HEAD,
                                  policy=False, meta="")
             (OUT / name).write_text(doc)
         else:
@@ -700,6 +748,12 @@ def write_site():
                 f"Generated {stamp} from the dev <code>aa</code> schema ({DATA_STAMP}) · admin site"))
     if missing := [n for n in OPEN_PAGES if n not in public]:
         raise SystemExit(f"FATAL: open-site page(s) not built as public pages: {', '.join(missing)}")
+    # the page counts are the open site's alone (D197): every page at the root counts, none
+    # under dev/ or admin/ does
+    for d, want in ((OUT, True), (dev_dir, False), (adm_dir, False)):
+        if wrong := sorted(f.name for f in d.glob("*.html") if (COUNT_MARK in f.read_text()) != want):
+            raise SystemExit(f"FATAL: {d.name or 'root'}: page counting {'missing from' if want else 'on'} "
+                             f"{', '.join(wrong[:8])}")
     (adm_dir / "index.html").write_text(_render(
         "admin/index.html", "AA tracking — admin site", _admin_home(admin), NAV_ADMIN,
         f"Generated {stamp} from the dev <code>aa</code> schema ({DATA_STAMP}) · admin site"))
@@ -810,6 +864,7 @@ NOTES = {
     "emergency_type_override": "Yakubu's re-tagged allocations: GMS emergency type vs actual shock (mostly Flood→Storm, with storm name).",
     "cerf_climate_coding": "CERF projects coded against climate-adaptation indicators (one row per project × indicator × coder; NULL value = blank cell). Hand coding on the unlisted climate-adaptation page, model runs (coders model-*) scored against it on the unlisted climate-coding-accuracy page (public password; the two link only to each other); indicator wording in scripts/page_climate.py.",
     "trigger_timeline": "When each trigger window of a framework version can activate, on its hazard's clock (the Model page's trigger timelines): storms in hours (<code>h</code>) and floods in days (<code>d</code>) before (−) / after (+) landfall or the flood peak, as a bar <code>lead_from</code> → <code>lead_to</code>; drought as the calendar <code>months</code> a trigger is checked, against the rainy season (<code>season_start</code>, <code>season_len</code>). A leg is a river or a season; <code>seq</code> orders the rows. Read by hand from the framework document and entered through entries files (<code>op: replace</code> per version); only the current version's rows are drawn.",
+    "page_count": "The open site's usage, as daily totals (D197): page views, map panels opened (the country or framework), language switches, downloads and links followed out, each with the page's language and phone or desktop; a view also with the referring site's host. Written only by the proxy's anonymous <code>POST /hit</code> (one row per day and combination, n + 1 per event) from the pages at the root, never dev/ or admin/; no IP address, identifier or time of day is stored (privacy.html says so to readers). Indicative counts, never audited: an anonymous endpoint can be inflated.",
 }
 
 def main():
@@ -832,6 +887,8 @@ def main():
     page_climate.build(e, page)
     import page_accessibility
     page_accessibility.build(page)
+    import page_privacy
+    page_privacy.build(page)
 
     write_site()
     import figure_check

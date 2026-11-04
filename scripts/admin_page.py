@@ -50,6 +50,8 @@ GROUPS = [
         "entered_version", "entered_window", "entered_window_funding", "entry_audit"]),
     ("Backtests (owned here since 2026-10-05; edited as errors are found — see v_trk_backtest_check)",
      "ds-aa-tracking", ["window", "simulated_activation", "backtest_event", "version_performance_reported"]),
+    ("Site usage (the open site's daily page counts, written only by the proxy's POST /hit; D197)",
+     "ds-aa-tracking", ["page_count"]),
     ("KB-era record (read-only, frozen 2026-10-05)", "ds-aa-tracking", [
         "funding_breakdown", "actual_activation", "activation_allocation"]),
     ("Mirrors — copied in every day, read-only", MIRRORS["repo"],
