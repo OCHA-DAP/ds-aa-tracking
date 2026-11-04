@@ -13,6 +13,13 @@
 # "Publish changes" on the admin page (D164) starts this by hand with fresh_snapshot: the
 # Databricks job then copies the database first (scripts/fresh_snapshot.py), so an edit made
 # minutes ago is on the site about 15 minutes later instead of the next morning.
+#
+# Deploy (2026-11-03, D195): the built site is uploaded as the Pages artifact and deployed by
+# actions/deploy-pages (Pages in workflow mode); it is never committed. Until then every publish
+# committed the whole re-encrypted site to gh-pages, ~6 GB of history in six weeks, and the
+# checkout fetched all of it. The checkout is main's tip only: nothing here reads history.
+# The admin page's "Publish changes" button (proxy/server.js) finds runs by this file, the
+# run-name below and the step names of the FIRST job: keep them.
 name: Publish site
 # the proxy's GET /publish tells a button run by this name; other runs keep GitHub's default
 run-name: ${{ inputs.fresh_snapshot && 'Publish changes (a fresh copy of the database)' || '' }}
@@ -40,7 +47,9 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
+  pages: write       # deploy-pages
+  id-token: write    # deploy-pages
 
 jobs:
   publish:
@@ -64,8 +73,6 @@ jobs:
       PGSSLMODE: disable
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
       # the copy runs on Databricks while the steps below set up; "Wait for…" joins it
       - name: Start a fresh copy of the database (Databricks)
@@ -113,7 +120,7 @@ jobs:
         run: |
           test -n "$DSCI_AZ_BLOB_DEV_SAS" || { echo "::error::DSCI_AZ_BLOB_DEV_SAS org secret is not visible to this repo"; exit 1; }
           uv run python scripts/restore_snapshot.py --snapshot "${{ github.event.inputs.snapshot || 'latest' }}"
-      - name: Build, encrypt and publish
+      - name: Build, encrypt and stage the site
         env:
           EXTRACT_TOKEN: ${{ secrets.EXTRACT_TOKEN }}
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
@@ -127,6 +134,19 @@ jobs:
           test -n "$SITE_PASSWORD" || { echo "::error::SITE_PASSWORD secret is not set"; exit 1; }
           # the admin site (admin/) has its own password, with no default anywhere
           test -n "$ADMIN_PASSWORD" || { echo "::error::ADMIN_PASSWORD secret is not set (gh secret set ADMIN_PASSWORD)"; exit 1; }
-          git config user.name "aa-tracking-bot"
-          git config user.email "aa-tracking-bot@users.noreply.github.com"
-          bash scripts/publish.sh
+          STAGE=_site bash scripts/publish.sh
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  # a job of its own: the github-pages environment's branch policy guards the deploy alone
+  deploy:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

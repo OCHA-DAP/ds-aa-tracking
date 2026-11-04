@@ -102,8 +102,8 @@ are kept forever (the year-end official state, for the map's time view).
   gets fixed at the source; `AA_SITE_GUARD=strict` stops the build instead (local checks).
   A public page can be **unlisted** (`UNLISTED_TABS`): same password as the
   tabs, but no header link and no link from any page (the build stops if one appears), so
-  only people given its address find it. `scripts/publish.sh` allows three directories on
-  gh-pages (`admin/`: encrypted pages and the two pdf.js files; `dev/`: encrypted pages, the
+  only people given its address find it. `scripts/publish.sh` allows three directories in
+  the published site (`admin/`: encrypted pages and the two pdf.js files; `dev/`: encrypted pages, the
   map's geometry and the vendored scripts; `dev/media/`: the Media page's photos) and refuses
   a page under them that is not encrypted. Every page carries the "internal product under
   development" banner; the development site's adds that it is the development version.
@@ -191,8 +191,8 @@ are kept forever (the year-end official state, for the map's time view).
 - `scripts/page_media.py` — the Media page: the folder "AA visuals" (OCHA-HFSA SharePoint,
   "(08) External communication"; a Google Drive folder until that was deleted in Oct 2026) as
   it was gathered (photos by country, the social posts of the folder's catalogue), read from
-  `site_src/media.json`. A photo is shown from two renditions published under `dev/media/` on
-  gh-pages (public files, as the Drive renditions were); the page links to neither the
+  `site_src/media.json`. A photo is shown from two renditions published under `dev/media/`
+  (public files, as the Drive renditions were); the page links to neither the
   folder nor the originals.
   `scripts/sync_media.py --from DIR` (DIR = the folder downloaded from SharePoint and
   unzipped) archives every file on the dev blob (`projects/ds-aa-tracking/raw/media/`), makes
@@ -261,8 +261,14 @@ DB access via `ocha-stratus` env vars; `PGSSLMODE=require` is set automatically.
 ```sh
 uv run python scripts/ensure_schema.py   # idempotent: create missing tables, additive migrations, views
 uv run python scripts/build_site.py      # needs graphviz (`brew install graphviz`) for the ERD
-bash scripts/publish.sh                  # build → encrypt → gh-pages; needs ADMIN_PASSWORD (SKIP_BUILD=1 reuses the build, DRY_RUN=1 stops before the commit)
+bash scripts/publish.sh                  # build → encrypt → stage in _site/ → check; needs ADMIN_PASSWORD (SKIP_BUILD=1 reuses the build); never deploys
+gh workflow run publish.yml              # put the site online: the workflow builds, uploads _site/ as the Pages artifact and deploys it
 ```
+
+The site is deployed as a GitHub Pages artifact (Pages in workflow mode, D195): the published
+pages are never committed, so the repository holds code only. To go back to an earlier site,
+run the workflow from that commit with the snapshot of that day
+(`gh workflow run publish.yml --ref <commit> -f snapshot=YYYY-MM-DD`; dated snapshots are kept 30 days).
 
 Once the laptop can no longer reach the dev DB, work from the snapshot in a local Postgres
 (the schema/data writes then go through the site's proxy, or through the Databricks job

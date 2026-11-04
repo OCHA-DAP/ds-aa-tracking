@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Publish the three sites: rebuild → encrypt → gh-pages.
+# Build the three sites into one folder for GitHub Pages: rebuild → encrypt → stage → check.
+# The publish workflow uploads the staged folder ($STAGE, default _site/) as the Pages artifact
+# and deploys it (D195): the published site never enters git, every deploy is the whole site
+# and atomic (a failed run leaves the live site as it was). Run locally, the script stops
+# after the checks; to put a build online, run the workflow: gh workflow run publish.yml.
 #   open site    top-level *.html  NO password: the map, Definitions and Accessibility
 #                                  (OPEN_PAGES), and a "Coming soon" page in place of every
 #                                  other public page (owner, 2026-11-01)
@@ -8,21 +12,19 @@
 # site_build/ is laid out the same way (scripts/build_site.py, write_site). The public pages
 # never link to the admin site; the admin site links to the dev site.
 # SKIP_BUILD=1 reuses the existing site_build/ + site_encrypted/ output.
-# DRY_RUN=1 stages and checks everything, then stops before the commit and the push.
+# DRY_RUN=1 is accepted as before (stage and check, then stop): the script never deploys.
 #
-# Hard-won rules encoded here (two incidents):
-# - never `git add -A` on gh-pages (no .gitignore there — sweeps in the
-#   UNENCRYPTED site_build/, scripts/, .venv/…)
-# - git pathspecs like '*.html' match RECURSIVELY — stage via a loop over
-#   named files with a literal ./ prefix
-# - the only directories on gh-pages are admin/, which holds only encrypted pages and the two
+# Hard-won rules encoded here (two incidents, from when the site was committed to gh-pages):
+# - the staged folder holds only what is copied in by name: nothing is swept in (the
+#   UNENCRYPTED site_build/, scripts/, .venv/… once were)
+# - the only directories in the published site are admin/, which holds only encrypted pages and the two
 #   pdf.js files of the data-entry page, dev/, which holds only encrypted pages, the map's
 #   geometry and the vendored scripts and styles, and dev/media/, which holds only the Media
 #   page's photo renditions (<key>-w<width>.jpg, scripts/sync_media.py): any other nested path
-#   aborts before committing, and any other directory in the pushed tree is fatal
+#   aborts before anything is uploaded, and so does any other directory
 # - every page under dev/ and admin/ is a staticrypt page, and a top-level page is served plain
 #   only if the build marked it for the open site (OPEN_META); apart from OPEN_PAGES, a page
-#   that is not a "Coming soon" page, or is the size of a real page, aborts before committing
+#   that is not a "Coming soon" page, or is the size of a real page, aborts before anything is uploaded
 # - the OPEN LAYER (scripts/llm_layer.py) is published unencrypted on purpose, at the top level:
 #   llms.txt, robots.txt, sitemap.xml and the data behind the pages the open site serves
 #   (build_site.OPEN_PAGES: today the map's aa-map.md and aa-*.json / aa-*.csv tables), for
@@ -75,61 +77,50 @@ fi
 # DSCI_AZ_BLOB_DEV_SAS); a cached folder only fetches what it lacks
 uv run python scripts/sync_media.py --fetch site_media
 
-# gh-pages lives in its own worktree so publishing never switches branches in the
-# main tree (uncommitted work there — possibly another session's — stays untouched)
-git fetch -q origin gh-pages
-WT="$(mktemp -d)/gh-pages"
-git worktree prune
-git worktree add -q -B gh-pages "$WT" origin/gh-pages
-trap 'git worktree remove --force "$WT" 2>/dev/null || true' EXIT
-
-# the published tree is exactly this build: a page dropped from the build, or moved to the
-# admin site, must not linger at its old address
-rm -f "$WT"/*.html "$WT"/adm-*.json "$WT"/pdf.min.js "$WT"/pdf.worker.min.js "$WT"/chart.umd.js \
-      "$WT"/sankey.js "$WT"/unocha.css
-for f in $(open_files "$WT"); do rm -f "$WT/$f"; done
-rm -rf "${WT:?}/$ADMIN" "${WT:?}/$DEV" "${WT:?}/media"
-mkdir "$WT/$ADMIN" "$WT/$DEV" "$WT/$DEV/media"
+# the staged site: built fresh every time, so a page dropped from the build, or moved to the
+# admin site, cannot linger at its old address. A relative folder inside the repo, never a
+# path that could reach outside it (it is deleted whole first).
+STAGE="${STAGE:-_site}"
+case "$STAGE" in ""|/*|*..*|.|./) echo "FATAL: STAGE must be a folder inside the repo, got '$STAGE'" >&2; exit 1 ;; esac
+rm -rf "./${STAGE:?}"
+mkdir -p "$STAGE/$ADMIN" "$STAGE/$DEV/media"
 # the Media page is on the dev site only, so are its photos
-if compgen -G 'site_media/*.jpg' >/dev/null; then cp site_media/*.jpg "$WT/$DEV/media/"; fi
+if compgen -G 'site_media/*.jpg' >/dev/null; then cp site_media/*.jpg "$STAGE/$DEV/media/"; fi
 # the open site: served as built, no password (the guard below checks each page is meant to be)
-cp site_build/*.html "$WT"/
-cp site_encrypted/$DEV/*.html "$WT/$DEV"/
-cp site_encrypted/$ADMIN/*.html "$WT/$ADMIN"/
-# committed copies of the vendored assets (main locally; the checked-out ref in CI)
-REF=main; git rev-parse -q --verify main >/dev/null 2>&1 || REF=HEAD
+cp site_build/*.html "$STAGE"/
+cp site_encrypted/$DEV/*.html "$STAGE/$DEV"/
+cp site_encrypted/$ADMIN/*.html "$STAGE/$ADMIN"/
+# the committed copies of the vendored assets (never a local edit not yet committed)
 for a in chart.umd.js sankey.js; do                 # the open map loads sankey.js
-  git show "$REF:site_src/$a" > "$WT/$a"
+  git show "HEAD:site_src/$a" > "$STAGE/$a"
 done
 for a in chart.umd.js sankey.js unocha.css; do      # unocha.css: the mock-up's
-  git show "$REF:site_src/$a" > "$WT/$DEV/$a"
+  git show "HEAD:site_src/$a" > "$STAGE/$DEV/$a"
 done
 for a in pdf.min.js pdf.worker.min.js; do          # the data-entry page only: admin site
-  git show "$REF:site_src/$a" > "$WT/$ADMIN/$a"
+  git show "HEAD:site_src/$a" > "$STAGE/$ADMIN/$a"
 done
 # per-country admin-boundary geometry for the map, open and dev (public CODAB data, not encrypted)
-cp site_build/adm-*.json "$WT"/
-cp site_build/adm-*.json "$WT/$DEV"/
+cp site_build/adm-*.json "$STAGE"/
+cp site_build/adm-*.json "$STAGE/$DEV"/
 # the open layer (unencrypted by design; the build already checked it for the proxy token)
-for f in $(open_files site_build); do cp "site_build/$f" "$WT/$f"; done
-touch "$WT/.nojekyll"
+for f in $(open_files site_build); do cp "site_build/$f" "$STAGE/$f"; done
+touch "$STAGE/.nojekyll"
 (
-  cd "$WT"
-  git add -u .                   # tracked files only: what changed and what went away
-  for f in *.html adm-*.json chart.umd.js sankey.js .nojekyll; do git add -f "./$f"; done
-  for f in $DEV/*.html $DEV/adm-*.json $DEV/chart.umd.js $DEV/sankey.js $DEV/unocha.css; do git add -f "./$f"; done
-  for f in $(open_files .); do git add -f "./$f"; done
-  for f in $ADMIN/*.html $ADMIN/pdf.min.js $ADMIN/pdf.worker.min.js; do git add -f "./$f"; done
-  if [ -n "$(ls -A $DEV/media)" ]; then git add -f ./$DEV/media; fi
-  # the tree about to be committed (not just what changed)
-  BAD=$(git ls-files | grep "/" | grep -v -E "^$ADMIN/([A-Za-z0-9_.-]+\.html|pdf\.min\.js|pdf\.worker\.min\.js)$" \
+  cd "$STAGE"
+  # every file about to be uploaded, as paths relative to the site root
+  FILES=$(find . -type f | sed 's|^\./||' | sort)
+  BAD=$(echo "$FILES" | grep "/" | grep -v -E "^$ADMIN/([A-Za-z0-9_.-]+\.html|pdf\.min\.js|pdf\.worker\.min\.js)$" \
         | grep -v -E "^$DEV/([A-Za-z0-9_.-]+\.html|adm-[A-Z]{3}\.json|chart\.umd\.js|sankey\.js|unocha\.css)$" \
         | grep -v -E "^$DEV/media/[0-9a-f]{16}-w[0-9]+\.jpg$" || true)
   if [ -n "$BAD" ]; then
     echo "FATAL: nested path outside $ADMIN/, $DEV/ and $DEV/media/ — aborting" >&2
     echo "$BAD" | head >&2; exit 1
   fi
-  git ls-files | grep -E '\.html$' | while read -r f; do
+  DIRS=$(find . -mindepth 1 -type d | sed 's|^\./||' | sort | tr '\n' ' ')
+  [ "$DIRS" = "$ADMIN $DEV " ] || [ "$DIRS" = "$ADMIN $DEV $DEV/media " ] \
+    || { echo "FATAL: the site contains directories other than $ADMIN/, $DEV/ and $DEV/media/: $DIRS" >&2; exit 1; }
+  echo "$FILES" | grep -E '\.html$' | while read -r f; do
     case "$f" in
       */*)    # dev/ and admin/: encrypted, nothing readable
         if ! grep -q "staticrypt-form" "$f" || grep -q "devbanner" "$f"; then
@@ -155,19 +146,8 @@ touch "$WT/.nojekyll"
   done
   [ -f llms.txt ] || { echo "FATAL: the open layer is missing (no llms.txt) — aborting" >&2; exit 1; }
   [ -f "$DEV/index.html" ] || { echo "FATAL: the dev site has no index.html — aborting" >&2; exit 1; }
-  if git diff --cached --quiet; then
-    echo "nothing changed — not publishing"
-  elif [ -n "${DRY_RUN:-}" ]; then
-    echo "DRY_RUN: would publish $(git ls-files | grep -c -v "/") top-level files ($(open_files . | wc -l | tr -d ' ') of the open layer), $(git ls-files "$DEV" | grep -c -v "^$DEV/media/") under $DEV/, $(git ls-files "$DEV/media" | wc -l | tr -d ' ') under $DEV/media/ and $(git ls-files "$ADMIN" | wc -l | tr -d ' ') under $ADMIN/"
-    git diff --cached --stat | tail -1
-  else
-    git commit -q -m "Publish review site $(date +%F)"
-    git push -q origin gh-pages
-  fi
+  echo "staged ✓ (tree clean): $(echo "$FILES" | grep -c -v "/") top-level files ($(open_files . | wc -l | tr -d ' ') of the open layer), $(echo "$FILES" | grep "^$DEV/" | grep -c -v "^$DEV/media/") under $DEV/, $(echo "$FILES" | grep -c "^$DEV/media/") under $DEV/media/ and $(echo "$FILES" | grep -c "^$ADMIN/") under $ADMIN/; $(du -sh . | cut -f1) in $STAGE/"
 )
-if [ -z "${DRY_RUN:-}" ]; then
-  DIRS=$(git ls-tree -d -r origin/gh-pages --name-only | tr '\n' ' ')
-  [ "$DIRS" = "$ADMIN $DEV " ] || [ "$DIRS" = "$ADMIN $DEV $DEV/media " ] \
-    || { echo "FATAL: gh-pages tree contains directories other than $ADMIN/, $DEV/ and $DEV/media/: $DIRS" >&2; exit 1; }
-  echo "published ✓ (tree clean)"
+if [ -z "${GITHUB_ACTIONS:-}" ]; then
+  echo "not deployed: the publish workflow deploys (gh workflow run publish.yml)"
 fi
