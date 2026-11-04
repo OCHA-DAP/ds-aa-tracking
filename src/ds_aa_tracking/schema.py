@@ -717,6 +717,32 @@ DURABLE_TABLES = {
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (allocation_code, project_code)
         )""",
+    # what each organisation does under a framework version, in a line or two (D196): read from
+    # the version's public framework document, the one named by sha256 (aa.framework_document),
+    # and shown in the map panel's Activities tab. Only from public documents: the build drops a
+    # row whose document is not public (any more), so the text leaves the open map with it.
+    # Written in English (record text: never translated, i18n/README.md); no amounts, no counts
+    # of people (the panel shows the recorded ones), no names of people.
+    "framework_activity": """
+        CREATE TABLE IF NOT EXISTS aa.framework_activity (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,         -- aa.framework_version
+            agency text NOT NULL,          -- the organisation, as the budget names it (WFP,
+                                           -- UNICEF…); for a group, one of the labels the map
+                                           -- lists after the organisations: 'NGO partners (<fund>)',
+                                           -- 'Government and partners', 'All agencies' (no
+                                           -- breakdown in the document)
+            summary text NOT NULL,         -- one or two sentences: what it does once the
+                                           -- trigger is met
+            sector text,                   -- as the document names it
+            sha256 text NOT NULL,          -- the document read (aa.framework_document)
+            pages text,                    -- where in it, e.g. '12, 14-15'
+            source text NOT NULL,          -- doc-read-YYYY-MM-DD | entered
+            note text,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (country_iso3, hazard, version, agency)
+        )""",
     "entry_audit": """
         CREATE TABLE IF NOT EXISTS aa.entry_audit (
             id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
