@@ -1292,6 +1292,24 @@ def assemble(d, e):
            FROM aa.framework_activity a JOIN aa.framework_document d USING (sha256)
            WHERE d.is_public ORDER BY a.agency""",
         ["country_iso3", "hazard", "version", "agency", "summary", "sector"])
+    # ...and say which lines that leaves out, or which name a document that is not the version's own
+    for r in _try(
+            """SELECT a.country_iso3, a.hazard, a.version, count(*) AS n,
+                      bool_or(d.sha256 IS NULL) AS unregistered, bool_or(NOT d.is_public) AS internal,
+                      bool_or(NOT EXISTS (SELECT 1 FROM aa.version_document vd
+                                          WHERE vd.sha256 = a.sha256 AND vd.country_iso3 = a.country_iso3
+                                            AND vd.hazard = a.hazard AND vd.version = a.version)) AS other_doc
+               FROM aa.framework_activity a LEFT JOIN aa.framework_document d USING (sha256)
+               GROUP BY 1, 2, 3
+               HAVING bool_or(d.sha256 IS NULL OR NOT d.is_public) OR bool_or(NOT EXISTS (
+                   SELECT 1 FROM aa.version_document vd WHERE vd.sha256 = a.sha256
+                     AND vd.country_iso3 = a.country_iso3 AND vd.hazard = a.hazard
+                     AND vd.version = a.version))""",
+            ["country_iso3", "hazard", "version", "n", "unregistered", "internal", "other_doc"]).itertuples():
+        why = ", ".join(w for w, on in (("its document is not registered", r.unregistered),
+                                        ("its document is not public: left off the map", r.internal),
+                                        ("its document is not one of the version's", r.other_doc)) if on)
+        print(f"  ! activities {r.country_iso3} {r.hazard} {r.version}: {why}")
     # the CERF AA sub-grants of the framework pages and the Financing page (d["subgrant_aa"]: the
     # allocations the activation record draws on, amounts recorded) — the sheet's own AA flag
     # missed four allocations (2026-10-28)
@@ -3821,19 +3839,23 @@ function partnersBlock(c, f, v){
   return html;
 }
 // Activities: what each organisation does under the version, in a line or two (aa.framework_activity,
-// D196), read from its public framework document; largest budget first, a line for a group (a
-// fund's NGO partners, government and partners) after the organisations named. A version without
+// D196), read from its public framework document: the organisations named first, by budget (largest
+// first; alphabetical where no split is recorded), then a line for a group (GROUP_LINE: a fund's NGO
+// partners, government and partners, all agencies). A version without
 // lines of its own points to the version of the same framework that has them (activities_from)
 const GROUP_LINE = /^(NGO partners|Government and partners|All agencies)\b/;
 function activitiesBlock(f, v){
   const A = (v && v.activities) || [];
   let html = `<h4>${esc(tr8('What each organisation does'))}</h4>`;
-  if(!A.length) return html + `<div class='muted small'>${esc(tr8('No summary of the activities yet.'))}${v && v.activities_from ? ` <a onclick='selectVersion("${esc(v.activities_from)}")' style='cursor:pointer'>${esc(tr8('See version {0}', v.activities_from))}</a>` : ''}</div>`;
+  if(!A.length){
+    if(f.disp === 'retired' && !(v && v.activities_from)) return '';   // a retired framework: nothing to come
+    return html + `<div class='muted small'>${esc(tr8('No summary of the activities yet.'))}${v && v.activities_from ? ` <a href='#' onclick='selectVersion("${esc(v.activities_from)}"); return false;'>${esc(tr8('See version {0}', v.activities_from))}</a>` : ''}</div>`;
+  }
   const usd = groupBy(v.funding.agency, x => x.agency, x => x.usd);
-  const rows = [...A].sort((a, b) => (usd[b.agency] || 0) - (usd[a.agency] || 0)
-    || GROUP_LINE.test(a.agency) - GROUP_LINE.test(b.agency) || a.agency.localeCompare(b.agency));
+  const rows = [...A].sort((a, b) => GROUP_LINE.test(a.agency) - GROUP_LINE.test(b.agency)
+    || (usd[b.agency] || 0) - (usd[a.agency] || 0) || a.agency.localeCompare(b.agency));
   html += rows.map(a => `<div class='act'><span class='ag'>${esc(a.agency)}</span>${a.sector ? ` <span class='muted'>· ${esc(a.sector)}</span>` : ''}<div>${esc(a.text)}</div></div>`).join('');
-  return html + `<div class='tm' style='margin-top:4px'>${v.doc_url ? `<a href='${esc(v.doc_url)}' target='_blank' rel='noopener'>${esc(tr8('Summarised from the framework document'))} ↗</a>` : esc(tr8('Summarised from the framework document'))}</div>`;
+  return html + `<div class='muted small' style='margin-top:4px'>${v.doc_url ? `<a href='${esc(v.doc_url)}' target='_blank' rel='noopener'>${esc(tr8('Summarised from the framework document'))} ↗</a>` : esc(tr8('Summarised from the framework document'))}</div>`;
 }
 function miniTable(rows){ return rows.length ? `<table class='mini' style='margin-top:4px'>${rows.map(([k,val])=>`<tr><td class='lbl'>${esc(k)}</td><td>${val}</td></tr>`).join('')}</table>` : ''; }
 function sectorBlock(v){

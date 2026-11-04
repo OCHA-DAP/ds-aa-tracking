@@ -729,8 +729,10 @@ DURABLE_TABLES = {
             hazard text NOT NULL,
             version text NOT NULL,         -- aa.framework_version
             agency text NOT NULL,          -- the organisation, as the budget names it (WFP,
-                                           -- UNICEF…); 'All agencies' when the document gives
-                                           -- no breakdown
+                                           -- UNICEF…); for a group, one of the labels the map
+                                           -- lists after the organisations: 'NGO partners (<fund>)',
+                                           -- 'Government and partners', 'All agencies' (no
+                                           -- breakdown in the document)
             summary text NOT NULL,         -- one or two sentences: what it does once the
                                            -- trigger is met
             sector text,                   -- as the document names it
