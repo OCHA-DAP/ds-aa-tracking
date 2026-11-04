@@ -2439,6 +2439,57 @@ def build_funding(page, d):
         return (f"<details class='note'><summary style='cursor:pointer'>{T(title)}</summary>{TB(body)}"
                 f"{two_how if two else ''}</details>")
 
+    # the insurance portfolio (D198): the annex's cover per framework and, beside it, the CERF
+    # money released on the framework's activations in the period, each activation a loss
+    # statement. A fixed list of frameworks: the filter bar does not apply (the page says so).
+    import insurance
+    ins = insurance.monitor(d["activation"])
+    ins_rel, ins_n = sum(r["released"] for r in ins), sum(r["n"] for r in ins)
+    ins_cover = sum(r["cover"] for r in ins)
+    n_ins_c = len({r["iso3"] for r in ins})
+    n_uni = sum(r["unicef"] for r in ins)
+    n_uni_c = len({r["iso3"] for r in ins if r["unicef"]})
+
+    def ins_row(r):
+        share = r["released"] / r["cover"] if r["cover"] else 0
+        bar = (f"<span class='ins-m' aria-hidden='true'><span style='width:{min(share, 1) * 100:.1f}%'></span></span>")
+        uni = (f"<span {ATTR('title', 'also in UNICEF policy')}>✓</span>" if r["unicef"] else "–")
+        return (f"<tr><td>{T(country_name(r['iso3']))}</td>"
+                f"<td>{T(hazard_word(r['hazard']))}{'*' if r['twice'] else ''}</td>"
+                f"<td class='n'>{r['cover'] / 1e6:,.1f}</td><td class='c'>{uni}</td>"
+                f"<td class='n'>{r['n']}</td><td class='n'>${r['released'] / 1e6:,.1f}M</td>"
+                f"<td class='n'>{share * 100:.0f}% {bar}</td></tr>")
+    since = insurance.START_TEXT
+    ins_html = f"""
+<style>
+.ins th.n, .ins td.n {{ text-align:right; white-space:nowrap; }} .ins th.c, .ins td.c {{ text-align:center; }}
+.ins tfoot td {{ font-weight:600; background:#f7f9fb; }} .ins tfoot tr + tr td {{ font-weight:400; }}
+.ins-m {{ display:inline-block; width:56px; height:6px; background:#e6edf4; border-radius:3px; vertical-align:middle; margin-left:4px; }}
+.ins-m span {{ display:block; height:100%; background:#007ce0; border-radius:3px; }}
+</style>
+<h2>{T("Insurance portfolio")}</h2>
+<p class='meta'>{TB("The anticipatory action frameworks covered by the insurance, " + insurance.PERIOD_TEXT + ", and the CERF money released on their activations since the period began. The <b>loss statement</b> is CERF's notification that a framework is triggered: each activation counted here is one.")}</p>
+<p class='fwnote'>{T("Not affected by the filters above: the insurance covers a fixed list of frameworks.")}</p>
+<div class='tiles'>
+ <div class='tile'><div class='v'>${ins_cover / 1e6:,.1f}M</div><div class='l'>{TF("cover limit per season — OCHA policy: {c} countries, {n} frameworks", c=n_ins_c, n=len(ins))}</div></div>
+ <div class='tile'><div class='v'>{ins_n}</div><div class='l'>{T("loss statements since " + since + " — activations of a covered framework")}</div></div>
+ <div class='tile'><div class='v'>${ins_rel / 1e6:,.1f}M</div><div class='l'>{T("CERF released on those activations since " + since)}</div></div>
+ <div class='tile'><div class='v'>{n_uni}</div><div class='l'>{TF("frameworks also in UNICEF policy, in {c} countries", c=n_uni_c)}</div></div>
+</div>
+{"" if ins_n else f"<p class='note' style='margin:-4px 0 6px;font-size:12px;color:#555'>{T('No covered framework has been activated since ' + since + '.')}</p>"}
+<div class='panel ins'><h3>{T("Anticipatory action frameworks covered by the insurance")}</h3>
+<div class='xscroll'><table class='data'><thead><tr><th>{T("Country")}</th><th>{T("Hazard")}</th>
+<th class='n'>{T("Cover limit (US$ million, per season)")}</th><th class='c'>{T("UNICEF")}</th>
+<th class='n'>{T("Activations since " + since)}</th><th class='n'>{T("CERF released since " + since)}</th>
+<th class='n'>{T("Released, share of the cover limit")}</th></tr></thead>
+<tbody>{"".join(ins_row(r) for r in ins)}</tbody>
+<tfoot><tr><td colspan='2'>{TF("OCHA policy: {c} countries, {n} frameworks", c=n_ins_c, n=len(ins))}</td>
+<td class='n'>{ins_cover / 1e6:,.1f}</td><td></td><td class='n'>{ins_n}</td><td class='n'>${ins_rel / 1e6:,.1f}M</td><td></td></tr>
+<tr><td colspan='7'>{TF("UNICEF policy: {c} countries, {n} frameworks", c=n_uni_c, n=n_uni)}</td></tr></tfoot></table></div>
+<p class='note' style='font-size:12px;color:#555'>{T("* Framework can activate up to twice per season. The cover limit shown is the maximum across both activations.")}</p>
+{how("Released: the CERF money of each covered framework's activations dated from " + insurance.PERIOD_TEXT + ", net of any refund, as on the rest of this page; an amount entered before CERF's records show the allocation is included. An activation known only to the month counts when that month is in the period. Only CERF money is counted, not the Country and Regional Funds'. The cover limit applies to each season, while the released column adds up the whole period, which can span more than one season of a framework. The frameworks and cover limits are those of the insurance annex, copied on " + insurance.UPDATED + ".")}
+</div>"""
+
     fund_sel = (f"<label>{T('Fund')} <select id='fFund'>{OPT('', 'CERF and Country and Regional Funds')}"
                 f"{OPT('cerf', 'CERF')}{OPT('pooled', 'Country and Regional Funds')}</select></label>")
     panels = f"""
@@ -2493,6 +2544,7 @@ def build_funding(page, d):
  <div class='panel'><h3>{T("Co-financing pre-arranged now, by co-financer")}</h3><div id='cofWhoBox' style='position:relative;height:300px'><canvas id='cofWho' style='max-height:none'></canvas></div><p class='empty' id='cofWhoX' style='display:none'></p>
    {how(COF_WHO_HOW)}</div>
 </div>
+{ins_html}
 <h2>{T("Frameworks and money by year, hazard and region")}</h2>
 <div class='grid'>
  <div class='panel'><h3>{T("Frameworks each year, by status")}</h3><canvas id='c0' height='260'></canvas>
