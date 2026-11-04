@@ -75,14 +75,19 @@ LONG_TEXT = ("note", "notes", "comment", "comments", "remark", "remarks", "descr
              "tiers")
 
 
-def build_admin(page):
+def site_token():
+    """The proxy's viewer token, embedded in the admin site's pages only (behind its password)."""
     token_file = Path(__file__).parents[1] / ".extract_token"
-    site_token = os.environ.get("EXTRACT_TOKEN", "").strip() or (
+    return os.environ.get("EXTRACT_TOKEN", "").strip() or (
         token_file.read_text().strip() if token_file.exists() else "")
+
+
+def build_admin(page):
+    site_token_ = site_token()
     import json
     body = (ADMIN_HTML
             .replace("__PROXY__", PROXY_URL)
-            .replace("__TOKEN__", site_token)
+            .replace("__TOKEN__", site_token_)
             .replace("__GROUPS__", json.dumps(GROUPS))
             .replace("__MIRRORS__", json.dumps(MIRRORS).replace("</", "<\\/"))
             .replace("__IMPORTED__", json.dumps(IMPORTED))
