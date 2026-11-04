@@ -23,19 +23,19 @@ A sync does three things:
   from the camera's orientation, and keeps them on the dev blob under WEB, named by the
   photo's content (the first 16 hex digits of its sha256): renditions are made once, here,
   never during the build (--rerender makes them all again, after a change to how they are
-  made: the publish then fetches and commits the new bytes under the same names);
+  made: the publish then fetches and deploys the new bytes under the same names);
 - rewrites the manifest: each photo and document with its key, name and size, and the
   social posts of the catalogue kept at the folder's root (its posts sheet).
 
 --fetch is the other half, for scripts/publish.sh: it fetches the renditions the manifest
-lists (and only those) from the blob into a folder the publish copies to gh-pages under
-media/. A rendition the blob does not have stops the publish.
+lists (and only those) from the blob into a folder the publish stages under dev/media/ in the
+published site (D195). A rendition the blob does not have stops the publish.
 
 Run by hand, and read the diff before committing it: what is in the manifest is published
 (the publish workflow runs on a push that touches site_src/). It is not part of the nightly
-build on purpose, so nothing reaches the page that nobody looked at. The renditions on
-gh-pages are public files (gh-pages is a public branch; the page's encryption covers its
-HTML only), as the Drive folder's own renditions were when it was shared by link.
+build on purpose, so nothing reaches the page that nobody looked at. The renditions in the
+published site are public files (the page's encryption covers its HTML only), as the Drive
+folder's own renditions were when it was shared by link.
 
 What is left out of the manifest, and said so on every run (all of it is still archived):
 - the catalogue itself and any other spreadsheet at the folder's root (working files, with

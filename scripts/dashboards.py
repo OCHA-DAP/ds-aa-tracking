@@ -71,18 +71,35 @@ def code_words(vocab, code, what="code"):
     return None
 
 
+# a regional fund's acronym in the registry's names -> the region in its label
+_FUND_REGION = {"AP-RHPF": "AP", "RHPF-AP": "AP", "ESAHF": "ESA", "RHPF-LAC": "LAC", "RHPF-WCA": "WCA"}
+
+
 def fund_label(fc):
     """A fund as the pages name it ('CERF', 'CBPF AFG', 'RHPF ESA UGA'; the map's form), never its
-    code; a financier recorded in words (an agency's co-financing) is shown as written."""
+    code; a financier recorded in words (an agency's co-financing) is shown as written. A
+    regional fund's window filed under a cbpf- code is named as the regional fund it is (owner,
+    2026-11-03: "VUT has financing from the regional fund too"; 'cbpf-vut', the AP-RhPF's
+    Vanuatu window, read "CBPF VUT"; D191): 'RHPF AP VUT', the region from the registry's name."""
     if not isinstance(fc, str) or not fc:
         return ""
     if fc == "cerf":
         return "CERF"
     if fc == "cbpf-unspecified":
         return "CBPF"
+    if fc in REGIONAL_FUNDS and fc.startswith("cbpf-"):
+        acr = re.search(r"\(([^)]+)\)\s*$", REGIONAL_FUND_NAMES.get(fc) or "")
+        reg = _FUND_REGION.get(acr.group(1).upper()) if acr else None
+        return " ".join(x for x in ("RHPF", reg, fc[5:].upper()) if x)
     if re.fullmatch(r"(cbpf|rhpf)(-[a-z]+)+", fc):
         return fc.upper().replace("-", " ")
     return fc
+
+
+def regional_fund_labels():
+    """{code: label} of the regional fund windows filed under cbpf- codes, for the pages' scripts
+    (fundName in the map's script names a fund as fund_label does)."""
+    return {fc: fund_label(fc) for fc in sorted(REGIONAL_FUNDS) if fc.startswith("cbpf-")}
 
 
 def hazard_word(h):
@@ -224,6 +241,8 @@ table.hist td.use, table.data tr:hover td.use { background:#fbf6ee; }
 .usetag { display:inline-block; padding:0 6px; border-radius:8px; font-size:10px; font-weight:600;
           background:#f6ead3; color:#7a5a17; margin-left:4px; vertical-align:1px; }
 .sw.use, p.legend .sw.use { display:inline-block; width:14px; height:12px; background:#fbf6ee; border:1px solid #eadcc0;
+          vertical-align:middle; margin:0 2px; }
+.sw.na, p.legend .sw.na { display:inline-block; width:14px; height:12px; background:#eef1f5; border:1px solid #d5dbe3;
           vertical-align:middle; margin:0 2px; }
 p.legend { font-size:12px; color:#555; margin:6px 0 0; }
 table.acts { width:100%; table-layout:fixed; }
@@ -431,6 +450,7 @@ def _canonical_org_names(d):
     srcs = [(k, col, usd) for k, col, usd in (("subgrant", "partner_name", "subgrant_usd"),
                                               ("subgrant_aa", "partner_name", "subgrant_usd"),
                                               ("cbpf_org_name", "org_name", "usd"),
+                                              ("cbpf_alloc_org", "org_name", "usd"),
                                               ("cbpf_proj", "org_name", "budget"))
             if isinstance(d.get(k), pd.DataFrame) and col in d[k] and len(d[k])]
     if not srcs:
@@ -1143,6 +1163,11 @@ def _fetch(e):
         print(f"  sim: unavailable ({exc.__class__.__name__})")
         d["sim"] = pd.DataFrame(columns=["country_iso3", "hazard", "version", "window_name",
                                          "event_year", "event_label", *SIM_DATED])
+    try:   # every event a backtest tested, met or not (D189); empty before the schema pass
+        d["bt_events"] = read_backtest_events(e)
+    except Exception as exc:
+        print(f"  bt_events: unavailable ({exc.__class__.__name__})")
+        d["bt_events"] = pd.DataFrame(columns=BT_EVENT_COLS)
     _opt("wact", """SELECT country_iso3, hazard, event_date::text AS event_date, window_name,
                            full_activation FROM aa.window_activation""",
          ["country_iso3", "hazard", "event_date", "window_name", "full_activation"])
@@ -1162,6 +1187,9 @@ def _fetch(e):
     d["fund_names"] = pd.read_sql("SELECT fund_code, fund_type, name, country_iso3 FROM aa.fund", e)
     REGIONAL_FUNDS.clear()
     REGIONAL_FUNDS.update(d["fund_names"].loc[d["fund_names"]["fund_type"] == "regional_fund", "fund_code"])
+    REGIONAL_FUND_NAMES.clear()
+    REGIONAL_FUND_NAMES.update({r.fund_code: (r.name if isinstance(r.name, str) else "") for r in d["fund_names"].itertuples()
+                                if r.fund_type == "regional_fund"})
     # Financing money flows: CBPF AA project budgets by grantee organisation (named grantees;
     # cbpf_org above keeps the type-only split for an older snapshot)
     _opt("cbpf_org_name", """SELECT p.allocation_year AS year, fu.fund_code,
@@ -1174,6 +1202,33 @@ def _fetch(e):
                              WHERE a.aa_keyword AND p.budget IS NOT NULL
                              GROUP BY 1, 2, 3, 4""",
          ["year", "fund_code", "org_name", "org_type", "usd"])
+    # ... and, released, the grantees of the allocation each activation drew on (D192), whatever
+    # its title says: only the listed projects where it paid for other things too
+    # (aa.activation_funding_project; an older snapshot without the table: all its projects)
+    has_afp = pd.read_sql("SELECT to_regclass('aa.activation_funding_project') AS r", e)["r"].iloc[0] is not None
+    listed = """
+                                AND (p.chf_project_code IN (SELECT x.project_code FROM aa.activation_funding_project x
+                                                            WHERE x.allocation_code = f.allocation_code)
+                                     OR NOT EXISTS (SELECT 1 FROM aa.activation_funding_project x
+                                                    WHERE x.allocation_code = f.allocation_code))"""
+    _opt("cbpf_alloc_org", """SELECT f.allocation_code,
+                                     coalesce(p.org_name, 'organisation not recorded') AS org_name, p.org_type,
+                                     sum(p.budget) AS usd
+                              FROM (SELECT DISTINCT allocation_code FROM aa.activation_funding
+                                    WHERE fund_code <> 'cerf' AND allocation_code ~ '^cbpf-[0-9]+-[0-9]+$') f
+                              JOIN aa.cbpf_project p
+                                ON 'cbpf-' || p.pooled_fund_id || '-' || p.allocation_type_id = f.allocation_code
+                              WHERE p.budget IS NOT NULL""" + (listed if has_afp else "") + """
+                              GROUP BY 1, 2, 3""",
+         ["allocation_code", "org_name", "org_type", "usd"])
+    if has_afp:   # a listed project that is not one of its allocation's would drop out unseen
+        for r in pd.read_sql("""SELECT x.allocation_code, x.project_code FROM aa.activation_funding_project x
+                                WHERE NOT EXISTS (SELECT 1 FROM aa.cbpf_project p
+                                                  WHERE p.chf_project_code = x.project_code
+                                                    AND 'cbpf-' || p.pooled_fund_id || '-' || p.allocation_type_id
+                                                        = x.allocation_code)""", e).itertuples():
+            print(f"::warning::money flows: listed project {r.project_code} is not a project of "
+                  f"allocation {r.allocation_code} in the mirror")
     _resolve_pooled_fund(d)
     _canonical_org_names(d)
     _merge_labels(d)
@@ -1470,6 +1525,41 @@ def _agency_node(name):
     return ("nr|" if _re.search(r"to be determined|not recorded", n, _re.IGNORECASE) else "un|") + n
 
 
+# a UN agency as the Country and Regional Funds write it ('World Food Programme', 'Programme
+# Alimentaire Mondial', 'The UN Refguee Agency') -> the short name CERF's projects use, so one
+# agency is one box in the money-flow chart (D192). Read on the name folded to lower case.
+UN_SHORT = [
+    (r"\bworld food programme\b|\bprogramme alimentaire mondial\b|^wfp$", "WFP"),
+    (r"\bunited nations children'?s fund\b|^unicef$", "UNICEF"),
+    (r"\borgani[sz]ation (?:internationale )?(?:for|pour les) migrations?\b|^iom$", "IOM"),
+    (r"\bworld health organi[sz]ation\b|\bpan american health organi[sz]ation\b|^who$|^paho$", "WHO"),
+    (r"\bhigh commissionn?er for refugees\b|\bun ref[a-z]{3,4} agency\b|^unhcr$", "UNHCR"),
+    (r"\bfood and agriculture organi[sz]ation\b|^fao$", "FAO"),
+    (r"\bunited nations population fund\b|^unfpa$", "UNFPA"),
+    (r"\boffice for project services\b|^unops$", "UNOPS"),
+    (r"\bunited nations development programme\b|^undp$", "UNDP"),
+    (r"^un women$", "UN Women"),
+    (r"\brelief and works agency\b|^unrwa$", "UNRWA"),
+    (r"\bhuman settlements programme\b|^un-?habitat$", "UN Habitat"),
+    (r"\bmine action service\b|^unmas$", "UNMAS"),
+    (r"\bdepartment of safety and security\b|^undss$", "UNDSS"),
+    (r"\beducational, scientific and cultural organi[sz]ation\b|^unesco$", "UNESCO"),
+    (r"\binternational labou?r organi[sz]ation\b|^ilo$", "ILO"),
+    (r"\bhigh commissioner for human rights\b|^ohchr$", "OHCHR"),
+]
+
+
+def _un_short(name):
+    """A UN agency's name as a Country or Regional Fund writes it -> CERF's short name for it
+    (AGENCY_ALIAS applied: WHO and PAHO are one box), None when it names no agency above."""
+    import re as _re
+    n = " ".join(str(name).replace("’", "'").casefold().split())
+    for pat, short in UN_SHORT:
+        if _re.search(pat, n):
+            return AGENCY_ALIAS.get(short, short)
+    return None
+
+
 def _layer_of(d):
     """(country, hazard[, version]) -> the map layer its money belongs to: 'r' a retired
     framework, 'c' any other (current frameworks, and the odd AA-tagged CBPF allocation in a
@@ -1499,6 +1589,7 @@ def _layer_of(d):
 # fund windows carry cbpf-* codes (Vanuatu, Fiji, Bangladesh under the AP-RhPF; Kenya, Uganda
 # under the ESAHF), so the type comes from the registry, the rhpf- prefix only as a fallback
 REGIONAL_FUNDS = set()
+REGIONAL_FUND_NAMES = {}   # their registry names ('Vanuatu (AP-Rhpf)'), for fund_label
 
 
 def _ft(fc):
@@ -1549,9 +1640,11 @@ def _money_flows(d, pre, act):
     m 'r' released in year y: activation funding; CERF -> agency from the AA projects
       approved that year (scaled to the released total); agency -> the named partners of the
       CERF AA sub-grants, and the rest -> a final node with the agency's own name (what it
-      implements itself); CBPF / RhPF -> grantee organisation (AA-keyword project budgets),
-      each running on to the same organisation in the final column (grantees implement
-      directly). Every band reaches the last column. Years add up.
+      implements itself); CBPF / RhPF -> grantee organisation: the projects of the allocation
+      the activation drew on (only those aa.activation_funding_project lists, when it does;
+      D192), else the fund's AA-keyword project budgets that year; each running on to the same
+      organisation in the final column (grantees implement directly). Every band reaches the
+      last column. Years add up.
     lv: 'd' donor -> fund (donor share of the fund's paid income that year × the amount),
         'f' fund -> agency / grantee, 'a' agency / grantee -> final recipient.
     c (the 'f' rows only): the country the money went to — the framework's country (pre-arranged),
@@ -1563,7 +1656,8 @@ def _money_flows(d, pre, act):
     Recipient node ids carry their category (_recipient_cat): 'a:<cat>|<agency>' and
     'p:<cat>|<agency>' (always named), 'a:<cat>~<organisation>' and 'p:<cat>~<organisation>'
     (a partner / grantee: FLOW_JS names the top ones of the view and groups the rest per
-    category). One spelling and one category per organisation across CERF and the CBPFs.
+    category). One spelling and one category per organisation across CERF and the CBPFs; a UN
+    agency a pooled fund pays is CERF's node of the agency ('a:un|WFP', _un_short).
     g: the map layer of the money, for the page toggles — 'c' current frameworks, 'r' retired
        frameworks, 'a' non-framework allocations (released only; pass act from
        funding_series(d, released="all") to have them). fu: fund type, 'c' CERF, 'p' CBPF,
@@ -1598,6 +1692,12 @@ def _money_flows(d, pre, act):
         co = d["cbpf_org"].copy()
         co["cat"] = co["org_type"].map(_recipient_cat)
         co["org_name"] = co["cat"].map(lambda c: "Country and Regional Fund grantees — " + RECIPIENT_PLURAL[c])
+    # the grantees of the allocation each pooled-fund release drew on (D192); not in an older
+    # snapshot's type-only fallback (one node per category there)
+    ca = d.get("cbpf_alloc_org")
+    ca = (ca.copy() if named and ca is not None and len(ca)
+          else pd.DataFrame(columns=["allocation_code", "org_name", "org_type", "usd"]))
+    ca["cat"] = ca["org_type"].map(_recipient_cat)
     import html as _html
     import re as _re
     placeholder = _re.compile(r"\b(tbd|to be determined|partner to be determined|not recorded)\b", _re.I)
@@ -1606,13 +1706,15 @@ def _money_flows(d, pre, act):
         return _re.sub(r"[^0-9a-z]+", "", _html.unescape(str(s)).casefold())
     sg["partner_name"] = sg["partner_name"].astype(str).map(_html.unescape)
     co["org_name"] = co["org_name"].astype(str).map(_html.unescape)
+    ca["org_name"] = ca["org_name"].astype(str).map(_html.unescape)
     # a national society typed only 'Others' (the CBPF org type of the Nigerian and Vanuatu Red
     # Cross Societies) is still Red Cross / Red Crescent
     rc_name = r"red cross|red crescent|croix[- ]rouge|cruz roja|croissant[- ]rouge"
-    for f_, ncol in ((sg, "partner_name"), (co, "org_name")):
+    for f_, ncol in ((sg, "partner_name"), (co, "org_name"), (ca, "org_name")):
         f_.loc[f_["cat"].isin(["oth", "nr"]) & f_[ncol].astype(str).str.contains(rc_name, case=False), "cat"] = "rc"
     reg = pd.concat([sg[["partner_name", "cat", "subgrant_usd"]].set_axis(["name", "cat", "usd"], axis=1),
-                     co[["org_name", "cat", "usd"]].set_axis(["name", "cat", "usd"], axis=1)])
+                     co[["org_name", "cat", "usd"]].set_axis(["name", "cat", "usd"], axis=1),
+                     ca[["org_name", "cat", "usd"]].set_axis(["name", "cat", "usd"], axis=1)])
     reg["k"] = reg["name"].map(fold)
     spell = reg.groupby(["k", "name"])["usd"].sum().reset_index().sort_values("usd").groupby("k")["name"].last()
     kcat = reg.groupby(["k", "cat"])["usd"].sum().reset_index().sort_values("usd").groupby("k")["cat"].last()
@@ -1623,11 +1725,15 @@ def _money_flows(d, pre, act):
     for k in spell.index:
         if placeholder.search(str(spell[k])) or kcat[k] == "nr":
             org_node[k] = "nr|partner not recorded"
+        elif named and kcat[k] == "un" and _un_short(spell[k]):
+            org_node[k] = "un|" + _un_short(spell[k])     # CERF's box of the agency
     sg["node"] = sg["partner_name"].map(fold).map(org_node)
     co["node"] = co["org_name"].map(fold).map(org_node)
     sg["rg"] = sg["country_iso3"].map(rg_of).fillna("?")
     sgm = sg.groupby(["year", "rg", "agency", "node"])["subgrant_usd"].sum()
     co = co.groupby(["fund_code", "year", "node"])["usd"].sum()
+    ca["node"] = ca["org_name"].map(fold).map(org_node)
+    ca_by = {ac: g.groupby("node")["usd"].sum() for ac, g in ca.groupby("allocation_code")}
     split = d["split_all"].copy()
     split["version"] = split["version"].astype(str)
     fvm = d["fv_meta"].copy()
@@ -1651,21 +1757,26 @@ def _money_flows(d, pre, act):
         else:
             add(m, y, "d", "d:Not recorded", "f:" + fc, amount, g, fc, rg)
 
-    def grantees(m, y, fc, amount, g, rg, c):
+    def grantees(m, y, fc, amount, g, rg, c, ac=""):
         # released money: a CBPF / RhPF grantee implements directly (no sub-grant level), so
         # its band runs on, same amount, to the same organisation in the final column — every
-        # band then reaches the last column and each grantee node stays balanced (in = out)
+        # band then reaches the last column and each grantee node stays balanced (in = out).
+        # The grantees: the projects of the allocation the release drew on (ac, D192), else the
+        # fund's AA-keyword projects that year
         def on(node, v, final):
             add(m, y, "f", "f:" + fc, "a:" + node, v, g, fc, rg, c)
             if m == "r":
                 add(m, y, "a", "a:" + node, "p:" + final, v, g, fc, rg)
-        o = co[(co.index.get_level_values(0) == fc) & (co.index.get_level_values(1) == y)] if len(co) else co
+        o = ca_by.get(ac) if ac else None
+        if o is None or float(o.sum()) <= 0:
+            o = (co[(co.index.get_level_values(0) == fc) & (co.index.get_level_values(1) == y)].droplevel([0, 1])
+                 if len(co) else co)
         osum = float(o.sum()) if len(o) else 0.0
         if osum <= 0:
             on("nr|Country and Regional Fund grantees not recorded", amount, "nr|grantee not recorded")
             return
-        for (_f, _a, node), v in o.items():
-            cat = node.split(sep)[0]
+        for node, v in o.items():
+            cat = _re.split(r"[|~]", node)[0]
             final = node if named else f"{cat}|{RECIPIENT_PLURAL[cat]}"
             on(node, v / osum * amount, final)
 
@@ -1713,7 +1824,19 @@ def _money_flows(d, pre, act):
     R = act[act["amount_usd"].fillna(0) > 0]
     R = R.assign(g=["a" if et == "adhoc_aa" else layer(c, h, v)     # v: an old version -> retired
                     for et, c, h, v in zip(R["event_type"], R["country_iso3"], R["hazard"], R["version"])],
-                 rg=R["country_iso3"].map(rg_of).fillna("?"), c=R["country_iso3"].fillna(""))
+                 rg=R["country_iso3"].map(rg_of).fillna("?"), c=R["country_iso3"].fillna(""),
+                 # a pooled fund's allocation, for its grantees ('' = none recorded; CERF's
+                 # split is by country and year, never by allocation)
+                 ac=[a if isinstance(a, str) and f != "cerf" else ""
+                     for a, f in zip(R.get("allocation_code", pd.Series(None, index=R.index)), R["fund_code"])])
+    # an allocation that paid for more than the release (its projects well over the amount) is a
+    # mixed one: list the release's own projects (aa.activation_funding_project), or its
+    # grantees take a share of every project's money
+    for ac_, rel in R[R["ac"] != ""].groupby("ac")["amount_usd"].sum().items():
+        got = float(ca_by[ac_].sum()) if ac_ in ca_by else 0.0
+        if got > 1.1 * float(rel):
+            print(f"::warning::money flows: allocation {ac_} has ${got:,.0f} of projects for "
+                  f"${float(rel):,.0f} released: list the release's projects if it paid for other things too")
     for (fc, y, g, rg), amount in R.groupby(["fund_code", "year", "g", "rg"])["amount_usd"].sum().items():
         donors("r", int(y), fc, amount, g, rg)
     # CERF -> agency -> partner, per country (the countries column shows the country's own
@@ -1723,10 +1846,10 @@ def _money_flows(d, pre, act):
     ag_r = _by_key(ag, 2)
     sg_c = _by_key(sg.groupby(["year", "country_iso3", "agency", "node"])["subgrant_usd"].sum(), 3)
     sg_r = _by_key(sgm, 3)
-    for (fc, y, g, rg, c), amount in R.groupby(["fund_code", "year", "g", "rg", "c"])["amount_usd"].sum().items():
+    for (fc, y, g, rg, c, ac), amount in R.groupby(["fund_code", "year", "g", "rg", "c", "ac"])["amount_usd"].sum().items():
         y = int(y)
         if fc != "cerf":
-            grantees("r", y, fc, amount, g, rg, c)
+            grantees("r", y, fc, amount, g, rg, c, ac)
             continue
         key, a_, subs = (y, c), ag_c.get((y, c)), sg_c
         if a_ is None or float(a_.sum()) <= 0:
@@ -1811,8 +1934,10 @@ FLOW_NOTE = " ".join(TB(x) for x in (
     "CERF → agency uses the AA projects approved that year in the same country (in the same region "
     "where the country has none that year), scaled to the released total; agency → partner uses the "
     "CERF AA sub-grants in that country, and the rest goes to a final node with the agency's own "
-    "name — what it implements itself. Country and Regional Funds go to their grantee organisations "
-    "from the AA-keyword project budgets; a grantee implements directly, so its band runs on, same "
+    "name — what it implements itself. Country and Regional Funds go to the grantee organisations "
+    "of the allocation the activation drew on (only its anticipatory action projects, where the "
+    "allocation also paid for other things), or, where no allocation is recorded, to the grantees "
+    "of the fund's projects marked AA that year; a grantee implements directly, so its band runs on, same "
     "amount, to the same organisation in the final column.",
     f"<b>Countries</b> (tick <i>countries</i>): a column between the funds and the agencies — the "
     f"country of the framework (pre-arranged) or of the activation (released). The {FLOW_TOP_COUNTRIES} "
@@ -3317,7 +3442,7 @@ def backtest_span(ss, wv, vf_y):
     return y0, y1, (y1 - y0 + 1) if recorded else None
 
 
-def untested_windows(ss, wv):
+def untested_windows(ss, wv, ev=None):
     """The windows of a version that were never backtested — no simulated year and no analysed
     period recorded — while another of its windows was: Vanuatu storm's readiness trigger ("not
     assessed", its document says), Nigeria flood's monitoring-only flash-flood trigger, Burkina
@@ -3325,14 +3450,67 @@ def untested_windows(ss, wv):
     backtest grid and the History page's timeline leave them out and the grid's note names them
     (owner, 2026-11-03: show when each specific trigger went off; leave out readiness, for which
     there is no information). Empty when no window of the version was backtested: the views say
-    so already. `ss` is sim_before_start's output; `wv` the version's d["windows"] rows."""
+    so already. `ss` is sim_before_start's output; `wv` the version's d["windows"] rows; `ev`
+    its tested events (aa.backtest_event), when any."""
     if not len(wv):
         return set()
     names = {str(x) for x in wv["window_name"].dropna()}
     spanned = {str(r.window_name) for r in wv.itertuples()
                if pd.notna(getattr(r, "analysis_start", None)) or pd.notna(getattr(r, "analysis_end", None))}
-    tested = spanned | ({str(x) for x in ss["window_name"].dropna()} if len(ss) else set())
+    tested = (spanned | ({str(x) for x in ss["window_name"].dropna()} if len(ss) else set())
+              | ({str(x) for x in ev["window_name"].dropna()} if ev is not None and len(ev) else set()))
     return (names - tested) if tested else set()
+
+
+BT_EVENT_COLS = ["country_iso3", "hazard", "version", "window_name", "event_year", "event_label",
+                 "met", "value", "unit", "source_note"]
+
+
+def read_backtest_events(e):
+    """aa.backtest_event: every event a version's backtest tested, met or not (D189). Empty on a
+    DB the schema pass has not reached yet, so a build never depends on the table existing."""
+    if pd.read_sql("SELECT to_regclass('aa.backtest_event') AS r", e)["r"].iloc[0] is None:
+        return pd.DataFrame(columns=BT_EVENT_COLS)
+    return pd.read_sql(
+        """SELECT country_iso3, hazard, version::text AS version, window_name, event_year,
+                  event_label, met, value::float AS value, unit, source_note
+           FROM aa.backtest_event""", e)
+
+
+def tested_rows(ev, ss, vf_y=None, where=""):
+    """The backtest grid's rows for the events a version's backtest tested (owner, 2026-11-03:
+    "include the full record we tested (i.e. including the storms we would NOT have activated
+    for)"). `ev` is the version's aa.backtest_event rows, `ss` its simulated rows
+    (sim_before_start's output). -> (rows, covered, units):
+    rows {(year, label): {"fired": set, "na": set, "vals": {window: value}}} — "na" holds the
+    windows the event could not be tested on (met NULL: no forecast record); covered, the
+    (window, year) pairs whose simulated activation those rows already draw; units {window: unit}.
+    Warns when a window's met years and its simulated years differ: the return periods count
+    the simulated ones."""
+    rows, units = {}, {}
+    if not len(ev):
+        return rows, set(), units
+    for r in ev.itertuples():
+        y = int(r.event_year)
+        if vf_y and y >= vf_y:          # a backtest is fixed before the version takes effect
+            continue
+        w = str(r.window_name)
+        x = rows.setdefault((y, str(r.event_label)), {"fired": set(), "na": set(), "vals": {}})
+        if r.met is None or pd.isna(r.met):
+            x["na"].add(w)
+        elif bool(r.met):
+            x["fired"].add(w)
+        if r.value is not None and pd.notna(r.value):
+            x["vals"][w] = float(r.value)
+        if isinstance(r.unit, str) and r.unit.strip():
+            units.setdefault(w, r.unit.strip())
+    met = {(w, y) for (y, _), x in rows.items() for w in x["fired"]}
+    sims = ({(str(r.window_name), int(r.sim_year)) for r in ss.itertuples()} if len(ss) else set())
+    tested_w = {str(w) for w in ev["window_name"]}
+    off = sorted(p for p in met ^ {s for s in sims if s[0] in tested_w})
+    if off:
+        print(f"  ? {where}: tested events and simulated activations disagree on {off}")
+    return rows, met & sims, units
 
 
 def sim_after_note(n, vf_y):
@@ -3378,23 +3556,49 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
     vf_txt = str(vf.dropna().astype(str).max())[:10] if len(vf.dropna()) else str(vf_y)
     win = d["windows"]
     wv = win[(win["country_iso3"] == c) & (win["hazard"] == h) & (win["version"].astype(str) == str(shown))]
-    wins = sorted(set(ss["window_name"].dropna()) | set(wv["window_name"].dropna()))
+    # every event the backtest tested, met or not (D189): one row each
+    bte = d.get("bt_events")
+    ev = (bte[(bte["country_iso3"] == c) & (bte["hazard"] == h) & (bte["version"].astype(str) == str(shown))]
+          if bte is not None and len(bte) and shown else pd.DataFrame(columns=BT_EVENT_COLS))
+    t_rows, covered, units = tested_rows(ev, ss, vf_y, f"{c} {h} {shown}")
+    wins = sorted(set(ss["window_name"].dropna()) | set(wv["window_name"].dropna())
+                  | set(ev["window_name"].dropna()))
     # backtest range: N analysed years ending at the later of the last simulated year and
     # the year before the version took effect
     n_years = None
     rows = {}   # (year, label) -> {'cell': [...], window: [...]}
     sim_years = set()   # years the historical simulation covers; others are greyed out
     use_years = set()   # from the version's start year: real activations only
-    if len(ss) or n_after:
+    if len(ss) or n_after or t_rows:
         y0, y1, n_years = backtest_span(ss, wv, vf_y)
         labelled = ss[ss["event_label"].fillna("").astype(str) != ""]
         sim_years = set(range(y0, y1 + 1))
         if vf_y:
             use_years = set(range(vf_y, max(vf_y, pd.Timestamp.now().year) + 1))
         for y in sorted(sim_years | use_years):
-            if not (labelled["sim_year"] == y).any():
+            if not (labelled["sim_year"] == y).any() and not any(k[0] == y for k in t_rows):
                 rows[(y, "")] = {}
+        num = lambda v: f"{v:,.0f}" if float(v).is_integer() else f"{v:,.2f}"   # noqa: E731
+        for (y, lab), x in t_rows.items():
+            cells = rows.setdefault((y, lab), {})
+            for w in sorted(set(x["vals"]) | x["fired"] | x["na"]):
+                val = (f" · {num(x['vals'][w])}" + (f" {units[w]}" if units.get(w) else "")
+                       if w in x["vals"] else "")
+                if w in x["na"]:
+                    cells.setdefault("__na", {})[w] = ATTRC("title", lambda t, w=w, lab=lab: f"{w}, {lab}: "
+                                                         + t("no record to test this trigger against"))
+                elif w in x["fired"]:
+                    cells.setdefault(w, []).append(
+                        f"<span class='dot sim' style='background:{col}' "
+                        + ATTRC("title", lambda t, w=w, y=y, val=val: f"{w}: " + t(
+                            "would have activated in {0} (simulation)").replace("{0}", str(y)) + val)
+                        + "></span>")
+                else:
+                    cells.setdefault("__tip", {})[w] = ATTRC("title", lambda t, w=w, val=val: f"{w}: "
+                                                          + t("would not have activated") + val)
         for r in ss.itertuples():
+            if (str(r.window_name), int(r.sim_year)) in covered:   # drawn on the tested event's row
+                continue
             key = (int(r.sim_year), str(r.event_label) if isinstance(r.event_label, str) else "")
             rows.setdefault(key, {}).setdefault(r.window_name, []).append(
                 f"<span class='dot sim' style='background:{col}' {_sim_tip(r.window_name, r)}></span>")
@@ -3413,7 +3617,7 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
                            ann=lk["ann"], other=lk["other"], cerf=lk["cerf"],
                            partial=full.get((ed, wn)) is False))
     # a window never backtested gets no column, unless a real activation sits on it
-    untested = [w for w in wins if w in untested_windows(ss, wv)
+    untested = [w for w in wins if w in untested_windows(ss, wv, ev)
                 and not any(_loose(w, ev["win"]) for ev in events)]
     wins = [w for w in wins if w not in untested]
     for ev in events:
@@ -3461,7 +3665,10 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
             if y in use_years:
                 tds = "".join(f"<td class='use' {_use(y)}>{inner(w)}</td>" for w in wins)
             elif y in sim_years or not sim_years:
-                tds = "".join(f"<td>{inner(w)}</td>" for w in wins)
+                na, tip = cells.get("__na", {}), cells.get("__tip", {})
+                tds = "".join(f"<td class='na' {na[w]}>{inner(w)}</td>" if w in na
+                              else f"<td {tip[w]}>{inner(w)}</td>" if w in tip
+                              else f"<td>{inner(w)}</td>" for w in wins)
             else:
                 tds = "".join(f"<td class='na' {ATTR('title', '{y} is not covered by the historical simulation', y=y)}>{inner(w)}</td>"
                               for w in wins)
@@ -3481,7 +3688,11 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
                        .format(d=esc(vf_txt), y=vf_y) if use_years else "") + ". "
                     + (esc(w(sim_after_note(n_after, vf_y))) + " " if n_after else "")
                     + (w("Not backtested, so no column: {w}.").format(w=esc(", ".join(untested))) + " "
-                       if untested else ""))
+                       if untested else "")
+                    + (w("The {n} events the framework document lists from its backtest are shown, including "
+                         "those that would not have activated.").format(n=len(t_rows)) + " "
+                       + (w("Hover a cell for the trigger's value.") + " " if any(x["vals"] for x in t_rows.values()) else "")
+                       if t_rows else ""))
         if n_after:   # the note, registered in every language (it is looked up above)
             _register_after_note(n_after, vf_y)
         hist = (f"<p class='meta'>{TBC(vnote)}"
@@ -3493,6 +3704,8 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
                 f"<span class='dot old'></span> "
                 + T("activated under an earlier version" if str(shown) == str(version) else "activated under a different version (hover for which)")
                 + (f" · <span class='sw use'></span> {T('version in use: real activations only')}" if use_years else "")
+                + (f" · <span class='sw na'></span> {T('no record to test this trigger against')}"
+                   if any(x["na"] for x in t_rows.values()) else "")
                 + "</p>")
     # ---- actual activations table
     if not events:

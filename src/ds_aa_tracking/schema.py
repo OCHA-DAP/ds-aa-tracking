@@ -701,6 +701,22 @@ DURABLE_TABLES = {
                 (country_iso3, hazard, event_date, window_name, event_label, event_type,
                  fund_code, allocation_code)
         )""",
+    # the projects of a Country or Regional Fund allocation that an activation's money went to,
+    # where the allocation paid for other things too (D192): Ethiopia's 2026 Third Reserve
+    # Allocation put $1M into anticipatory action beside a refugee response and Ebola
+    # preparedness. The money-flow chart takes a release's grantees from the allocation it drew
+    # on (aa.activation_funding.allocation_code): only these projects when the allocation is
+    # listed here, all of its projects when it is not. Project codes as the CBPF mirror writes
+    # them (aa.cbpf_project); entered by hand, with what shows the projects were the release's.
+    "activation_funding_project": """
+        CREATE TABLE IF NOT EXISTS aa.activation_funding_project (
+            allocation_code text NOT NULL, -- cbpf-<fund>-<id>, as in aa.activation_funding
+            project_code text NOT NULL,    -- the pooled fund's project code
+            source text NOT NULL,          -- what shows the project was the activation's
+            note text,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (allocation_code, project_code)
+        )""",
     "entry_audit": """
         CREATE TABLE IF NOT EXISTS aa.entry_audit (
             id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -716,7 +732,8 @@ DURABLE_TABLES = {
     # Written by the knowledge base's load_aa_performance.py until 2026-10-05 (from its
     # gsheet / insurance-Excel crosswalk); owned here since. Shapes are the live ones.
     # A version's backtest = its aa.window rows + aa.simulated_activation rows + its
-    # aa.version_performance_reported row. Edited freely for now — entries files (op:
+    # aa.version_performance_reported row (+ its aa.backtest_event rows: every event it
+    # tested, when recorded). Edited freely for now — entries files (op:
     # replace re-enters a version's backtest as a set), the admin page — and corrected as
     # errors are found; v_trk_backtest_check lists the rows that break the rules below.
     # Sealing a checked backtest (and refusing changes to a sealed one) is a follow-up.
@@ -760,6 +777,26 @@ DURABLE_TABLES = {
             time_precision text,           -- year | month | day | hour
             source_note text,
             PRIMARY KEY (country_iso3, hazard, version, window_name, event_year)
+        )""",
+    # every event a version's backtest tested, met or not (owner, 2026-11-03: "include the full
+    # record we tested (i.e. including the storms we would NOT have activated for)"; D189). One
+    # row per event and window. simulated_activation stays the set the return periods count:
+    # the met rows of a window should fall in the years it lists (the build warns otherwise).
+    "backtest_event": """
+        CREATE TABLE IF NOT EXISTS aa.backtest_event (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,
+            window_name text NOT NULL,
+            event_year integer NOT NULL,   -- labelled as in simulated_activation (the document's)
+            event_label text NOT NULL,     -- the event as the document names it (a storm)
+            kb_framework text,
+            met boolean,                   -- the window's trigger would have been met; NULL = it
+                                           -- could not be tested (no forecast record, …)
+            value numeric,                 -- the trigger's indicator for the event, as reported
+            unit text,                     -- what `value` measures
+            source_note text,
+            PRIMARY KEY (country_iso3, hazard, version, window_name, event_year, event_label)
         )""",
     "version_performance_reported": """
         CREATE TABLE IF NOT EXISTS aa.version_performance_reported (
@@ -826,7 +863,7 @@ DURABLE_TABLES = {
 }
 
 # the backtest tables (edited here) and the KB-era tables kept read-only
-BACKTEST_TABLES = ["window", "simulated_activation", "version_performance_reported"]
+BACKTEST_TABLES = ["window", "simulated_activation", "backtest_event", "version_performance_reported"]
 KB_ERA_TABLES = ["funding_breakdown", "actual_activation", "activation_allocation"]
 
 # ------------------------------------------------------------ additive migrations

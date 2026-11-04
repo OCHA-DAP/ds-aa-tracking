@@ -10,3 +10,4 @@ __pycache__/
 site_encrypted/
 site_media/
 .extract_token
+_site/

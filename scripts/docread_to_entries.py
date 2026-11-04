@@ -275,10 +275,12 @@ def convert(read, body, db):
                  "releases (usd)": w.get("allocation_usd")} for w in read.get("windows") or []]
     add("version_page", {"kb_framework": kb, "version": ver, "country_iso3": countries, "hazard": hz,
                          "frontmatter": merged, "triggers": triggers, "body_md": body,
-                         "source": SOURCE, "note": f"full read of the framework document ({quality})"})
+                         "source": SOURCE, "note": f"full read of the framework document ({quality})",
+                         # tiers of areas when the triggers cover different ones (D190)
+                         **({"tiers": read["scope_tiers"]} if read.get("scope_tiers") else {})})
 
     # ---- windows, funding, backtest, people: per country of the version
-    n_win = n_fund = n_sim = 0
+    n_win = n_fund = n_sim = n_tested = 0
     skipped_sc, notes = set(), []
     for c in countries:
         if db["fv"][(db["fv"]["country_iso3"] == c) & (db["fv"]["hazard"] == hz)
@@ -393,6 +395,19 @@ def convert(read, body, db):
                                          "time_precision": "day" if d else "year",
                                          "source_note": "; ".join(x for x in (f"framework document p.{s.get('page')}", extra) if x)})
             n_sim += 1
+        # every event the backtest tested, met or not (D189): re-entered as a set, so a re-read
+        # drops events the document no longer lists. Needs aa.backtest_event (the schema run).
+        tested = [t for t in read.get("tested_events") or [] if mine(t) and t.get("event_year") is not None
+                  and t.get("event_label") and not (vf_year and int(t["event_year"]) >= vf_year)]
+        if tested:
+            key = {"country_iso3": c, "hazard": hz, "version": ver}
+            rows.append({"op": "replace", "table": "backtest_event", "scope": key, "rows": [
+                {**key, "window_name": t.get("window") or "window not recorded",
+                 "event_year": int(t["event_year"]), "event_label": str(t["event_label"]), "kb_framework": kb,
+                 "met": t.get("met"), "value": _num(t.get("value")), "unit": t.get("unit"),
+                 "source_note": "; ".join(x for x in (f"framework document p.{t.get('page')}", t.get("note")) if x)}
+                for t in tested]})
+            n_tested += len(tested)
         tp = _num(fm.get("target_people"))
         if isinstance(fm.get("target_people_by_country"), dict):
             tp = _num(fm["target_people_by_country"].get(c)) or tp
@@ -440,7 +455,7 @@ def convert(read, body, db):
         "valid_until": _date_end(fvr.get("valid_until")) or _date_end(fvr.get("valid_until_inferred")),
         "envelope": _num(fvr.get("prearranged_usd_doc")), "by_source": fm.get("funding_by_source"),
         "target_people": fm.get("target_people"), "n_windows": n_win, "n_funding_rows": n_fund,
-        "n_sim": n_sim, "sim_dropped_after_start": dropped, "changes": changes,
+        "n_sim": n_sim, "n_tested_events": n_tested, "sim_dropped_after_start": dropped, "changes": changes,
         "partners_not_in_db": new_partners, "issues": read.get("issues") or [],
         "not_in_doc": read.get("not_in_doc") or [],
     }

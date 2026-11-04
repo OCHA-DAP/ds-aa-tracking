@@ -1203,13 +1203,20 @@ def assemble(d, e):
     # the agency x sector split of each version's funding, per window (KB pages, sheets,
     # entered) — window_funding split rows; fund_source = pooled fund or financier
     fb = pd.read_sql(
-        """SELECT country_iso3, hazard, version, window_name,
+        """SELECT country_iso3, hazard, version, window_name, kind,
                   coalesce(fund_code, financier, 'unspecified') AS fund_source,
                   agency, sector, amount_usd, provenance
            FROM aa.v_window_funding_split
            WHERE amount_usd IS NOT NULL AND (agency IS NOT NULL OR sector IS NOT NULL)""", e)
-    from dashboards import EXCLUDED_EVENT_TYPES, funding_sql, read_simulated, sim_before_start, sim_when
+    from dashboards import (BT_EVENT_COLS, EXCLUDED_EVENT_TYPES, _loose, funding_sql, read_backtest_events,
+                            read_simulated, sim_before_start, sim_when, tested_rows, untested_windows)
     sim = read_simulated(e)   # with event_date / event_time when the DB has them
+    bte = d.get("bt_events")   # every event a backtest tested, met or not (D189)
+    if bte is None:
+        try:
+            bte = read_backtest_events(e)
+        except Exception:   # noqa: BLE001 — the build never depends on the table
+            bte = pd.DataFrame(columns=BT_EVENT_COLS)
     psb = fb.iloc[0:0]                                    # folded into window_funding
     excl = ", ".join(f"'{t}'" for t in EXCLUDED_EVENT_TYPES)
     acts = pd.read_sql(
@@ -1297,6 +1304,12 @@ def assemble(d, e):
     # counts N times (prearranged_now; owner, 2026-10-28: a pooled-fund envelope counts once)
     env_cerf = {(r.country_iso3, r.hazard, r.version): float(r.total_usd)
                 for r in ebf_[ebf_["fund_code"] == "cerf"].itertuples()}
+    # each version's envelope by fund (the same rows): the panel's CERF / Country and Regional
+    # Funds breakdown of its pre-arranged figure (owner, 2026-11-03)
+    env_funds = {}
+    for r in ebf_.sort_values("total_usd", ascending=False).itertuples():
+        env_funds.setdefault((r.country_iso3, r.hazard, r.version), []).append(
+            {"fund": _s(r.fund_code) or "unspecified", "usd": float(r.total_usd)})
     pre_parts = {}                        # pair -> pre-arranged now by fund, and the version it comes from
     for (c_, h_, v_), parts in _envelope_parts(d["vfund"]).items():
         p = pre_parts.setdefault((c_, h_), {"version": v_})
@@ -1374,12 +1387,23 @@ def assemble(d, e):
             # a version's backtest is fixed before it is endorsed and real activations come
             # after: only rows dated before the year it took effect are simulation
             s_v, n_after, vf_y = sim_before_start(s_v, v.valid_from)
+            e_v = bte[(bte["country_iso3"] == c) & (bte["hazard"] == h)
+                      & kb_key_match(bte["version"], v.version)] if len(bte) else bte
+            t_rows, covered, units = tested_rows(e_v, s_v, vf_y, f"{c} {h} {v.version}")
             backtest = None
-            if len(s_v) or n_after:
+            if len(s_v) or n_after or t_rows:
                 wins_bt = list(dict.fromkeys(w.window_name for w in w_v.itertuples())) or sorted(s_v["window_name"].unique())
-                per_event = bool(s_v["event_label"].notna().any())   # numpy bool -> str under default=str
-                rows, when = {}, {}
+                # a window never backtested gets no column (dashboards.untested_windows, D184), unless
+                # a real framework activation sits on it
+                fired = [_s(a.window_name) for a in a_f.itertuples()
+                         if a.event_type == "framework_aa" and _s(a.window_name)]
+                gone = untested_windows(s_v, w_v, e_v)
+                wins_bt = [w for w in wins_bt if w not in gone or any(_loose(w, x) for x in fired)]
+                per_event = bool(s_v["event_label"].notna().any()) or bool(t_rows)   # numpy bool -> str under default=str
+                rows, when = {k: set(x["fired"]) for k, x in t_rows.items()}, {}
                 for sr in s_v.itertuples():
+                    if (sr.window_name, int(sr.sim_year)) in covered:   # drawn on the tested storm's row
+                        continue
                     key = (int(sr.sim_year), _s(sr.event_label) if per_event else None)
                     rows.setdefault(key, set()).add(sr.window_name)
                     if sim_when(sr) != str(sr.sim_year):   # the day / hour when recorded
@@ -1404,11 +1428,19 @@ def assemble(d, e):
                             "in_use_from": vf_y, "in_use_to": use_end if vu is not None and pd.notna(vu) else None,
                             "n_after": n_after, "after_note": _after_note(n_after, vf_y),
                             "rows": [{"year": k[0], "label": k[1], "fired": sorted(ws),
-                                      "when": when.get(k, {})}
-                                     for k, ws in sorted(rows.items(), key=lambda kv: (-kv[0][0], str(kv[0][1])))]}
+                                      "when": when.get(k, {}),
+                                      **({"tested": True, "na": sorted(t_rows[k]["na"]),
+                                          "vals": t_rows[k]["vals"]} if k in t_rows else {})}
+                                     for k, ws in sorted(rows.items(), key=lambda kv: (-kv[0][0], str(kv[0][1])))],
+                            **({"n_tested": len(t_rows), "units": units} if t_rows else {})}
             # budget breakdown: KB funding_breakdown for this version, else sheet sector budget
             f_v = fb[(fb["country_iso3"] == c) & (fb["hazard"] == h)
                      & (fb["version"] == v.version)]
+            # the split is of the pre-arranged money, as on the framework page; an agency's own
+            # co-financing lines are listed apart (owner, 2026-11-03: the panel mixed them in with
+            # the funds, and its split total then exceeded the envelope)
+            co_v = f_v[f_v["kind"] == "cofinancing"] if "kind" in f_v else f_v.iloc[0:0]
+            f_v = f_v[f_v["kind"] != "cofinancing"] if "kind" in f_v else f_v
             fund_src = "kb"
             if not len(f_v):
                 p_v = psb[(psb["country_iso3"] == c) & (psb["hazard"] == h)
@@ -1470,6 +1502,9 @@ def assemble(d, e):
                              for x in by_fund.itertuples()],
                     "pair": [{"agency": _s(x.agency), "sector": _s(x.sector), "usd": float(x.amount_usd)}
                              for x in by_pair.itertuples()],
+                    "cofin": [{"from": _s(k), "usd": float(u)} for k, u in
+                              (co_v.groupby("fund_source")["amount_usd"].sum().sort_values(ascending=False).items()
+                               if len(co_v) else [])],
                 },
                 "admin_level": fm.get("admin_level") if isinstance(fm.get("admin_level"), int) else None,
                 "scope_raw": [str(x) for x in scope_raw],
@@ -1481,6 +1516,7 @@ def assemble(d, e):
                 # funds) — the sidebar compares the agency x sector split total against it
                 "envelope": envelope.get((c, h, v.version)),
                 "env_cerf": env_cerf.get((c, h, v.version)),
+                "env_funds": env_funds.get((c, h, v.version)) or [],
                 # its Country or Regional Fund envelope released by an activation (dashboards.pooled_spent)
                 "pool_spent": (c, h, str(v.version)) in (d.get("pool_spent") or set()),
                 "analysis_ref": _s(v.analysis_ref), "analysis_url": _analysis_url(_s(v.analysis_ref)),
@@ -1691,8 +1727,9 @@ def geo_pass(countries, bboxes):
                     national = True
                 tiers = []
                 for t in v.get("scope_tiers_raw") or []:
-                    if t["rest"]:
-                        tiers.append({"label": t["label"], "pcodes": [], "rest": True})
+                    if t["rest"]:   # whole: the whole country, the areas named above included (D190)
+                        tiers.append({"label": t["label"], "pcodes": [], "rest": True,
+                                      **({"whole": True} if t.get("whole") else {})})
                         national = True
                     else:
                         pc, um, _ = m.match(t["items"], v["admin_level"], cd["name"])
@@ -1916,6 +1953,7 @@ def open_map_countries(countries, withheld):
 
 
 def build_landing(page, d, e):
+    from dashboards import regional_fund_labels
     cur = d["current"]
     names = dict(zip(cur["country_iso3"], cur["country_name"]))
     countries = assemble(d, e)
@@ -2101,6 +2139,7 @@ def build_landing(page, d, e):
 <!-- 2026-10-02 meeting: the internal links that sat here (dashboards, explorer, data entry,
      data & schema review) were easy to miss below the map; they all live in the Internal menu -->
 <script>window.L = /*AA_L*/null;
+window.FUNDLAB = {json.dumps(regional_fund_labels())};
 window.HAZ = {json.dumps(HAZ_COLOR)}; window.COLOR = {json.dumps(KB_COLOR)};
 window.KBLABEL = {json.dumps(DISP_LABEL)}; window.GLYPH = {json.dumps(HAZARD_SVG)};
 window.LAYER_ORDER = {json.dumps(list(LAYER_ORDER))}; window.LAYER_COLOR = {json.dumps(LAYER_COLOR)};
@@ -2236,6 +2275,7 @@ td.bt-na { background:#eef1f5; }
 table.bt td.bt-use { background:#fbf6ee; }
 .bt-usetag { display:inline-block; padding:0 5px; border-radius:8px; font-size:9.5px; font-weight:600; background:#f6ead3; color:#7a5a17; margin-left:3px; vertical-align:1px; }
 .bt-sw { display:inline-block; width:13px; height:10px; border:1px solid #eadcc0; vertical-align:-1px; background:#fbf6ee; }
+.bt-sw.bt-na { background:#eef1f5; border-color:#d5dbe3; }
 table.acttbl { table-layout:fixed; width:100%; } table.acttbl td, table.acttbl th { overflow-wrap:anywhere; vertical-align:top; }
 table.acttbl tr.oldv td { background:#f8fafc; }
 .fhead .actdots, .wl-pin .actdots { display:none; }
@@ -2419,6 +2459,7 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
   vertical-align:2px; font:700 9px/1 Georgia,serif; color:#fff; background:#64748b; }
 .ctiles .ctile:focus { outline:none; } .ctiles .ctile:focus-visible { outline:2px solid var(--ocha); outline-offset:1px; }
 .ctiles .ctile.hasnote:hover .tnote, .ctiles .ctile.hasnote:focus .tnote { display:block; }
+.ctiles .ctile ul.cb { margin:2px 0 0; padding-left:13px; font-size:10px; color:#475569; } .ctiles .ctile ul.cb li { margin:0; }
 .ctiles .ccap { grid-column:1 / -1; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:#1a5fa0; font-weight:700; margin-bottom:-2px; }
 @media (max-width:759px){ .ctiles { grid-template-columns:repeat(2,1fr); } }
 /* map layer toggles (world legend) */
@@ -2951,7 +2992,7 @@ function drawAdmin(iso, fade){
     if(!v || !v.scope) return;
     const ts = (v.scope.tiers && v.scope.tiers.length) ? v.scope.tiers
              : [{label:null, pcodes:v.scope.pcodes, rest:!!v.scope.national}];
-    ts.forEach((t, i) => tiers.push({hz:f.hazard, hzl:tr8(f.hz_label), label:t.label, pcodes:t.pcodes||[], rest:!!t.rest,
+    ts.forEach((t, i) => tiers.push({hz:f.hazard, hzl:tr8(f.hz_label), label:t.label, pcodes:t.pcodes||[], rest:!!t.rest, whole:!!t.whole,
       color: shade(hzColor(f.hazard), ts.length > 1 ? i/(ts.length-1) : 0)}));
   });
   // country-wide tiers (national trigger, 'all other provinces', unmapped zone): a wash under everything
@@ -2966,7 +3007,9 @@ function drawAdmin(iso, fade){
     const cover = [...ts, ...rests.filter(r => !ts.some(t => t.hz === r.hz))];   // other hazards' national tiers
     const fill = cover.length > 1 ? `url(#${hatchId(cover.map(t=>t.color))})` : cover[0].color;
     if(cover.length > 1) multi = true;
-    html += `<path class='sc' fill='${fill}' data-n='${esc(a.n)}' data-hz='${esc(cover.map(t=>t.hzl + (t.label?` (${t.label})`:'')).join(' + '))}' d='${ringsD(a.r)}'/>`;
+    // the same hazard's whole-country tier covers the area too (Vanuatu's observational trigger): named on hover, not striped
+    const also = rests.filter(r => r.whole && ts.some(t => t.hz === r.hz));
+    html += `<path class='sc' fill='${fill}' data-n='${esc(a.n)}' data-hz='${esc([...cover, ...also].map(t=>t.hzl + (t.label?` (${t.label})`:'')).join(' + '))}' d='${ringsD(a.r)}'/>`;
   });
   adm.innerHTML = html;
   if(fade) void adm.getBoundingClientRect();
@@ -3544,6 +3587,9 @@ function actMonths(acts){
 function countryTiles(c){
   const fws = vis(c), fw = fws.filter(f=>visLayer(f)==='framework');
   const pre = fw.reduce((s,f)=>s+(f.pre_now||0),0), cov = fw.reduce((s,f)=>s+(f.covered||0),0), nCov = fw.filter(f=>f.covered).length;
+  // pre-arranged now by fund, as the global tile (a past year has no split by fund there either)
+  const part = k => fw.reduce((s, f) => s + ((f.pre_parts || {})[k] || 0), 0);
+  const preBul = pastY() || !pre ? [] : fundBullets(part('cerf'), part('pooled'), part('all'));
   const F = flowFigures(c.fws);   // the global tiles' rule, this country (a retired pin's releases while that layer is on)
   const kind = F.nAd && F.nAd === F.n ? 'non-framework allocation' : F.nAd ? 'activation' : 'framework activation', one = F.n === 1;
   const ACT = {'non-framework allocation': one ? ['non-framework allocation to date', 'non-framework allocation in {0}'] : ['non-framework allocations to date', 'non-framework allocations in {0}'],
@@ -3559,13 +3605,14 @@ function countryTiles(c){
   const reachL = !F.nCerf && !F.nPool ? tr8('people reached or targeted') : estR ? tr8('people reached or targeted — estimate')
     : F.nRep ? tr8('people reached') : tr8('people reached or targeted: no figure yet');
   let k = 0;
-  const tile = (v, l, note) => { const nt = (note || []).filter(Boolean).join(' '), id = `ctn${++k}`;
+  const tile = (v, l, note, bul) => { const nt = (note || []).filter(Boolean).join(' '), id = `ctn${++k}`;
+    if(bul && bul.length) l += `<ul class='cb'>${bul.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
     return nt ? `<div class='ctile hasnote' tabindex='0' aria-describedby='${id}'><div class='v'>${v}</div><div class='l'>${l}</div><div class='tnote' id='${id}' role='tooltip'>${esc(nt)}</div></div>`
               : `<div class='ctile'><div class='v'>${v}</div><div class='l'>${l}</div></div>`; };
   return `<div class='ctiles'><div class='ccap'>${esc(tr8('{0} only', tr8(c.name)))}</div>`
     + tile(fw.length, esc(tr8(fw.length === 1 ? 'framework' : 'frameworks')) + (fws.length>fw.length?' · ' + esc(tr8('{0} other', fws.length-fw.length)):''))
     + tile(pre ? money(pre) : '—', esc(pastY() ? tr8('pre-arranged in {0}', YEAR) : tr8('pre-arranged now')),
-           fw.length ? [preNote()].concat(apyTileNotes(apyFw), [noEnv.length ? tr8('No figure for {0}: {1}.', YEAR, noEnv.join(', ')) : '']) : [])
+           fw.length ? [preNote()].concat(apyTileNotes(apyFw), [noEnv.length ? tr8('No figure for {0}: {1}.', YEAR, noEnv.join(', ')) : '']) : [], preBul)
     + tile(cov?num(cov):'—', esc(tr8(pastY() ? 'people covered' : 'people covered now')), pastY() && !cov ? [] : covNote(nCov, fw.length, false))
     + tile(F.n, esc(actL))
     + tile(F.n?money(F.usd):'—', esc(yr('released to date', 'released in {0}')), actNote(F))
@@ -3631,6 +3678,21 @@ function renderSide(){
 const verPre = v => { if(!(v.envelope > 0)) return null;
   const c = v.env_cerf || 0, x = (v.pool_spent ? 0 : v.envelope - c) + c * (v.apy > 1 ? v.apy : 1);
   return x > 0.5 ? x : null; };
+// verPre's figure by fund (owner, 2026-11-03: "put the CERF / country/regional breakdown in the
+// per-framework panel"): CERF (counted N times when N activations a year are allowed, as verPre),
+// the Country and Regional Funds with the funds named, a total not split by fund. Its parts add up
+// to verPre: a Country or Regional Fund envelope an activation released is no longer counted
+function preSplit(v){
+  const ef = v.env_funds || []; if(verPre(v) == null || !ef.length) return [];
+  const sum = xs => xs.reduce((t, x) => t + x.usd, 0);
+  const cerf = sum(ef.filter(x => x.fund === 'cerf')) * (v.apy > 1 ? v.apy : 1);
+  const pf = v.pool_spent ? [] : ef.filter(x => x.fund !== 'cerf' && x.fund !== 'all');
+  const all = v.pool_spent ? 0 : sum(ef.filter(x => x.fund === 'all'));
+  const names = pf.map(x => fundName(x.fund)).filter(x => x && x !== 'unspecified');
+  return [cerf > 0.5 && `CERF ${money(cerf)}`,
+          pf.length && `${tr8('Country and Regional Funds')} ${money(sum(pf))}${names.length ? ` (${names.join(', ')})` : ''}`,
+          all > 0.5 && `${tr8('not split by fund')} ${money(all)}`].filter(Boolean);
+}
 // ---------- the building blocks of AA: model · plan · funding · learning (always shown)
 const PILLARS = ['model', 'plan', 'funding', 'learning'];
 function pillarsBar(f, v){
@@ -3663,10 +3725,14 @@ function pillarBody(f, v){
   const c = L[state.iso];
   if(state.pillar==='funding'){
     if(v.pool_spent && v.envelope > (v.env_cerf || 0)) rows.push([tr8('Released, no longer committed'), `${money(v.envelope - (v.env_cerf || 0))} <span class='muted'>${esc(tr8('the Country or Regional Fund envelope an activation drew on'))}</span>`]);
-    rows.push([tr8('Pre-arranged'), `${verPre(v) == null ? '—' : money(verPre(v))}${v.apy > 1 && verPre(v) != null ? apyMark(v.apy) + ` <span class='muted'>· ${esc(apyNote(v.apy))}</span>` : ''}${v.regional?` <span class='muted'>· ${esc(tr8('regional document total (all countries)'))}</span>`:''}${v.all_in===false?` <span class='muted'>· ${esc(tr8('split budget per window'))}</span>`:v.all_in===true?` <span class='muted'>· ${esc(tr8('all-in'))}</span>`:''}`]);
+    const ps = preSplit(v);
+    rows.push([tr8('Pre-arranged'), `${verPre(v) == null ? '—' : money(verPre(v))}${v.apy > 1 && verPre(v) != null ? apyMark(v.apy) + ` <span class='muted'>· ${esc(apyNote(v.apy))}</span>` : ''}${v.regional?` <span class='muted'>· ${esc(tr8('regional document total (all countries)'))}</span>`:''}${v.all_in===false?` <span class='muted'>· ${esc(tr8('split budget per window'))}</span>`:v.all_in===true?` <span class='muted'>· ${esc(tr8('all-in'))}</span>`:''}${ps.length ? `<div class='small muted'>${esc(ps.join(' · '))}</div>` : ''}`]);
     // the document's own figure, where it differs from the envelope counted (or there is none)
     if(v.prearranged_doc!=null && (!(v.envelope > 0) || Math.abs(v.envelope - v.prearranged_doc) > 0.01*Math.max(v.envelope, v.prearranged_doc))) rows.push([tr8('In the framework document'), `${money(v.prearranged_doc)} <span class='muted'>${esc(tr8("the figure the document states; the tiles, the table and the Financing page count the envelope recorded for the version"))}${v.regional?' · '+esc(tr8('regional document total (all countries)')):''}</span>`]);
-    if(v.cofin) rows.push([tr8('Co-financing'), `${money(v.cofin)}${v.cofin_sources.length?` <span class='muted'>${esc(v.cofin_sources.join(', '))}</span>`:''}`]);
+    // the page's co-financing figure, else the document's co-financing lines (the split's, kept apart)
+    const coL = (v.funding && v.funding.cofin) || [], coT = v.cofin || coL.reduce((t, x) => t + x.usd, 0) || null;
+    const coS = v.cofin_sources.length ? v.cofin_sources : v.cofin ? [] : coL.map(x => fundName(x.from));
+    if(coT) rows.push([tr8('Co-financing'), `${money(coT)}${coS.length?` <span class='muted'>${esc(coS.join(', '))}</span>`:''}`]);
     if(f.tech) rows.push([tr8('OCHA role'), `<span class='badge b-tech'>${esc(tr8('technical support'))}</span> <span class='muted'>${esc(tr8('no funding commitment'))}</span>`]);
     return miniTable(rows) + fundingBlock(v);
   }
@@ -3821,17 +3887,21 @@ function triggersBlock(v){
   return html;
 }
 // a fund as the pages name it ('CERF', 'CBPF AFG'; dashboards.fund_label), never its code; a
-// financier recorded in words is shown as written
+// financier recorded in words is shown as written; a regional fund's window filed under a cbpf-
+// code as the regional fund it is ('RHPF AP VUT', window.FUNDLAB from the fund registry)
 function fundName(x){ return x === 'cerf' ? 'CERF' : x === 'cbpf-unspecified' ? 'CBPF'
-  : /^(cbpf|rhpf)(-[a-z]+)+$/.test(x || '') ? x.toUpperCase().replace(/-/g, ' ') : x; }
+  : (window.FUNDLAB || {})[x] || (/^(cbpf|rhpf)(-[a-z]+)+$/.test(x || '') ? x.toUpperCase().replace(/-/g, ' ') : x); }
 function fundingBlock(v){
-  const F = v.funding; if(!F.agency.length && !F.sector.length && !F.fund.length) return '';
+  const F = v.funding, CO = F.cofin || []; if(!F.agency.length && !F.sector.length && !F.fund.length && !CO.length) return '';
   // budget sanity: the split rows (one source per version, v_window_funding_split) must not
   // add up to more than the version's envelope — a flag here is a genuine data problem
   const splitTot = F.fund.reduce((s,x)=>s+x.usd,0), env = v.envelope ?? v.prearranged_doc;
   const over = env != null && splitTot > env * 1.01;
-  let html = `<div class='small' style='margin:8px 0 4px'>${esc(tr8('Split total'))} <b>${money(splitTot)}</b>${env!=null?' ' + esc(tr8('of a {0} envelope', money(env))):' — ' + esc(tr8('no envelope recorded'))}${F.src==='sheet'?` <span class="muted">${esc(tr8('(tracking sheet)'))}</span>`:''}${over?`<span class='warntag' title='${esc(tr8('the agency × sector split adds up to more than the version envelope'))}'>${esc(tr8('split exceeds envelope'))}</span>`:''}</div>`;
+  // no split of the pre-arranged money (only co-financing lines): no split line either
+  let html = !F.fund.length ? '' : `<div class='small' style='margin:8px 0 4px'>${esc(tr8('Split total'))} <b>${money(splitTot)}</b>${env!=null?' ' + esc(tr8('of a {0} envelope', money(env))):' — ' + esc(tr8('no envelope recorded'))}${F.src==='sheet'?` <span class="muted">${esc(tr8('(tracking sheet)'))}</span>`:''}${over?`<span class='warntag' title='${esc(tr8('the agency × sector split adds up to more than the version envelope'))}'>${esc(tr8('split exceeds envelope'))}</span>`:''}</div>`;
   if(F.fund.length > 1) html += `<div class='small muted'>${esc(tr8('By fund:'))} ${F.fund.map(x=>`${esc(fundName(x.fund))} ${money(x.usd)}`).join(' · ')}</div>`;
+  // an agency's own co-financing: beside the split, never in it (the split is the pre-arranged money)
+  if(CO.length) html += `<div class='small muted'>${esc(tr8('Co-financing, not in the split:'))} ${CO.map(x=>`${esc(fundName(x.from))} ${money(x.usd)}`).join(' · ')}</div>`;
   const CW = Math.max(280, Math.min(560, (side.clientWidth || 420) - 36));
   const bars = (rows, label) => { const m = groupBy(rows, x=>x[label], x=>x.usd);
     return hbarsSVG(Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([k,u])=>({label:k, v:u})), {width:CW, fmt:money, label:tr8(label === 'agency' ? 'budget by agency' : 'budget by sector'), colorBy: label==='agency' ? 'a' : null, color:'#64748b'}); };
@@ -3853,7 +3923,7 @@ function scopeBlock(v){
   if(s.approx) html += `<div class='warnbox'>${esc(s.unmatched.length ? tr8("The framework's zone could not be mapped to admin areas ({0}) — the whole country is shown.", s.unmatched.join('; ')) : tr8("The framework's zone could not be mapped to admin areas — the whole country is shown."))}</div>`;
   const nt = (s.tiers||[]).length;
   if(nt){
-    html += s.tiers.map((t,i)=>`<div class='scopelist'><span class='sq' style='display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px;background:${shade(hzColor(state.hz), nt>1?i/(nt-1):0)}'></span><b>${esc(t.label||tr8('named areas'))}</b>${t.rest ? ' — ' + esc(tr8('everywhere not named above')) : `: ${nm(t.pcodes).map(esc).join(', ')}`}</div>`).join('');
+    html += s.tiers.map((t,i)=>`<div class='scopelist'><span class='sq' style='display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px;background:${shade(hzColor(state.hz), nt>1?i/(nt-1):0)}'></span><b>${esc(t.label||tr8('named areas'))}</b>${t.rest ? ' — ' + esc(tr8(t.whole ? 'the whole country, the areas above included' : 'everywhere not named above')) : `: ${nm(t.pcodes).map(esc).join(', ')}`}</div>`).join('');
   } else if(s.national && !s.approx) html += `<div class='scopelist'>${esc(tr8('National trigger — whole country.'))}</div>`;
   else if(s.pcodes.length) html += `<div class='scopelist'>${nm(s.pcodes).map(esc).join(', ')}</div>`;
   if(!s.national && !s.pcodes.length && !s.inherited_from) html += `<div class='muted'>${esc(tr8('Scope not extracted for this version yet.'))}</div>`;
@@ -3901,16 +3971,20 @@ function backtestBlock(f, v){
     ? tr8('{0}: after version {1} was replaced ({2}) — real activations only', y, v.v, bt.in_use_to)
     : tr8('{0}: version {1} in use (took effect {2}) — real activations only; its simulation covers the years before', y, v.v, v.valid_from || use0);
   const simYears = new Set(bt.rows.filter(r => !inUse(r.year)).map(r => r.year));
-  const dot = (w, r) => `<span class='bt-dot' style='background:${hzColor(f.hazard)}' title='${esc(r && r.when && r.when[w] ? tr8('would have activated on {0} (simulation)', r.when[w]) : tr8('would have activated in {0} (simulation)', r ? r.year : tr8('that year')))}'></span>`;
+  // a tested storm's value for the trigger (D189): ' · 49,587 people exposed to …'
+  const val = (r, w) => r && r.vals && r.vals[w] != null ? ` · ${num(r.vals[w])}${bt.units && bt.units[w] ? ' ' + bt.units[w] : ''}` : '';
+  const dot = (w, r) => `<span class='bt-dot' style='background:${hzColor(f.hazard)}' title='${esc((r && r.when && r.when[w] ? tr8('would have activated on {0} (simulation)', r.when[w]) : tr8('would have activated in {0} (simulation)', r ? r.year : tr8('that year'))) + val(r, w))}'></span>`;
   const cell = (r, w) => inUse(r.year) ? `<td class='bt-c bt-use' title='${esc(useTip(r.year))}'>`
+    : r.tested && (r.na||[]).includes(w) ? `<td class='bt-c bt-na' title='${esc(tr8('no record to test this trigger against'))}'>`
+    : r.tested && !r.fired.includes(w) ? `<td class='bt-c' title='${esc(tr8('would not have activated') + val(r, w))}'>`
     : simYears.has(r.year) && !r.extra ? `<td class='bt-c'>`
     : `<td class='bt-c bt-na' title='${esc(tr8('{0} is not covered by the historical simulation', r.year))}'>`;
   let html = `<h4>${esc(tr8('Historical activations'))}</h4>
-    <div class='small' style='margin-bottom:4px'>${esc(tr8(bt.per_event ? 'Simulation {0}–{1}: would each trigger of this version have activated for each storm?' : 'Simulation {0}–{1}: would each trigger of this version have activated each year?', bt.start, bt.end))}${use0 ? ' ' + esc(tr8('From {0}, when the version took effect, real activations only.', use0)) : ''} ${esc(tr8('Real activations are marked in, linked to their announcement.'))}${bt.after_note ? ` <span class='muted'>${esc(tr8(bt.after_note))}</span>` : ''}</div>
+    <div class='small' style='margin-bottom:4px'>${esc(tr8(bt.per_event ? 'Simulation {0}–{1}: would each trigger of this version have activated for each storm?' : 'Simulation {0}–{1}: would each trigger of this version have activated each year?', bt.start, bt.end))}${bt.n_tested ? ' ' + esc(tr8('The {0} storms the framework document lists from its backtest are shown, including those that would not have activated.', bt.n_tested)) + (bt.rows.some(r => r.vals && Object.keys(r.vals).length) ? ' ' + esc(tr8('Hover a cell for the trigger\'s value.')) : '') : ''}${use0 ? ' ' + esc(tr8('From {0}, when the version took effect, real activations only.', use0)) : ''} ${esc(tr8('Real activations are marked in, linked to their announcement.'))}${bt.after_note ? ` <span class='muted'>${esc(tr8(bt.after_note))}</span>` : ''}</div>
     <table class='mini bt'><thead><tr><th>${esc(tr8(bt.per_event?'storm':'year'))}</th>${bt.windows.map(w=>`<th class='bt-c'>${trigName(w)}</th>`).join('')}</tr></thead><tbody>`;
   html += rows.map(r => `<tr class='${r.fired.length?'bt-on':''}'><td class='lbl'>${r.year}${r.label?` <span class='muted'>${esc(r.label)}</span>`:''}${inUse(r.year) && !r.label && !(bt.in_use_to && r.year > bt.in_use_to) ? ` <span class='bt-usetag' title='${esc(useTip(r.year))}'>${esc(tr8('in use'))}</span>` : ''}${r.realYear.map(a=>realMark(a, v)).join('')}</td>`
     + bt.windows.map(w => `${cell(r, w)}${r.fired.includes(w) && !inUse(r.year) ? dot(w, r) : ''}${(r.real[w]||[]).map(a=>realMark(a, v)).join('')}</td>`).join('') + `</tr>`).join('');
-  return html + `</tbody></table><div class='small bt-key'>${dot()} ${esc(tr8('would have activated (simulation)'))} · <span class='rm'></span> ${esc(tr8('activated, money released'))} · <span class='rm old'></span> ${esc(tr8('activated under an earlier version'))}${use0 ? ` · <span class='bt-sw bt-use'></span> ${esc(tr8('version in use: real activations only'))}` : ''}</div>`;
+  return html + `</tbody></table><div class='small bt-key'>${dot()} ${esc(tr8('would have activated (simulation)'))} · <span class='rm'></span> ${esc(tr8('activated, money released'))} · <span class='rm old'></span> ${esc(tr8('activated under an earlier version'))}${use0 ? ` · <span class='bt-sw bt-use'></span> ${esc(tr8('version in use: real activations only'))}` : ''}${bt.rows.some(r => (r.na||[]).length) ? ` · <span class='bt-sw bt-na'></span> ${esc(tr8('no record to test this trigger against'))}` : ''}</div>`;
 }
 // the real activations of the framework, all versions: when, which window, how much, links
 function actualBlock(f, v){
@@ -3940,7 +4014,7 @@ const HELP = [
   ['lead time', /\blead time\b/i, 'how far ahead of the shock the money is released'],
   ['readiness', /\b(readiness(?: vs\.? action)?|readiness and action)\b/i, 'readiness money prepares the response before the shock is certain; action money delivers it'],
 ];
-const ABBR = {CERF:'Central Emergency Response Fund', CBPF:'Country-Based Pooled Fund', RhPF:'Regional Humanitarian Pooled Fund', ERC:'Emergency Relief Coordinator',
+const ABBR = {CERF:'Central Emergency Response Fund', CBPF:'Country-Based Pooled Fund', RhPF:'Regional Humanitarian Pooled Fund', RHPF:'Regional Humanitarian Pooled Fund', ERC:'Emergency Relief Coordinator',
   AA:'anticipatory action', GHO:'Global Humanitarian Overview', HRP:'Humanitarian Response Plan', IPC:'Integrated Food Security Phase Classification',
   CH:'Cadre Harmonisé', SEAS5:'ECMWF seasonal forecast system', ECMWF:'European Centre for Medium-Range Weather Forecasts', GloFAS:'Global Flood Awareness System',
   ASAP:'Anomaly hot Spots of Agricultural Production', 'FEWS NET':'Famine Early Warning Systems Network', ENSO:'El Niño–Southern Oscillation', NDMO:'National Disaster Management Office',
