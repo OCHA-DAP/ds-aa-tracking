@@ -39,7 +39,7 @@ on:
   repository_dispatch:
     types: [kb-updated, data-updated]
   push:
-    branches: [main]
+    branches: [main, pages-artifact]   # TEMPORARY: branch test of the build job; remove before merge
     paths: ["scripts/**", "src/**", "site_src/**", ".github/workflows/publish.yml"]
 
 concurrency:
