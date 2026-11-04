@@ -844,7 +844,7 @@ def build_plan(page, d):
 
 <div class='notyet'><h3>{T("Not yet measured")}</h3><ul>
  <li>{TB("<b>National ownership score</b> — a design decision for the team (which elements, which weights); the government roles above are one possible input.")}</li>
- <li>{TB("<b>Anticipatory activities</b> (most common activities, readiness vs action per activity) — the frameworks' activities are not recorded as structured data, only their sectors.")}</li>
+ <li>{TB("<b>Anticipatory activities</b> (most common activities, readiness vs action per activity) — the frameworks' activities are recorded only as their sectors and a short summary per organisation (in each framework's panel on the map), not in categories that can be counted.")}</li>
  <li>{TB("<b>Geographic coverage</b> (admin areas targeted) — not recorded.")}</li>
  <li>{TB("<b>Gender, age and disability</b> beyond the CERF breakdown above — the framework documents' targets are not disaggregated in the database.")}</li>
  <li>{TB("<b>In-kind vs cash</b> — only the cash and voucher share is recorded.")}</li>

@@ -45,7 +45,7 @@ GROUPS = [
         "cerf_allocation_extra", "cerf_application_people", "cerf_application_report",
         "cerf_project_supplement", "cerf_subgrant", "cerf_cva_history"]),
     ("Framework pages, learning, partners (KB flip 2026-09-28: edited here, the KB reads this)",
-     "ds-aa-tracking", ["version_page", "learning_document", "framework_partner"]),
+     "ds-aa-tracking", ["version_page", "learning_document", "framework_partner", "framework_activity"]),
     ("Data entry (entered values win)", "ds-aa-tracking", [
         "entered_version", "entered_window", "entered_window_funding", "entry_audit"]),
     ("Backtests (owned here since 2026-10-05; edited as errors are found — see v_trk_backtest_check)",

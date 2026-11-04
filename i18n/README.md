@@ -23,7 +23,8 @@ Never translated, on purpose (KB rules): organisation and fund names, codes and 
 the framework documents' own text (trigger statements, thresholds, window names quoted from
 a document — several are already in French or Spanish); the framework records' text on the
 Model page and in the map's panel (indicators, lead times, stated return periods, data
-provider names, partner roles as written, the sector labels of a budget split, area names);
+provider names, partner roles as written, the sector labels of a budget split, area names, and
+the Activities tab's line per organisation on what it does, D196);
 the learning documents' titles, publishers, summaries and key statistics; CERF's emergency
 types; file and folder names and the social posts on the Media page (quoted posts); the
 open data files and CSV downloads. The Learning page's curated findings and headlines are
