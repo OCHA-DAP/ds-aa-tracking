@@ -1676,7 +1676,7 @@ def _strip_sections(body):
 def _pdf_texts(e, out):
     """pdf-<sha256>.txt for every current, public, registered framework document: the archived
     PDF's text page by page (pypdf), from the blob archive, cached under PDF_CACHE by content
-    hash (a file never changes, so the file carries no date and gh-pages sees no churn).
+    hash (a file never changes, so the file carries no date and the published site sees no churn).
     Returns (sha -> file name, (iso3, hazard, version) -> [doc])."""
     try:
         docs = pd.read_sql(

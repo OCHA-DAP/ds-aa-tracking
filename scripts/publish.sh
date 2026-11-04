@@ -78,10 +78,10 @@ fi
 uv run python scripts/sync_media.py --fetch site_media
 
 # the staged site: built fresh every time, so a page dropped from the build, or moved to the
-# admin site, cannot linger at its old address. A relative folder inside the repo, never a
-# path that could reach outside it (it is deleted whole first).
+# admin site, cannot linger at its old address. It is deleted whole first, so only a folder of
+# its own is accepted: a name starting with '_' at the repo root (never scripts/, site_build/, .git)
 STAGE="${STAGE:-_site}"
-case "$STAGE" in ""|/*|*..*|.|./) echo "FATAL: STAGE must be a folder inside the repo, got '$STAGE'" >&2; exit 1 ;; esac
+[[ "$STAGE" =~ ^_[A-Za-z0-9-]+$ ]] || { echo "FATAL: STAGE must be a folder of its own at the repo root, named _<name>; got '$STAGE'" >&2; exit 1; }
 rm -rf "./${STAGE:?}"
 mkdir -p "$STAGE/$ADMIN" "$STAGE/$DEV/media"
 # the Media page is on the dev site only, so are its photos

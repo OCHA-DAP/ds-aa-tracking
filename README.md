@@ -266,9 +266,11 @@ gh workflow run publish.yml              # put the site online: the workflow bui
 ```
 
 The site is deployed as a GitHub Pages artifact (Pages in workflow mode, D195): the published
-pages are never committed, so the repository holds code only. To go back to an earlier site,
-run the workflow from that commit with the snapshot of that day
-(`gh workflow run publish.yml --ref <commit> -f snapshot=YYYY-MM-DD`; dated snapshots are kept 30 days).
+pages are never committed, so the repository holds code only. Only `main` may deploy (the
+github-pages environment's branch policy). To go back to an earlier site: a code change is
+reverted on `main` (the merge publishes it); earlier data is published with that day's snapshot,
+`gh workflow run publish.yml -f snapshot=YYYY-MM-DD` (dated snapshots are kept 30 days). To publish
+again, start a new run rather than re-running an old one (its site package is kept one day).
 
 Once the laptop can no longer reach the dev DB, work from the snapshot in a local Postgres
 (the schema/data writes then go through the site's proxy, or through the Databricks job

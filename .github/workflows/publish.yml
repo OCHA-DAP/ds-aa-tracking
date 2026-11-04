@@ -19,7 +19,9 @@
 # committed the whole re-encrypted site to gh-pages, ~6 GB of history in six weeks, and the
 # checkout fetched all of it. The checkout is main's tip only: nothing here reads history.
 # The admin page's "Publish changes" button (proxy/server.js) finds runs by this file, the
-# run-name below and the step names of the FIRST job: keep them.
+# run-name below and the step names of the FIRST job: keep them. To publish again, start a new
+# run (gh workflow run publish.yml) rather than re-running one: its site package is kept a day.
+# Only main may deploy (the github-pages environment's branch policy).
 name: Publish site
 # the proxy's GET /publish tells a button run by this name; other runs keep GitHub's default
 run-name: ${{ inputs.fresh_snapshot && 'Publish changes (a fresh copy of the database)' || '' }}
@@ -39,7 +41,7 @@ on:
   repository_dispatch:
     types: [kb-updated, data-updated]
   push:
-    branches: [main, pages-artifact]   # TEMPORARY: branch test of the build job; remove before merge
+    branches: [main]
     paths: ["scripts/**", "src/**", "site_src/**", ".github/workflows/publish.yml"]
 
 concurrency:
@@ -47,9 +49,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
-  pages: write       # deploy-pages
-  id-token: write    # deploy-pages
+  contents: read     # the build job: nothing it runs can deploy or write to the repo
 
 jobs:
   publish:
@@ -144,6 +144,9 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      pages: write       # deploy-pages, this job only
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
