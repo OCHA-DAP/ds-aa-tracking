@@ -226,7 +226,7 @@ document.addEventListener('click', function(e){
   a = t.closest('a[href]'); if (!a) return;
   try { u = new URL(a.getAttribute('href'), location.href); } catch(x){ return; }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return;
-  if (u.hostname !== location.hostname) count('out', (u.hostname + u.pathname).slice(0, 160));
+  if (u.hostname !== location.hostname) count('out', u.hostname + u.pathname.slice(0, 150));
   else if (/\.(csv|json|md|txt|pdf)$/i.test(u.pathname)) count('download', u.pathname.split('/').pop());
 }, true);
 })();</script>""")
