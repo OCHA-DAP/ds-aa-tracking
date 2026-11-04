@@ -282,6 +282,10 @@ ADMIN_HOME = [
         ("entry.html", "enter or ingest a framework: upload the PDF or fill the form"),
         ("schema.html", "every table and view of the database, with its columns"),
     ]),
+    ("Site", [
+        ("usage.html", "how the open site is used: page views, map panels opened, languages, "
+                       "downloads and links out, from its daily counts"),
+    ]),
 ]
 
 
@@ -865,7 +869,7 @@ NOTES = {
     "emergency_type_override": "Yakubu's re-tagged allocations: GMS emergency type vs actual shock (mostly Flood→Storm, with storm name).",
     "cerf_climate_coding": "CERF projects coded against climate-adaptation indicators (one row per project × indicator × coder; NULL value = blank cell). Hand coding on the unlisted climate-adaptation page, model runs (coders model-*) scored against it on the unlisted climate-coding-accuracy page (public password; the two link only to each other); indicator wording in scripts/page_climate.py.",
     "trigger_timeline": "When each trigger window of a framework version can activate, on its hazard's clock (the Model page's trigger timelines): storms in hours (<code>h</code>) and floods in days (<code>d</code>) before (−) / after (+) landfall or the flood peak, as a bar <code>lead_from</code> → <code>lead_to</code>; drought as the calendar <code>months</code> a trigger is checked, against the rainy season (<code>season_start</code>, <code>season_len</code>). A leg is a river or a season; <code>seq</code> orders the rows. Read by hand from the framework document and entered through entries files (<code>op: replace</code> per version); only the current version's rows are drawn.",
-    "page_count": "The open site's usage, as daily totals (D197): page views, map panels opened (the country or framework), language switches, downloads and links followed out, each with the page's language and phone or desktop; a view also with the referring site's host. Written only by the proxy's anonymous <code>POST /hit</code> (one row per day and combination, n + 1 per event) from the pages at the root, never dev/ or admin/; no IP address, identifier or time of day is stored (privacy.html says so to readers). Indicative counts, never audited: an anonymous endpoint can be inflated.",
+    "page_count": "The open site's usage, as daily totals (D197): page views, map panels opened (the country or framework), language switches, downloads and links followed out, each with the page's language and phone or desktop; a view also with the referring site's host. Written only by the proxy's anonymous <code>POST /hit</code> (one row per day and combination, n + 1 per event) from the pages at the root, never dev/ or admin/; no IP address, identifier or time of day is stored (privacy.html says so to readers). Indicative counts, never audited: an anonymous endpoint can be inflated. The Site usage page (usage.html) shows them as a dashboard.",
 }
 
 def main():
@@ -884,6 +888,8 @@ def main():
               "proxy/mirror_tables.json: if another repo writes it, list it there so the "
               "admin page stops offering to edit it")
     admin_page.build_admin(page)
+    import page_usage   # the open site's page counts, as a dashboard (D197)
+    page_usage.build(e, page, DATA_STAMP)
     import page_climate
     page_climate.build(e, page)
     import page_accessibility
