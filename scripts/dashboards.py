@@ -23,6 +23,12 @@ import pandas as pd
 # validated reference palette (light mode), fixed assignment order
 PAL = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]
 FUND_COLORS = {"cerf": "#2a78d6", "cbpf": "#eb6834", "regional_fund": "#1baf7a"}
+# the Financing page's framework × agency table (D200): one blue, light to dark (the reference
+# palette's sequential steps 100, 200, 300, 400, 550, 700), in fixed steps of US$ — a cell below
+# 0.5M, 0.5–1M, 1–2M, 2–3M, 3–5M, 5M or more. Dark text on the four lightest, white on the two
+# darkest (contrast at least 5:1 both ways)
+HEAT_STEPS = [5e5, 1e6, 2e6, 3e6, 5e6]
+HEAT_COLORS = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#1c5cab", "#0d366b"]
 # a fund type in words (chart legends): the type is a code, never shown
 FUND_TYPE_LABEL = {"cerf": "CERF", "cbpf": "Country funds", "regional_fund": "Regional funds"}
 HAZARDS = ["drought", "flood", "storm", "cholera"]  # fixed order; rest -> Other
@@ -2490,6 +2496,38 @@ def build_funding(page, d):
 {how("Released: the CERF money of each covered framework's activations dated from " + insurance.PERIOD_TEXT + ", net of any refund, as on the rest of this page; an amount entered before CERF's records show the allocation is included. An activation known only to the month counts when that month is in the period. Only CERF money is counted, not the Country and Regional Funds'. The cover limit applies to each season, while the released column adds up the whole period, which can span more than one season of a framework. The frameworks and cover limits are those of the insurance annex, copied on " + insurance.UPDATED + ".")}
 </div>"""
 
+    # pre-arranged by framework and agency (D200): a table the script fills (drawHeat), the rows
+    # of the chart by agency, one per framework; the colour steps are fixed (HEAT_STEPS), so a
+    # colour means the same amount whatever the filters
+    heat_key = "".join(f"<span><i style='background:{c}'></i>{lab}</span>" for c, lab in zip(
+        HEAT_COLORS, [TF("less than {n}", n="0.5"), "0.5–1", "1–2", "2–3", "3–5", TF("{n} or more", n="5")]))
+    heat_html = f"""
+<style>
+.hm table.data {{ width:auto; min-width:100%; }}
+.hm table.data th, .hm table.data td {{ white-space:nowrap; }}
+.hm thead th {{ vertical-align:bottom; text-align:center; }}
+.hm th.fw {{ position:sticky; left:0; top:auto; z-index:1; background:#fff; text-align:left;
+             font-weight:400; border-bottom:1px solid #eee; }}
+.hm thead th.fw {{ background:#eef3f8; top:0; z-index:3; border-bottom:2px solid #cbd6e2; }}
+.hm td.c {{ text-align:center; font-variant-numeric:tabular-nums; min-width:40px; padding:3px 6px;
+            border:2px solid #fff; vertical-align:middle; }}
+.hm td.c[title]:hover {{ outline:2px solid #0d366b; outline-offset:-2px; }}
+.hm tr.g td {{ background:#f7f9fb; color:#555; font-weight:600; font-size:12px; }}
+.hm td.none, .hm-key i.none {{ background:repeating-linear-gradient(45deg,#f6f6f6 0 5px,#e4e4e4 5px 7px); }}
+.hm td.none {{ color:#555; font-style:italic; }}
+.hm-key {{ display:flex; flex-wrap:wrap; gap:4px 12px; align-items:center; font-size:12px; color:#555; margin:0 0 8px; }}
+.hm-key i {{ display:inline-block; width:20px; height:12px; border-radius:2px; vertical-align:-1px; margin-right:4px;
+            border:1px solid #d6dbe1; }}
+</style>
+<div class='panel hm'><h3>{T("Pre-arranged by framework and agency")}</h3>
+<div class='hm-key'><span>{T("US$ million:")}</span>{heat_key}
+ <span><i style='background:#fff'></i>{T("blank: no line for the agency")}</span>
+ <span><i class='none'></i>{T("no split by agency recorded for the latest version")}</span></div>
+<div class='xscroll' id='hmBox'><table class='data' id='hmT'></table></div>
+<p class='empty' id='hmX' style='display:none'></p>
+{how("Each cell is one agency's part of one framework's pre-arranged money now, in US$ million: the agency lines of the budget of the framework's latest version, all its windows and sectors together — the lines of the chart by agency below. A blank cell: that budget has no line for the agency. A framework with pre-arranged money now whose latest version has no split by agency recorded keeps its row, hatched. Money with no agency split recorded (most Country and Regional Fund envelopes) is not shown, so a row can add up to less than the framework's envelope. The colour steps are fixed: a colour means the same amount whatever the filters. Follows the current-frameworks layer (retired frameworks have no pre-arranged money now), the framework selection, the fund switch and the hazard and region filters; the GHO filter does not apply.", two=True)}
+</div>"""
+
     fund_sel = (f"<label>{T('Fund')} <select id='fFund'>{OPT('', 'CERF and Country and Regional Funds')}"
                 f"{OPT('cerf', 'CERF')}{OPT('pooled', 'Country and Regional Funds')}</select></label>")
     panels = f"""
@@ -2560,6 +2598,7 @@ def build_funding(page, d):
 </div>
 <h2>{T("Where the pre-arranged money goes")}</h2>
 <p class='meta'>{T("The latest version of every current framework, split by agency and sector as the framework documents state it, stacked by fund.")}</p>
+{heat_html}
 <div class='grid'>
  <div class='panel'><h3>{T("Pre-arranged by agency")}</h3><canvas id='c7' height='320'></canvas>
    {how("Envelope shares per implementing agency (the agency lines of the framework budgets; top 18). Money with no agency split recorded (most Country and Regional Fund envelopes) is not in this chart. Follows the current-frameworks layer (retired frameworks have no pre-arranged money now), the fund switch and the hazard and region filters; the GHO filter does not apply.", two=True)}</div>
@@ -2604,6 +2643,7 @@ def build_funding(page, d):
         "unSplit": un_split,
         "flow": flow_rows, "flowYears": flow_years, "flowDefault": flow_default,
         "fundNames": fund_names, "cy": cy,
+        "heat": {"steps": HEAT_STEPS, "colors": HEAT_COLORS},
     }
     js = FLOW_JS + """
 // two fund groups on this page's charts: CERF, and the Country and Regional Funds together, as
@@ -2764,6 +2804,59 @@ function tiles(s, geo, A, N){
     tCov.textContent = (sumOf(C, r=>r.people_covered)/1e6).toFixed(1)+'M';
     tCovl.textContent = tr8('people covered now — current frameworks{0}, latest figure each ({1} of {2} have one) · not people reached', fundTxt, new Set(C.map(r=>r.k)).size, live) + selTxt; }
 }
+// pre-arranged by framework and agency (D200; owner, 2026-11-05: "which agencies are a part of
+// which framework … the amount of money per agency in each framework"): the rows of the chart by
+// agency (S: the latest versions' agency lines, every filter of that chart), one row per framework
+// with pre-arranged money now or agency lines, in the picker's order (region, country, hazard),
+// one column per agency, most money first. Fixed colour steps (D.heat), so a colour means the
+// same amount whatever the filters. Built with textContent: agency names are data.
+const HM_STEP = D.heat.steps, HM_COL = D.heat.colors;
+const hmBin = v => { let i = 0; while(i < HM_STEP.length && v >= HM_STEP[i]) i++; return i; };
+const hmNum = v => (v/1e6).toFixed(v < 1e6 ? 2 : 1);
+function drawHeat(s, S, geo){
+  const N = D.now.filter(r=>geo(r) && layerOK(r.g,s) && ftOK(r.ft,s) && r.total_usd > 0);
+  const SA = S.filter(r=>r.agency && r.amount_usd > 0);
+  const ks = new Set(N.map(r=>r.k).concat(SA.map(r=>r.k)));
+  const rows = FWL.filter(f=>f.lc && ks.has(f.k));
+  const tb = document.getElementById('hmT'), box = document.getElementById('hmBox'), none = document.getElementById('hmX');
+  tb.textContent = '';
+  box.style.display = rows.length ? '' : 'none'; none.style.display = rows.length ? 'none' : '';
+  if(!rows.length){
+    none.textContent = !s.cur ? tr8('pre-arranged now: select current frameworks (retired frameworks and non-framework allocations have none)')
+      : tr8('No data in this selection');
+    return; }
+  const tot = groupSum(SA, r=>r.agency, r=>r.amount_usd);
+  const ags = Object.keys(tot).sort((a,b)=>tot[b]-tot[a] || a.localeCompare(b));
+  const cell = {}, part = {};
+  SA.forEach(r=>{ const c = r.k + '\t' + r.agency, g = fgOf(r.ft);
+    cell[c] = (cell[c]||0) + r.amount_usd;
+    const p = part[c] = part[c] || {}; p[g] = (p[g]||0) + r.amount_usd; });
+  const el = (tag, cls, txt) => { const e = document.createElement(tag);
+    if(cls) e.className = cls; if(txt!=null) e.textContent = txt; return e; };
+  const head = el('thead'), hr = el('tr');
+  const h0 = el('th', 'fw', tr8('Framework')); h0.scope = 'col'; hr.appendChild(h0);
+  ags.forEach(a=>{ const h = el('th', null, a); h.scope = 'col'; hr.appendChild(h); });
+  head.appendChild(hr); tb.appendChild(head);
+  const body = el('tbody'); let reg = null;
+  rows.forEach(f=>{
+    if(f.region !== reg){ reg = f.region;
+      const gr = el('tr', 'g'), gc = el('td', null, tr8(reg)); gc.colSpan = ags.length + 1;
+      gr.appendChild(gc); body.appendChild(gr); }
+    const tr = el('tr'), name = tr8(f.name) + ' — ' + tr8(f.hazard) + (TWO.has(f.k) ? '*' : '');
+    const th = el('th', 'fw', name); th.scope = 'row'; tr.appendChild(th);
+    if(!ags.some(a=>cell[f.k + '\t' + a])){
+      const td = el('td', 'none', tr8('no split by agency recorded for the latest version'));
+      td.colSpan = Math.max(ags.length, 1); tr.appendChild(td); }
+    else ags.forEach(a=>{ const c = f.k + '\t' + a, v = cell[c], td = el('td', 'c');
+      if(v){ const b = hmBin(v), p = part[c];
+        td.textContent = hmNum(v);
+        td.style.background = HM_COL[b]; td.style.color = b >= 4 ? '#fff' : '#111';
+        td.title = name + ' · ' + a + ': ' + M2(v)
+          + (p.cerf && p.pooled ? ' (' + tr8('CERF {0} · Country and Regional Funds {1}', M2(p.cerf), M2(p.pooled)) + ')' : ''); }
+      tr.appendChild(td); });
+    body.appendChild(tr); });
+  tb.appendChild(body);
+}
 function draw(){
   const s = sel(), gho = s.gho;
   const geo = r => (!s.hz||r.hz===s.hz) && (!s.rg||r.region===s.rg) && fwOK(r, s);
@@ -2832,6 +2925,7 @@ function draw(){
     }
   }
   const S = D.split.filter(r=>geo(r) && layerOK(r.g,s) && ftOK(r.ft,s));
+  drawHeat(s, S, geo);
   const SA = S.filter(r=>r.agency), SS = S.filter(r=>r.sector);
   stackedBy('c7', SA, r=>r.agency, r=>r.amount_usd, {keys:topKeys(SA,r=>r.agency,r=>r.amount_usd,18), extra:{indexAxis:'y'}});
   stackedBy('c8', SS, r=>r.sector, r=>r.amount_usd, {keys:topKeys(SS,r=>r.sector,r=>r.amount_usd,18), allLabels:true, extra:{indexAxis:'y'}});
