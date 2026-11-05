@@ -2590,7 +2590,8 @@ def build_funding(page, d):
         "act": json.loads(_records(act, ["k", "country_iso3", "hz", "region", "year",
                                          "fund_code", "amount_usd", "event_type",
                                          "in_gho", "g", "allocation_code"])),
-        "ver": json.loads(_records(ver, ["k", "year", "kb_status", "hz", "region", "g", "funds"])),
+        "ver": json.loads(_records(ver.rename(columns={"kb_status": "status"}),
+                                    ["k", "year", "status", "hz", "region", "g", "funds"])),
         "now": json.loads(_records(vf, ["k", "country_iso3", "hz", "region", "ft", "total_usd", "g", "x"])),
         "fw": json.loads(_records(fw, ["k", "hz", "region", "lifecycle", "technical_support", "g", "funds"])),
         "cov": json.loads(_records(cov, ["k", "hz", "region", "people_covered", "g", "funds"])),
@@ -4116,7 +4117,7 @@ def build_framework_pages(page, tbl, d, e=None):
 {T('Monitoring window:')} {_cal_strip(cal, c, h)}</div>
 {changes_html}
 <div class='blk'><h2>{T('Model')}</h2>
-<p class='meta'>{(T('Trigger:') + ' ' + TC(lambda w: _trigger_line(trig_line, w))) if trig_line else T('No structured trigger info in the KB for this version.')}</p>
+<p class='meta'>{(T('Trigger:') + ' ' + TC(lambda w: _trigger_line(trig_line, w))) if trig_line else T('No structured trigger information for this version yet — see the framework document.')}</p>
 <h3 class='sub'>{TF('Windows and backtests (version {v})', v=version or '—')}</h3>
 <section><div class='scroll' style='max-height:260px'><table class='data'><thead>
 <tr>{''.join(f'<th>{T(x)}</th>' for x in ('window', 'basis', 'state', 'budget', 'return period', 'annual prob.', 'backtest'))}</tr></thead>
@@ -4143,7 +4144,7 @@ def build_framework_pages(page, tbl, d, e=None):
 <div class='panel'><h3>{T('Pre-arranged funding in place, by year × fund')}</h3><div class='note'>{T('The envelope in place each year — a stock, so the bars are not added up.')}</div><canvas id='pf' height='230'></canvas></div>
 <div class='panel'><h3>{T('Versions (endorsed documents)')}</h3>
 <div class='scroll' style='max-height:230px'><table class='data'><thead>
-<tr>{''.join(f'<th>{T(x)}</th>' for x in ('version', 'KB status', 'source', 'doc', 'analysis'))}</tr></thead>
+<tr>{''.join(f'<th>{T(x)}</th>' for x in ('version', 'status', 'source', 'doc', 'analysis'))}</tr></thead>
 <tbody>{vrows or '<tr><td colspan=5>' + T('none registered') + '</td></tr>'}</tbody></table></div></div>
 </div>
 <p class='meta'>{T('Counted in reports:')} {rrows or '—'}</p></div>
@@ -4286,7 +4287,6 @@ def build_entry(page, d, e):
     fw = [{"iso3": r.country_iso3, "hazard": r.hazard,
            "label": f"{r.country_name} — {r.hazard}",
            "names": [r.country_name],
-           "kb": r.kb_framework if pd.notna(r.kb_framework) else None,
            "versions": sorted(ver.loc[(ver.country_iso3 == r.country_iso3)
                                       & (ver.hazard == r.hazard), "version"].tolist())}
           for r in cur.itertuples()]

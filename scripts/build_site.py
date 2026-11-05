@@ -122,7 +122,7 @@ button.dl:hover, a.dl:hover { background:#eef4fc; }
         margin:14px 0; }
 .badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11.5px;
          font-weight:600; margin-right:6px; }
-.b-new { background:#e3f1e6; color:#1c6b31; } .b-kb { background:#e8e8f8; color:#3b3b8f; }
+.b-new { background:#e3f1e6; color:#1c6b31; }
 .b-mirror { background:#fdf1dc; color:#8a5c0a; } .b-warn { background:#fde3e3; color:#a11; }
 code { background:#f0f0f0; padding:1px 5px; border-radius:3px; font-size:12px; }
 ul.tight li { margin:3px 0; }
@@ -802,6 +802,8 @@ def write_site():
     for name, gone in sorted(cut.items()):
         # visible in the publish run's summary, not only in its log
         print(f"::warning::public page {name}: link(s) to admin-only page(s) removed: {', '.join(sorted(gone))}")
+    import no_kb
+    no_kb.check(OUT)    # no reference to the knowledge base on any page or open file (D199)
     print(f"  public site: {len(public)} pages ({DEV_DIR}/; open at the root: {', '.join(OPEN_PAGES)}, and "
           f"{len(public) - len(OPEN_PAGES)} 'Coming soon' pages) · admin site: {len(admin) + 1} pages ({ADMIN_DIR}/) · "
           f"open layer: {len(open_files)} files (the data of {', '.join(sorted(OPEN_PAGES))})")
@@ -840,18 +842,18 @@ def tbl(df, max_rows=8000, name="data"):
 # per-table reviewer notes
 NOTES = {
     "country_hazard": "The (country, hazard) pair — the identity everything hangs off: pipeline entries with no version yet, plus descriptive attributes that aren't approved per version (region, language, coordination group) the manual <code>retired</code> flag (a retired framework is hidden from the map whatever its versions say) and <code>technical_support</code> (OCHA supported the framework technically, without a funding commitment). The framework status everyone shows comes from <code>v_framework_lifecycle</code>. Hierarchy: country_hazard → framework_version → window → {window_activation, simulated_activation, window_funding}; ad hoc / early-action allocations attach to the pair (adhoc_activation).",
-    "window": "A framework version's trigger windows as BACKTESTED: analysis span (the RP denominator), all-in flag, reported RP/prob. With <code>simulated_activation</code> and <code>version_performance_reported</code> it is the version's backtest. Owned and edited here since 2026-10-05 (entries files with <code>op: replace</code>, this admin page); corrected as errors are found — <code>v_trk_backtest_check</code> lists the rows that break a rule. Written by the KB's loader until then.",
-    "simulated_activation": "The years a version's trigger WOULD have fired, per window — never a real activation of the version itself (those are <code>window_activation</code>). Should fall inside the window's analysis span: the KB-era data broke that where real activations were appended (listed by <code>v_trk_backtest_check</code>).",
+    "window": "A framework version's trigger windows as BACKTESTED: analysis span (the RP denominator), all-in flag, reported RP/prob. With <code>simulated_activation</code> and <code>version_performance_reported</code> it is the version's backtest. Owned and edited here since 2026-10-05 (entries files with <code>op: replace</code>, this admin page); corrected as errors are found — <code>v_trk_backtest_check</code> lists the rows that break a rule. Written by a loader in another repository until then.",
+    "simulated_activation": "The years a version's trigger WOULD have fired, per window — never a real activation of the version itself (those are <code>window_activation</code>). Should fall inside the window's analysis span: the data loaded before 2026-10-05 broke that where real activations were appended (listed by <code>v_trk_backtest_check</code>).",
     "framework_version": "The unit that actually gets approved: one row per framework version (incl. superseded versions), first recorded from the team's records (<code>source='aa-team'</code>), the historical sweep of the OCHA AA web page and the pa-anticipatory-action monorepo (<code>source='ocha-web'/'pa-monorepo'</code>, with <code>doc_url</code>/<code>analysis_ref</code>), and since then entered here (<code>source='entered'</code>). Version-specific facts (budgets, sector budgets, coverage, calendar, activations, status) carry a <code>version</code>.",
-    "framework_status": "Operational lifecycle snapshots from every source sheet, kept side by side (PK includes <code>source</code>). Canonical <code>status</code> vocabulary; raw spelling preserved. This is deliberately distinct from the KB page-status vocabulary.",
+    "framework_status": "Operational lifecycle snapshots from every source sheet, kept side by side (PK includes <code>source</code>). Canonical <code>status</code> vocabulary; raw spelling preserved. This is deliberately distinct from the version status (<code>framework_version</code>).",
     "framework_focal_point": "Focal points by role from the 2026 planning sheet, attributed to the version in force at the snapshot date.",
     "framework_calendar": "Monthly markers recovered from cell <em>colors</em> in the planning sheet: green = trigger window, orange = framework finalization, red = proposal development; 'F' = finalization deadline.",
-    "window_funding": "ALL framework funding, off the WINDOW: pre-arranged envelopes, co-financing and the agency × sector split (envelope rows have agency and sector NULL; never sum the two kinds together). <code>window_name</code> is one of the version's windows or a sentinel — <code>single</code> (one-window framework, window not named) / <code>unattributed</code> (a version-level figure for a multi-window framework: a curation queue, see <code>v_trk_funding_rollup</code>). Version totals are derived by <code>v_version_funding</code> under the version's rollup mode. Seeded from the sheets, KB pages and browser entries; <code>provenance</code> says which.",
+    "window_funding": "ALL framework funding, off the WINDOW: pre-arranged envelopes, co-financing and the agency × sector split (envelope rows have agency and sector NULL; never sum the two kinds together). <code>window_name</code> is one of the version's windows or a sentinel — <code>single</code> (one-window framework, window not named) / <code>unattributed</code> (a version-level figure for a multi-window framework: a curation queue, see <code>v_trk_funding_rollup</code>). Version totals are derived by <code>v_version_funding</code> under the version's rollup mode. Seeded from the sheets, earlier reads of the framework documents and browser entries; <code>provenance</code> says which.",
     "people_covered": "People covered per framework, per source; includes double-activation assessment for cyclone frameworks.",
     "fund": "OCHA pooled funds only (CERF, CBPFs, regional funds) — the fund dimension every funding row references. Agency co-financing is deliberately NOT here (free-text financier on commitments instead). Seeded from the CBPF mirror's fund registry.",
-    "window_activation": "A framework activation is a WINDOW firing: keyed (country, hazard, version, window, date). <code>window_name</code> should be one of the version's windows — sheet-era rows carry the KB's free-text window until curated (<code>v_trk_activation_window_check</code> lists the ones not in the window registry). <code>event_date</code> is partial ISO at the source's precision.",
+    "window_activation": "A framework activation is a WINDOW firing: keyed (country, hazard, version, window, date). <code>window_name</code> should be one of the version's windows — older rows carry a free-text window until curated (<code>v_trk_activation_window_check</code> lists the ones not in the window registry). <code>event_date</code> is partial ISO at the source's precision.",
     "adhoc_activation": "Ad hoc AA and early-action allocations, off the (country, hazard) pair — no version, no window.",
-    "window_status": "Curated trigger state per window: <code>triggered</code> yes/no (+ date, note). It lives apart from <code>window</code> because the KB loader used to truncate that table (until 2026-10-05). A version is <i>fully triggered</i> when any window fired (all-in / exclusive rollup) or every window fired (independent windows); that, with validity, drives the framework status on the map. Seeded once from <code>window_activation</code> — a window is flagged when an activation names it, the version has a single window, or an activation is marked full.",
+    "window_status": "Curated trigger state per window: <code>triggered</code> yes/no (+ date, note). It lives apart from <code>window</code> because the loader that wrote that table until 2026-10-05 emptied it on every run. A version is <i>fully triggered</i> when any window fired (all-in / exclusive rollup) or every window fired (independent windows); that, with validity, drives the framework status on the map. Seeded once from <code>window_activation</code> — a window is flagged when an activation names it, the version has a single window, or an activation is marked full.",
     "activation_funding": "One row per activation × fund allocation — the multi-fund reality (e.g. Nigeria floods Sep 2025 = CERF $5.0M + NHF $2.0M under one activation). <code>allocation_code</code> resolves through <code>aa.v_allocation</code> (CERF application codes and Country and Regional Fund codes alike).",
     "activation_refund": "Money an activation sent back to its fund after it was paused or stopped (CERF, mostly), keyed like the activation's funding row (fund, and the allocation when known; NULL = the activation's only allocation from that fund). Every page counts released money net of these rows. OneGMS shows a refund months later, so it is recorded here first. A funding row with <code>match_method</code> 'provisional' is an amount entered before OneGMS recorded the CERF allocation; the nightly job gives it OneGMS's code and amount once the allocation appears.",
     "framework_activity": "What each organisation does under a framework version, in a line or two, read from the version's public framework document (the one named by its hash, with the pages). The map panel's Activities tab shows them; a version without lines of its own links to the latest version of the same framework that has them (lines are not carried across versions: the agencies change). A line whose document is not public is never shown.",
@@ -905,7 +907,6 @@ def main():
 
 OWNER_BADGE = {
     "ds-aa-tracking": "<span class='badge b-new'>ds-aa-tracking</span>",
-    "ds-knowledge-base": "<span class='badge b-kb'>ds-knowledge-base</span>",
     "ds-cerf-supplement": "<span class='badge b-mirror'>ds-cerf-supplement</span>",
     "other": "<span class='badge'>other</span>",
 }
@@ -913,7 +914,6 @@ OWNER_BADGE = {
 
 ERD_STYLE = {
     "new": ("#e3f1e6", "#1c6b31"),
-    "kb": ("#e8e8f8", "#3b3b8f"),
     "mirror": ("#fdf1dc", "#8a5c0a"),
     "ext": ("#e8f4f8", "#0b6079"),
 }
@@ -1168,7 +1168,7 @@ def build_schema_page(e):
         "repo that owns (i.e. is the single writer of) each table. Constraints and "
         "indexes are shown as Postgres reports them; row counts are as of generation "
         "time. The <code>v_trk_*</code> view SQL at the bottom is this repo's — the "
-        "mirror repo's view definitions are documented in the KB ERD.</div>"
+        "mirror repo's view definitions are documented in that repo.</div>"
     ]
     sections.append("<h2>ERD</h2>" + LEGEND_CARD.format(svg=build_erd_legend()))
     sections.append(
@@ -1188,7 +1188,7 @@ def build_schema_page(e):
         f"<div class='scroll' style='max-height:none'>{build_erd()}</div></div>"
     )
     tables = sorted(cols["table_name"].unique(), key=lambda t: (owner_of(t) != "ds-aa-tracking", t))
-    for owner in ("ds-aa-tracking", "ds-knowledge-base", "ds-cerf-supplement", "other"):
+    for owner in ("ds-aa-tracking", "ds-cerf-supplement", "other"):
         group = [t for t in tables if owner_of(t) == owner]
         if not group:
             continue
@@ -1249,7 +1249,7 @@ def build_schema_page(e):
     if others:
         sections.append(
             "<p class='meta'>Other views in the schema (the OneGMS mirror's, documented "
-            "in the KB ERD): " + ", ".join(f"<code>aa.{v}</code>" for v in others) + "</p>"
+            "in its own repo): " + ", ".join(f"<code>aa.{v}</code>" for v in others) + "</p>"
         )
     page("schema.html", "DB schema — the full aa schema by owner", "\n".join(sections))
 

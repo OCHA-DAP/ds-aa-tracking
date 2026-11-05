@@ -79,8 +79,8 @@ W, H = VB_W, VB_H                       # kept for callers; the view box is 0 0 
 # Lifecycle colours, glyphs, callout directions and centroids mirror the KB public map
 # (ds-knowledge-base/scripts/gen_public_site.py) so the two sites read the same.
 # framework status (aa.v_framework_lifecycle): 'updating' shares the active colour, hatched
-KB_COLOR = {"active": "#2171b5", "updating": "#2171b5", "development": "#9ecae1"}
-KB_LABEL = {"active": "Active", "updating": "Being updated", "development": "In development"}
+STATUS_COLOR = {"active": "#2171b5", "updating": "#2171b5", "development": "#9ecae1"}
+STATUS_LABEL = {"active": "Active", "updating": "Being updated", "development": "In development"}
 # map layers (index.html toggles). A pair can sit on several layers; the pin takes the
 # style of the first ENABLED layer in this order (a framework with ad hoc allocations is
 # drawn as a framework while the framework layer is on).
@@ -88,7 +88,7 @@ LAYER_ORDER = ("framework", "retired", "adhoc", "tech")
 LAYER_COLOR = {"adhoc": "#74c476", "retired": "#9e9e9e", "tech": "#2a9d8f"}
 LAYER_LABEL = {"framework": "Current frameworks", "adhoc": "Non-framework allocations", "retired": "Retired",
                "tech": "Technical support"}
-DISP_LABEL = {**KB_LABEL, "retired": "Retired", "pipeline": "No framework version yet",
+DISP_LABEL = {**STATUS_LABEL, "retired": "Retired", "pipeline": "No framework version yet",
               "adhoc": "Non-framework allocation"}   # owner, 2026-10-30: not "... allocations only"
 # year selector: the first year it offers (the annual pre-arranged series starts here —
 # dashboards._backfill_years) and the status-report -> lifecycle mapping, the CASE that
@@ -834,7 +834,7 @@ def status_help_html(open_=False):
    <text x='240' y='362' class='sh-note'>a manual flag on the framework (country × hazard) — overrides everything above</text>
   </svg>
   <div class='sh-layers'>
-   {TB("<b>Map layers.</b>")} <span class='dot' style='background:{KB_COLOR["active"]}'></span>{TB("<b>Current frameworks</b> — every framework whose status is active, being updated or in development (the default view; the headline figures follow whatever is shown).")}
+   {TB("<b>Map layers.</b>")} <span class='dot' style='background:{STATUS_COLOR["active"]}'></span>{TB("<b>Current frameworks</b> — every framework whose status is active, being updated or in development (the default view; the headline figures follow whatever is shown).")}
    <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span>{TB("<b>Non-framework allocations</b> — countries and hazards that received anticipatory-action money without a framework version (light green; a framework that also received non-framework money stays drawn as a framework).")}
    <span class='dot' style='background:{LAYER_COLOR["retired"]}'></span>{TB("<b>Retired</b> — frameworks flagged retired, drawn in grey so past coverage can be compared with today's.")}
    <span class='dot dot-hollow' style='border-color:{LAYER_COLOR["tech"]}'></span>{TB("<b>Technical support</b> — countries where OCHA supported the framework technically without a funding commitment, whatever their status (including pipeline ones like Palau and Tonga), drawn as a hollow teal pin.")}
@@ -1466,7 +1466,7 @@ def assemble(d, e):
             # the funds, and its split total then exceeded the envelope)
             co_v = f_v[f_v["kind"] == "cofinancing"] if "kind" in f_v else f_v.iloc[0:0]
             f_v = f_v[f_v["kind"] != "cofinancing"] if "kind" in f_v else f_v
-            fund_src = "kb"
+            fund_src = "document"
             if not len(f_v):
                 p_v = psb[(psb["country_iso3"] == c) & (psb["hazard"] == h)
                           & (psb["version"] == v.version)]
@@ -1536,7 +1536,7 @@ def assemble(d, e):
                 "scope_tiers_raw": (pg["tiers"] if pg else []) if not regional else [],
                 "scope": None,      # filled by the geo pass
                 # no "note": the version's working notes name people and the page never shows them
-                "kb_page": bool(pg), "source": _s(v.source),
+                "doc_read": bool(pg), "source": _s(v.source),
                 # budget sanity: the version's pre-arranged envelope (v_version_funding, all
                 # funds) — the sidebar compares the agency x sector split total against it
                 "envelope": envelope.get((c, h, v.version)),
@@ -1590,7 +1590,7 @@ def assemble(d, e):
                 u = u2 if len(u2) else u
             u = u.iloc[0] if len(u) else None
             activations.append({
-                "date": a.event_date, "kb_date": _s(a.kb_event_date),
+                "date": a.event_date, "exact_date": _s(a.kb_event_date),
                 "type": a.event_type, "window": _s(a.window_name), "version": _s(a.version),
                 # an activation of an earlier framework that a distinct new one replaced
                 # (dashboards.old_versions: Somalia drought 2020, 2021): a RETIRED framework's,
@@ -1632,7 +1632,7 @@ def assemble(d, e):
         synthetic = bool(_f(r.get("synthetic")) or False)
         # map layers (the page filters; LAYER_ORDER decides the pin style)
         layers = []
-        if disp in KB_LABEL:
+        if disp in STATUS_LABEL:
             layers.append("framework")                # active · updating · development
         if disp == "retired" or any(k[:2] == (c, h) for k in old_v):
             layers.append("retired")                  # retired, or hosts a replaced framework
@@ -1651,7 +1651,6 @@ def assemble(d, e):
                      & (learn["hazard"].isna() | (learn["hazard"] == h))] if len(learn) else learn
         countries[c]["fws"].append({
             "hazard": h, "status": sheet_status, "status_label": _sheet_status_label(sheet_status),
-            "kb": kb_fw,
             "disp": disp, "disp_label": DISP_LABEL.get(disp, disp), "ring": ring, "n_act": n_fw_act,
             "n_act_all": len(activations), "n_adhoc": n_adhoc.get((c, h), 0),
             "adhoc_cerf": adhoc_cerf.get((c, h), []),
@@ -2178,8 +2177,8 @@ def build_landing(page, d, e):
      data & schema review) were easy to miss below the map; they all live in the Internal menu -->
 <script>window.L = /*AA_L*/null;
 window.FUNDLAB = {json.dumps(regional_fund_labels())};
-window.HAZ = {json.dumps(HAZ_COLOR)}; window.COLOR = {json.dumps(KB_COLOR)};
-window.KBLABEL = {json.dumps(DISP_LABEL)}; window.GLYPH = {json.dumps(HAZARD_SVG)};
+window.HAZ = {json.dumps(HAZ_COLOR)}; window.COLOR = {json.dumps(STATUS_COLOR)};
+window.DISPLABEL = {json.dumps(DISP_LABEL)}; window.GLYPH = {json.dumps(HAZARD_SVG)};
 window.LAYER_ORDER = {json.dumps(list(LAYER_ORDER))}; window.LAYER_COLOR = {json.dumps(LAYER_COLOR)};
 window.LAYER_LABEL = {json.dumps(LAYER_LABEL)}; window.TRIGGER_VALIDATION_URL = {json.dumps(TRIGGER_VALIDATION_URL)};
 window.WORLD = {json.dumps(wdata, separators=(",", ":"))};
@@ -2279,7 +2278,7 @@ LANDING_CSS = r"""
 .sc:hover { fill-opacity:1; }
 .nat { fill-opacity:.82; pointer-events:none; }
 #adm { opacity:0; transition: opacity .5s ease; } #adm.show { opacity:1; }
-/* callouts (KB style) */
+/* callouts */
 .labelpane { position:absolute; inset:0; pointer-events:none; transition: opacity .35s; }
 .labelpane.hide { opacity:0; }
 .labelpane.hide .callout { visibility:hidden !important; transition: visibility 0s linear .35s; }
@@ -2345,7 +2344,7 @@ table.acttbl tr.oldv td { background:#f8fafc; }
 .backbtn:hover { background:#fff; border-color:#b6c2d1; }
 .tip { position:absolute; z-index:5; background:rgba(15,37,64,.92); color:#fff; font-size:12px; padding:5px 10px;
   border-radius:6px; pointer-events:none; white-space:nowrap; transform:translate(-50%,-135%); box-shadow:0 4px 12px -4px rgba(0,0,0,.35); }
-/* sidebar (KB info-pop styling) */
+/* sidebar (info-pop styling) */
 .side { background:#fff; border:1px solid #e6eaef; border-radius:12px; padding:12px 16px 16px;
   overflow-y:auto; scrollbar-gutter:stable; font-size:12.5px; line-height:1.45; color:var(--ink); box-shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px -12px rgba(16,24,40,.18); box-sizing:border-box; }
 .side a { color:var(--ocha); }
@@ -2692,7 +2691,7 @@ const people = v => v >= 1e6 ? (v/1e6).toFixed(1) + 'M' : v >= 1e3 ? Math.round(
 // 'recent' = in the last RECENT_DAYS days, by the browser's clock (the page is static: one
 // published weeks ago must not keep showing it on the build date). ONE rule for the pin's red
 // ring, the frameworks table's chip and the what's-new box. Dates are partial ISO: a full date
-// counts from that day (an activation's KB crosswalk date sharpens a month-only one when it falls
+// counts from that day (an activation's second recorded date sharpens a month-only one when it falls
 // in that month); a month-only date counts from the 1st of the month (the owner's rule,
 // 2026-10-27; it was the month's last day while the dot blinked); a year-only date is too coarse.
 const RECENT_DAYS = 30;
@@ -2700,7 +2699,7 @@ const RECENT_DAYS = 30;
 function dayOf(s){ s = String(s || ''); if(!/^\d{4}-\d{2}/.test(s)) return null;
   const full = /^\d{4}-\d{2}-\d{2}/.test(s);
   return [Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, full ? +s.slice(8, 10) : 1), !full]; }
-function actDate(a){ const d = String(a.date || ''), k = String(a.kb_date || '');
+function actDate(a){ const d = String(a.date || ''), k = String(a.exact_date || '');
   return d.length === 7 && k.length === 10 && k.startsWith(d) ? k : d; }   // only a month-only date is sharpened
 // a partial ISO date's age in days, by the reader's calendar; null when too coarse
 function ageOf(s){ const d = dayOf(s); if(!d) return null;
@@ -2737,7 +2736,7 @@ function applyYear(){
       if(st === 'retired') layers.push('retired');
       if(f.n_adhoc) layers.push('adhoc');
       if(f.tech && st) layers.push('tech');
-      f.disp = st || (f.n_adhoc ? 'adhoc' : 'pipeline'); f.disp_label = KBLABEL[f.disp] || f.disp;
+      f.disp = st || (f.n_adhoc ? 'adhoc' : 'pipeline'); f.disp_label = DISPLABEL[f.disp] || f.disp;
       f.ring = null; f.current = ver; f.prearranged = null; f.pre_parts = null;   // a past year's figure has no split by fund
       const p = (H.pre || {})[Y]; f.pre_now = p ? p[0] : null; f.pre_drv = !!(p && p[1]); f.pre_apy = p && p[2] > 1 ? p[2] : null;
       const cv = lastAt(H.cov, D); f.covered = cv ? cv[1] : null;
@@ -2816,7 +2815,7 @@ function pinStyle(f){ const l = visLayer(f) || f.layer;
   return {bg: LAYER_COLOR[l], cls: l}; }
 function badge(st, label){ st = st || 'development';
   const cls = st==='active' ? 'endorsed' : st==='updating' ? 'updating' : st==='retired' ? 'retired' : st==='adhoc' ? 'adhoc' : st==='pipeline' ? 'pipeline' : 'development';
-  return `<span class='badge b-${cls}'>${esc(tr8(label || KBLABEL[st] || 'not recorded'))}</span>`; }   // never the code
+  return `<span class='badge b-${cls}'>${esc(tr8(label || DISPLABEL[st] || 'not recorded'))}</span>`; }   // never the code
 function verBadge(st){ st=st||''; const m = {endorsed:'endorsed', superseded:'superseded', development:'development', 'pre-development':'pre-development', retired:'retired'};
   const lbl = {development:'in development', 'pre-development':'pre-development'}[st] || st || '?';
   return `<span class='badge b-${m[st]||'retired'}'>${esc(tr8(lbl))}</span>`; }
@@ -3094,7 +3093,7 @@ function placeLegend(){
   if(best) legend.classList.add(best);
 }
 
-// ---------- world legend (KB style). Each status and layer carries a one-sentence definition (owner,
+// ---------- world legend. Each status and layer carries a one-sentence definition (owner,
 // 2026-10-27: they replace the status diagram), shown on hover, focus or tap like the tiles' notes
 // and read out by screen readers (a hidden copy in the entry; the layer rows' 'i' is a role=note)
 const LDEF = {
@@ -3368,7 +3367,7 @@ function updateTiles(){
     + (past ? ' · ' + tr8('as at 31 December {0}', YEAR) : YEAR != null ? ' · ' + tr8('{0}, as of today', YEAR) : '');
 }
 
-// ---------- callouts: one per country, laid out clear of every framework country (ported from the KB map)
+// ---------- callouts: one per country, laid out clear of every framework country
 const NS = 'http://www.w3.org/2000/svg';
 let labels = [];
 // one callout per country with something on the enabled layers; rebuilt on every layer change

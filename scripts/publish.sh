@@ -54,6 +54,8 @@ if [ -z "${SKIP_BUILD:-}" ]; then
   # set would link to twins that are not there)
   uv run python scripts/mock_unocha.py site_build/$DEV \
     || { rm -f site_build/$DEV/mock-*.html; echo "::warning::mock-up (scripts/mock_unocha.py) failed: not published"; }
+  # the mock-up's pages are written after the build's check: checked here (D199)
+  uv run python scripts/no_kb.py site_build "$DEV/mock-*.html"
   rm -rf site_encrypted          # nothing from an earlier build may be published by accident
   # the dev site keeps the old site's password and "Remember me" keys (same origin, same salt:
   # .staticrypt.json), so a password remembered on the old site opens it

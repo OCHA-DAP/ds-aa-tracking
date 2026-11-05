@@ -44,7 +44,7 @@ GROUPS = [
         "start_network", "cirv", "emergency_type_override",
         "cerf_allocation_extra", "cerf_application_people", "cerf_application_report",
         "cerf_project_supplement", "cerf_subgrant", "cerf_cva_history"]),
-    ("Framework pages, learning, partners (KB flip 2026-09-28: edited here, the KB reads this)",
+    ("Framework pages, learning, partners (edited here since 2026-09-28)",
      "ds-aa-tracking", ["version_page", "learning_document", "framework_partner", "framework_activity"]),
     ("Data entry (entered values win)", "ds-aa-tracking", [
         "entered_version", "entered_window", "entered_window_funding", "entry_audit"]),
@@ -52,7 +52,7 @@ GROUPS = [
      "ds-aa-tracking", ["window", "simulated_activation", "backtest_event", "version_performance_reported"]),
     ("Site usage (the open site's daily page counts, written only by the proxy's POST /hit; D197)",
      "ds-aa-tracking", ["page_count"]),
-    ("KB-era record (read-only, frozen 2026-10-05)", "ds-aa-tracking", [
+    ("Record before 2026-10-05 (read-only, frozen)", "ds-aa-tracking", [
         "funding_breakdown", "actual_activation", "activation_allocation"]),
     ("Mirrors — copied in every day, read-only", MIRRORS["repo"],
      [*MIRRORS["tables"], *MIRRORS["views"]],
@@ -126,7 +126,8 @@ const VOCAB = {
   'framework_status.status': ['active', 'activated_implementing', 'under_revision', 'under_development', 'project_finalization', 'advanced_conversations', 'early_conversations', 'dormant', 'expired', 'other'],
   '*.hazard': ['drought', 'flood', 'storm', 'cholera', 'plague', 'locusts', 'food_insecurity', 'other'],
 };
-const VOCAB_LABEL = {development: 'in development', 'pre-development': 'pre-development'};
+const VOCAB_LABEL = {development: 'in development', 'pre-development': 'pre-development',
+                     kb: 'earlier read of the framework document'};   // the stored code stays
 // boolean columns that read better with domain words than yes/no
 const BOOL_LABEL = {'window_status.triggered': ['triggered', 'not triggered'], 'country_hazard.retired': ['retired', 'not retired'], 'country_hazard.technical_support': ['technical support (no funding commitment)', 'no']};
 function vocabFor(t, c){ return VOCAB[`${t.name}.${c.name}`] || VOCAB[`*.${c.name}`] || null; }
