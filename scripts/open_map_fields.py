@@ -46,7 +46,6 @@ MAP_FIELDS = {
                   "pairs on `framework` (= `map_layers` in aa-frameworks)",
         "tech": "OCHA supported the framework technically, with no funding",
         "ring": "`now` when an active framework is monitored this month (the map rings it)",
-        "kb": "the framework's identifier in the team's knowledge base",
         "latest": "the most recent version, of any status (= `latest_version`)",
         "current": "the version the map and the country panel open on (the most recent)",
         "in_force": "the version the tracking registry has in force",
@@ -145,7 +144,7 @@ MAP_FIELDS = {
         "rp_bt": "the one from the backtest",
         "rp_src": "which of the two `rp` is: stated or backtest",
         "apy": "activations a year the document allows",
-        "funding": "the version's pre-arranged budget split: {src (kb: the document; sheet: the team's "
+        "funding": "the version's pre-arranged budget split: {src (document: the framework document; sheet: the team's "
                    "sheet), agency [{agency, fund, usd}], sector [{sector, fund, usd}], fund [{fund, usd}], "
                    "pair [{agency, sector, usd}], cofin [{from (the financier), usd}]: the document's "
                    "co-financing lines, kept out of the split}",
@@ -169,12 +168,12 @@ MAP_FIELDS = {
         "analysis_ref": "where the trigger analysis lives: repository@branch:path in the OCHA-DAP GitHub "
                         "organisation",
         "analysis_url": "its URL",
-        "kb_page": "the team has a structured read of the document",
+        "doc_read": "the team has a structured read of the document",
         "source": "where the version record comes from (aa-team, entered, ocha-web)",
     },
     "activation": {
         "date": "the event date, at the precision recorded (YYYY, YYYY-MM or YYYY-MM-DD)",
-        "kb_date": "the date the knowledge base gives",
+        "exact_date": "a second record of the activation's date; the map takes the day from it when `date` gives only the month",
         "type": "framework_aa (a framework's trigger) or adhoc_aa (a non-framework allocation)",
         "window": "the trigger window, as recorded (can be a short code of the backtest)",
         "version": "the version it activated under",
