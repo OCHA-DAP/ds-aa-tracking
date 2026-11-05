@@ -2515,6 +2515,10 @@ def build_funding(page, d):
 .hm tr.g td {{ background:#f7f9fb; color:#555; font-weight:600; font-size:12px; }}
 .hm td.none, .hm-key i.none {{ background:repeating-linear-gradient(45deg,#f6f6f6 0 5px,#e4e4e4 5px 7px); }}
 .hm td.none {{ color:#555; font-style:italic; }}
+/* the page's row hover (table.data tr:hover td) must not wipe the hatch or the region rows */
+.hm table.data tr:hover td.none {{ background:repeating-linear-gradient(45deg,#f6f6f6 0 5px,#e4e4e4 5px 7px); }}
+.hm table.data tr.g:hover td {{ background:#f7f9fb; }}
+.hm table.data tbody tr:hover th.fw {{ background:#f2f7fc; }}
 .hm-key {{ display:flex; flex-wrap:wrap; gap:4px 12px; align-items:center; font-size:12px; color:#555; margin:0 0 8px; }}
 .hm-key i {{ display:inline-block; width:20px; height:12px; border-radius:2px; vertical-align:-1px; margin-right:4px;
             border:1px solid #d6dbe1; }}
@@ -2813,10 +2817,15 @@ function tiles(s, geo, A, N){
 const HM_STEP = D.heat.steps, HM_COL = D.heat.colors;
 const hmBin = v => { let i = 0; while(i < HM_STEP.length && v >= HM_STEP[i]) i++; return i; };
 const hmNum = v => (v/1e6).toFixed(v < 1e6 ? 2 : 1);
+// the shade of the number as printed: $1.968M reads 2.0, so it takes the 2–3 shade, not 1–2
+const hmShade = v => hmBin(+hmNum(v) * 1e6);
 function drawHeat(s, S, geo){
   const N = D.now.filter(r=>geo(r) && layerOK(r.g,s) && ftOK(r.ft,s) && r.total_usd > 0);
   const SA = S.filter(r=>r.agency && r.amount_usd > 0);
   const ks = new Set(N.map(r=>r.k).concat(SA.map(r=>r.k)));
+  // hatched only when the latest version has no agency line in either fund: under the fund
+  // switch, a framework split only in the other fund shows blank cells (no line for the agency)
+  const hasSplit = new Set(D.split.filter(r=>r.agency && r.amount_usd > 0 && geo(r) && layerOK(r.g,s)).map(r=>r.k));
   const rows = FWL.filter(f=>f.lc && ks.has(f.k));
   const tb = document.getElementById('hmT'), box = document.getElementById('hmBox'), none = document.getElementById('hmX');
   tb.textContent = '';
@@ -2844,11 +2853,11 @@ function drawHeat(s, S, geo){
       gr.appendChild(gc); body.appendChild(gr); }
     const tr = el('tr'), name = tr8(f.name) + ' — ' + tr8(f.hazard) + (TWO.has(f.k) ? '*' : '');
     const th = el('th', 'fw', name); th.scope = 'row'; tr.appendChild(th);
-    if(!ags.some(a=>cell[f.k + '\t' + a])){
+    if(!hasSplit.has(f.k)){
       const td = el('td', 'none', tr8('no split by agency recorded for the latest version'));
       td.colSpan = Math.max(ags.length, 1); tr.appendChild(td); }
     else ags.forEach(a=>{ const c = f.k + '\t' + a, v = cell[c], td = el('td', 'c');
-      if(v){ const b = hmBin(v), p = part[c];
+      if(v){ const b = hmShade(v), p = part[c];
         td.textContent = hmNum(v);
         td.style.background = HM_COL[b]; td.style.color = b >= 4 ? '#fff' : '#111';
         td.title = name + ' · ' + a + ': ' + M2(v)
