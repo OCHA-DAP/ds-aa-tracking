@@ -2352,6 +2352,9 @@ def build_funding(page, d):
     pr["k"] = pair_key(pr)
     # a UN agency's line (the heat-map table shows these only, D200; the chart by agency all)
     pr["un"] = pr["agency"].map(lambda a: isinstance(a, str) and _is_un(a))
+    not_un = sorted(set(pr.loc[pr["agency"].notna() & ~pr["un"], "agency"].astype(str)))
+    if not_un:   # a UN agency missing from UN_SHORT would drop out of the table: the list shows it
+        print(f"  framework × agency table: not UN agencies, left out ({len(not_un)}): {', '.join(not_un)}")
     # a version that allows two activations a year: its CERF budget lines count twice, as its
     # CERF envelope (prearranged_now)
     fac = d.get("act_factors") or {}
@@ -2838,7 +2841,7 @@ function drawHeat(s, S, geo){
   const ks = new Set(N.map(r=>r.k).concat(SA.map(r=>r.k)));
   // hatched only when the latest version has no agency line in either fund: under the fund
   // switch, a framework split only in the other fund shows blank cells (no line for the agency)
-  const hasSplit = new Set(D.split.filter(r=>r.agency && r.amount_usd > 0 && geo(r) && layerOK(r.g,s)).map(r=>r.k));
+  const hasSplit = new Set(D.split.filter(r=>r.agency && r.un && r.amount_usd > 0 && geo(r) && layerOK(r.g,s)).map(r=>r.k));
   const rows = FWL.filter(f=>f.lc && ks.has(f.k));
   const tb = document.getElementById('hmT'), box = document.getElementById('hmBox'), none = document.getElementById('hmX');
   tb.textContent = '';
@@ -2849,6 +2852,9 @@ function drawHeat(s, S, geo){
     return; }
   const tot = groupSum(SA, r=>r.agency, r=>r.amount_usd);
   const ags = Object.keys(tot).sort((a,b)=>tot[b]-tot[a] || a.localeCompare(b));
+  // no UN agency line in the selection (the Country and Regional Funds' agency lines are NGO and
+  // Red Cross lines): a message, not a table of names with no column
+  if(!ags.length){ box.style.display = 'none'; none.style.display = ''; none.textContent = tr8('No data in this selection'); return; }
   const cell = {}, part = {};
   SA.forEach(r=>{ const c = r.k + '\t' + r.agency, g = fgOf(r.ft);
     cell[c] = (cell[c]||0) + r.amount_usd;

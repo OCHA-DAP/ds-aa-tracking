@@ -93,6 +93,7 @@ SECTOR_BUCKETS = [
                     "disaster risk reduction"]),
 ]
 SECTOR_COMBINED = {"health & nutrition": ["Health", "Nutrition"],
+                   "shelter & cccm": ["Shelter and Non-Food Items", "Camp Coordination and Camp Management (CCCM)"],
                    "food security (window 1) / nutrition (window 2)": ["Food Security", "Nutrition"]}
 SECTOR_SKIP = {"to be determined"}
 # a bucket name maps to itself: dashboards._merge_labels already buckets the money rows
