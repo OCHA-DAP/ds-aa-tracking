@@ -30,7 +30,7 @@ ADMIN_DIR = "admin"
 SUFFIXES = (".html", ".md", ".txt", ".json", ".csv", ".xml")
 SKIP = re.compile(r"^pdf-.*\.txt$|^i18n-missing\.json$")      # the documents' own words; never published
 
-_SIZE = r"(?<![\d.] )(?<![\d.])"                                 # not a file size ("874 KB", "1.5KB")
+_SIZE = r"(?<!\d )(?<!\d)"     # not a file size ("874 KB", "1.5KB"); "(p.7). KB's" is a reference
 WORDS = re.compile(r"(?i:knowledge[\s-]*bases?|bases? de conn?aissances?|bases? de conocimientos?"
                    r"|ds-knowledge-base)|" + _SIZE + r"\bK\.?B\b")
 WORDS_PUBLIC = re.compile(WORDS.pattern + "|" + _SIZE + r"(?i:\bkb\b)")
