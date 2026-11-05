@@ -374,8 +374,8 @@ def _frameworks(d):
 
 
 def _life(lc):
-    """A status as the Map's badge (landing.KB_LABEL; LANDING_JS badge())."""
-    return f"<span class='badge b-{BADGE.get(lc, 'development')}'>{T(landing.KB_LABEL.get(lc, lc))}</span>"
+    """A status as the Map's badge (landing.STATUS_LABEL; LANDING_JS badge())."""
+    return f"<span class='badge b-{BADGE.get(lc, 'development')}'>{T(landing.STATUS_LABEL.get(lc, lc))}</span>"
 
 
 # ------------------------------------------------ the frameworks table's cells

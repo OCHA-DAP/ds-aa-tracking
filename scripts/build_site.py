@@ -632,46 +632,6 @@ def _report_cleaned(cleaned):
           "AA_SITE_GUARD=strict fails the build instead")
 
 
-# ---------------------------------------------------------------- no knowledge base (D199)
-# Owner's rule (2026-11-04): "There should be no reference to the knowledge base at all on this
-# site anymore." The tracking database has been the record since 2026-09-28; the site never sends a
-# reader there. Checked on every page as written (open, dev/ and admin/: its text, the strings its
-# scripts carry, its data) and on every file of the open layer, in the three languages. The open and
-# development sites also carry no data field named after it (`"kb…":`). Not checked: the framework
-# documents' own texts (pdf-*.txt), and the admin site's database column names (kb_framework,
-# kb_status…), which are the database's. A hit is a ::warning:: naming the file, so the code or the
-# data gets fixed at the source; AA_SITE_GUARD=strict stops the build instead.
-_KB_WORDS = re.compile(r"(?i:knowledge[\s-]*base|base de conn?aissances|base de conocimientos?|ds-knowledge-base)"
-                       r"|(?<![\d.] )(?<![\d.])\bKB\b")      # not a file size ("874 KB")
-_KB_KEYS = re.compile(r'"kb(?:_[a-z_]+)?"\s*:|"src"\s*:\s*"kb"')
-
-
-def _kb_check():
-    hits = {}
-    for f in sorted(OUT.rglob("*")):
-        if not f.is_file() or f.suffix not in (".html", ".md", ".txt", ".json", ".csv") or f.name.startswith("pdf-"):
-            continue
-        rel = f.relative_to(OUT).as_posix()
-        s = f.read_text(errors="replace")
-        text = html.unescape(s) if f.suffix == ".html" else s
-        found = [re.sub(r"\s+", " ", text[max(0, m.start() - 50):m.end() + 50]) for m in _KB_WORDS.finditer(text)]
-        if not rel.startswith(ADMIN_DIR + "/"):
-            found += [s[max(0, m.start() - 30):m.end() + 20] for m in _KB_KEYS.finditer(s)]
-        if found:
-            hits[rel] = list(dict.fromkeys(found))
-    if not hits:
-        print("  knowledge-base check: no reference to the knowledge base on any page or open file")
-        return
-    lines = [f"{rel}: {len(h)} reference(s), e.g. " + " | ".join(repr(x) for x in h[:3]) for rel, h in sorted(hits.items())]
-    if GUARD_STRICT:
-        raise SystemExit("FATAL (AA_SITE_GUARD=strict): the site refers to the knowledge base (owner's rule, "
-                         "D199):\n  " + "\n  ".join(lines[:60]))
-    for ln in lines:
-        print(f"::warning::knowledge base: {ln}")
-    print(f"::warning::knowledge-base check: references on {len(hits)} file(s) — reword them at the source "
-          "(the code's text, or the data); AA_SITE_GUARD=strict fails the build instead")
-
-
 def _soon_body(name):
     """The open site's page in place of one not public yet: a page-like outline, blurred (drawn
     here: nothing of the page itself), "Coming soon", and the link to the page on the development
@@ -842,7 +802,8 @@ def write_site():
     for name, gone in sorted(cut.items()):
         # visible in the publish run's summary, not only in its log
         print(f"::warning::public page {name}: link(s) to admin-only page(s) removed: {', '.join(sorted(gone))}")
-    _kb_check()
+    import no_kb
+    no_kb.check(OUT)    # no reference to the knowledge base on any page or open file (D199)
     print(f"  public site: {len(public)} pages ({DEV_DIR}/; open at the root: {', '.join(OPEN_PAGES)}, and "
           f"{len(public) - len(OPEN_PAGES)} 'Coming soon' pages) · admin site: {len(admin) + 1} pages ({ADMIN_DIR}/) · "
           f"open layer: {len(open_files)} files (the data of {', '.join(sorted(OPEN_PAGES))})")

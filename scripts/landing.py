@@ -79,8 +79,8 @@ W, H = VB_W, VB_H                       # kept for callers; the view box is 0 0 
 # Lifecycle colours, glyphs, callout directions and centroids mirror the KB public map
 # (ds-knowledge-base/scripts/gen_public_site.py) so the two sites read the same.
 # framework status (aa.v_framework_lifecycle): 'updating' shares the active colour, hatched
-KB_COLOR = {"active": "#2171b5", "updating": "#2171b5", "development": "#9ecae1"}
-KB_LABEL = {"active": "Active", "updating": "Being updated", "development": "In development"}
+STATUS_COLOR = {"active": "#2171b5", "updating": "#2171b5", "development": "#9ecae1"}
+STATUS_LABEL = {"active": "Active", "updating": "Being updated", "development": "In development"}
 # map layers (index.html toggles). A pair can sit on several layers; the pin takes the
 # style of the first ENABLED layer in this order (a framework with ad hoc allocations is
 # drawn as a framework while the framework layer is on).
@@ -88,7 +88,7 @@ LAYER_ORDER = ("framework", "retired", "adhoc", "tech")
 LAYER_COLOR = {"adhoc": "#74c476", "retired": "#9e9e9e", "tech": "#2a9d8f"}
 LAYER_LABEL = {"framework": "Current frameworks", "adhoc": "Non-framework allocations", "retired": "Retired",
                "tech": "Technical support"}
-DISP_LABEL = {**KB_LABEL, "retired": "Retired", "pipeline": "No framework version yet",
+DISP_LABEL = {**STATUS_LABEL, "retired": "Retired", "pipeline": "No framework version yet",
               "adhoc": "Non-framework allocation"}   # owner, 2026-10-30: not "... allocations only"
 # year selector: the first year it offers (the annual pre-arranged series starts here —
 # dashboards._backfill_years) and the status-report -> lifecycle mapping, the CASE that
@@ -834,7 +834,7 @@ def status_help_html(open_=False):
    <text x='240' y='362' class='sh-note'>a manual flag on the framework (country × hazard) — overrides everything above</text>
   </svg>
   <div class='sh-layers'>
-   {TB("<b>Map layers.</b>")} <span class='dot' style='background:{KB_COLOR["active"]}'></span>{TB("<b>Current frameworks</b> — every framework whose status is active, being updated or in development (the default view; the headline figures follow whatever is shown).")}
+   {TB("<b>Map layers.</b>")} <span class='dot' style='background:{STATUS_COLOR["active"]}'></span>{TB("<b>Current frameworks</b> — every framework whose status is active, being updated or in development (the default view; the headline figures follow whatever is shown).")}
    <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span>{TB("<b>Non-framework allocations</b> — countries and hazards that received anticipatory-action money without a framework version (light green; a framework that also received non-framework money stays drawn as a framework).")}
    <span class='dot' style='background:{LAYER_COLOR["retired"]}'></span>{TB("<b>Retired</b> — frameworks flagged retired, drawn in grey so past coverage can be compared with today's.")}
    <span class='dot dot-hollow' style='border-color:{LAYER_COLOR["tech"]}'></span>{TB("<b>Technical support</b> — countries where OCHA supported the framework technically without a funding commitment, whatever their status (including pipeline ones like Palau and Tonga), drawn as a hollow teal pin.")}
@@ -1632,7 +1632,7 @@ def assemble(d, e):
         synthetic = bool(_f(r.get("synthetic")) or False)
         # map layers (the page filters; LAYER_ORDER decides the pin style)
         layers = []
-        if disp in KB_LABEL:
+        if disp in STATUS_LABEL:
             layers.append("framework")                # active · updating · development
         if disp == "retired" or any(k[:2] == (c, h) for k in old_v):
             layers.append("retired")                  # retired, or hosts a replaced framework
@@ -2177,8 +2177,8 @@ def build_landing(page, d, e):
      data & schema review) were easy to miss below the map; they all live in the Internal menu -->
 <script>window.L = /*AA_L*/null;
 window.FUNDLAB = {json.dumps(regional_fund_labels())};
-window.HAZ = {json.dumps(HAZ_COLOR)}; window.COLOR = {json.dumps(KB_COLOR)};
-window.KBLABEL = {json.dumps(DISP_LABEL)}; window.GLYPH = {json.dumps(HAZARD_SVG)};
+window.HAZ = {json.dumps(HAZ_COLOR)}; window.COLOR = {json.dumps(STATUS_COLOR)};
+window.DISPLABEL = {json.dumps(DISP_LABEL)}; window.GLYPH = {json.dumps(HAZARD_SVG)};
 window.LAYER_ORDER = {json.dumps(list(LAYER_ORDER))}; window.LAYER_COLOR = {json.dumps(LAYER_COLOR)};
 window.LAYER_LABEL = {json.dumps(LAYER_LABEL)}; window.TRIGGER_VALIDATION_URL = {json.dumps(TRIGGER_VALIDATION_URL)};
 window.WORLD = {json.dumps(wdata, separators=(",", ":"))};
@@ -2736,7 +2736,7 @@ function applyYear(){
       if(st === 'retired') layers.push('retired');
       if(f.n_adhoc) layers.push('adhoc');
       if(f.tech && st) layers.push('tech');
-      f.disp = st || (f.n_adhoc ? 'adhoc' : 'pipeline'); f.disp_label = KBLABEL[f.disp] || f.disp;
+      f.disp = st || (f.n_adhoc ? 'adhoc' : 'pipeline'); f.disp_label = DISPLABEL[f.disp] || f.disp;
       f.ring = null; f.current = ver; f.prearranged = null; f.pre_parts = null;   // a past year's figure has no split by fund
       const p = (H.pre || {})[Y]; f.pre_now = p ? p[0] : null; f.pre_drv = !!(p && p[1]); f.pre_apy = p && p[2] > 1 ? p[2] : null;
       const cv = lastAt(H.cov, D); f.covered = cv ? cv[1] : null;
@@ -2815,7 +2815,7 @@ function pinStyle(f){ const l = visLayer(f) || f.layer;
   return {bg: LAYER_COLOR[l], cls: l}; }
 function badge(st, label){ st = st || 'development';
   const cls = st==='active' ? 'endorsed' : st==='updating' ? 'updating' : st==='retired' ? 'retired' : st==='adhoc' ? 'adhoc' : st==='pipeline' ? 'pipeline' : 'development';
-  return `<span class='badge b-${cls}'>${esc(tr8(label || KBLABEL[st] || 'not recorded'))}</span>`; }   // never the code
+  return `<span class='badge b-${cls}'>${esc(tr8(label || DISPLABEL[st] || 'not recorded'))}</span>`; }   // never the code
 function verBadge(st){ st=st||''; const m = {endorsed:'endorsed', superseded:'superseded', development:'development', 'pre-development':'pre-development', retired:'retired'};
   const lbl = {development:'in development', 'pre-development':'pre-development'}[st] || st || '?';
   return `<span class='badge b-${m[st]||'retired'}'>${esc(tr8(lbl))}</span>`; }
