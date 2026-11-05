@@ -1,12 +1,11 @@
 # ds-aa-tracking
 
 Single authoritative tracking system for OCHA's anticipatory action (AA) portfolio,
-superseding the team-member spreadsheets it was seeded from — and, since 2026-09-28,
-the knowledge base's framework pages (see "The KB flip").
+superseding the team-member spreadsheets it was seeded from.
 
 This repo owns every table in the dev Postgres `aa` schema except the CERF / CBPF OneGMS
-mirrors (`ds-cerf-supplement`) — since 2026-10-05 including the backtest tables the
-knowledge base's loaders used to write (see "AA management moved here" below). It holds:
+mirrors (`ds-cerf-supplement`), the backtest tables included (see "AA management" below).
+It holds:
 
 - **framework lifecycle**: registry of every (country, hazard) framework incl. the
   pipeline (early conversations → active → dormant/expired), status snapshots over time,
@@ -23,26 +22,29 @@ knowledge base's loaders used to write (see "AA management moved here" below). I
 
 Decisions about the site (who made them, when, why, and whether they still stand) are logged in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
-## The KB flip (2026-09-28)
+The data science team's knowledge base, [`ds-knowledge-base`](https://github.com/OCHA-DAP/ds-knowledge-base),
+covers a much wider range of topics and goes into more technical detail. It is not a source
+for OCHA's AA reporting: for the AA portfolio's figures and statuses, use this database and
+its site.
 
-This system is **authoritative**. The knowledge base (`ds-knowledge-base`) is no longer a
-source: its framework pages were imported once into `aa.version_page` (scope, monitoring
-months, trigger facets, data sources, agencies, the "Trigger windows" table, the page body)
-and are edited here; the site build reads only the database snapshot (no KB checkout). The KB's job is now the other way
-round: read this DB (registry, versions, statuses, funding) and find the code, monitoring
-and published documents for each framework.
+## The record (since 2026-09-28)
 
-**AA management moved here (2026-10-05).** The tables the KB's loaders used to write are
-owned here now (DDL and views in `schema.py`; the KB loaders, its activation-link flow and
-its KB→DB workflows are retired): the **backtests** — `window`, `simulated_activation`,
-`version_performance_reported` — are edited here, and `funding_breakdown`,
-`actual_activation`, `activation_allocation` are the frozen KB-era record (superseded by
-`window_funding`, `window_activation`, `activation_funding`). This database is the record
+This system is **authoritative**. Each framework version's page (scope, monitoring months,
+trigger facets, data sources, agencies, the "Trigger windows" table, the page body) was
+imported once into `aa.version_page` on 2026-09-28 and is edited here; the site build reads
+only the database snapshot.
+
+**AA management (since 2026-10-05).** Every AA table is owned here (DDL and views in
+`schema.py`; the loaders that used to write some of them from elsewhere are retired): the
+**backtests** — `window`, `simulated_activation`, `version_performance_reported` — are
+edited here, and `funding_breakdown`, `actual_activation`, `activation_allocation` are the
+frozen record from before 2026-10-05 (superseded by `window_funding`, `window_activation`,
+`activation_funding`). This database is the record
 of every AA table; backtests are edited freely and corrected as errors are found
 (`v_trk_backtest_check` lists the rows that break a rule). Sealing a backtest once it has
 been checked against the endorsed document is a follow-up, not yet implemented.
 
-Two more DB-first tables came with the flip: `aa.learning_document` (the AA Compendium of
+Two more DB-first tables came with the switch on 2026-09-28: `aa.learning_document` (the AA Compendium of
 Available Resources, Sept 2026, plus the website to-add list; `scripts/import_learning.py`;
 `internal` rows never render) and `aa.framework_partner` (organisations named in the
 endorsed framework documents, extracted once with `scripts/import_partners.py`, curated in
@@ -57,8 +59,8 @@ are kept forever (the year-end official state, for the map's time view).
   window_funding}; ad hoc / early-action allocations off the pair (adhoc_activation)
 - publishing: `.github/workflows/publish.yml` rebuilds and publishes nightly, on pushes to
   main, by hand (workflow_dispatch, optionally from a dated snapshot) and on
-  `repository_dispatch` events `data-updated` (`kb-updated` is still accepted but the KB is
-  not a source any more). It never touches the dev DB: it restores the blob snapshot
+  `repository_dispatch` events `data-updated` (the older name `kb-updated` is still
+  accepted). It never touches the dev DB: it restores the blob snapshot
   (below) into a Postgres service container and builds against localhost. Needs the org
   blob secret plus repo secrets `EXTRACT_TOKEN` (the proxy site token), `SITE_PASSWORD`
   (staticrypt, development site) and `ADMIN_PASSWORD` (staticrypt, admin site; no default
@@ -131,7 +133,7 @@ are kept forever (the year-end official state, for the map's time view).
   or the map a tile `aa-map.md` does not state, and when a page is opened whose data no file carries.
   Held until their pages open, code kept but nothing written: the framework pages' Markdown
   (`fw-<iso3>-<hazard>.md`), the structured reads of the framework documents
-  (`doc-<kb_framework>-<version>.md`), their full texts (`pdf-<sha256>.txt`, pypdf, cached under
+  (`doc-<framework>-<version>.md`), their full texts (`pdf-<sha256>.txt`, pypdf, cached under
   `data/framework_documents/`), `llms-full.txt`, `aa-portfolio.md` and the Financing,
   Activities, Learning, Model and historical-activation tables. Never published, whatever is
   open: focal points, the version pages' working notes (frontmatter `extra`, raw extracts, QA
@@ -160,7 +162,7 @@ are kept forever (the year-end official state, for the map's time view).
   retired = a flag on country_hazard; per-window triggered flags in window_status
 - `src/ds_aa_tracking/migrations.py` — the status collapse and window_status seeding (run by ensure_schema)
 - `scripts/drop_leftovers.py` — one-off (D168): archives, then drops what was left from
-  building the tracker (the zz_legacy tables, version_match, raw KB YAML, old views) and
+  building the tracker (the zz_legacy tables, version_match, the raw page YAML, old views) and
   renames the source labels that named people
 - `scripts/build_site.py` — render the GH Pages sites: the open site at the root (the map,
   Definitions, Accessibility, and "Coming soon" pages), the development site under `dev/` and the admin site under
@@ -170,7 +172,7 @@ are kept forever (the year-end official state, for the map's time view).
   token prompted for in the browser (never embedded). Supersedes the tracking-tables tab.
 - `proxy/server.js` — the one server: PDF extraction, framework entry, and generic
   `/schema` `/rows` `/distinct` `/save` `/delete` for the admin page; every field change is
-  audited to `aa.entry_audit`; the frozen KB-era tables and the mirrors are read-only
+  audited to `aa.entry_audit`; the frozen tables from before 2026-10-05 and the mirrors are read-only
 - `proxy/mirror_tables.json` — the mirrors (D154): every table and view ds-cerf-supplement
   copies into `aa` every day (CERF OneGMS feeds, CBPF OData API, its storm and drought
   matches), each with what it is copied from. The one list: the proxy refuses writes to them,
@@ -222,7 +224,7 @@ are kept forever (the year-end official state, for the map's time view).
 - `scripts/landing.py` — landing map (base: Natural Earth 1:50m simplified as one topology so
   borders stay shared; zoom: FieldMaps edge-matched COD-AB for every country in view): zoom
   to a country, subnational scope per framework
-  version (KB `geographic_scope` names matched to FieldMaps edge-matched COD-AB boundaries; one
+  version (`geographic_scope` names matched to FieldMaps edge-matched COD-AB boundaries; one
   `adm-<ISO3>.json` per country with its neighbours, simplified as one shared-edge topology; layers cached under `data/fieldmaps/`)
   Scope tiers: inside a block-form `geographic_scope`, a comment line on its own names a tier
   for the items below it (`# riverine window — …`), and an item like `Non-endemic provinces
@@ -255,7 +257,7 @@ released money net of it.
 ## Running
 
 The dev DB is the single source of truth: data is entered and corrected through the
-admin site (`admin/entry.html`, `admin/admin.html`) — there is no spreadsheet ingest and no KB sync.
+admin site (`admin/entry.html`, `admin/admin.html`) — there is no spreadsheet ingest and no sync from elsewhere.
 DB access via `ocha-stratus` env vars; `PGSSLMODE=require` is set automatically.
 
 ```sh
