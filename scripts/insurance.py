@@ -19,6 +19,10 @@ START_TEXT = "1 October 2026"
 PERIOD_TEXT = START_TEXT + " to 31 December 2027"
 UPDATED = "2026-11-04"   # the date the annex was copied here
 
+# the annex's word where it differs from the site's (owner, 2026-11-06: "yes use tropical cyclone"):
+# this section names the hazard as the annex does, the rest of the site keeps "storm"
+HAZARD_WORD = {"storm": "tropical cyclone"}
+
 # (country ISO3, hazard code, cover limit in US$ million per season, also in UNICEF's policy,
 #  can activate up to twice per season: the limit is then the maximum across both activations)
 COVER = (
