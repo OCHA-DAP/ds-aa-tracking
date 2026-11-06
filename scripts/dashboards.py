@@ -2471,7 +2471,7 @@ def build_funding(page, d):
         bar = (f"<span class='ins-m' aria-hidden='true'><span style='width:{min(share, 1) * 100:.1f}%'></span></span>")
         uni = (f"<span {ATTR('title', 'also in UNICEF policy')}>✓</span>" if r["unicef"] else "–")
         return (f"<tr><td>{T(country_name(r['iso3']))}</td>"
-                f"<td>{T(hazard_word(r['hazard']))}{'*' if r['twice'] else ''}</td>"
+                f"<td>{T(insurance.HAZARD_WORD.get(r['hazard']) or hazard_word(r['hazard']))}{'*' if r['twice'] else ''}</td>"
                 f"<td class='n'>{r['cover'] / 1e6:,.1f}</td><td class='c'>{uni}</td>"
                 f"<td class='n'>{r['n']}</td><td class='n'>${r['released'] / 1e6:,.1f}M</td>"
                 f"<td class='n'>{share * 100:.0f}% {bar}</td></tr>")
