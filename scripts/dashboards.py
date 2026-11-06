@@ -23,6 +23,12 @@ import pandas as pd
 # validated reference palette (light mode), fixed assignment order
 PAL = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]
 FUND_COLORS = {"cerf": "#2a78d6", "cbpf": "#eb6834", "regional_fund": "#1baf7a"}
+# the Financing page's framework × agency table (D200): one blue, light to dark (the reference
+# palette's sequential steps 100, 200, 300, 400, 550, 700), in fixed steps of US$ — a cell below
+# 0.5M, 0.5–1M, 1–2M, 2–3M, 3–5M, 5M or more. Dark text on the four lightest, white on the two
+# darkest (contrast at least 5:1 both ways)
+HEAT_STEPS = [5e5, 1e6, 2e6, 3e6, 5e6]
+HEAT_COLORS = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#1c5cab", "#0d366b"]
 # a fund type in words (chart legends): the type is a code, never shown
 FUND_TYPE_LABEL = {"cerf": "CERF", "cbpf": "Country funds", "regional_fund": "Regional funds"}
 HAZARDS = ["drought", "flood", "storm", "cholera"]  # fixed order; rest -> Other
@@ -1560,6 +1566,11 @@ def _un_short(name):
     return None
 
 
+def _is_un(name):
+    """A framework budget's agency is a UN agency (UN_SHORT; WHO and PAHO under their merged name)."""
+    return _un_short(name) is not None or name in set(AGENCY_ALIAS.values())
+
+
 def _layer_of(d):
     """(country, hazard[, version]) -> the map layer its money belongs to: 'r' a retired
     framework, 'c' any other (current frameworks, and the odd AA-tagged CBPF allocation in a
@@ -2339,6 +2350,11 @@ def build_funding(page, d):
     pr["ft"] = pr["fund_code"].map(_ft)
     pr["g"] = [layer(c, h) for c, h in zip(pr["country_iso3"], pr["hazard"])]
     pr["k"] = pair_key(pr)
+    # a UN agency's line (the heat-map table shows these only, D200; the chart by agency all)
+    pr["un"] = pr["agency"].map(lambda a: isinstance(a, str) and _is_un(a))
+    not_un = sorted(set(pr.loc[pr["agency"].notna() & ~pr["un"], "agency"].astype(str)))
+    if not_un:   # a UN agency missing from UN_SHORT would drop out of the table: the list shows it
+        print(f"  framework × agency table: not UN agencies, left out ({len(not_un)}): {', '.join(not_un)}")
     # a version that allows two activations a year: its CERF budget lines count twice, as its
     # CERF envelope (prearranged_now)
     fac = d.get("act_factors") or {}
@@ -2490,6 +2506,48 @@ def build_funding(page, d):
 {how("Released: the CERF money of each covered framework's activations dated from " + insurance.PERIOD_TEXT + ", net of any refund, as on the rest of this page; an amount entered before CERF's records show the allocation is included. An activation known only to the month counts when that month is in the period. Only CERF money is counted, not the Country and Regional Funds'. The cover limit applies to each season, while the released column adds up the whole period, which can span more than one season of a framework. The frameworks and cover limits are those of the insurance annex, copied on " + insurance.UPDATED + ".")}
 </div>"""
 
+    # pre-arranged by framework and agency (D200): a table the script fills (drawHeat), the rows
+    # of the chart by agency, one per framework; the colour steps are fixed (HEAT_STEPS), so a
+    # colour means the same amount whatever the filters
+    heat_key = "".join(f"<span><i style='background:{c}'></i>{lab}</span>" for c, lab in zip(
+        HEAT_COLORS, [TF("less than {n}", n="0.5"), "0.5–1", "1–2", "2–3", "3–5", TF("{n} or more", n="5")]))
+    heat_html = f"""
+<style>
+.hm table.data {{ width:auto; min-width:100%; }}
+.hm table.data th, .hm table.data td {{ white-space:nowrap; }}
+.hm thead th {{ vertical-align:bottom; text-align:center; }}
+.hm th.fw {{ position:sticky; left:0; top:auto; z-index:1; background:#fff; text-align:left;
+             font-weight:400; border-bottom:1px solid #eee; }}
+.hm thead th.fw {{ background:#eef3f8; top:0; z-index:3; border-bottom:2px solid #cbd6e2; }}
+.hm td.c {{ text-align:center; font-variant-numeric:tabular-nums; min-width:40px; padding:3px 6px;
+            border:2px solid #fff; vertical-align:middle; }}
+.hm td.c[title]:hover {{ outline:2px solid #0d366b; outline-offset:-2px; }}
+.hm tr.g td {{ background:#f7f9fb; color:#555; font-weight:600; font-size:12px; }}
+.hm td.none, .hm-key i.none {{ background:repeating-linear-gradient(45deg,#f6f6f6 0 5px,#e4e4e4 5px 7px); }}
+.hm td.none {{ color:#555; font-style:italic; }}
+/* the page's row hover (table.data tr:hover td) must not wipe the hatch or the region rows */
+.hm table.data tr:hover td.none {{ background:repeating-linear-gradient(45deg,#f6f6f6 0 5px,#e4e4e4 5px 7px); }}
+.hm table.data tr.g:hover td {{ background:#f7f9fb; }}
+.hm table.data tbody tr:hover th.fw {{ background:#f2f7fc; }}
+.hm-key {{ display:flex; flex-wrap:wrap; gap:4px 12px; align-items:center; font-size:12px; color:#555; margin:0 0 8px; }}
+.hm-key i {{ display:inline-block; width:20px; height:12px; border-radius:2px; vertical-align:-1px; margin-right:4px;
+            border:1px solid #d6dbe1; }}
+/* a framework's status before its name, as the map's pins: active, being updated (two-tone), in development (dashed) */
+.hm .hm-st, .hm-key i.hm-st {{ display:inline-block; width:11px; height:11px; border-radius:50%; margin-right:6px; vertical-align:-1px;
+            box-sizing:border-box; border:0; }}
+.hm .hm-st.a {{ background:#2171b5; }} .hm .hm-st.u {{ background:linear-gradient(135deg,#2171b5 0 50%,#9ecae1 50% 100%); }}
+.hm .hm-st.d {{ background:#9ecae1; border:1.5px dashed #0f2540; width:12px; height:12px; }}
+</style>
+<div class='panel hm'><h3>{T("Pre-arranged by framework and UN agency")}</h3>
+<div class='hm-key'><span>{T("Status:")}</span><span><i class='hm-st a'></i>{T("active")}</span><span><i class='hm-st u'></i>{T("being updated")}</span><span><i class='hm-st d'></i>{T("in development")}</span></div>
+<div class='hm-key'><span>{T("US$ million:")}</span>{heat_key}
+ <span><i style='background:#fff'></i>{T("blank: no line for the agency")}</span>
+ <span><i class='none'></i>{T("no split by agency recorded for the latest version")}</span></div>
+<div class='xscroll' id='hmBox'><table class='data' id='hmT'></table></div>
+<p class='empty' id='hmX' style='display:none'></p>
+{how("Each cell is one UN agency's part of one framework's pre-arranged money now, in US$ million: the UN agency lines of the budget of the framework's latest version, all its windows and sectors together. The chart by agency below has the same lines, and also the NGO and Red Cross lines some budgets have. A blank cell: that budget has no line for the agency. The marker before a framework's name is its status, as on the map. A framework with pre-arranged money now whose latest version has no split by agency recorded keeps its row, hatched. Money with no agency split recorded (most Country and Regional Fund envelopes) is not shown, so a row can add up to less than the framework's envelope. The colour steps are fixed: a colour means the same amount whatever the filters. Follows the current-frameworks layer (retired frameworks have no pre-arranged money now), the framework selection, the fund switch and the hazard and region filters; the GHO filter does not apply.", two=True)}
+</div>"""
+
     fund_sel = (f"<label>{T('Fund')} <select id='fFund'>{OPT('', 'CERF and Country and Regional Funds')}"
                 f"{OPT('cerf', 'CERF')}{OPT('pooled', 'Country and Regional Funds')}</select></label>")
     panels = f"""
@@ -2544,7 +2602,15 @@ def build_funding(page, d):
  <div class='panel'><h3>{T("Co-financing pre-arranged now, by co-financer")}</h3><div id='cofWhoBox' style='position:relative;height:300px'><canvas id='cofWho' style='max-height:none'></canvas></div><p class='empty' id='cofWhoX' style='display:none'></p>
    {how(COF_WHO_HOW)}</div>
 </div>
-{ins_html}
+<h2>{T("Where the pre-arranged money goes")}</h2>
+<p class='meta'>{T("The latest version of every current framework, split by agency and sector as the framework documents state it, stacked by fund.")}</p>
+{heat_html}
+<div class='grid'>
+ <div class='panel'><h3>{T("Pre-arranged by agency")}</h3><canvas id='c7' height='320'></canvas>
+   {how("Envelope shares per implementing agency (the agency lines of the framework budgets; top 18). Money with no agency split recorded (most Country and Regional Fund envelopes) is not in this chart. Follows the current-frameworks layer (retired frameworks have no pre-arranged money now), the fund switch and the hazard and region filters; the GHO filter does not apply.", two=True)}</div>
+ <div class='panel'><h3>{T("Pre-arranged by sector")}</h3><canvas id='c8' height='320'></canvas>
+   {how("Sector lines of the same budgets; a line with an agency but no sector is not shown here. Money with no sector split recorded (most Country and Regional Fund envelopes) is not in this chart. Follows the same toggles as by agency.", two=True)}</div>
+</div>
 <h2>{T("Frameworks and money by year, hazard and region")}</h2>
 <div class='grid'>
  <div class='panel'><h3>{T("Frameworks each year, by status")}</h3><canvas id='c0' height='260'></canvas>
@@ -2557,14 +2623,6 @@ def build_funding(page, d):
    {how("Latest envelope of every framework that is active, being updated or in development.", two=True)}</div>
  <div class='panel'><h3>{T("Pre-arranged now, by region")}</h3><canvas id='c4' height='260'></canvas>
    {how("The same envelopes as by hazard, by the framework's region.", two=True)}</div>
-</div>
-<h2>{T("Where the pre-arranged money goes")}</h2>
-<p class='meta'>{T("The latest version of every current framework, split by agency and sector as the framework documents state it, stacked by fund.")}</p>
-<div class='grid'>
- <div class='panel'><h3>{T("Pre-arranged by agency")}</h3><canvas id='c7' height='320'></canvas>
-   {how("Envelope shares per implementing agency (the agency lines of the framework budgets; top 18). Money with no agency split recorded (most Country and Regional Fund envelopes) is not in this chart. Follows the current-frameworks layer (retired frameworks have no pre-arranged money now), the fund switch and the hazard and region filters; the GHO filter does not apply.", two=True)}</div>
- <div class='panel'><h3>{T("Pre-arranged by sector")}</h3><canvas id='c8' height='320'></canvas>
-   {how("Sector lines of the same budgets; a line with an agency but no sector is not shown here. Money with no sector split recorded (most Country and Regional Fund envelopes) is not in this chart. Follows the same toggles as by agency.", two=True)}</div>
 </div>
 <h2>{T("UN agencies and partners")}</h2>
 <p class='meta'>{T("Once CERF releases AA money, the agencies partially spend it directly (in large part on procurement) and partially sub-grant it to implementing partners.")}</p>
@@ -2581,7 +2639,8 @@ def build_funding(page, d):
  <div class='panel'><h3>{T("Share of CERF AA sub-grants to local and national actors, by year")}</h3><canvas id='c10' height='280'></canvas>
    {how("Each bar is the part of one year's CERF money released that went to partners, the partner part of the chart on the left (100%): to local and national actors (national / local NGOs, government, national Red Cross / Red Crescent societies), to international NGOs, and to partners not yet typed in the reports. The label is the local and national share; the recent years fill in as partners are typed. Follows the same filters as the chart on the left.")}</div>
 </div>
-</div>"""
+</div>
+{ins_html}"""
 
     data = {
         "pre": json.loads(_records(pre, ["k", "country_iso3", "hz", "region", "year",
@@ -2596,7 +2655,7 @@ def build_funding(page, d):
         "fw": json.loads(_records(fw, ["k", "hz", "region", "lifecycle", "technical_support", "g", "funds"])),
         "cov": json.loads(_records(cov, ["k", "hz", "region", "people_covered", "g", "funds"])),
         "split": json.loads(_records(pr, ["k", "hz", "region", "agency", "sector", "ft",
-                                          "amount_usd", "g"])),
+                                          "amount_usd", "g", "un"])),
         "cof": json.loads(_records(cof, ["k", "hz", "region", "year", "in_gho", "g", "amount_usd"])),
         "cofNow": json.loads(_records(cof_now, ["k", "hz", "region", "g", "in_gho", "who", "amount_usd", "detail"])),
         "fwList": fw_list,
@@ -2604,6 +2663,7 @@ def build_funding(page, d):
         "unSplit": un_split,
         "flow": flow_rows, "flowYears": flow_years, "flowDefault": flow_default,
         "fundNames": fund_names, "cy": cy,
+        "heat": {"steps": HEAT_STEPS, "colors": HEAT_COLORS},
     }
     js = FLOW_JS + """
 // two fund groups on this page's charts: CERF, and the Country and Regional Funds together, as
@@ -2764,6 +2824,71 @@ function tiles(s, geo, A, N){
     tCov.textContent = (sumOf(C, r=>r.people_covered)/1e6).toFixed(1)+'M';
     tCovl.textContent = tr8('people covered now — current frameworks{0}, latest figure each ({1} of {2} have one) · not people reached', fundTxt, new Set(C.map(r=>r.k)).size, live) + selTxt; }
 }
+// pre-arranged by framework and agency (D200; owner, 2026-11-05: "which agencies are a part of
+// which framework … the amount of money per agency in each framework"): the rows of the chart by
+// agency (S: the latest versions' agency lines, every filter of that chart), one row per framework
+// with pre-arranged money now or agency lines, in the picker's order (region, country, hazard),
+// one column per agency, most money first. Fixed colour steps (D.heat), so a colour means the
+// same amount whatever the filters. Built with textContent: agency names are data.
+const HM_STEP = D.heat.steps, HM_COL = D.heat.colors;
+const hmBin = v => { let i = 0; while(i < HM_STEP.length && v >= HM_STEP[i]) i++; return i; };
+const hmNum = v => (v/1e6).toFixed(v < 1e6 ? 2 : 1);
+// the shade of the number as printed: $1.968M reads 2.0, so it takes the 2–3 shade, not 1–2
+const hmShade = v => hmBin(+hmNum(v) * 1e6);
+function drawHeat(s, S, geo){
+  const N = D.now.filter(r=>geo(r) && layerOK(r.g,s) && ftOK(r.ft,s) && r.total_usd > 0);
+  const SA = S.filter(r=>r.agency && r.un && r.amount_usd > 0);   // UN agencies only (owner, 2026-11-05)
+  const ks = new Set(N.map(r=>r.k).concat(SA.map(r=>r.k)));
+  // hatched only when the latest version has no agency line in either fund: under the fund
+  // switch, a framework split only in the other fund shows blank cells (no line for the agency)
+  const hasSplit = new Set(D.split.filter(r=>r.agency && r.un && r.amount_usd > 0 && geo(r) && layerOK(r.g,s)).map(r=>r.k));
+  const rows = FWL.filter(f=>f.lc && ks.has(f.k));
+  const tb = document.getElementById('hmT'), box = document.getElementById('hmBox'), none = document.getElementById('hmX');
+  tb.textContent = '';
+  box.style.display = rows.length ? '' : 'none'; none.style.display = rows.length ? 'none' : '';
+  if(!rows.length){
+    none.textContent = !s.cur ? tr8('pre-arranged now: select current frameworks (retired frameworks and non-framework allocations have none)')
+      : tr8('No data in this selection');
+    return; }
+  const tot = groupSum(SA, r=>r.agency, r=>r.amount_usd);
+  const ags = Object.keys(tot).sort((a,b)=>tot[b]-tot[a] || a.localeCompare(b));
+  // no UN agency line in the selection (the Country and Regional Funds' agency lines are NGO and
+  // Red Cross lines): a message, not a table of names with no column
+  if(!ags.length){ box.style.display = 'none'; none.style.display = ''; none.textContent = tr8('No data in this selection'); return; }
+  const cell = {}, part = {};
+  SA.forEach(r=>{ const c = r.k + '\t' + r.agency, g = fgOf(r.ft);
+    cell[c] = (cell[c]||0) + r.amount_usd;
+    const p = part[c] = part[c] || {}; p[g] = (p[g]||0) + r.amount_usd; });
+  const el = (tag, cls, txt) => { const e = document.createElement(tag);
+    if(cls) e.className = cls; if(txt!=null) e.textContent = txt; return e; };
+  const head = el('thead'), hr = el('tr');
+  const h0 = el('th', 'fw', tr8('Framework')); h0.scope = 'col'; hr.appendChild(h0);
+  ags.forEach(a=>{ const h = el('th', null, a); h.scope = 'col'; hr.appendChild(h); });
+  head.appendChild(hr); tb.appendChild(head);
+  const body = el('tbody'); let reg = null;
+  rows.forEach(f=>{
+    if(f.region !== reg){ reg = f.region;
+      const gr = el('tr', 'g'), gc = el('td', null, tr8(reg)); gc.colSpan = ags.length + 1;
+      gr.appendChild(gc); body.appendChild(gr); }
+    const tr = el('tr'), name = tr8(f.name) + ' — ' + tr8(f.hazard) + (TWO.has(f.k) ? '*' : '');
+    const th = el('th', 'fw'); th.scope = 'row';
+    // the status, as on the map (a retired framework has no pre-arranged money now: never a row)
+    const st = el('span', 'hm-st ' + ({active:'a', updating:'u', development:'d'}[f.lc] || ''));
+    st.setAttribute('role', 'img'); st.setAttribute('aria-label', LCL[f.lc] || ''); st.title = LCL[f.lc] || '';
+    th.appendChild(st); th.appendChild(document.createTextNode(name)); tr.appendChild(th);
+    if(!hasSplit.has(f.k)){
+      const td = el('td', 'none', tr8('no split by agency recorded for the latest version'));
+      td.colSpan = Math.max(ags.length, 1); tr.appendChild(td); }
+    else ags.forEach(a=>{ const c = f.k + '\t' + a, v = cell[c], td = el('td', 'c');
+      if(v){ const b = hmShade(v), p = part[c];
+        td.textContent = hmNum(v);
+        td.style.background = HM_COL[b]; td.style.color = b >= 4 ? '#fff' : '#111';
+        td.title = name + ' · ' + a + ': ' + M2(v)
+          + (p.cerf && p.pooled ? ' (' + tr8('CERF {0} · Country and Regional Funds {1}', M2(p.cerf), M2(p.pooled)) + ')' : ''); }
+      tr.appendChild(td); });
+    body.appendChild(tr); });
+  tb.appendChild(body);
+}
 function draw(){
   const s = sel(), gho = s.gho;
   const geo = r => (!s.hz||r.hz===s.hz) && (!s.rg||r.region===s.rg) && fwOK(r, s);
@@ -2832,6 +2957,7 @@ function draw(){
     }
   }
   const S = D.split.filter(r=>geo(r) && layerOK(r.g,s) && ftOK(r.ft,s));
+  drawHeat(s, S, geo);
   const SA = S.filter(r=>r.agency), SS = S.filter(r=>r.sector);
   stackedBy('c7', SA, r=>r.agency, r=>r.amount_usd, {keys:topKeys(SA,r=>r.agency,r=>r.amount_usd,18), extra:{indexAxis:'y'}});
   stackedBy('c8', SS, r=>r.sector, r=>r.amount_usd, {keys:topKeys(SS,r=>r.sector,r=>r.amount_usd,18), allLabels:true, extra:{indexAxis:'y'}});
