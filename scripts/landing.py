@@ -2276,7 +2276,7 @@ window.YEARS = {json.dumps({"first": YEAR_FIRST, "now": TODAY.year, "today": TOD
     i18n.register_countries((iso, cd.get("name")) for iso, cd in countries.items())
     i18n.register_countries((iso, w.get("n")) for iso, w in wdata.items())
     # the open site's map: the same page without the figures it may not show
-    if body.count("/*AA_L*/null") != 1 or body.count("<!--AA_TCOV-->") != 1:
+    if body.count("/*AA_L*/null") != 1 or any(x.count("<!--AA_TCOV-->") != 1 for x in (tiles, tiles_open)):
         raise SystemExit("FATAL: the map's data or people-covered placeholder is not in its page exactly once")
     # the open map's "Download CSV" is a link to the open layer's table, so a program reading the
     # page finds a file behind it (owner, 2026-11-03); a click still downloads the table as the map
