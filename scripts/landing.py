@@ -1860,6 +1860,11 @@ def _flow_acts(f, layers, year=None):
 # headline tile icons (24x24 strokes; coloured by CSS)
 # the tiles' notes, in the owner's words (2026-11-02: "hover text simplifications"); the page's
 # script (updateTiles, countryTiles) has the same sentences, translated by tr8
+# the map's "Reading the map" line: the development map names the fund switch (D201); the open map,
+# which has none yet, keeps its words
+MAP_HELP = '<b>Reading the map.</b> Published triggers, windows, pre-arranged financing and activations across the AA portfolio — CERF, country-based and regional pooled funds. Pin colour = framework status, inferred from the most recent version; each red dot = one past activation; a red ring = activated in the last 30 days; an amber ring = in its monitoring season this month. <b>Click a country or a pin</b> to zoom in and see the areas each framework covers; the <b>layer toggles</b>{switch} in the map legend choose what is drawn, and the figures above follow them.'
+MAP_HELP_SWITCH = ' and the <b>fund switch</b> (CERF, CBPF, RHPF)'
+MAP_HELP_NO_SWITCH = ""
 PRE_NOTE = ("Total funding recorded for the frameworks shown, including those being updated or developed. "
             "This is funding arranged ahead of possible activations, rather than funding already released.")
 COF_NOTE = ("Additional funding pre-arranged for the frameworks outside OCHA-managed pooled funds "
@@ -2008,6 +2013,28 @@ def withheld_on_open_map(e):
     return out
 
 
+def _strip_fund_switch(countries):
+    """The open map has no fund switch yet (owner, 2026-11-09: "DEV ONLY", D201): its data keeps the
+    fields it had before — no funding row's `fs`, no `cbpf`/`rhpf` parts, past years' [usd, inferred?,
+    activations a year] without the split by fund."""
+    for cd in countries.values():
+        for k, x in list((cd.get("pre_x") or {}).items()):
+            cd["pre_x"][k] = x[:3]
+        for f in cd.get("fws", []):
+            for k in ("cbpf", "rhpf"):
+                (f.get("pre_parts") or {}).pop(k, None)
+            for a in f.get("activations") or []:
+                for x in a.get("funding") or []:
+                    x.pop("fs", None)
+            pre = (f.get("hist") or {}).get("pre") or {}
+            for k, x in list(pre.items()):
+                pre[k] = x[:3]
+    return countries
+
+
+SWITCH_TILE_KEYS = ("pre_cbpf", "pre_rhpf", "released_cbpf", "released_rhpf")   # tile_figures' D201 keys
+
+
 def open_map_countries(countries, withheld):
     """The map's data for the open site: a copy without the withheld figures (the framework's
     people covered now, the year selector's past figures, and a version's people targeted when
@@ -2056,7 +2083,7 @@ def build_landing(page, d, e):
     geo_pass(countries, bboxes)
     # the open site's copy of the map's data: without the figures it may not show
     withheld = withheld_on_open_map(e)
-    open_countries = open_map_countries(countries, withheld)
+    open_countries = _strip_fund_switch(open_map_countries(countries, withheld))
 
     # headline tiles follow the map: the same rule as the page's updateTiles() (JS), here
     # for the default layer set AND the default year so the static HTML matches what the page
@@ -2086,7 +2113,11 @@ def build_landing(page, d, e):
     ns_reach = not_shown((ad["n_rep"] or ad["n_tgt"] or ad["n_ptgt"]) and f"non-framework allocations {est(ad)}",
                          (rt["n_rep"] or rt["n_tgt"] or rt["n_ptgt"]) and f"retired frameworks {est(rt)}")
 
-    def funds(cerf, cbpf, rhpf, other=0):   # fundBullets() in LANDING_JS (every fund ticked)
+    def funds(cerf, cbpf, rhpf, other=0, switch=True):   # fundBullets() in LANDING_JS (every fund ticked)
+        if not switch:   # the open map, no fund switch (D201): CERF and the Country and Regional Funds, as before
+            return [x for x in (cerf >= 5e4 and f"CERF {_money(cerf)}",
+                                cbpf + rhpf >= 5e4 and f"Country and Regional Funds {_money(cbpf + rhpf)}",
+                                other >= 5e4 and f"not split by fund {_money(other)}") if x]
         return [x for x in (cerf >= 5e4 and f"CERF {_money(cerf)}", cbpf >= 5e4 and f"CBPF {_money(cbpf)}",
                             rhpf >= 5e4 and f"RHPF {_money(rhpf)}",
                             other >= 5e4 and f"not split by fund {_money(other)}") if x]
@@ -2137,27 +2168,29 @@ def build_landing(page, d, e):
                     "people covered now by the frameworks shown" if t["n_fw"] else "people covered now: no framework shown",
                     note=f"{COV_NOTE} Coverage figures are available for {t['n_cov']} of the {t['n_fw']} frameworks shown."
                     if t["n_fw"] else "")
-    t_open = tile_figures(open_countries, {"framework"}, Y)
+    t_open = {k: v for k, v in tile_figures(open_countries, {"framework"}, Y).items() if k not in SWITCH_TILE_KEYS}
     OPEN_MAP.clear()
     OPEN_MAP.update(countries=open_countries, withheld=withheld, year=Y, tiles=t_open,
-                    adhoc=tile_figures(open_countries, {"adhoc"}, Y))
-    tiles = "".join((
+                    adhoc={k: v for k, v in tile_figures(open_countries, {"adhoc"}, Y).items() if k not in SWITCH_TILE_KEYS})
+    def tiles_html(sw):   # sw: the development map's fund switch (D201); the open map has none
+      tm = _tile_money if sw else (lambda v: f"${_jsround(v / 1e6)}M")
+      return "".join((
         tile("t-fw", "doc", "Frameworks", t["n_fw"], fw_lead(t["n_ctry"]),
              [f"{t['n_active']} active", f"{t['n_upd']} being updated", f"{t['n_dev']} in development"]),
-        tile("t-pre", "money", "Pre-arranged", _tile_money(t["pre"]), "pre-arranged now",
-             funds(t["pre_cerf"], t["pre_cbpf"], t["pre_rhpf"], t["pre_all"]),
+        tile("t-pre", "money", "Pre-arranged", tm(t["pre"]), "pre-arranged now",
+             funds(t["pre_cerf"], t["pre_cbpf"], t["pre_rhpf"], t["pre_all"], switch=sw),
              " ".join([PRE_NOTE] + apy_notes(t["apy"])) if t["n_fw"] else ""),
         # co-financing beside pre-arranged (owner, 2026-10-30)
-        tile("t-cof", "cofin", "Co-financing", _tile_money(t["cofin"]) if t["n_cofin"] else "—",
+        tile("t-cof", "cofin", "Co-financing", tm(t["cofin"]) if t["n_cofin"] else "—",
              "co-financing pre-arranged now",
-             note=" ".join((COF_NOTE, f"This is additional to the {_tile_money(t['pre'])} pre-arranged.",
+             note=" ".join((COF_NOTE, f"This is additional to the {tm(t['pre'])} pre-arranged.",
                             f"Co-financing is recorded for {t['n_cofin']} of the {t['n_fw']} frameworks shown.", COF_MISSING))
              if t["n_fw"] else ""),
         "<!--AA_TCOV-->",   # people covered: one per site (cov_tile)
         # activations and the money they released, in one tile (owner, 2026-10-27)
         tile("t-act", "bolt", "Activations", act_sentence(t["released"], t["n_act"]),
              f"framework activations in {Y}" if t["n_act"] else f"no activation in {Y} on the layers shown",
-             funds(t["released_cerf"], t["released_cbpf"], t["released_rhpf"]) if t["n_act"] else [],
+             funds(t["released_cerf"], t["released_cbpf"], t["released_rhpf"], switch=sw) if t["n_act"] else [],
              " ".join(x for x in (t["n_act"] and f"Funding released following the activation of anticipatory action in {Y}.",
                                   t["prov"] and ACT_PROV, t["refund"] and ACT_REFUND,
                                   t["n_nousd"] and f"{t['n_nousd']} of the {t['n_act']} have no amount recorded.", ns_act) if x),
@@ -2169,10 +2202,11 @@ def build_landing(page, d, e):
              else f"people reached with the {Y} releases: no report yet for the CERF allocation" if n_cerf == 1
              else f"people reached with the {Y} releases: no report yet for the {n_cerf} CERF allocations",
              note=reach_note)))
+    tiles, tiles_open = tiles_html(True), tiles_html(False)
     # the tiles' notes as the open map shows them first (the open layer quotes them: llm_layer)
     OPEN_MAP["notes"] = {m.group(1): html_unescape(re.sub(r"<[^>]+>", "", m.group(2))).strip()
                          for m in re.finditer(r"<div class='tnote' id='(t-[\w-]+?)-n' role='tooltip'>(.*?)</div>",
-                                              tiles.replace("<!--AA_TCOV-->", cov_tile(t_open), 1), re.S)}
+                                              tiles_open.replace("<!--AA_TCOV-->", cov_tile(t_open), 1), re.S)}
 
     # What's new sits beside the definition box (owner, 2026-10-30); build_site puts the box at
     # the placeholder
@@ -2194,7 +2228,7 @@ def build_landing(page, d, e):
  </div>
  <div class='tiles gtiles' id='gtiles'>
   <div class='gcap' id='gcap'>Global portfolio — all layers currently shown on the map · {Y}, as of today</div>
-  {tiles}
+  <!--AA_TILES-->
  </div>
 </div>
 <div class='maprow' id='maprow'>
@@ -2211,7 +2245,7 @@ def build_landing(page, d, e):
  </div>
 </div>
 <p class='mapdisc'>{T("The boundaries and names shown and the designations used on this map do not imply official endorsement or acceptance by the United Nations.")}</p>
-<p class='maphelp'>{TB("<b>Reading the map.</b> Published triggers, windows, pre-arranged financing and activations across the AA portfolio — CERF, country-based and regional pooled funds. Pin colour = framework status, inferred from the most recent version; each red dot = one past activation; a red ring = activated in the last 30 days; an amber ring = in its monitoring season this month. <b>Click a country or a pin</b> to zoom in and see the areas each framework covers; the <b>layer toggles</b> and the <b>fund switch</b> (CERF, CBPF, RHPF) in the map legend choose what is drawn, and the figures above follow them.")}
+<p class='maphelp'>{TB(MAP_HELP.format(switch=MAP_HELP_SWITCH))}
  {TB("<b>Keyboard.</b> Tab to a country name or a pin, Enter opens it, Escape goes back to the world; the table under the map lists the same frameworks. A dashed pin border = in development, a two-tone pin = being updated. <a href='accessibility.html'>Accessibility statement</a>.")}</p>
 <section class='fwt' id='fwt'>
  <div class='fwt-head'><h2>{T("Frameworks and allocations on the map")}</h2>
@@ -2223,7 +2257,7 @@ def build_landing(page, d, e):
 </section>
 <!-- 2026-10-02 meeting: the internal links that sat here (dashboards, explorer, data entry,
      data & schema review) were easy to miss below the map; they all live in the Internal menu -->
-<script>window.L = /*AA_L*/null;
+<script>window.L = /*AA_L*/null; window.FUND_SWITCH = /*AA_FUND_SWITCH*/true;
 window.FUNDLAB = {json.dumps(regional_fund_labels())};
 window.HAZ = {json.dumps(HAZ_COLOR)}; window.COLOR = {json.dumps(STATUS_COLOR)};
 window.DISPLABEL = {json.dumps(DISP_LABEL)}; window.GLYPH = {json.dumps(HAZARD_SVG)};
@@ -2252,10 +2286,20 @@ window.YEARS = {json.dumps({"first": YEAR_FIRST, "now": TODAY.year, "today": TOD
                 f"{T('Download CSV')}</a>")
     if body.count(csv_btn) != 1:
         raise SystemExit("FATAL: the map's Download CSV button is not in its page exactly once")
+    # the fund switch on the development map only (owner, 2026-11-09: "DEV ONLY", D201): the open
+    # map gets the flag off, its tiles and its help line as before
+    help_dev = TB(MAP_HELP.format(switch=MAP_HELP_SWITCH))
+    help_open = TB(MAP_HELP.format(switch=MAP_HELP_NO_SWITCH))
+    for tok in ("<!--AA_TILES-->", "/*AA_FUND_SWITCH*/true", help_dev):
+        if body.count(tok) != 1:
+            raise SystemExit(f"FATAL: {tok[:40]!r} is not in the map's page exactly once")
+    dev_body = body.replace("<!--AA_TILES-->", tiles, 1)
+    open_body = (body.replace("<!--AA_TILES-->", tiles_open, 1).replace("/*AA_FUND_SWITCH*/true", "false", 1)
+                 .replace(help_dev, help_open, 1))
     page("index.html", "OCHA Anticipatory Action — portfolio",
-         body.replace("/*AA_L*/null", json.dumps(countries, default=str), 1).replace("<!--AA_TCOV-->", cov_tile(t), 1),
-         prod_body=body.replace("/*AA_L*/null", json.dumps(open_countries, default=str), 1)
-                       .replace("<!--AA_TCOV-->", cov_tile(t_open), 1).replace(csv_btn, csv_link, 1))
+         dev_body.replace("/*AA_L*/null", json.dumps(countries, default=str), 1).replace("<!--AA_TCOV-->", cov_tile(t), 1),
+         prod_body=open_body.replace("/*AA_L*/null", json.dumps(open_countries, default=str), 1)
+                            .replace("<!--AA_TCOV-->", cov_tile(t_open), 1).replace(csv_btn, csv_link, 1))
 
 
 LANDING_CSS = r"""
@@ -2647,6 +2691,9 @@ const LAYERS = { framework:true, adhoc:false, retired:false, tech:false };
 // from a fund still ticked leaves the map. Every fund ticked is no filter at all: a framework with
 // no money recorded yet is drawn, and money not split by fund counts. Technical support is not
 // money: its pins ignore the switch.
+// On the development map only for now (owner, 2026-11-09: "put it online on DEV ONLY"): the open
+// map's page sets window.FUND_SWITCH false — no switch, and its fund split, table and CSV as before.
+const FUND_SWITCH = !!window.FUND_SWITCH;
 const FKEYS = ['cerf', 'cbpf', 'rhpf'];
 const FUNDS = { cerf:true, cbpf:true, rhpf:true };
 const FUND_LABEL = { cerf:'CERF', cbpf:'CBPF', rhpf:'RHPF' };
@@ -2870,8 +2917,8 @@ function lockTiles(){
         state.iso = null; updateTiles(); take(); }
       Object.assign(LAYERS, L0); state.iso = long; updateTiles(); take();   // the caption naming a country
       // ... and the fund switch's longest words in it (D201); fewer funds only take bullets away
-      Object.assign(FUNDS, {cerf: false, cbpf: true, rhpf: true}); updateTiles(); take();
-      Object.assign(FUNDS, {cerf: true, cbpf: true, rhpf: true});
+      if(FUND_SWITCH){ Object.assign(FUNDS, {cerf: false, cbpf: true, rhpf: true}); updateTiles(); take();
+        Object.assign(FUNDS, {cerf: true, cbpf: true, rhpf: true}); }
     }
   } finally {
     Object.assign(LAYERS, L0); Object.assign(FUNDS, F0); YEAR = Y0; state.iso = I0; applyYear(); updateTiles();
@@ -2903,7 +2950,7 @@ function statusNote(f){ if(!pastY()) return '';
 
 function money(v){ return v==null ? '—' : v>=1e6 ? '$'+(v/1e6).toFixed(v>=1e7?0:1)+'M' : v>=1e3 ? '$'+Math.round(v/1e3)+'k' : '$'+Math.round(v); }
 // a money tile's figure: whole millions, but $3.3M under $10M (a single fund's total, D201) — _tile_money()
-const tileMoney = v => v > 0 && v < 1e7 ? money(v) : '$' + Math.round(v / 1e6) + 'M';
+const tileMoney = v => FUND_SWITCH && v > 0 && v < 1e7 ? money(v) : '$' + Math.round(v / 1e6) + 'M';
 function num(v){ return v==null ? '—' : Math.round(v).toLocaleString('en-US'); }   // one number format in every language
 function esc(s){ return s==null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 const SPLIT = `linear-gradient(135deg,${'#2171b5'} 0 50%,${'#9ecae1'} 50% 100%)`;   // 'being updated': half active, half development
@@ -3229,7 +3276,7 @@ function worldLegend(){
   const fbox = k => `<label><input type='checkbox' ${FUNDS[k]?'checked':''} onchange='setFund("${k}", this.checked)'>${FUND_LABEL[k]} <span class='cnt'>${nFund(k)}</span></label>`;
   const fundctl = `<div class='layerctl fundctl' role='group' aria-label='${esc(tr8('Funds'))}'><div class='lrow'><span class='lhead'>${esc(tr8('Funds'))}</span>`
     + FKEYS.map(fbox).join('') + defInfo('funds') + `</div></div>`;
-  legend.innerHTML = `<div class='layerctl' role='group' aria-label='${esc(tr8('Map layers'))}'>` + row('framework') + st + row('adhoc') + row('retired') + row('tech') + `</div>` + fundctl
+  legend.innerHTML = `<div class='layerctl' role='group' aria-label='${esc(tr8('Map layers'))}'>` + row('framework') + st + row('adhoc') + row('retired') + row('tech') + `</div>` + (FUND_SWITCH ? fundctl : '')
     + `<div class='lsub'><span><span class='dot' style='background:#e3322d'></span>${esc(YEAR != null ? tr8('Activations in {0}', YEAR) : tr8('Activations'))} <span class='cnt'>${nAct}</span></span>`
     + (pastY() ? '' : `<span><span class='dot' style='background:#fff;border:3px solid #e3322d;box-sizing:border-box'></span>${esc(tr8('Activated in the last {0} days', RECENT_DAYS))} <span class='cnt'>${nRec}</span></span>`
       + `<span><span class='dot' style='background:#fff;border:2px solid #f5a300;box-sizing:border-box'></span>${esc(tr8('In monitoring season'))} <span class='cnt'>${nNow}</span></span>`) + `</div>`
@@ -3300,10 +3347,13 @@ function buildNews(){
 // CERF, CBPF and RHPF (D201), then the part not split by fund while all three are; a fund under
 // $50k is not named — funds() in Python. P: {cerf, cbpf, rhpf, all}
 function fundBullets(P){
+  if(!FUND_SWITCH){ const pooled = P.pooled != null ? P.pooled : (P.cbpf || 0) + (P.rhpf || 0);   // the open map: as before D201
+    return [(P.cerf || 0) >= 5e4 && `CERF ${money(P.cerf)}`, pooled >= 5e4 && `${tr8('Country and Regional Funds')} ${money(pooled)}`,
+            (P.all || 0) >= 5e4 && `${tr8('not split by fund')} ${money(P.all)}`].filter(Boolean); }
   return FKEYS.filter(k => FUNDS[k]).map(k => (P[k] || 0) >= 5e4 && `${FUND_LABEL[k]} ${money(P[k])}`)
     .concat([allFunds() && (P.all || 0) >= 5e4 && `${tr8('not split by fund')} ${money(P.all)}`]).filter(Boolean); }
 // the pre-arranged parts of frameworks, summed for fundBullets
-const partsOf = fs => Object.fromEntries(FKEYS.concat(['all']).map(k => [k, fs.reduce((s, f) => s + ((f.pre_parts || {})[k] || 0), 0)]));
+const partsOf = fs => Object.fromEntries(FKEYS.concat(['pooled', 'all']).map(k => [k, fs.reduce((s, f) => s + ((f.pre_parts || {})[k] || 0), 0)]));
 // the fund switch in the tiles' notes: what is counted, and how to see everything
 const switchNote = () => allFunds() ? '' : tr8('Counts the money of {0} only (the fund switch in the map legend); money not split by fund is left out.', fundWords());
 // a framework version that allows N activations a year (tropical cyclones: two storms in a season,
@@ -3454,7 +3504,7 @@ function updateTiles(){
                                              : (nFw === 1 ? tr8('1 framework activation to date') : tr8('{0} framework activations to date', nFw)))
       : yr(...WHAT_WHEN[what]),
       {vhtml: F.n > 0, sub: adSub,
-       bul: F.n ? fundBullets({cerf: F.usdCerf, cbpf: F.usdCbpf, rhpf: F.usdRhpf}) : [],
+       bul: F.n ? fundBullets({cerf: F.usdCerf, cbpf: F.usdCbpf, rhpf: F.usdRhpf, pooled: F.usd - F.usdCerf}) : [],
        note: actNote(F).concat([switchNote(),
          // a past year shows the frameworks as they stood at its end: with the current-frameworks layer
          // off, a framework retired since is not counted here, while the Financing page counts its releases
@@ -3469,7 +3519,7 @@ function updateTiles(){
       !F.nCerf && !F.nPool ? yr('people reached or targeted: no allocation on the layers shown', 'people reached or targeted: no allocation in {0} on the layers shown')
       : F.nTgt || F.nPtgt ? yr('people reached or targeted to date — estimate', 'people reached or targeted with the {0} releases — estimate')
       : F.nRep ? yr('people reached to date — CERF allocations', 'people reached with the {0} releases — CERF allocations')
-      : !F.nCerf ? yr('people reached or targeted to date: no figure recorded for these allocations', 'people reached or targeted with the {0} releases: no figure recorded for these allocations')
+      : FUND_SWITCH && !F.nCerf ? yr('people reached or targeted to date: no figure recorded for these allocations', 'people reached or targeted with the {0} releases: no figure recorded for these allocations')
       : F.nCerf === 1 ? yr('people reached to date: no report yet for the CERF allocation', 'people reached with the {0} releases: no report yet for the CERF allocation')
       : tr8(YEAR != null ? 'people reached with the {1} releases: no report yet for the {0} CERF allocations' : 'people reached to date: no report yet for the {0} CERF allocations', F.nCerf, YEAR),
       {note: reachNote(F).concat([switchNote(), notShown((lab, G) => G.nRep || G.nTgt || G.nPtgt ? `${tr8(lab)} ${est(G)}` : null)])});
@@ -4263,7 +4313,7 @@ function fwRows(){
     // else the layer it is drawn on (retired, non-framework allocation, technical support)
     const st = lay === 'framework' ? f.disp : lay;
     R.push({iso, c, f, v, lay, st, country: tr8(c.name), hazard: tr8(f.hz_label), status: ST_ORDER[st] ?? 9,
-            version: f.current || '', pre: stock ? preOf(f) : null, cerf: P.cerf, cbpf: P.cbpf, rhpf: P.rhpf, all: allFunds() ? P.all : null, pre_v: P.version,
+            version: f.current || '', pre: stock ? preOf(f) : null, cerf: P.cerf, cbpf: P.cbpf, rhpf: P.rhpf, pooled: P.pooled, all: allFunds() ? P.all : null, pre_v: P.version,
             covered: stock ? f.covered : null, n: acts.length, apy: stock ? apyIn(f) : null,
             // the overall return period of the version shown (the latest; a past year: the one at its end)
             rp: v && v.rp != null ? v.rp : null,
@@ -4273,6 +4323,7 @@ function fwRows(){
             released: rows.some(x => x.usd != null) ? rows.reduce((s, x) => s + (x.usd || 0), 0) : null,
             // ... by fund (owner, 2026-10-30), as pre-arranged is: CERF, CBPF, RHPF (D201)
             rel_cerf: relOf('cerf'), rel_cbpf: relOf('cbpf'), rel_rhpf: relOf('rhpf'),
+            rel_pool: rows.some(x => x.usd != null && x.fund !== 'cerf') ? rows.reduce((s, x) => s + (x.fund !== 'cerf' ? x.usd || 0 : 0), 0) : null,
             // the red dots: a row shown as a framework (current or retired) — a pair drawn as a
             // non-framework allocation gets none, though it counts a retired framework's activation
             months: (v && v.months) || [], am: lay === 'framework' || lay === 'retired' ? actMonths(acts) : {}});
@@ -4299,8 +4350,10 @@ function rpTitle(v){
 function buildFwTable(){
   const tab = document.getElementById('fwtab'), cap = document.getElementById('fwtcap'), foot0 = document.getElementById('fwtfoot'); if(!tab) return;
   // a past year has no split columns; an unticked fund has none (D201)
-  if((pastY() && FKEYS.includes(FWT.k)) || (/^(rel_)?(cerf|cbpf|rhpf)$/.test(FWT.k) && !FUNDS[FWT.k.replace('rel_', '')])) Object.assign(FWT, {k: 'country', dir: 1});
+  if((pastY() && ['cerf', 'cbpf', 'rhpf', 'pooled'].includes(FWT.k)) || (/^(rel_)?(cerf|cbpf|rhpf)$/.test(FWT.k) && !FUNDS[FWT.k.replace('rel_', '')])) Object.assign(FWT, {k: 'country', dir: 1});
   const R = fwRows(), past = pastY(), split = !past, preX = fwPreX(R), n = R.length;
+  const subCols = pre => FUND_SWITCH ? FKEYS.filter(k => FUNDS[k]).map(k => [pre + k, tr8('of which {0}', FUND_LABEL[k]), 1, 'sub'])
+    : [[pre + 'cerf', tr8('of which CERF'), 1, 'sub'], [pre ? 'rel_pool' : 'pooled', tr8('of which Country and Regional Funds'), 1, 'sub']];
   const sum = k => R.reduce((s, r) => s + (r[k] || 0), 0);
   const usd = v => v == null ? '—' : `<span title='$${Math.round(v).toLocaleString('en-US')}'>${money(v)}</span>`;
   // the owner's order (2026-10-28): who, status, when monitored, how often it would activate,
@@ -4311,10 +4364,11 @@ function buildFwTable(){
       ['n', YEAR != null ? tr8('Activations in {0}', YEAR) : tr8('Activations to date'), 1],
       ['covered', tr8('People covered'), 1],
       ['pre', past ? tr8('Pre-arranged (OCHA-managed funds) in {0}', YEAR) : tr8('Pre-arranged (OCHA-managed funds) total'), 1]]
-    .concat(split ? FKEYS.filter(k => FUNDS[k]).map(k => [k, tr8('of which {0}', FUND_LABEL[k]), 1, 'sub']) : [])
+    // the funds' columns: the ticked ones (D201); the open map: CERF, Country and Regional Funds, as before
+    .concat(split ? subCols('') : [])
     .concat([['cofin', past ? tr8('Co-financing in {0}', YEAR) : tr8('Co-financing'), 1],
              ['released', YEAR != null ? tr8('Released from OCHA in {0}', YEAR) : tr8('Released from OCHA to date'), 1],
-            ].concat(FKEYS.filter(k => FUNDS[k]).map(k => ['rel_' + k, tr8('of which {0}', FUND_LABEL[k]), 1, 'sub'])));
+            ].concat(subCols('rel_')));
   const on = k => FWT.k === k;
   const head = '<thead><tr>' + cols.map(([k, lab, isNum, cls]) => k
       ? `<th data-k='${k}' aria-sort='${on(k) ? (FWT.dir > 0 ? 'ascending' : 'descending') : 'none'}' class='${isNum ? 'num' : ''} ${cls || ''}'><button type='button' class='sortbtn'>${esc(lab)}<span class='ar' aria-hidden='true'>${on(k) ? (FWT.dir > 0 ? '▲' : '▼') : ''}</span></button></th>`
@@ -4330,20 +4384,21 @@ function buildFwTable(){
         : r.lay === 'framework' ? badge(f.disp) + (past ? DRV(statusNote(f).slice(3)) : actChip(f)) : badge(r.st),
       rp: r.rp == null ? '—' : `<span title='${esc(rpTitle(r.v))}'>${esc(rpText(r.rp))}</span>`,
       n: r.n || '—', covered: num(r.covered),
-      pre: usd(r.pre) + mk + drvPre + notes, cerf: usd(r.cerf) + (r.cerf != null ? mk : ''), cbpf: usd(r.cbpf), rhpf: usd(r.rhpf),
-      cofin: usd(r.cofin), released: usd(r.released), rel_cerf: usd(r.rel_cerf), rel_cbpf: usd(r.rel_cbpf), rel_rhpf: usd(r.rel_rhpf)};
+      pre: usd(r.pre) + mk + drvPre + notes, cerf: usd(r.cerf) + (r.cerf != null ? mk : ''), cbpf: usd(r.cbpf), rhpf: usd(r.rhpf), pooled: usd(r.pooled) + (r.pooled != null ? mk : ''),
+      cofin: usd(r.cofin), released: usd(r.released), rel_cerf: usd(r.rel_cerf), rel_cbpf: usd(r.rel_cbpf), rel_rhpf: usd(r.rel_rhpf), rel_pool: usd(r.rel_pool)};
     return '<tr>' + cols.map(([k, , isNum]) => k == null ? `<td class='mstrip'>${r.months.length || Object.keys(r.am).length ? monthStrip(r.months, r.am) : '—'}</td>`
       : `<td class='${isNum ? 'num' : k === 'status' ? 'nw' : ''}'>${cell[k]}</td>`).join('') + '</tr>'; }).join('') + '</tbody>';
   // the totals: every money and count column; a return period has none. The label spans the
   // columns before the first figure (computed: the year view drops the split columns)
   const lead = cols.findIndex(c => c[0] === 'rp'), anyApy = R.some(r => r.apy);
   const tot = {n: sum('n') || '—', covered: num(R.some(r => r.covered != null) ? sum('covered') : null),
-               pre: usd(sum('pre') + preX) + (anyApy ? "<span class='tmark'>†</span>" : ''), cerf: usd(sum('cerf')), cbpf: usd(sum('cbpf')), rhpf: usd(sum('rhpf')),
+               pre: usd(sum('pre') + preX) + (anyApy ? "<span class='tmark'>†</span>" : ''), cerf: usd(sum('cerf')), cbpf: usd(sum('cbpf')), rhpf: usd(sum('rhpf')), pooled: usd(sum('pooled')),
                cofin: usd(R.some(r => r.cofin != null) ? sum('cofin') : null),
                released: usd(R.some(r => r.released != null) ? sum('released') : null),
                rel_cerf: usd(R.some(r => r.rel_cerf != null) ? sum('rel_cerf') : null),
                rel_cbpf: usd(R.some(r => r.rel_cbpf != null) ? sum('rel_cbpf') : null),
-               rel_rhpf: usd(R.some(r => r.rel_rhpf != null) ? sum('rel_rhpf') : null)};
+               rel_rhpf: usd(R.some(r => r.rel_rhpf != null) ? sum('rel_rhpf') : null),
+               rel_pool: usd(R.some(r => r.rel_pool != null) ? sum('rel_pool') : null)};
   const iPre = cols.findIndex(c => c[0] === 'pre');
   const xrow = preX ? `<tr class='x'><td colspan='${iPre}'>${esc(tr8('Country and Regional Fund allocations in {0} not tied to one framework', YEAR))}</td>`
       + `<td class='num'>${usd(preX)}</td><td colspan='${cols.length - iPre - 1}'></td></tr>` : '';
@@ -4382,8 +4437,10 @@ function fwCSV(){
   const cols = ['country', 'country_iso3', 'hazard', 'status', 'monitoring_months', 'return_period_years', 'return_period_basis',
                 `activations_${yr}`, 'people_covered',
                 pastY() ? `prearranged_ocha_funds_${YEAR}_usd` : 'prearranged_ocha_funds_now_usd', 'prearranged_cerf_usd',
-                'prearranged_cbpf_usd', 'prearranged_rhpf_usd', pastY() ? `cofinancing_${YEAR}_usd` : 'cofinancing_usd',
-                `released_from_ocha_${yr}_usd`, `released_cerf_${yr}_usd`, `released_cbpf_${yr}_usd`, `released_rhpf_${yr}_usd`,
+                ...(FUND_SWITCH ? ['prearranged_cbpf_usd', 'prearranged_rhpf_usd'] : ['prearranged_country_regional_funds_usd']),
+                pastY() ? `cofinancing_${YEAR}_usd` : 'cofinancing_usd',
+                `released_from_ocha_${yr}_usd`, `released_cerf_${yr}_usd`,
+                ...(FUND_SWITCH ? [`released_cbpf_${yr}_usd`, `released_rhpf_${yr}_usd`] : [`released_country_regional_funds_${yr}_usd`]),
                 'activations_per_year', 'prearranged_from_version', 'version',
                 'framework_document', 'framework_page'];
   const RPB = {backtest: 'historical simulation', stated: 'stated in the framework'};
@@ -4391,8 +4448,9 @@ function fwCSV(){
   const lines = [cols.join(',')].concat(R.map(r => [r.c.name, r.iso, r.f.hz_label, r.lay === 'framework' ? r.f.disp_label : ST_EN[r.lay],
       r.months.map(m => MON[m - 1]).join(' '), r.rp == null ? null : +r.rp.toFixed(2), r.rp == null ? null : RPB[r.v.rp_src],
       // the fund switch (D201): an unticked fund's columns are empty, as the table leaves them out
-      r.n, r0(r.covered), r0(r.pre), ...['cerf', 'cbpf', 'rhpf'].map(k => split && FUNDS[k] ? r0(r[k]) : null), r0(r.cofin), r0(r.released),
-      ...['cerf', 'cbpf', 'rhpf'].map(k => FUNDS[k] ? r0(r['rel_' + k]) : null),
+      r.n, r0(r.covered), r0(r.pre), ...(FUND_SWITCH ? ['cerf', 'cbpf', 'rhpf'] : ['cerf', 'pooled']).map(k => split && FUNDS[k] !== false ? r0(r[k]) : null),
+      r0(r.cofin), r0(r.released),
+      ...(FUND_SWITCH ? ['cerf', 'cbpf', 'rhpf'] : ['cerf', 'pool']).map(k => FUNDS[k] !== false ? r0(r['rel_' + k]) : null),
       r.apy || 1, split ? r.pre_v : null, r.f.current, r.v && r.v.doc_url,
       r.f.page ? new URL(r.f.page, location.href).href : null].map(q).join(',')));
   const a = document.createElement('a');

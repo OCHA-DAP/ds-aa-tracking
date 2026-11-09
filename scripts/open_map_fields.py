@@ -62,9 +62,7 @@ MAP_FIELDS = {
                    "`prearranged_usd` in aa-frameworks; two activations a year: the CERF envelope counted "
                    "twice)",
         "pre_parts": "`pre_now` split: {cerf, pooled (Country and Regional Funds), version (the version "
-                     "it is the envelope of), apy (activations a year counted)}; `pooled` again as cbpf "
-                     "(country-based pooled funds) + rhpf (regional humanitarian pooled funds, their "
-                     "country windows included), for the map's fund switch — never add them to `pooled`",
+                     "it is the envelope of), apy (activations a year counted)}",
         "apy": "activations a year counted in `pre_now`, where more than one",
         "prearranged": "the registry's CERF figure of the in-force endorsed version: NOT the headline "
                        "figure, which is `pre_now`",
@@ -83,8 +81,7 @@ MAP_FIELDS = {
         "cov": "people covered by date, [[date, people]] (a figure from a framework document that is not "
                "published is left out)",
         "pre": "pre-arranged money per past year, {year: [usd, derived (1: carried from the version in "
-               "force rather than reported for the year), activations a year counted, {cerf, cbpf, rhpf, "
-               "all (no fund named)}: usd by the map's fund switch]}",
+               "force rather than reported for the year), activations a year counted]}",
         "retired": "the pair counts as retired",
         "ret_on": "from when, derived (no retirement date is recorded): the day after its last version's "
                   "validity ended, else the first status report saying dormant or retired",
@@ -192,9 +189,6 @@ MAP_FIELDS = {
         "code": "the fund's allocation code",
         "fk": "[kind, region]: cerf, country (a country-based pooled fund), regional (a regional fund's "
               "envelope, with its region) or unrecorded",
-        "fs": "the map's fund switch box the row counts under: cerf, cbpf (a country-based pooled fund) "
-              "or rhpf (a regional humanitarian pooled fund; a fund not recorded: the country's one "
-              "registered fund)",
         "usd": "released, net of any refund: what the tiles add up",
         "refund": "money sent back after the activation stopped",
         "prov": "entered before OCHA's grant management system recorded the allocation (an estimate)",
@@ -213,14 +207,11 @@ TILE_FIELDS = {
     "n_active": "of them active", "n_upd": "being updated", "n_dev": "in development",
     "pre": "pre-arranged now, all funds", "pre_cerf": "its CERF part",
     "pre_pooled": "its Country and Regional Funds part", "pre_all": "its part not split by fund",
-    "pre_cbpf": "of the Country and Regional Funds part, the country-based pooled funds'",
-    "pre_rhpf": "of the Country and Regional Funds part, the regional humanitarian pooled funds'",
     "apy": "[activations a year, country, hazard, hazard in words] of the frameworks counting more than one",
     "cofin": "co-financing pre-arranged now", "n_cofin": "frameworks with a co-financing figure",
     "covered": "people covered now", "n_cov": "frameworks with a figure",
     "n_act": "framework activations this year", "released": "money they released, net of refunds",
-    "released_cerf": "its CERF part", "released_cbpf": "its country-based pooled funds' part",
-    "released_rhpf": "its regional humanitarian pooled funds' part", "refund": "money returned after activations stopped",
+    "released_cerf": "its CERF part", "refund": "money returned after activations stopped",
     "prov": "money estimated, not yet in OCHA's grant management system",
     "n_nousd": "activations with no amount recorded",
     "reached": "people reached, CERF's reports", "n_rep": "CERF allocations with a report",
