@@ -31,7 +31,8 @@ MAP_FIELDS = {
     },
     "fw": {
         "hazard": "drought, flood, storm, cholera, plague or food_insecurity for a framework; other "
-                  "hazards (locusts, for one) for a pair with non-framework allocations only",
+                  "hazards (locusts, for one) for a pair with non-framework allocations only; general for "
+                  "technical support not tied to one hazard (see `general`)",
         "hz_label": "the hazard in words",
         "status": "the operational status the team reports (early_conversations, advanced_conversations, "
                   "under_development, active, activated_implementing, retired, ...); not the map's status",
@@ -45,6 +46,9 @@ MAP_FIELDS = {
                   "(non-framework allocations), tech (technical support). The headline figures count "
                   "pairs on `framework` (= `map_layers` in aa-frameworks)",
         "tech": "OCHA supported the framework technically, with no funding",
+        "general": "true for technical support for anticipatory action in general, not for one hazard "
+                   "(hazard `general`, shown as 'No specific hazard'): technical support only, never a "
+                   "framework version or an allocation",
         "ring": "`now` when an active framework is monitored this month (the map rings it)",
         "latest": "the most recent version, of any status (= `latest_version`)",
         "current": "the version the map and the country panel open on (the most recent)",

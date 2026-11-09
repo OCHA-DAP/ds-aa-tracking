@@ -1024,7 +1024,9 @@ def _vocabulary(on):
     return (
         "- `country_iso3`: ISO 3166-1 alpha-3. `hazard`: drought, flood, storm, cholera, plague, "
         "food_insecurity for frameworks; non-framework allocations in aa-activations also carry other "
-        "hazards (locusts, for one) and countries without a framework.\n"
+        "hazards (locusts, for one) and countries without a framework; `general` is technical support "
+        "for anticipatory action not tied to one hazard (shown as 'No specific hazard': technical "
+        "support only, never a framework version or an allocation).\n"
         "- `lifecycle` (aa-frameworks), the one rule every page counts by: `active` the latest "
         "version is endorsed, within its validity and not fully triggered; `updating` (being "
         "updated) an endorsed framework whose latest version is in development, or whose latest "

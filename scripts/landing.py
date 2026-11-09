@@ -109,10 +109,10 @@ HAZ_LABEL = {"storm": "Trop. cyclones", "flood": "Floods", "drought": "Drought",
              "locusts": "Locusts", "general": "No specific hazard"}
 # technical support not tied to one hazard (owner, 2026-11-09, D202): its pair takes the hazard
 # GENERAL and holds technical support only, never a framework version or an allocation (the build
-# warns when one does). The development map shows these pairs; the open map leaves them out until
-# the owner says so (GENERAL_ON_OPEN), as the fund switch waited (D201).
+# warns when one does). GENERAL_ON_OPEN: the open map shows them too (owner, 2026-11-09: "get it on
+# prod"); False leaves them on the development map only, as the fund switch first was (D201).
 GENERAL = "general"
-GENERAL_ON_OPEN = False
+GENERAL_ON_OPEN = True
 # what the open site leaves out for it (open_map_countries fills it; build_site.write_site reads
 # it): the pages of these pairs get no "Coming soon" page at the root, and a country left with no
 # pin on the open map keeps its geometry file on the development site only
