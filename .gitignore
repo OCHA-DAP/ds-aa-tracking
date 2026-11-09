@@ -11,3 +11,6 @@ site_encrypted/
 site_media/
 .extract_token
 _site/
+
+# the publish workflow's build folders (scripts/publish.sh STAGE, assemble_site.py, the prod checkout)
+/_*/

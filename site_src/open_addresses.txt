@@ -1,0 +1,41 @@
+# Addresses on the open site (https://ocha-dap.github.io/ds-aa-tracking/<address>) that people
+# hold links to: the publish run stops before deploying if one is missing (scripts/assemble_site.py,
+# D203). The open site is checked against this list as it stands in the commit that built it
+# (prod), and every build of main and every pull request against main's: a page or file leaves the
+# list only on purpose, with the owner's word, and better with a page left at its address pointing
+# to where it went. A new address may be added any time, with the page that serves it.
+# Framework pages (fw-*.html) and the map's geometry (adm-*.json) follow the data, so they are not
+# listed.
+
+# the open pages
+index.html
+definitions.html
+accessibility.html
+privacy.html
+# "Coming soon" at the root until each page opens
+pillar-model.html
+pillar-history.html
+pillar-plan.html
+pillar-learning.html
+dash-funding.html
+media.html
+climate-adaptation.html
+climate-coding-accuracy.html
+# the open layer, read by programs (llms.txt describes every file)
+llms.txt
+robots.txt
+sitemap.xml
+aa-map.md
+aa-map-data.json
+aa-frameworks.json
+aa-frameworks.csv
+aa-versions.json
+aa-versions.csv
+aa-prearranged-funding.json
+aa-prearranged-funding.csv
+aa-cofinancing.json
+aa-cofinancing.csv
+aa-activations.json
+aa-activations.csv
+aa-funds.json
+aa-funds.csv
