@@ -6,7 +6,7 @@
 name: Check
 on:
   pull_request:
-    paths: ["scripts/**", "src/**", "site_src/**", "i18n/**", ".github/workflows/**"]
+    paths: ["scripts/**", "src/**", "site_src/**", "i18n/**", ".github/workflows/**", "pyproject.toml", "uv.lock"]
 
 # a new push to the pull request replaces its running check
 concurrency:

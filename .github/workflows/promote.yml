@@ -29,7 +29,7 @@ permissions: {}
 jobs:
   promote:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 75
     permissions:
       contents: write    # move the prod branch
       actions: write     # start publish.yml
@@ -75,5 +75,34 @@ jobs:
             fi
           } | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Publish
-        # main's workflow builds the open site from prod as it now stands
-        run: gh workflow run publish.yml --repo "$R" --ref main
+        # main's workflow builds the open site from prod as it now stands; this step waits for that
+        # run, so a promotion whose publish fails shows as failed (the open site stays as it was)
+        timeout-minutes: 65
+        run: |
+          set -euo pipefail
+          # a publish still waiting to start reads prod when it starts: wait for it rather than start
+          # another, which would replace it (and a waiting "Publish changes" would lose its fresh copy)
+          id=$(gh run list -R "$R" --workflow publish.yml --branch main -L 10 --json databaseId,status --jq \
+               '[.[] | select(.status == "queued" or .status == "waiting" or .status == "pending" or .status == "requested")][0].databaseId // empty')
+          if [ -n "$id" ]; then
+            echo "A publish was already waiting to start (run $id): it builds the open site from the new prod."
+          else
+            since=$(date -u -d '-15 seconds' +%Y-%m-%dT%H:%M:%SZ)
+            gh workflow run publish.yml --repo "$R" --ref main
+            for _ in $(seq 30); do
+              sleep 4
+              id=$(gh run list -R "$R" --workflow publish.yml --event workflow_dispatch --branch main -L 5 \
+                   --json databaseId,createdAt --jq "[.[] | select(.createdAt >= \"$since\")][-1].databaseId // empty")
+              [ -n "$id" ] && break
+            done
+            [ -n "$id" ] || { echo "::error::the publish run did not appear; start one: gh workflow run publish.yml"; exit 1; }
+          fi
+          url="https://github.com/$R/actions/runs/$id"
+          echo "Publish: $url" | tee -a "$GITHUB_STEP_SUMMARY"
+          gh run watch "$id" -R "$R" --interval 30 > /dev/null || true
+          c=$(gh run view "$id" -R "$R" --json conclusion --jq .conclusion)
+          case "$c" in
+            success)   echo "**Live:** the open site is built from prod." | tee -a "$GITHUB_STEP_SUMMARY" ;;
+            cancelled) echo "::notice::run $id was replaced by a newer publish, which builds from prod too: $url" ;;
+            *)         echo "::error::the publish ended '$c': the open site still shows the code before. $url"; exit 1 ;;
+          esac

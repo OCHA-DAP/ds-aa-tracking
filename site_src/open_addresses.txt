@@ -1,7 +1,9 @@
 # Addresses on the open site (https://ocha-dap.github.io/ds-aa-tracking/<address>) that people
 # hold links to: the publish run stops before deploying if one is missing (scripts/assemble_site.py,
-# D203). A page or file leaves this list only on purpose, with the owner's word, and better with
-# a page left at its address pointing to where it went. A new address may be added any time.
+# D203). The open site is checked against this list as it stands in the commit that built it
+# (prod), and every build of main and every pull request against main's: a page or file leaves the
+# list only on purpose, with the owner's word, and better with a page left at its address pointing
+# to where it went. A new address may be added any time, with the page that serves it.
 # Framework pages (fw-*.html) and the map's geometry (adm-*.json) follow the data, so they are not
 # listed.
 

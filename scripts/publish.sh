@@ -94,6 +94,9 @@ check_stage() (
 )
 if [ -n "${CHECK_ONLY:-}" ]; then
   [ -d "$CHECK_ONLY" ] || { echo "FATAL: CHECK_ONLY: no folder $CHECK_ONLY" >&2; exit 1; }
+  # the open site's pages are judged by the list of the code that built them (the prod branch's
+  # publish.sh, D203), which may differ from this one's while main waits to be put live
+  if [ -n "${OPEN_PAGES_OVERRIDE:-}" ]; then OPEN_PAGES=" $(echo $OPEN_PAGES_OVERRIDE) "; fi
   check_stage "$CHECK_ONLY"; exit
 fi
 [ -n "$ADMIN_PW" ] || { echo "FATAL: ADMIN_PASSWORD is not set (the admin site has no default password)" >&2; exit 1; }
