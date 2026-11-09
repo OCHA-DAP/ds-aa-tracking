@@ -157,9 +157,11 @@ done
 for a in pdf.min.js pdf.worker.min.js; do          # the data-entry page only: admin site
   git show "HEAD:site_src/$a" > "$STAGE/$ADMIN/$a"
 done
-# per-country admin-boundary geometry for the map, open and dev (public CODAB data, not encrypted)
+# per-country admin-boundary geometry for the map, open and dev (public CODAB data, not encrypted),
+# each from its own site's folder: the open site leaves out the countries its map leaves out (D202),
+# the development map keeps them all (build_site.write_site)
 cp site_build/adm-*.json "$STAGE"/
-cp site_build/adm-*.json "$STAGE/$DEV"/
+cp site_build/$DEV/adm-*.json "$STAGE/$DEV"/
 # the open layer (unencrypted by design; the build already checked it for the proxy token)
 for f in $(open_files site_build); do cp "site_build/$f" "$STAGE/$f"; done
 touch "$STAGE/.nojekyll"
