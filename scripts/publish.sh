@@ -4,6 +4,9 @@
 # and deploys it (D195): the published site never enters git, every deploy is the whole site
 # and atomic (a failed run leaves the live site as it was). Run locally, the script stops
 # after the checks; to put a build online, run the workflow: gh workflow run publish.yml.
+# Since D203 the workflow runs this twice, on main (dev/ and admin/) and on the `prod` branch (the
+# open site at the root), puts the two together (scripts/assemble_site.py) and runs the checks
+# below once more on the whole: CHECK_ONLY=<folder> checks a staged folder and stops.
 #   open site    top-level *.html  NO password: the map, Definitions and Accessibility
 #                                  (OPEN_PAGES), and a "Coming soon" page in place of every
 #                                  other public page (owner, 2026-11-01)

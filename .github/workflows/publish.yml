@@ -152,7 +152,8 @@ jobs:
           if [ "${{ github.event_name }}" = pull_request ]; then
             echo "open_from=self" >> "$GITHUB_OUTPUT"; exit 0      # a check: the branch's own open site
           fi
-          prod=$(git ls-remote --exit-code origin refs/heads/prod | cut -f1) \
+          prod=$(git ls-remote --exit-code origin refs/heads/prod | cut -f1 || true)    # (a step has no pipefail)
+          [[ "$prod" =~ ^[0-9a-f]{40}$ ]] \
             || { echo "::error::no prod branch: the open site is built from it (D203; promote.yml creates it)"; exit 1; }
           echo "prod_sha=$prod" >> "$GITHUB_OUTPUT"
           if [ "$prod" = "$GITHUB_SHA" ]; then echo "open_from=self"; else echo "open_from=prod"; fi >> "$GITHUB_OUTPUT"
