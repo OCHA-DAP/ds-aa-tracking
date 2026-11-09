@@ -75,6 +75,19 @@ are kept forever (the year-end official state, for the map's time view).
   the button), and for the workflow the repo variables
   `DATABRICKS_HOST` + `DATABRICKS_CLIENT_ID` and secret `DATABRICKS_CLIENT_SECRET` of the
   service principal `ds-aa-tracking-publish`, which `databricks.yml` lets run the job.
+- **open site from `prod`, development site from `main`** (D203, 2026-11-09): a merge to `main`
+  is on `dev/` (and `admin/`) a few minutes later; the open site at the root is built from the
+  `prod` branch, the commit of `main` last put live. **Put it live** with
+  `gh workflow run promote.yml` (or Actions → "Promote to the open site" → Run workflow): it
+  moves `prod` forward to `main`'s tip (`-f ref=<sha>` for an earlier commit; `-f rollback=true`
+  to move back) and publishes. Every publish builds both from the same snapshot
+  (`scripts/assemble_site.py` puts them together, then `publish.sh`'s rules run on the whole with
+  `CHECK_ONLY`), so the open site's data is as fresh as dev's; only its code waits. The run's
+  summary lists the pull requests not on the open site yet. Keep in step: database changes stay
+  additions, the proxy stays backward compatible, and data that needs new code to be drawn right
+  is uploaded only after that code is promoted. Every pull request runs the same build and checks
+  as its check (`.github/workflows/check.yml`), never deployed; `site_src/open_addresses.txt`
+  lists open-site addresses people hold links to, and the publish stops if one is missing.
 - **open site and development site** (D169, 2026-11-01): the site's address
   (https://ocha-dap.github.io/ds-aa-tracking/) is the **open site**, no password: the map,
   the Definitions page and the accessibility statement (`build_site.OPEN_PAGES`, the map links
@@ -264,13 +277,15 @@ DB access via `ocha-stratus` env vars; `PGSSLMODE=require` is set automatically.
 uv run python scripts/ensure_schema.py   # idempotent: create missing tables, additive migrations, views
 uv run python scripts/build_site.py      # needs graphviz (`brew install graphviz`) for the ERD
 bash scripts/publish.sh                  # build → encrypt → stage in _site/ → check; needs ADMIN_PASSWORD (SKIP_BUILD=1 reuses the build); never deploys
-gh workflow run publish.yml              # put the site online: the workflow builds, uploads _site/ as the Pages artifact and deploys it
+gh workflow run publish.yml              # rebuild and deploy: dev/ + admin/ from main, the open site from prod (D203)
+gh workflow run promote.yml              # put main live on the open site: moves prod to main's tip, then publishes
 ```
 
 The site is deployed as a GitHub Pages artifact (Pages in workflow mode, D195): the published
 pages are never committed, so the repository holds code only. Only `main` may deploy (the
-github-pages environment's branch policy). To go back to an earlier site: a code change is
-reverted on `main` (the merge publishes it); earlier data is published with that day's snapshot,
+github-pages environment's branch policy). To go back to an earlier site: the open site's code
+moves back with `gh workflow run promote.yml -f ref=<sha> -f rollback=true` (the promote run's
+summary names the commit), the development site's by reverting on `main`; earlier data is published with that day's snapshot,
 `gh workflow run publish.yml -f snapshot=YYYY-MM-DD` (dated snapshots are kept 30 days). To publish
 again, start a new run rather than re-running an old one (its site package is kept one day).
 

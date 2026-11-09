@@ -1,0 +1,28 @@
+# A pull request's check (D203): the publish workflow's build and every check it runs (the figure
+# check, the open layer, translations, the published site's rules and the addresses people hold
+# links to), on the branch, from the latest snapshot. Nothing is deployed: publish.yml's deploy job
+# runs on main only. A run of its own here, not under publish.yml, so the admin page's
+# "Publish changes" status line (which reads publish.yml's runs) never shows a check.
+name: Check
+on:
+  pull_request:
+    paths: ["scripts/**", "src/**", "site_src/**", "i18n/**", ".github/workflows/**", "pyproject.toml", "uv.lock"]
+
+# a new push to the pull request replaces its running check
+concurrency:
+  group: pr-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/publish.yml
+    secrets: inherit
+    # publish.yml's deploy job asks for these; it is skipped on a pull request (and the github-pages
+    # environment lets only main deploy), but a called workflow may not ask for more than it is given
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
