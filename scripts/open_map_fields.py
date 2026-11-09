@@ -41,7 +41,7 @@ MAP_FIELDS = {
                 "updated) or development for a current framework; retired; pipeline (conversations only, "
                 "drawn for technical support); adhoc (non-framework allocations only). Equals `lifecycle` "
                 "in aa-frameworks where the pair has a framework",
-        "disp_label": "`disp` in words",
+        "disp_label": "`disp` in words; for a `general` pair the page shows technical support instead",
         "layers": "the map layers the pair is drawn on: framework (current frameworks), retired, adhoc "
                   "(non-framework allocations), tech (technical support). The headline figures count "
                   "pairs on `framework` (= `map_layers` in aa-frameworks)",

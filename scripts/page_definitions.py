@@ -48,7 +48,7 @@ GLOSSARY = [
         ("Technical support",
          "Countries where OCHA supported the framework technically, without a funding commitment, "
          "whatever its status."),
-        ("No specific hazard",   # DEV_ONLY_TERMS until the open map shows it (D202)
+        ("No specific hazard",   # in DEV_ONLY_TERMS: left off the open site while landing.GENERAL_ON_OPEN is off (D202)
          "Technical support for anticipatory action in general, not for one hazard. No framework and "
          "no allocation stand behind it; the Map draws its pin with an open ring."),
     ]),
