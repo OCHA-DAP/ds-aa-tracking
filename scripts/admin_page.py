@@ -49,7 +49,8 @@ GROUPS = [
     ("Data entry (entered values win)", "ds-aa-tracking", [
         "entered_version", "entered_window", "entered_window_funding", "entry_audit"]),
     ("Backtests (owned here since 2026-10-05; edited as errors are found — see v_trk_backtest_check)",
-     "ds-aa-tracking", ["window", "simulated_activation", "backtest_event", "version_performance_reported"]),
+     "ds-aa-tracking", ["window", "window_trigger", "simulated_activation", "trigger_event", "backtest_event",
+                        "version_performance_reported"]),
     ("Site usage (the open site's daily page counts, written only by the proxy's POST /hit; D197)",
      "ds-aa-tracking", ["page_count"]),
     ("Record before 2026-10-05 (read-only, frozen)", "ds-aa-tracking", [
