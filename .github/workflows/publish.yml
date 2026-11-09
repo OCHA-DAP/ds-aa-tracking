@@ -157,7 +157,8 @@ jobs:
           [[ "$prod" =~ ^[0-9a-f]{40}$ ]] \
             || { echo "::error::no prod branch: the open site is built from it (D203; promote.yml creates it)"; exit 1; }
           # prod only ever holds a commit of main (promote.yml): never build the open site from anything else
-          rel=$(gh api "repos/$GITHUB_REPOSITORY/compare/$prod...$GITHUB_SHA" --jq .status) || rel="unknown"
+          cmp() { gh api "repos/$GITHUB_REPOSITORY/compare/$prod...$GITHUB_SHA" --jq .status; }
+          rel=$(cmp) || { sleep 10; rel=$(cmp) || rel="unknown (GitHub's API did not answer)"; }
           case "$rel" in identical|ahead) ;; *)
             echo "::error::prod ($prod) is not a commit of this build's history ($rel): move it with promote.yml"; exit 1 ;;
           esac

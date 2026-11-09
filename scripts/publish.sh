@@ -46,7 +46,8 @@ ADMIN_PW="${ADMIN_PASSWORD:-}"
 ADMIN=admin
 DEV=dev
 # the real pages served without a password: the same list as build_site.OPEN_PAGES (a page
-# must be in both to go out plain)
+# must be in both to go out plain). publish.yml reads this line from the prod branch's copy (D203):
+# keep it on one line, OPEN_PAGES="<names>" with nothing after the closing quote
 OPEN_PAGES=" index.html definitions.html accessibility.html privacy.html "
 # the published site's rules, checked on a staged folder ($1): run on every build's own stage, and
 # with CHECK_ONLY=<folder> alone on the site the publish workflow assembles from two builds (D203)
