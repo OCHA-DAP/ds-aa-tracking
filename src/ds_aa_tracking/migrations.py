@@ -40,7 +40,11 @@ def collapse_statuses(conn):
     wins = conn.execute(sa.text("""
         SELECT w.country_iso3, w.hazard, w.version, w.window_name
         FROM (SELECT country_iso3, hazard, version, window_name FROM aa.window
-              UNION SELECT country_iso3, hazard, version, window_name FROM aa.entered_window) w
+              -- an entered window name, only for a version with no window rows yet (an entered
+              -- label beside a version's own windows is not another window: D207)
+              UNION SELECT e.country_iso3, e.hazard, e.version, e.window_name FROM aa.entered_window e
+              WHERE NOT EXISTS (SELECT 1 FROM aa.window x WHERE (x.country_iso3, x.hazard, x.version)
+                                = (e.country_iso3, e.hazard, e.version))) w
         LEFT JOIN aa.window_status s USING (country_iso3, hazard, version, window_name)
         WHERE s.window_name IS NULL""")).fetchall()
     if not wins:

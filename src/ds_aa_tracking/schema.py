@@ -1005,7 +1005,8 @@ ADDITIVE_MIGRATIONS = [
     "ALTER TABLE IF EXISTS aa.framework_version ADD COLUMN IF NOT EXISTS cerf_version_id text "
     "CHECK (cerf_version_id ~ '^[a-z]{3}_[a-z]+_v[0-9]+$')",
     """DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'framework_version_cerf_version_id_key') THEN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'framework_version_cerf_version_id_key'
+                       AND conrelid = 'aa.framework_version'::regclass) THEN
             ALTER TABLE aa.framework_version ADD CONSTRAINT framework_version_cerf_version_id_key UNIQUE (cerf_version_id);
         END IF;
     END $$""",
@@ -1018,12 +1019,14 @@ ADDITIVE_MIGRATIONS = [
     "ALTER TABLE IF EXISTS aa.window ADD COLUMN IF NOT EXISTS monitor_months smallint[] "
     "CHECK (monitor_months <@ ARRAY[1,2,3,4,5,6,7,8,9,10,11,12]::smallint[])",
     """DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'window_code_key') THEN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'window_code_key'
+                       AND conrelid = 'aa.window'::regclass) THEN
             ALTER TABLE aa.window ADD CONSTRAINT window_code_key UNIQUE (country_iso3, hazard, version, window_code);
         END IF;
     END $$""",
     """DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'window_cannot_trigger_if_fk') THEN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'window_cannot_trigger_if_fk'
+                       AND conrelid = 'aa.window'::regclass) THEN
             ALTER TABLE aa.window ADD CONSTRAINT window_cannot_trigger_if_fk FOREIGN KEY (country_iso3, hazard, version, cannot_trigger_if)
                 REFERENCES aa.window (country_iso3, hazard, version, window_code) ON UPDATE CASCADE
                 DEFERRABLE INITIALLY DEFERRED NOT VALID;
@@ -1031,7 +1034,8 @@ ADDITIVE_MIGRATIONS = [
     END $$""",
     "ALTER TABLE IF EXISTS aa.window_funding ADD COLUMN IF NOT EXISTS window_code text",
     """DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'window_funding_window_fk') THEN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'window_funding_window_fk'
+                       AND conrelid = 'aa.window_funding'::regclass) THEN
             ALTER TABLE aa.window_funding ADD CONSTRAINT window_funding_window_fk FOREIGN KEY (country_iso3, hazard, version, window_code)
                 REFERENCES aa.window (country_iso3, hazard, version, window_code) ON UPDATE CASCADE
                 DEFERRABLE INITIALLY DEFERRED NOT VALID;
@@ -1039,7 +1043,8 @@ ADDITIVE_MIGRATIONS = [
     END $$""",
     "ALTER TABLE IF EXISTS aa.simulated_activation ADD COLUMN IF NOT EXISTS window_code text",
     """DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'simulated_activation_window_fk') THEN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'simulated_activation_window_fk'
+                       AND conrelid = 'aa.simulated_activation'::regclass) THEN
             ALTER TABLE aa.simulated_activation ADD CONSTRAINT simulated_activation_window_fk FOREIGN KEY (country_iso3, hazard, version, window_code)
                 REFERENCES aa.window (country_iso3, hazard, version, window_code) ON UPDATE CASCADE
                 DEFERRABLE INITIALLY DEFERRED NOT VALID;
@@ -1047,7 +1052,8 @@ ADDITIVE_MIGRATIONS = [
     END $$""",
     "ALTER TABLE IF EXISTS aa.backtest_event ADD COLUMN IF NOT EXISTS window_code text",
     """DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'backtest_event_window_fk') THEN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'backtest_event_window_fk'
+                       AND conrelid = 'aa.backtest_event'::regclass) THEN
             ALTER TABLE aa.backtest_event ADD CONSTRAINT backtest_event_window_fk FOREIGN KEY (country_iso3, hazard, version, window_code)
                 REFERENCES aa.window (country_iso3, hazard, version, window_code) ON UPDATE CASCADE
                 DEFERRABLE INITIALLY DEFERRED NOT VALID;
@@ -1055,7 +1061,8 @@ ADDITIVE_MIGRATIONS = [
     END $$""",
     "ALTER TABLE IF EXISTS aa.window_activation ADD COLUMN IF NOT EXISTS window_code text",
     """DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'window_activation_window_fk') THEN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'window_activation_window_fk'
+                       AND conrelid = 'aa.window_activation'::regclass) THEN
             ALTER TABLE aa.window_activation ADD CONSTRAINT window_activation_window_fk FOREIGN KEY (country_iso3, hazard, version, window_code)
                 REFERENCES aa.window (country_iso3, hazard, version, window_code) ON UPDATE CASCADE
                 DEFERRABLE INITIALLY DEFERRED NOT VALID;
@@ -1063,7 +1070,8 @@ ADDITIVE_MIGRATIONS = [
     END $$""",
     "ALTER TABLE IF EXISTS aa.window_status ADD COLUMN IF NOT EXISTS window_code text",
     """DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'window_status_window_fk') THEN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'window_status_window_fk'
+                       AND conrelid = 'aa.window_status'::regclass) THEN
             ALTER TABLE aa.window_status ADD CONSTRAINT window_status_window_fk FOREIGN KEY (country_iso3, hazard, version, window_code)
                 REFERENCES aa.window (country_iso3, hazard, version, window_code) ON UPDATE CASCADE
                 DEFERRABLE INITIALLY DEFERRED NOT VALID;
@@ -1071,37 +1079,35 @@ ADDITIVE_MIGRATIONS = [
     END $$""",
     # D208: the trigger tables hang off the window by code, events off their trigger
     """DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'window_trigger_window_fk') THEN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'window_trigger_window_fk'
+                       AND conrelid = 'aa.window_trigger'::regclass) THEN
             ALTER TABLE aa.window_trigger ADD CONSTRAINT window_trigger_window_fk FOREIGN KEY (country_iso3, hazard, version, window_code)
                 REFERENCES aa.window (country_iso3, hazard, version, window_code) ON UPDATE CASCADE
                 DEFERRABLE INITIALLY DEFERRED NOT VALID;
         END IF;
     END $$""",
     """DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'trigger_event_trigger_fk') THEN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'trigger_event_trigger_fk'
+                       AND conrelid = 'aa.trigger_event'::regclass) THEN
             ALTER TABLE aa.trigger_event ADD CONSTRAINT trigger_event_trigger_fk FOREIGN KEY (country_iso3, hazard, version, window_code, trigger_code)
                 REFERENCES aa.window_trigger (country_iso3, hazard, version, window_code, trigger_code) ON UPDATE CASCADE
                 DEFERRABLE INITIALLY DEFERRED NOT VALID;
         END IF;
     END $$""",
-    # a child row given only a window name gets its window's code; one given a code gets the
-    # window's current name (so the name joins the site still uses keep working) — except a
-    # real activation, which keeps the label it was recorded under (its money is matched by it)
+    # a child row gets its window's code from the name it gives; a row moved to another window
+    # by name gets that window's code (a label that names no window keeps the code it has).
+    # Labels are never rewritten: name-keyed writers (entries files, the proxy's /save) find
+    # their rows by the label they wrote, and an activation's money is matched by its label.
     """CREATE OR REPLACE FUNCTION aa.fill_window_code() RETURNS trigger LANGUAGE plpgsql AS $f$
-    DECLARE c text; n text;
+    DECLARE c text;
     BEGIN
-        IF NEW.window_code IS NULL AND NEW.window_name IS NOT NULL THEN
+        IF NEW.window_name IS NOT NULL AND (NEW.window_code IS NULL OR (TG_OP = 'UPDATE'
+               AND NEW.window_name IS DISTINCT FROM OLD.window_name
+               AND NEW.window_code IS NOT DISTINCT FROM OLD.window_code)) THEN
             SELECT w.window_code INTO c FROM aa.window w
              WHERE w.country_iso3 = NEW.country_iso3 AND w.hazard = NEW.hazard
                AND w.version = NEW.version AND w.window_name = NEW.window_name;
-            NEW.window_code := c;
-        ELSIF NEW.window_code IS NOT NULL AND TG_TABLE_NAME <> 'window_activation' THEN
-            -- (an activation keeps the label it was recorded under: its released money in
-            -- activation_funding is matched to it by that label)
-            SELECT w.window_name INTO n FROM aa.window w
-             WHERE w.country_iso3 = NEW.country_iso3 AND w.hazard = NEW.hazard
-               AND w.version = NEW.version AND w.window_code = NEW.window_code;
-            IF n IS NOT NULL THEN NEW.window_name := n; END IF;
+            IF c IS NOT NULL THEN NEW.window_code := c; END IF;
         END IF;
         RETURN NEW;
     END $f$""",
@@ -1120,29 +1126,33 @@ ADDITIVE_MIGRATIONS = [
     "DROP TRIGGER IF EXISTS fill_window_code ON aa.window_status",
     "CREATE TRIGGER fill_window_code BEFORE INSERT OR UPDATE OF window_name, window_code ON aa.window_status "
     "FOR EACH ROW EXECUTE FUNCTION aa.fill_window_code()",
-    # a window given a code fills it in on the rows below that name it; a window renamed is
-    # renamed on the rows below that carry its code (a code changed cascades by the keys)
+    # a window inserted or given a code fills it in on the rows below that name it; a window
+    # renamed renames the rows that carried its old name (not an activation: its money is
+    # matched by its label); a code changed cascades by the keys
     """CREATE OR REPLACE FUNCTION aa.window_sync_children() RETURNS trigger LANGUAGE plpgsql AS $f$
     DECLARE t text;
     BEGIN
+        IF NEW.window_code IS NULL THEN RETURN NEW; END IF;
         FOREACH t IN ARRAY ARRAY['window_funding', 'simulated_activation', 'backtest_event', 'window_activation', 'window_status']
         LOOP
-            IF NEW.window_code IS NOT NULL AND OLD.window_code IS NULL THEN
+            IF TG_OP = 'INSERT' OR OLD.window_code IS NULL THEN
                 EXECUTE format('UPDATE aa.%I SET window_code = $1 WHERE country_iso3 = $2 AND hazard = $3 '
                                'AND version = $4 AND window_name = $5 AND window_code IS NULL', t)
-                USING NEW.window_code, NEW.country_iso3, NEW.hazard, NEW.version, OLD.window_name;
+                USING NEW.window_code, NEW.country_iso3, NEW.hazard, NEW.version,
+                      CASE WHEN TG_OP = 'INSERT' THEN NEW.window_name ELSE OLD.window_name END;
             END IF;
-            IF NEW.window_code IS NOT NULL AND NEW.window_name IS DISTINCT FROM OLD.window_name
+            IF TG_OP = 'UPDATE' AND NEW.window_name IS DISTINCT FROM OLD.window_name
                AND t <> 'window_activation' THEN
                 EXECUTE format('UPDATE aa.%I SET window_name = $1 WHERE country_iso3 = $2 AND hazard = $3 '
-                               'AND version = $4 AND window_code = $5 AND window_name <> $1', t)
-                USING NEW.window_name, NEW.country_iso3, NEW.hazard, NEW.version, NEW.window_code;
+                               'AND version = $4 AND window_code = $5 AND window_name = $6', t)
+                USING NEW.window_name, NEW.country_iso3, NEW.hazard, NEW.version, NEW.window_code,
+                      OLD.window_name;
             END IF;
         END LOOP;
         RETURN NEW;
     END $f$""",
     "DROP TRIGGER IF EXISTS window_sync_children ON aa.window",
-    "CREATE TRIGGER window_sync_children AFTER UPDATE OF window_name, window_code ON aa.window "
+    "CREATE TRIGGER window_sync_children AFTER INSERT OR UPDATE OF window_name, window_code ON aa.window "
     "FOR EACH ROW EXECUTE FUNCTION aa.window_sync_children()",
     # rows written before the codes existed: matched by name, once a window has its code
     """UPDATE aa.window_funding c SET window_code = w.window_code FROM aa.window w
@@ -1160,7 +1170,11 @@ ADDITIVE_MIGRATIONS = [
     """UPDATE aa.window_status c SET window_code = w.window_code FROM aa.window w
        WHERE c.window_code IS NULL AND w.window_code IS NOT NULL AND (c.country_iso3, c.hazard,
              c.version, c.window_name) = (w.country_iso3, w.hazard, w.version, w.window_name)""",
-    # the keys are checked on the old rows once every row below a window is mapped to it
+    # the backfill's deferred key checks run now: a later ALTER on these tables in the same
+    # transaction would otherwise fail on "pending trigger events"
+    "SET CONSTRAINTS ALL IMMEDIATE",
+    # the keys hold for every coded row from the start (an uncoded row is not checked: it is
+    # listed in v_trk_window_links); validated here once, kept NOT VALID-safe for old databases
     """DO $$ DECLARE r record; BEGIN
         FOR r IN SELECT conrelid::regclass AS t, conname FROM pg_constraint
                  WHERE contype = 'f' AND NOT convalidated AND conname IN
@@ -1754,20 +1768,20 @@ VIEWS = {
         CREATE OR REPLACE VIEW aa.v_window_budget AS
         WITH votes AS (
             SELECT wf.*, count(*) OVER (PARTITION BY wf.country_iso3, wf.hazard, wf.version, wf.kind,
-                                                     wf.fund_code, wf.financier, wf.window_name,
+                                                     wf.fund_code, wf.financier, wf.window_code,
                                                      wf.year, wf.amount_usd) AS n_agree,
                    (wf.year IS NOT NULL AND v.valid_until IS NOT NULL
                     AND wf.year > extract(year FROM v.valid_until)) AS after_validity
             FROM aa.window_funding wf
             LEFT JOIN aa.framework_version v USING (country_iso3, hazard, version)
             WHERE wf.agency IS NULL AND wf.sector IS NULL AND wf.amount_usd IS NOT NULL
-              AND wf.window_name NOT IN ('single', 'unattributed')
+              AND wf.window_code IS NOT NULL
         )
-        SELECT DISTINCT ON (country_iso3, hazard, version, kind, fund_code, financier, window_name)
+        SELECT DISTINCT ON (country_iso3, hazard, version, kind, fund_code, financier, window_code)
                country_iso3, hazard, version, window_name, window_code, kind, fund_code, financier,
                amount_usd, provenance, source, year
         FROM votes
-        ORDER BY country_iso3, hazard, version, kind, fund_code, financier, window_name,
+        ORDER BY country_iso3, hazard, version, kind, fund_code, financier, window_code,
                  after_validity, year DESC NULLS LAST,
                  CASE provenance WHEN 'entered' THEN 0 WHEN 'doc-stated' THEN 1
                                  WHEN 'kb' THEN 2 WHEN 'sheet' THEN 3 ELSE 4 END,
@@ -1794,8 +1808,8 @@ VIEWS = {
     # (aa.backtest_event) when there are some, else its simulated years
     "v_trigger_event": """
         CREATE OR REPLACE VIEW aa.v_trigger_event AS
-        WITH explicit AS (
-            SELECT DISTINCT country_iso3, hazard, version, window_code FROM aa.trigger_event
+        WITH explicit AS (     -- a window with entered triggers takes its events from them only
+            SELECT DISTINCT country_iso3, hazard, version, window_code FROM aa.window_trigger
         ),
         tested AS (
             SELECT DISTINCT country_iso3, hazard, version, window_code FROM aa.backtest_event
@@ -1884,14 +1898,11 @@ VIEWS = {
     # apart in the database, together in the app's view); n = both, as the Gallagher matrix counts
     "v_cerf_activation_history": """
         CREATE OR REPLACE VIEW aa.v_cerf_activation_history AS
-        WITH sim AS (
-            SELECT country_iso3, hazard, version, window_code, event_year AS year, count(*) AS n_simulated
+        WITH sim AS (   -- distinct events: two triggers met on one storm count once
+            SELECT country_iso3, hazard, version, window_code, event_year AS year,
+                   count(DISTINCT event_label) AS n_simulated
             FROM aa.v_trigger_event WHERE met
             GROUP BY 1, 2, 3, 4, 5
-        ),
-        sim_years AS (   -- several triggers in one window and year still activate it once
-            SELECT country_iso3, hazard, version, window_code, event_year AS year
-            FROM aa.v_trigger_event WHERE met GROUP BY 1, 2, 3, 4, 5
         ),
         rl AS (
             SELECT country_iso3, hazard, version, window_code, left(event_date, 4)::int AS year,
@@ -1900,7 +1911,7 @@ VIEWS = {
             WHERE window_code IS NOT NULL AND event_date ~ '^[0-9]{4}'
             GROUP BY 1, 2, 3, 4, 5
         ),
-        yr AS (SELECT country_iso3, hazard, version, window_code, year FROM sim_years
+        yr AS (SELECT country_iso3, hazard, version, window_code, year FROM sim
                UNION SELECT country_iso3, hazard, version, window_code, year FROM rl)
         SELECT c.uid, y.country_iso3, y.hazard, y.version, y.window_code, y.year,
                coalesce(s.n_simulated, 0) AS n_simulated, coalesce(r.n_real, 0) AS n_real,

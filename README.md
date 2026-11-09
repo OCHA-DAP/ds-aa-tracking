@@ -61,8 +61,9 @@ are kept forever (the year-end official state, for the map's time view).
   `window_code` (`ws`, `wt1`…, `wg1`…, `op1`…), unique in its version; the tables below it
   (`window_funding`, `simulated_activation`, `backtest_event`, `window_activation`,
   `window_status`) carry the code with a foreign key (deferrable, follows a code change). A row
-  written with only a window name gets its code from the name (trigger `fill_window_code`); a
-  window renamed is renamed below. `framework_version.cerf_version_id` is CERF's id where CERF
+  written with only a window name gets its code from the name (trigger `fill_window_code`), a
+  window inserted links the rows waiting under its name, a window renamed renames the rows that
+  carried its old name; labels below a window are never rewritten (writers key on them). `framework_version.cerf_version_id` is CERF's id where CERF
   has one. Below the window, `window_trigger` / `trigger_event` hold the OR'd conditions and
   every event each was tested on, entered where a window has more than one; the views
   `v_window_trigger` / `v_trigger_event` add every other window's implicit trigger `t1` from its
