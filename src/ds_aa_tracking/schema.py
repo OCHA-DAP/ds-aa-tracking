@@ -1085,7 +1085,8 @@ ADDITIVE_MIGRATIONS = [
         END IF;
     END $$""",
     # a child row given only a window name gets its window's code; one given a code gets the
-    # window's current name (so the name joins the site still uses keep working)
+    # window's current name (so the name joins the site still uses keep working) — except a
+    # real activation, which keeps the label it was recorded under (its money is matched by it)
     """CREATE OR REPLACE FUNCTION aa.fill_window_code() RETURNS trigger LANGUAGE plpgsql AS $f$
     DECLARE c text; n text;
     BEGIN
@@ -1094,7 +1095,9 @@ ADDITIVE_MIGRATIONS = [
              WHERE w.country_iso3 = NEW.country_iso3 AND w.hazard = NEW.hazard
                AND w.version = NEW.version AND w.window_name = NEW.window_name;
             NEW.window_code := c;
-        ELSIF NEW.window_code IS NOT NULL THEN
+        ELSIF NEW.window_code IS NOT NULL AND TG_TABLE_NAME <> 'window_activation' THEN
+            -- (an activation keeps the label it was recorded under: its released money in
+            -- activation_funding is matched to it by that label)
             SELECT w.window_name INTO n FROM aa.window w
              WHERE w.country_iso3 = NEW.country_iso3 AND w.hazard = NEW.hazard
                AND w.version = NEW.version AND w.window_code = NEW.window_code;
@@ -1129,7 +1132,8 @@ ADDITIVE_MIGRATIONS = [
                                'AND version = $4 AND window_name = $5 AND window_code IS NULL', t)
                 USING NEW.window_code, NEW.country_iso3, NEW.hazard, NEW.version, OLD.window_name;
             END IF;
-            IF NEW.window_code IS NOT NULL AND NEW.window_name IS DISTINCT FROM OLD.window_name THEN
+            IF NEW.window_code IS NOT NULL AND NEW.window_name IS DISTINCT FROM OLD.window_name
+               AND t <> 'window_activation' THEN
                 EXECUTE format('UPDATE aa.%I SET window_name = $1 WHERE country_iso3 = $2 AND hazard = $3 '
                                'AND version = $4 AND window_code = $5 AND window_name <> $1', t)
                 USING NEW.window_name, NEW.country_iso3, NEW.hazard, NEW.version, NEW.window_code;
