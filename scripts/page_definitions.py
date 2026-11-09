@@ -48,6 +48,9 @@ GLOSSARY = [
         ("Technical support",
          "Countries where OCHA supported the framework technically, without a funding commitment, "
          "whatever its status."),
+        ("No specific hazard",   # DEV_ONLY_TERMS until the open map shows it (D202)
+         "Technical support for anticipatory action in general, not for one hazard. No framework and "
+         "no allocation stand behind it; the Map draws its pin with an open ring."),
     ]),
     ("Statuses", [
         ("Active",
@@ -126,19 +129,26 @@ CSS = r"""
 """
 
 
+# terms of what only the development site shows: left out of the open site's copy
+DEV_ONLY_TERMS = {"No specific hazard"}
+
+
 def build_definitions(page, d):
     import landing
     # the recent-activation ring's window, from the Map's own constant
     n_days = re.search(r"const RECENT_DAYS = (\d+);", landing.LANDING_JS).group(1)
     def t(x):
         return TF(x, n=n_days) if "{n}" in x else (TB(x) if "<" in x else T(x))
-    sections = "".join(
-        f"<h2>{T(head)}</h2><dl>"
-        + "".join(f"<dt>{t(term)}</dt><dd>{t(text)}</dd>" for term, text in terms) + "</dl>"
-        for head, terms in GLOSSARY)
     meta = TB("The terms used on the Map and the other pages, in the words the pages use where they "
               "define a term; the rest follows the decision log.")
-    body = (f"<div class='defs'><p class='meta'>{meta}</p>"
-            f"<h2>{T('How statuses work')}</h2>{landing.status_help_html(open_=True)}"
-            f"{sections}</div><style>{CSS}</style>")
-    page(PAGE, TITLE, body)
+
+    def body(skip=()):
+        sections = "".join(
+            f"<h2>{T(head)}</h2><dl>"
+            + "".join(f"<dt>{t(term)}</dt><dd>{t(text)}</dd>" for term, text in terms if term not in skip) + "</dl>"
+            for head, terms in GLOSSARY)
+        return (f"<div class='defs'><p class='meta'>{meta}</p>"
+                f"<h2>{T('How statuses work')}</h2>{landing.status_help_html(open_=True)}"
+                f"{sections}</div><style>{CSS}</style>")
+    open_skip = set() if landing.GENERAL_ON_OPEN else DEV_ONLY_TERMS
+    page(PAGE, TITLE, body(), prod_body=body(open_skip) if open_skip else None)

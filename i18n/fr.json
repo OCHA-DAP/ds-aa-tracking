@@ -1855,5 +1855,11 @@
  "no money from {0}": "aucun argent de {0}",
  "of which {0}": "dont {0}",
  "CBPF, RHPF": "CBPF, RHPF",
- "The two kinds of Country and Regional Funds, apart in the Map's fund switch: CBPF, the country-based pooled funds; RHPF, the regional humanitarian pooled funds, through their country windows. OCHA's fund registry says which kind a fund is.": "Les deux sortes de fonds communs pays et régionaux, séparées dans le sélecteur de fonds de la carte : CBPF, les fonds communs pays ; RHPF, les fonds communs humanitaires régionaux, par leurs guichets pays. Le registre des fonds d’OCHA dit de quelle sorte est un fonds."
+ "The two kinds of Country and Regional Funds, apart in the Map's fund switch: CBPF, the country-based pooled funds; RHPF, the regional humanitarian pooled funds, through their country windows. OCHA's fund registry says which kind a fund is.": "Les deux sortes de fonds communs pays et régionaux, séparées dans le sélecteur de fonds de la carte : CBPF, les fonds communs pays ; RHPF, les fonds communs humanitaires régionaux, par leurs guichets pays. Le registre des fonds d’OCHA dit de quelle sorte est un fonds.",
+ "No specific hazard": "Aucun aléa en particulier",
+ "no specific hazard": "aucun aléa en particulier",
+ "OCHA technical support for anticipatory action in general, not for one hazard, and without a funding commitment.": "Appui technique d’OCHA à l’action anticipatoire en général, pas pour un aléa donné, et sans engagement de financement.",
+ "OCHA supports anticipatory action here technically, in general rather than for one hazard, without a funding commitment from CERF or the Country and Regional Funds. No framework and no allocation are behind it.": "OCHA appuie techniquement l’action anticipatoire ici, en général plutôt que pour un aléa donné, sans engagement de financement du CERF ni des fonds communs pays et régionaux. Aucun cadre ni aucune allocation n’y est lié.",
+ "{country} — technical support, {hazard}": "{country} — appui technique, {hazard}",
+ "Technical support for anticipatory action in general, not for one hazard. No framework and no allocation stand behind it; the Map draws its pin with an open ring.": "Appui technique à l’action anticipatoire en général, pas pour un aléa donné. Aucun cadre ni aucune allocation n’y est lié ; la carte dessine son épingle avec un anneau ouvert."
 }

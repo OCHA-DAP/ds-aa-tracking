@@ -728,9 +728,13 @@ def write_site():
                 cleaned[name] = (changes, script_hits)
         return doc
 
+    import landing
+    left_out = landing.OPEN_LEFT_OUT    # development site only, no "Coming soon" at the root (D202)
     for name, (title, body) in _PAGES.items():
         if name in public:
             (dev_dir / name).write_text(public_doc(name, title, body, DEV_BANNER))
+            if name in left_out["pages"]:
+                continue
             # the open site: OPEN_PAGES, and "Coming soon" for the rest (its cleaning is the
             # development page's, already reported)
             if name == "index.html":
@@ -783,12 +787,14 @@ def write_site():
             f.unlink()
     for g in sorted(geo):
         shutil.copy(OUT / g, dev_dir / g)
+    for g in left_out["geo"]:          # a country the open map leaves out (D202): dev/ only
+        (OUT / g).unlink(missing_ok=True)
     # nothing from an earlier build may linger: publish.sh serves what is here (the mock-up's
     # stylesheet sits beside its pages, in dev/, since 2026-11-01)
     (OUT / "unocha.css").unlink(missing_ok=True)
     for d in (OUT, dev_dir):
         for f in list(d.glob("*.html")):
-            if f.name not in public:
+            if f.name not in public or (d == OUT and f.name in left_out["pages"]):
                 f.unlink()
     # the open layer's files that this build did not write (a page taken off the open site loses
     # its data with it): publish.sh publishes whatever open files are here
@@ -804,8 +810,10 @@ def write_site():
         print(f"::warning::public page {name}: link(s) to admin-only page(s) removed: {', '.join(sorted(gone))}")
     import no_kb
     no_kb.check(OUT)    # no reference to the knowledge base on any page or open file (D199)
+    n_dev_only = len(left_out["pages"] & public)
     print(f"  public site: {len(public)} pages ({DEV_DIR}/; open at the root: {', '.join(OPEN_PAGES)}, and "
-          f"{len(public) - len(OPEN_PAGES)} 'Coming soon' pages) · admin site: {len(admin) + 1} pages ({ADMIN_DIR}/) · "
+          f"{len(public) - len(OPEN_PAGES) - n_dev_only} 'Coming soon' pages"
+          f"{f', {n_dev_only} on {DEV_DIR}/ only' if n_dev_only else ''}) · admin site: {len(admin) + 1} pages ({ADMIN_DIR}/) · "
           f"open layer: {len(open_files)} files (the data of {', '.join(sorted(OPEN_PAGES))})")
 
 
