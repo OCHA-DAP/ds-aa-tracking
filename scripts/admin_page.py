@@ -124,9 +124,10 @@ const VOCAB = {
   'window_funding.provenance': ['doc-stated', 'kb', 'sheet', 'entered', 'window-unattributed'],
   'adhoc_activation.event_type': ['adhoc_aa', 'early_action'],
   'framework_status.status': ['active', 'activated_implementing', 'under_revision', 'under_development', 'project_finalization', 'advanced_conversations', 'early_conversations', 'dormant', 'expired', 'other'],
-  '*.hazard': ['drought', 'flood', 'storm', 'cholera', 'plague', 'locusts', 'food_insecurity', 'other'],
+  '*.hazard': ['drought', 'flood', 'storm', 'cholera', 'plague', 'locusts', 'food_insecurity', 'other', 'general'],   // general: technical support for no specific hazard (D202)
 };
 const VOCAB_LABEL = {development: 'in development', 'pre-development': 'pre-development',
+                     general: 'no specific hazard (technical support only)',
                      kb: 'earlier read of the framework document'};   // the stored code stays
 // boolean columns that read better with domain words than yes/no
 const BOOL_LABEL = {'window_status.triggered': ['triggered', 'not triggered'], 'country_hazard.retired': ['retired', 'not retired'], 'country_hazard.technical_support': ['technical support (no funding commitment)', 'no']};

@@ -60,7 +60,8 @@ PARTNER_ROLE_LABEL = {"implementing": "implementing", "technical": "technical",
 # a hazard as a word inside a sentence or a name ('Niger — drought')
 HAZARD_WORD = {"drought": "drought", "flood": "flood", "storm": "storm", "cholera": "cholera",
                "plague": "plague", "locusts": "locusts", "food_insecurity": "food insecurity",
-               "other": "other hazard"}
+               "other": "other hazard",
+               "general": "no specific hazard"}   # technical support not tied to one hazard (D202)
 _UNLABELLED = set()
 
 
@@ -4020,7 +4021,10 @@ def _no_framework_body(d, fw, c, h, umap, docs):
                          "trigger, plan or pre-arranged envelope stands behind it, so this page has no model, "
                          "monitoring window or versions. These allocations count on the Map and the Financing page "
                          "under the non-framework allocations layer."),
-        "tech": T("OCHA supports a framework here technically, without a funding commitment from CERF or the "
+        "tech": T("OCHA supports anticipatory action here technically, in general rather than for one hazard, "
+                  "without a funding commitment from CERF or the Country and Regional Funds. No framework and "
+                  "no allocation are behind it.") if h == "general" else
+                T("OCHA supports a framework here technically, without a funding commitment from CERF or the "
                   "Country and Regional Funds. No framework version is recorded yet, and no money has been "
                   "allocated for this hazard."),
         "none": T("No framework version and no allocation are recorded for this hazard."),
@@ -4110,8 +4114,9 @@ def build_framework_pages(page, tbl, d, e=None):
         links.append((fw["country_name"], h, status, slug, c))
         if no_fw:   # no framework: a page of its own kind, not a framework page's empty shell
             kind, body = _no_framework_body(d, fw, c, h, umap, docs)
-            tmpl = "{country} {hazard} — " + {"allocations": "non-framework allocations", "tech": "technical support",
-                                              "none": "no framework version recorded"}[kind]
+            tmpl = ("{country} — technical support, {hazard}" if h == "general" and kind == "tech" else   # D202
+                    "{country} {hazard} — " + {"allocations": "non-framework allocations", "tech": "technical support",
+                                               "none": "no framework version recorded"}[kind])
             page(f"{slug}.html", i18n.add(tmpl.format(country=fw["country_name"], hazard=hazard_word(h)), tmpl,
                                           country=i18n.country(c, fw["country_name"]), hazard=hazard_word(h)), body)
             continue

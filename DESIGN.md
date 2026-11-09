@@ -306,7 +306,9 @@ aa.activation_funding         one row per activation × fund, either kind of act
   made up front, so an AA-tagged allocation in the OneGMS mirror counts as pre-arranged
   until an activation draws on it (a hand-entered `activation_funding` row), then as
   disbursed. `country_hazard.technical_support` marks frameworks OCHA supported without a
-  funding commitment.
+  funding commitment. Support for no specific hazard (D202) is a pair with `hazard =
+  'general'` (shown as "No specific hazard"): technical support only, never a version or an
+  allocation; `landing.GENERAL_ON_OPEN` keeps it off the open site until the owner says so.
 - Donor shares (2026-09-25): contributions per fund × donor × fiscal year come from the
   OneGMS mirrors (`aa.cerf_contribution`, `aa.cbpf_contribution`, union `aa.v_contribution`,
   ds-cerf-supplement PR #129). A donor's share of a fund-year = paid ÷ fund income that year

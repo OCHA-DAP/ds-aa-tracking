@@ -106,7 +106,17 @@ HAZ_COLOR = {"flood": "#2a78d6", "drought": "#eb6834", "storm": "#8e5bd9",
              "cholera": "#1baf7a", "plague": "#b8860b"}
 HAZ_LABEL = {"storm": "Trop. cyclones", "flood": "Floods", "drought": "Drought",
              "cholera": "Cholera", "plague": "Plague", "food_insecurity": "Food insecurity",
-             "locusts": "Locusts"}
+             "locusts": "Locusts", "general": "No specific hazard"}
+# technical support not tied to one hazard (owner, 2026-11-09, D202): its pair takes the hazard
+# GENERAL and holds technical support only, never a framework version or an allocation (the build
+# warns when one does). The development map shows these pairs; the open map leaves them out until
+# the owner says so (GENERAL_ON_OPEN), as the fund switch waited (D201).
+GENERAL = "general"
+GENERAL_ON_OPEN = False
+# what the open site leaves out for it (open_map_countries fills it; build_site.write_site reads
+# it): the pages of these pairs get no "Coming soon" page at the root, and a country left with no
+# pin on the open map keeps its geometry file on the development site only
+OPEN_LEFT_OUT = {"pages": set(), "geo": set()}
 # the tracking sheets' status codes as words (the Map panel quotes them; a code is never shown)
 SHEET_STATUS_LABEL = {"active": "active", "activated_implementing": "activated, being implemented",
                       "monitoring": "monitoring", "under_revision": "under revision", "expired": "expired",
@@ -130,7 +140,7 @@ def _haz_label(h):
         print(f"  ! hazard without a label (shown as 'Other hazard'): {h}")
     return HAZ_LABEL.get(h, "Other hazard")
 HAZ_GLYPH = {"storm": "tropical-cyclone", "flood": "flood", "drought": "drought",
-             "cholera": "cholera"}
+             "cholera": "cholera", GENERAL: "general"}
 HAZARD_SVG = {
     "drought": '<circle cx="12" cy="12" r="3.6" fill="#fff"/><g stroke="#fff" stroke-width="1.7" stroke-linecap="round">'
                '<line x1="12" y1="2.5" x2="12" y2="5.5"/><line x1="12" y1="18.5" x2="12" y2="21.5"/>'
@@ -154,6 +164,8 @@ HAZARD_SVG = {
              '<g fill="#fff"><circle cx="12" cy="3.6" r="1.1"/><circle cx="12" cy="20.4" r="1.1"/>'
              '<circle cx="3.6" cy="12" r="1.1"/><circle cx="20.4" cy="12" r="1.1"/></g>',
     "other": '<circle cx="12" cy="12" r="3.5" fill="#fff"/>',
+    # no specific hazard (D202): an open ring, so it reads as no hazard rather than an unlabelled one
+    "general": '<circle cx="12" cy="12" r="5.2" fill="none" stroke="#fff" stroke-width="2"/>',
 }
 CENTROID = {   # iso3 -> (lat, lon) for the callout anchor dot
     "AFG": (33.9, 67.7), "BFA": (12.2, -1.6), "BGD": (23.7, 90.4), "COD": (-2.9, 23.6),
@@ -1681,6 +1693,10 @@ def assemble(d, e):
             layers.append("tech")                     # OCHA technical support, whatever the lifecycle
         if not layers:
             continue                                  # conversation stage with nothing to show
+        general = h == GENERAL and layers == ["tech"] and not versions   # its wording only when it is what D202 says
+        if h == GENERAL and not general:
+            print(f"::warning::{c} {GENERAL} (no specific hazard) holds technical support only (D202); "
+                  f"it is on the layers {', '.join(layers)} with {len(versions)} framework version(s)")
         if disp is None or (disp == "pipeline" and not tech):
             disp = "adhoc" if "adhoc" in layers else "pipeline"
         months_now = (versions[-1]["months"] if versions else [])
@@ -1695,6 +1711,7 @@ def assemble(d, e):
             "adhoc_cerf": adhoc_cerf.get((c, h), []),
             "layers": layers, "layer": next(l for l in LAYER_ORDER if l in layers),
             "tech": tech,
+            "general": general,                      # technical support for no specific hazard (D202)
             "hz_label": _haz_label(h),
             "glyph": HAZ_GLYPH.get(h, "other"),
             "latest": latest, "in_force": in_force,
@@ -2012,8 +2029,23 @@ def open_map_countries(countries, withheld):
     """The map's data for the open site: a copy without the withheld figures (the framework's
     people covered now, the year selector's past figures, and a version's people targeted when
     it is the same figure: the document reader writes one from the other). The development
-    map, and the cross-page figure check, keep them."""
+    map, and the cross-page figure check, keep them. Technical support for no specific hazard
+    (D202) is left out too, until the owner puts it on the open map (GENERAL_ON_OPEN)."""
     out = copy.deepcopy(countries)
+    OPEN_LEFT_OUT["pages"].clear()
+    OPEN_LEFT_OUT["geo"].clear()
+    if not GENERAL_ON_OPEN:
+        gen = sorted(iso for iso, cd in out.items() if any(f.get("hazard") == GENERAL for f in cd.get("fws", [])))
+        for iso in gen:
+            OPEN_LEFT_OUT["pages"].update(f["page"] for f in out[iso]["fws"] if f.get("hazard") == GENERAL and f.get("page"))
+            out[iso]["fws"] = [f for f in out[iso]["fws"] if f.get("hazard") != GENERAL]
+            if not out[iso]["fws"]:
+                del out[iso]
+                OPEN_LEFT_OUT["geo"].add(f"adm-{iso}.json")
+        for cd in out.values():       # and its flag: the open data stays as it was (the field
+            for f in cd.get("fws", []):   # gets its line in open_map_fields when it goes public)
+                f.pop("general", None)
+        print(f"  open map: technical support for no specific hazard left out (D202): {', '.join(gen) or 'none'}")
     n = 0
     for iso, cd in out.items():
         for f in cd.get("fws", []):
@@ -2229,7 +2261,7 @@ window.HAZ = {json.dumps(HAZ_COLOR)}; window.COLOR = {json.dumps(STATUS_COLOR)};
 window.DISPLABEL = {json.dumps(DISP_LABEL)}; window.GLYPH = {json.dumps(HAZARD_SVG)};
 window.LAYER_ORDER = {json.dumps(list(LAYER_ORDER))}; window.LAYER_COLOR = {json.dumps(LAYER_COLOR)};
 window.LAYER_LABEL = {json.dumps(LAYER_LABEL)}; window.TRIGGER_VALIDATION_URL = {json.dumps(TRIGGER_VALIDATION_URL)};
-window.WORLD = {json.dumps(wdata, separators=(",", ":"))};
+window.WORLD = /*AA_W*/null;
 window.VB = {{w:{VB_W:.2f}, h:{VB_H:.2f}}}; window.EEBOX = {json.dumps([round(x, 6) for x in EE_BBOX])};
 window.EE = {{lam0:{EE_LAM0}, smax:{S_MAX_DEG}}};
 window.CURMONTH = {json.dumps(TODAY.strftime("%B %Y"))};
@@ -2242,8 +2274,12 @@ window.YEARS = {json.dumps({"first": YEAR_FIRST, "now": TODAY.year, "today": TOD
     i18n.register_countries((iso, cd.get("name")) for iso, cd in countries.items())
     i18n.register_countries((iso, w.get("n")) for iso, w in wdata.items())
     # the open site's map: the same page without the figures it may not show
-    if body.count("/*AA_L*/null") != 1 or body.count("<!--AA_TCOV-->") != 1:
-        raise SystemExit("FATAL: the map's data or people-covered placeholder is not in its page exactly once")
+    if body.count("/*AA_L*/null") != 1 or body.count("<!--AA_TCOV-->") != 1 or body.count("/*AA_W*/null") != 1:
+        raise SystemExit("FATAL: the map's data, world or people-covered placeholder is not in its page exactly once")
+    # the world base: a country is shaded ('on') when the map has pins for it; the open copy
+    # shades only the countries its own data keeps (D202 leaves some out)
+    w_open = {iso: ({**w, "on": False} if w["on"] and iso not in open_countries else w) for iso, w in wdata.items()}
+    w_json = lambda w: json.dumps(w, separators=(",", ":"))      # noqa: E731
     # the open map's "Download CSV" is a link to the open layer's table, so a program reading the
     # page finds a file behind it (owner, 2026-11-03); a click still downloads the table as the map
     # shows it (fwCSV: the year and layers chosen). The development map keeps its button
@@ -2253,9 +2289,11 @@ window.YEARS = {json.dumps({"first": YEAR_FIRST, "now": TODAY.year, "today": TOD
     if body.count(csv_btn) != 1:
         raise SystemExit("FATAL: the map's Download CSV button is not in its page exactly once")
     page("index.html", "OCHA Anticipatory Action — portfolio",
-         body.replace("/*AA_L*/null", json.dumps(countries, default=str), 1).replace("<!--AA_TCOV-->", cov_tile(t), 1),
+         body.replace("/*AA_L*/null", json.dumps(countries, default=str), 1).replace("<!--AA_TCOV-->", cov_tile(t), 1)
+             .replace("/*AA_W*/null", w_json(wdata), 1),
          prod_body=body.replace("/*AA_L*/null", json.dumps(open_countries, default=str), 1)
-                       .replace("<!--AA_TCOV-->", cov_tile(t_open), 1).replace(csv_btn, csv_link, 1))
+                       .replace("<!--AA_TCOV-->", cov_tile(t_open), 1).replace(csv_btn, csv_link, 1)
+                       .replace("/*AA_W*/null", w_json(w_open), 1))
 
 
 LANDING_CSS = r"""
@@ -2913,6 +2951,7 @@ function pinStyle(f){ const l = visLayer(f) || f.layer;
   if(l==='framework') return {bg: bgFor(f.disp), cls: f.disp==='updating' ? 'upd' : f.disp==='development' ? 'dev' : ''};
   if(l==='tech') return {bg: '#fff', cls: 'tech'};
   return {bg: LAYER_COLOR[l], cls: l}; }
+function techBadge(){ return `<span class='badge b-tech'>${esc(tr8('technical support'))}</span>`; }
 function badge(st, label){ st = st || 'development';
   const cls = st==='active' ? 'endorsed' : st==='updating' ? 'updating' : st==='retired' ? 'retired' : st==='adhoc' ? 'adhoc' : st==='pipeline' ? 'pipeline' : 'development';
   return `<span class='badge b-${cls}'>${esc(tr8(label || DISPLABEL[st] || 'not recorded'))}</span>`; }   // never the code
@@ -2964,7 +3003,7 @@ function renderWorldList(){
   const rows = Object.entries(L).filter(([iso,c]) => vis(c).length).sort((a,b)=>tr8(a[1].name).localeCompare(tr8(b[1].name))).map(([iso,c]) =>
     `<div class='fcardx wl' data-iso='${iso}' role='button' tabindex='0' style='--hz:${hzColor(vis(c)[0].hazard)}' onclick='selectCountry("${iso}", null, null, {focus: true})'>
       <div class='fhead'><b>${esc(tr8(c.name))}</b><span class='muted'>${nounCount(vis(c))}</span></div>
-      <div class='wl-pins'>${vis(c).map(f=>`<span class='wl-pin'>${iconHTML(f)}<span class='hlab'>${esc(tr8(f.hz_label))}</span> ${badge(f.disp)}${actChip(f)}</span>`).join('')}</div>
+      <div class='wl-pins'>${vis(c).map(f=>`<span class='wl-pin'>${iconHTML(f)}<span class='hlab'>${esc(tr8(f.hz_label))}</span> ${f.general ? techBadge() : badge(f.disp)}${actChip(f)}</span>`).join('')}</div>
     </div>`).join('');
   side.innerHTML = `<div class='muted' style='margin:2px 0 8px'>${esc(tr8('Tap a country to zoom in.'))}</div><div class='fwlist'>${rows}</div>`;
 }
@@ -3507,9 +3546,9 @@ function buildCallouts(){
     el.querySelectorAll('.iconbox').forEach(ib => { ib.onclick = e => { e.stopPropagation(); selectCountry(iso, ib.dataset.hz, null, {focus: true}); };
       const fb = c.fws.find(x => x.hazard === ib.dataset.hz);
       ib.setAttribute('role', 'button'); ib.tabIndex = 0;
-      ib.setAttribute('aria-label', `${tr8(c.name)} — ${tr8(fb.hz_label)}: ${tr8(fb.disp_label)}`);
+      ib.setAttribute('aria-label', `${tr8(c.name)} — ${tr8(fb.hz_label)}: ${tr8(fb.general ? 'technical support' : fb.disp_label)}`);
       ib.onmouseenter = ev => { const f = c.fws.find(x=>x.hazard===ib.dataset.hz); const nA = f.n_act_all;
-        showTip(ev, `${tr8(c.name)} — ${tr8(f.hz_label)}: ${tr8(f.disp_label)}${statusNote(f)}${f.tech ? ' · ' + tr8('technical support') : ''}`
+        showTip(ev, `${tr8(c.name)} — ${tr8(f.hz_label)}${f.general ? '' : ': ' + tr8(f.disp_label) + statusNote(f)}${f.tech ? ' · ' + tr8('technical support') : ''}`
           + (nA ? ' · ' + (YEAR != null ? tr8(nA > 1 ? '{0} activations in {1}' : '{0} activation in {1}', nA, YEAR) : tr8(nA > 1 ? '{0} activations' : '{0} activation', nA)) : '')
           + (recentAct(f) ? ' · ' + actLabel(recentAct(f)) : '')); };
       ib.onmouseleave = () => tip.hidden = true; });
@@ -3796,7 +3835,7 @@ function renderSide(){
       `<div class='fwlist'>` + fws.map(f => {
         const v = f.versions.find(x=>x.v===f.current);
         return `<div class='fcardx' style='--hz:${hzColor(f.hazard)}' onclick='selectFramework("${f.hazard}")'>
-          <div class='fhead'><b>${iconHTML(f)}${esc(tr8(f.hz_label))}</b><span>${badge(f.disp)}${actChip(f)}</span>${pastY()?DRV(statusNote(f).slice(3)):''}${f.tech?` <span class='badge b-tech'>${esc(tr8('technical support'))}</span>`:''}</div>
+          <div class='fhead'><b>${iconHTML(f)}${esc(tr8(f.hz_label))}</b><span>${f.general ? '' : badge(f.disp)}${actChip(f)}</span>${pastY()?DRV(statusNote(f).slice(3)):''}${f.tech?` <span class='badge b-tech'>${esc(tr8('technical support'))}</span>`:''}</div>
           <table class='mini'>
            <tr><td class='lbl'>${esc(pastY() ? tr8('Version, end of {0}', YEAR) : tr8('Latest version'))}</td><td>${f.current ? `<code>${f.current}</code> <span class='muted'>${esc(tr8('({0} total)', f.versions.length))}</span>` : `<span class="muted">${esc(tr8('no framework version'))}</span>`}</td></tr>
            <tr><td class='lbl'>${esc(tr8('Pre-arranged'))}</td><td>${money(f.pre_now ?? f.prearranged)}${f.pre_now==null && f.prearranged_year?` <span class='muted'>(${f.prearranged_year})</span>`:''}${apyOf(f) && f.pre_now != null ? apyMark(apyOf(f)) + `<div class='muted'>† ${esc(apyNote(apyOf(f)))}</div>` : ''}</td></tr>
@@ -3810,7 +3849,8 @@ function renderSide(){
   const f = c.fws.find(x=>x.hazard===state.hz); if(!f){ state.hz=null; return renderSide(); }
   if(!f.versions.length){
     const st = f.status_label ? tr8(f.status_label) : '';   // the sheet's status in words, never its code
-    const why = f.layer==='adhoc' ? esc(tr8('Non-framework anticipatory-action allocations for this hazard — no framework behind them.'))
+    const why = f.general ? esc(tr8('OCHA technical support for anticipatory action in general, not for one hazard, and without a funding commitment.'))
+              : f.layer==='adhoc' ? esc(tr8('Non-framework anticipatory-action allocations for this hazard — no framework behind them.'))
               : f.layer==='tech' ? (st ? esc(tr8('OCHA technical support — no framework version in the registry yet (tracking sheets: {0}).', st)) : esc(tr8('OCHA technical support — no framework version in the registry yet.')))
               : st ? esc(tr8('No framework version in the registry yet — status comes from the tracking sheets ({0}).', st)) : esc(tr8('No framework version in the registry yet.'));
     side.innerHTML = crumb + fwHeader(c, f) + countryTiles(c) + `<p class='muted'>${why}</p>` + adhocBlock(f) +
@@ -4022,7 +4062,7 @@ function adhocBlock(f){
 function groupBy(rows, kf, vf){ const m = {}; rows.forEach(r=>{ const k = kf(r); m[k] = (m[k]||0) + (vf(r)||0); }); return m; }
 function fwHeader(c, f){
   return `<h3 style='display:flex;align-items:center;gap:8px'>${iconHTML(f)}<span>${esc(tr8(c.name))} — ${esc(tr8(f.hz_label))}</span></h3>
-   <div>${pastY() && !f.layers.length ? `<span class='badge b-retired'>${esc(tr8('no framework at the end of {0}', YEAR))}</span>` : badge(f.disp) + (pastY() ? DRV(statusNote(f).slice(3)) : '')}${f.tech?` <span class='badge b-tech'>${esc(tr8('OCHA technical support'))}</span>`:''}${actChip(f)} ${f.ring ? `<span class='small' style='color:#8f6200'>&bull; ${esc(tr8('in its monitoring season'))}</span>` : ''}
+   <div>${pastY() && !f.layers.length ? `<span class='badge b-retired'>${esc(tr8('no framework at the end of {0}', YEAR))}</span>` : f.general ? '' : badge(f.disp) + (pastY() ? DRV(statusNote(f).slice(3)) : '')}${f.tech?` <span class='badge b-tech'>${esc(tr8('OCHA technical support'))}</span>`:''}${actChip(f)} ${f.ring ? `<span class='small' style='color:#8f6200'>&bull; ${esc(tr8('in its monitoring season'))}</span>` : ''}
    ${f.in_force && f.in_force!==f.current ? ` <span class='muted'>· ${esc(tr8('tracking view in force: {0}', f.in_force))}</span>` : ''}</div>`;
 }
 function versionBar(f, v, isCur){

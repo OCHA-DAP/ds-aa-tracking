@@ -1749,5 +1749,11 @@
  "no money from {0}": "sin dinero de {0}",
  "of which {0}": "de ello, {0}",
  "CBPF, RHPF": "CBPF, RHPF",
- "The two kinds of Country and Regional Funds, apart in the Map's fund switch: CBPF, the country-based pooled funds; RHPF, the regional humanitarian pooled funds, through their country windows. OCHA's fund registry says which kind a fund is.": "Los dos tipos de fondos de país y regionales, separados en el selector de fondos del mapa: CBPF, los fondos mancomunados de país; RHPF, los fondos humanitarios mancomunados regionales, a través de sus ventanillas de país. El registro de fondos de OCHA indica de qué tipo es un fondo."
+ "The two kinds of Country and Regional Funds, apart in the Map's fund switch: CBPF, the country-based pooled funds; RHPF, the regional humanitarian pooled funds, through their country windows. OCHA's fund registry says which kind a fund is.": "Los dos tipos de fondos de país y regionales, separados en el selector de fondos del mapa: CBPF, los fondos mancomunados de país; RHPF, los fondos humanitarios mancomunados regionales, a través de sus ventanillas de país. El registro de fondos de OCHA indica de qué tipo es un fondo.",
+ "No specific hazard": "Ninguna amenaza específica",
+ "no specific hazard": "ninguna amenaza específica",
+ "OCHA technical support for anticipatory action in general, not for one hazard, and without a funding commitment.": "Apoyo técnico de OCHA a la acción anticipatoria en general, no para una amenaza concreta, y sin compromiso de financiación.",
+ "OCHA supports anticipatory action here technically, in general rather than for one hazard, without a funding commitment from CERF or the Country and Regional Funds. No framework and no allocation are behind it.": "OCHA apoya técnicamente la acción anticipatoria aquí, en general y no para una amenaza concreta, sin compromiso de financiación del CERF ni de los fondos de país y regionales. No hay ningún marco ni ninguna asignación detrás.",
+ "{country} — technical support, {hazard}": "{country} — apoyo técnico, {hazard}",
+ "Technical support for anticipatory action in general, not for one hazard. No framework and no allocation stand behind it; the Map draws its pin with an open ring.": "Apoyo técnico a la acción anticipatoria en general, no para una amenaza concreta. No hay ningún marco ni ninguna asignación detrás; el Mapa dibuja su marcador con un anillo abierto."
 }

@@ -18,7 +18,8 @@ import sqlalchemy as sa
 PAGE, TITLE = "usage.html", "Site usage"
 COLS = ["day", "page", "event", "detail", "lang", "device", "referrer", "n"]
 HAZARD_WORDS = {"storm": "tropical cyclone", "flood": "floods", "drought": "drought", "cholera": "cholera",
-                "plague": "plague", "locusts": "locusts", "food_insecurity": "food insecurity"}
+                "plague": "plague", "locusts": "locusts", "food_insecurity": "food insecurity",
+                "general": "no specific hazard"}
 
 CSS = """
 .us-intro { max-width:880px; color:#444; margin:0 0 12px; line-height:1.5; }
