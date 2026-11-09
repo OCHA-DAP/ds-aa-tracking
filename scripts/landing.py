@@ -1693,7 +1693,8 @@ def assemble(d, e):
             layers.append("tech")                     # OCHA technical support, whatever the lifecycle
         if not layers:
             continue                                  # conversation stage with nothing to show
-        if h == GENERAL and (layers != ["tech"] or versions):
+        general = h == GENERAL and layers == ["tech"] and not versions   # its wording only when it is what D202 says
+        if h == GENERAL and not general:
             print(f"::warning::{c} {GENERAL} (no specific hazard) holds technical support only (D202); "
                   f"it is on the layers {', '.join(layers)} with {len(versions)} framework version(s)")
         if disp is None or (disp == "pipeline" and not tech):
@@ -1710,7 +1711,7 @@ def assemble(d, e):
             "adhoc_cerf": adhoc_cerf.get((c, h), []),
             "layers": layers, "layer": next(l for l in LAYER_ORDER if l in layers),
             "tech": tech,
-            "general": h == GENERAL,                 # technical support for no specific hazard (D202)
+            "general": general,                      # technical support for no specific hazard (D202)
             "hz_label": _haz_label(h),
             "glyph": HAZ_GLYPH.get(h, "other"),
             "latest": latest, "in_force": in_force,
@@ -2031,6 +2032,8 @@ def open_map_countries(countries, withheld):
     map, and the cross-page figure check, keep them. Technical support for no specific hazard
     (D202) is left out too, until the owner puts it on the open map (GENERAL_ON_OPEN)."""
     out = copy.deepcopy(countries)
+    OPEN_LEFT_OUT["pages"].clear()
+    OPEN_LEFT_OUT["geo"].clear()
     if not GENERAL_ON_OPEN:
         gen = sorted(iso for iso, cd in out.items() if any(f.get("hazard") == GENERAL for f in cd.get("fws", [])))
         for iso in gen:

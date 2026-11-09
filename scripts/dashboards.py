@@ -4114,7 +4114,7 @@ def build_framework_pages(page, tbl, d, e=None):
         links.append((fw["country_name"], h, status, slug, c))
         if no_fw:   # no framework: a page of its own kind, not a framework page's empty shell
             kind, body = _no_framework_body(d, fw, c, h, umap, docs)
-            tmpl = ("{country} — technical support, {hazard}" if h == "general" else   # D202
+            tmpl = ("{country} — technical support, {hazard}" if h == "general" and kind == "tech" else   # D202
                     "{country} {hazard} — " + {"allocations": "non-framework allocations", "tech": "technical support",
                                                "none": "no framework version recorded"}[kind])
             page(f"{slug}.html", i18n.add(tmpl.format(country=fw["country_name"], hazard=hazard_word(h)), tmpl,
