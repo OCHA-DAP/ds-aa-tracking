@@ -94,7 +94,7 @@ GLOSSARY = [
         ("Country and Regional Funds",
          "OCHA's country-based and regional pooled funds. Their money counts as pre-arranged until an "
          "activation draws on it, and from then on it is released money, no longer committed."),
-        ("CBPF, RHPF",   # DEV_ONLY_TERMS: the fund switch is on the development map only (D201)
+        ("CBPF, RHPF",
          "The two kinds of Country and Regional Funds, apart in the Map's fund switch: CBPF, the "
          "country-based pooled funds; RHPF, the regional humanitarian pooled funds, through their "
          "country windows. OCHA's fund registry says which kind a fund is."),
@@ -126,25 +126,19 @@ CSS = r"""
 """
 
 
-# terms of what only the development site shows: left out of the open site's copy
-DEV_ONLY_TERMS = {"CBPF, RHPF"}
-
 def build_definitions(page, d):
     import landing
     # the recent-activation ring's window, from the Map's own constant
     n_days = re.search(r"const RECENT_DAYS = (\d+);", landing.LANDING_JS).group(1)
     def t(x):
         return TF(x, n=n_days) if "{n}" in x else (TB(x) if "<" in x else T(x))
+    sections = "".join(
+        f"<h2>{T(head)}</h2><dl>"
+        + "".join(f"<dt>{t(term)}</dt><dd>{t(text)}</dd>" for term, text in terms) + "</dl>"
+        for head, terms in GLOSSARY)
     meta = TB("The terms used on the Map and the other pages, in the words the pages use where they "
               "define a term; the rest follows the decision log.")
-
-    def body(skip=()):
-        sections = "".join(
-            f"<h2>{T(head)}</h2><dl>"
-            + "".join(f"<dt>{t(term)}</dt><dd>{t(text)}</dd>" for term, text in terms if term not in skip) + "</dl>"
-            for head, terms in GLOSSARY)
-        return (f"<div class='defs'><p class='meta'>{meta}</p>"
-                f"<h2>{T('How statuses work')}</h2>{landing.status_help_html(open_=True)}"
-                f"{sections}</div><style>{CSS}</style>")
-    # the open site's copy leaves out what only the development site shows (the fund switch, D201)
-    page(PAGE, TITLE, body(), prod_body=body(DEV_ONLY_TERMS))
+    body = (f"<div class='defs'><p class='meta'>{meta}</p>"
+            f"<h2>{T('How statuses work')}</h2>{landing.status_help_html(open_=True)}"
+            f"{sections}</div><style>{CSS}</style>")
+    page(PAGE, TITLE, body)
