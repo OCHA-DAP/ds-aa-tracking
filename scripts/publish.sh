@@ -45,6 +45,54 @@ DEV=dev
 # the real pages served without a password: the same list as build_site.OPEN_PAGES (a page
 # must be in both to go out plain)
 OPEN_PAGES=" index.html definitions.html accessibility.html privacy.html "
+# the published site's rules, checked on a staged folder ($1): run on every build's own stage, and
+# with CHECK_ONLY=<folder> alone on the site the publish workflow assembles from two builds (D203)
+check_stage() (
+  cd "$1"
+  # every file about to be uploaded, as paths relative to the site root
+  FILES=$(find . -type f | sed 's|^\./||' | sort)
+  BAD=$(echo "$FILES" | grep "/" | grep -v -E "^$ADMIN/([A-Za-z0-9_.-]+\.html|pdf\.min\.js|pdf\.worker\.min\.js)$" \
+        | grep -v -E "^$DEV/([A-Za-z0-9_.-]+\.html|adm-[A-Z]{3}\.json|chart\.umd\.js|sankey\.js|unocha\.css)$" \
+        | grep -v -E "^$DEV/media/[0-9a-f]{16}-w[0-9]+\.jpg$" || true)
+  if [ -n "$BAD" ]; then
+    echo "FATAL: nested path outside $ADMIN/, $DEV/ and $DEV/media/ — aborting" >&2
+    echo "$BAD" | head >&2; exit 1
+  fi
+  DIRS=$(find . -mindepth 1 -type d | sed 's|^\./||' | sort | tr '\n' ' ')
+  [ "$DIRS" = "$ADMIN $DEV " ] || [ "$DIRS" = "$ADMIN $DEV $DEV/media " ] \
+    || { echo "FATAL: the site contains directories other than $ADMIN/, $DEV/ and $DEV/media/: $DIRS" >&2; exit 1; }
+  echo "$FILES" | grep -E '\.html$' | while read -r f; do
+    case "$f" in
+      */*)    # dev/ and admin/: encrypted, nothing readable
+        if ! grep -q "staticrypt-form" "$f" || grep -q "devbanner" "$f"; then
+          echo "FATAL: $f is not an encrypted page — aborting" >&2; exit 1
+        fi ;;
+      *)      # the open site: only what the build marked for it, and apart from OPEN_PAGES only
+              # "Coming soon" pages (class='soon' is written by build_site._soon_body alone; the
+              # size cap only catches the map's data or a long page, not a short real page)
+        if ! grep -q '<meta name="aa-site" content="open">' "$f"; then
+          echo "FATAL: $f is served without a password but the build did not mark it for the open site — aborting" >&2; exit 1
+        fi
+        if [[ "$OPEN_PAGES" != *" $f "* ]] && { ! grep -q "class='soon'" "$f" || [ "$(wc -c < "$f")" -gt 250000 ]; }; then
+          echo "FATAL: $f is served without a password but is not a 'Coming soon' page — aborting" >&2; exit 1
+        fi ;;
+    esac
+  done
+  [ -f "$ADMIN/index.html" ] || { echo "FATAL: the admin site has no index.html — aborting" >&2; exit 1; }
+  # the open files are plain data: never a token, never a page
+  for f in $(open_files .); do
+    if grep -q "x-site-token\|staticrypt" "$f"; then
+      echo "FATAL: open file $f carries a token or a page — aborting" >&2; exit 1
+    fi
+  done
+  [ -f llms.txt ] || { echo "FATAL: the open layer is missing (no llms.txt) — aborting" >&2; exit 1; }
+  [ -f "$DEV/index.html" ] || { echo "FATAL: the dev site has no index.html — aborting" >&2; exit 1; }
+  echo "staged ✓ (tree clean): $(echo "$FILES" | grep -c -v "/") top-level files ($(open_files . | wc -l | tr -d ' ') of the open layer), $(echo "$FILES" | grep "^$DEV/" | grep -c -v "^$DEV/media/") under $DEV/, $(echo "$FILES" | grep -c "^$DEV/media/") under $DEV/media/ and $(echo "$FILES" | grep -c "^$ADMIN/") under $ADMIN/; $(du -sh . | cut -f1) in $1/"
+)
+if [ -n "${CHECK_ONLY:-}" ]; then
+  [ -d "$CHECK_ONLY" ] || { echo "FATAL: CHECK_ONLY: no folder $CHECK_ONLY" >&2; exit 1; }
+  check_stage "$CHECK_ONLY"; exit
+fi
 [ -n "$ADMIN_PW" ] || { echo "FATAL: ADMIN_PASSWORD is not set (the admin site has no default password)" >&2; exit 1; }
 [ "$ADMIN_PW" != "$PW" ] || { echo "FATAL: the admin password must differ from the public one" >&2; exit 1; }
 
@@ -108,48 +156,7 @@ cp site_build/adm-*.json "$STAGE/$DEV"/
 # the open layer (unencrypted by design; the build already checked it for the proxy token)
 for f in $(open_files site_build); do cp "site_build/$f" "$STAGE/$f"; done
 touch "$STAGE/.nojekyll"
-(
-  cd "$STAGE"
-  # every file about to be uploaded, as paths relative to the site root
-  FILES=$(find . -type f | sed 's|^\./||' | sort)
-  BAD=$(echo "$FILES" | grep "/" | grep -v -E "^$ADMIN/([A-Za-z0-9_.-]+\.html|pdf\.min\.js|pdf\.worker\.min\.js)$" \
-        | grep -v -E "^$DEV/([A-Za-z0-9_.-]+\.html|adm-[A-Z]{3}\.json|chart\.umd\.js|sankey\.js|unocha\.css)$" \
-        | grep -v -E "^$DEV/media/[0-9a-f]{16}-w[0-9]+\.jpg$" || true)
-  if [ -n "$BAD" ]; then
-    echo "FATAL: nested path outside $ADMIN/, $DEV/ and $DEV/media/ — aborting" >&2
-    echo "$BAD" | head >&2; exit 1
-  fi
-  DIRS=$(find . -mindepth 1 -type d | sed 's|^\./||' | sort | tr '\n' ' ')
-  [ "$DIRS" = "$ADMIN $DEV " ] || [ "$DIRS" = "$ADMIN $DEV $DEV/media " ] \
-    || { echo "FATAL: the site contains directories other than $ADMIN/, $DEV/ and $DEV/media/: $DIRS" >&2; exit 1; }
-  echo "$FILES" | grep -E '\.html$' | while read -r f; do
-    case "$f" in
-      */*)    # dev/ and admin/: encrypted, nothing readable
-        if ! grep -q "staticrypt-form" "$f" || grep -q "devbanner" "$f"; then
-          echo "FATAL: $f is not an encrypted page — aborting" >&2; exit 1
-        fi ;;
-      *)      # the open site: only what the build marked for it, and apart from OPEN_PAGES only
-              # "Coming soon" pages (class='soon' is written by build_site._soon_body alone; the
-              # size cap only catches the map's data or a long page, not a short real page)
-        if ! grep -q '<meta name="aa-site" content="open">' "$f"; then
-          echo "FATAL: $f is served without a password but the build did not mark it for the open site — aborting" >&2; exit 1
-        fi
-        if [[ "$OPEN_PAGES" != *" $f "* ]] && { ! grep -q "class='soon'" "$f" || [ "$(wc -c < "$f")" -gt 250000 ]; }; then
-          echo "FATAL: $f is served without a password but is not a 'Coming soon' page — aborting" >&2; exit 1
-        fi ;;
-    esac
-  done
-  [ -f "$ADMIN/index.html" ] || { echo "FATAL: the admin site has no index.html — aborting" >&2; exit 1; }
-  # the open files are plain data: never a token, never a page
-  for f in $(open_files .); do
-    if grep -q "x-site-token\|staticrypt" "$f"; then
-      echo "FATAL: open file $f carries a token or a page — aborting" >&2; exit 1
-    fi
-  done
-  [ -f llms.txt ] || { echo "FATAL: the open layer is missing (no llms.txt) — aborting" >&2; exit 1; }
-  [ -f "$DEV/index.html" ] || { echo "FATAL: the dev site has no index.html — aborting" >&2; exit 1; }
-  echo "staged ✓ (tree clean): $(echo "$FILES" | grep -c -v "/") top-level files ($(open_files . | wc -l | tr -d ' ') of the open layer), $(echo "$FILES" | grep "^$DEV/" | grep -c -v "^$DEV/media/") under $DEV/, $(echo "$FILES" | grep -c "^$DEV/media/") under $DEV/media/ and $(echo "$FILES" | grep -c "^$ADMIN/") under $ADMIN/; $(du -sh . | cut -f1) in $STAGE/"
-)
+check_stage "$STAGE"
 if [ -z "${GITHUB_ACTIONS:-}" ]; then
   echo "not deployed: the publish workflow deploys (gh workflow run publish.yml)"
 fi

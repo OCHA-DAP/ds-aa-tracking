@@ -22,6 +22,13 @@
 # run-name below and the step names of the FIRST job: keep them. To publish again, start a new
 # run (gh workflow run publish.yml) rather than re-running one: its site package is kept a day.
 # Only main may deploy (the github-pages environment's branch policy).
+#
+# Two builds, one site (D203, 2026-11-09): the development and admin sites (dev/, admin/) are built
+# from main, the open site at the root from the `prod` branch, both from the same snapshot, and put
+# together by scripts/assemble_site.py. A merge to main changes dev/ only; the open site changes
+# when `prod` moves (.github/workflows/promote.yml: "put it live"), and its data every night like
+# the rest. When prod and main are the same commit there is one build. A pull request runs this
+# workflow as its check (.github/workflows/check.yml): one build, never deployed.
 name: Publish site
 # the proxy's GET /publish tells a button run by this name; other runs keep GitHub's default
 run-name: ${{ inputs.fresh_snapshot && 'Publish changes (a fresh copy of the database)' || '' }}
@@ -43,9 +50,12 @@ on:
   push:
     branches: [main]
     paths: ["scripts/**", "src/**", "site_src/**", ".github/workflows/publish.yml"]
+  workflow_call:       # a pull request's check (check.yml): build and check, no deploy
 
+# main's runs queue one at a time (a newer waiting run replaces an older waiting one); a branch's
+# or a pull request's build waits in a queue of its own, so it never displaces a publish
 concurrency:
-  group: publish-site
+  group: ${{ github.ref == 'refs/heads/main' && 'publish-site' || format('check-{0}', github.ref) }}
   cancel-in-progress: false
 
 permissions:
@@ -134,7 +144,46 @@ jobs:
           test -n "$SITE_PASSWORD" || { echo "::error::SITE_PASSWORD secret is not set"; exit 1; }
           # the admin site (admin/) has its own password, with no default anywhere
           test -n "$ADMIN_PASSWORD" || { echo "::error::ADMIN_PASSWORD secret is not set (gh secret set ADMIN_PASSWORD)"; exit 1; }
-          STAGE=_site bash scripts/publish.sh
+          STAGE=_dev-build bash scripts/publish.sh
+      # the open site is built from `prod` (D203): the commit the owner last put live
+      - name: Which code builds the open site
+        id: which
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            echo "open_from=self" >> "$GITHUB_OUTPUT"; exit 0      # a check: the branch's own open site
+          fi
+          prod=$(git ls-remote --exit-code origin refs/heads/prod | cut -f1) \
+            || { echo "::error::no prod branch: the open site is built from it (D203; promote.yml creates it)"; exit 1; }
+          echo "prod_sha=$prod" >> "$GITHUB_OUTPUT"
+          if [ "$prod" = "$GITHUB_SHA" ]; then echo "open_from=self"; else echo "open_from=prod"; fi >> "$GITHUB_OUTPUT"
+      - name: Check out the open site's code (prod)
+        if: steps.which.outputs.open_from == 'prod'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.which.outputs.prod_sha }}
+          path: _prod
+      - name: Build the open site from prod
+        if: steps.which.outputs.open_from == 'prod'
+        env:
+          EXTRACT_TOKEN: ${{ secrets.EXTRACT_TOKEN }}
+          SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          DSCI_AZ_BLOB_DEV_SAS: ${{ secrets.DSCI_AZ_BLOB_DEV_SAS }}
+        run: |
+          # the same database (restored above), caches and photos; its own code, scripts and checks
+          ln -s "$GITHUB_WORKSPACE/data" _prod/data
+          ln -s "$GITHUB_WORKSPACE/site_media" _prod/site_media
+          cd _prod && STAGE=_open-build bash scripts/publish.sh
+      - name: Put the site together
+        env:
+          GH_TOKEN: ${{ github.token }}      # the summary's list of pull requests not on the open site yet
+          OPEN_FROM: ${{ steps.which.outputs.open_from }}
+          PROD_SHA: ${{ steps.which.outputs.prod_sha }}
+        run: |
+          open=_dev-build; [ "$OPEN_FROM" = prod ] && open=_prod/_open-build
+          shas=(); [ -n "$PROD_SHA" ] && shas=(--open-sha "$PROD_SHA" --dev-sha "$GITHUB_SHA")
+          uv run python scripts/assemble_site.py --dev _dev-build --open "$open" --out _site "${shas[@]}"
+          CHECK_ONLY=_site bash scripts/publish.sh          # the published site's rules, on the whole
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
@@ -142,6 +191,8 @@ jobs:
   # a job of its own: the github-pages environment's branch policy guards the deploy alone
   deploy:
     needs: publish
+    # main only: a pull request's check and a branch's build stop at the package (D203)
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

@@ -1,0 +1,79 @@
+# Put it live (D203): move `prod`, the commit the open site at the root is built from, to a commit
+# of main (main's tip by default), then start a publish. The development site (dev/) shows main
+# already; this is the one step between it and the open site.
+#   gh workflow run promote.yml                          # main's tip
+#   gh workflow run promote.yml -f ref=<sha>             # an earlier commit of main
+#   gh workflow run promote.yml -f ref=<sha> -f rollback=true   # back to an earlier commit
+# Also from the Actions tab: "Promote to the open site" → Run workflow.
+# prod only ever holds a commit of main, and moves forward unless rollback is ticked. The run's
+# summary lists the pull requests that went out and the commit to roll back to.
+# Data needing new code (an entries file the old code would draw wrongly) waits until this has run.
+name: Promote to the open site
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit of main to put on the open site (a SHA, or main for its tip)"
+        default: main
+      rollback:
+        description: "Allow moving the open site back to an earlier commit"
+        type: boolean
+        default: false
+
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write    # move the prod branch
+      actions: write     # start publish.yml
+    env:
+      GH_TOKEN: ${{ github.token }}
+      R: ${{ github.repository }}
+      REF: ${{ inputs.ref }}
+      ROLLBACK: ${{ inputs.rollback }}
+    steps:
+      - name: Move prod
+        run: |
+          set -euo pipefail
+          sha=$(gh api "repos/$R/commits/${REF:-main}" --jq .sha) || { echo "::error::no commit '$REF'"; exit 1; }
+          # a commit of main: main is that commit or ahead of it
+          on_main=$(gh api "repos/$R/compare/$sha...main" --jq .status)
+          case "$on_main" in identical|ahead) ;; *) echo "::error::$sha is not a commit of main ($on_main)"; exit 1 ;; esac
+          # (gh prints GitHub's error body on a 404: an absent prod reads as empty, not as that body)
+          old=$(gh api "repos/$R/git/ref/heads/prod" --jq .object.sha 2>/dev/null) || old=""
+          {
+            echo "## Open site"
+            if [ -z "$old" ]; then
+              gh api -X POST "repos/$R/git/refs" -f ref=refs/heads/prod -f sha="$sha" >/dev/null
+              echo "prod created at \`${sha:0:7}\`."
+            else
+              rel=$(gh api "repos/$R/compare/$old...$sha" --jq .status)
+              case "$rel" in
+                identical) echo "Already live: prod is \`${sha:0:7}\`." ;;
+                ahead)
+                  gh api -X PATCH "repos/$R/git/refs/heads/prod" -f sha="$sha" -F force=false >/dev/null
+                  echo "prod moved \`${old:0:7}\` → \`${sha:0:7}\`. Going out:"
+                  gh api "repos/$R/compare/$old...$sha" --jq '.commits[] | select(.parents | length > 1)
+                    | .commit.message | split("\n") as $m
+                    | "- #" + ($m[0] | capture("#(?<n>[0-9]+)").n // "?") + " " + ([$m[1:][] | select(length > 0)][0] // "")'
+                  echo
+                  echo "To roll back: \`gh workflow run promote.yml -f ref=$old -f rollback=true\`" ;;
+                *)
+                  if [ "$ROLLBACK" != true ]; then
+                    echo "::error::$sha is not ahead of prod (${old:0:7}, $rel): tick rollback to move the open site back"; exit 1
+                  fi
+                  gh api -X PATCH "repos/$R/git/refs/heads/prod" -f sha="$sha" -F force=true >/dev/null
+                  echo "prod moved BACK \`${old:0:7}\` → \`${sha:0:7}\` (rollback)." ;;
+              esac
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Publish
+        # main's workflow builds the open site from prod as it now stands
+        run: gh workflow run publish.yml --repo "$R" --ref main
