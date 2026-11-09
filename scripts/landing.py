@@ -791,7 +791,10 @@ def _switch_fund(code, alloc, reg, iso):
         return "rhpf"
     k = _fund_kind(code, alloc, reg)[0]
     if k == "unrecorded":
-        k = "regional" if reg.get("one", {}).get(iso) == "regional_fund" else "country"
+        m = re.match(r"cbpf-(\d+)-", str(alloc or ""))   # the allocation code names the fund
+        row = reg["pf"].get(int(m.group(1))) if m else None
+        t = row[0] if row is not None else reg.get("one", {}).get(iso)
+        k = "regional" if t == "regional_fund" else "country"
     return {"cerf": "cerf", "regional": "rhpf"}.get(k, "cbpf")
 
 
@@ -2761,7 +2764,7 @@ function flowFiguresOf(acts){
   return { n: acts.length, nAd: acts.filter(a => a.type === 'adhoc_aa').length,
            usd: sum(rows, 'usd'), usdCerf: sum(rows.filter(x => x.fund === 'cerf'), 'usd'),
            usdCbpf: sum(rows.filter(x => rowFund(x) === 'cbpf'), 'usd'), usdRhpf: sum(rows.filter(x => rowFund(x) === 'rhpf'), 'usd'),
-           noUsd: acts.filter(a => !(a.funding || []).some(x => x.usd || x.shared)).length,
+           noUsd: acts.filter(a => !fundRows(a.funding || []).some(x => x.usd || x.shared)).length,
            reached: sum(rep, 'reached'), nRep: rep.length, nCerf: cerf.length, nInterim: rep.filter(x => x.interim).length,
            targeted: sum(tgt, 'planned'), nTgt: tgt.length,
            ptargeted: sum(ptgt, 'planned'), nPtgt: ptgt.length, nPool: pool.length,
@@ -2858,6 +2861,8 @@ function lockTiles(){
   const take = () => kids.forEach(k => mx.set(k, Math.max(mx.get(k), k.offsetHeight)));
   g.classList.add('measuring');
   try {
+    // every fund ticked: the tallest tiles (the 'not split by fund' bullet), whatever the reader has ticked
+    Object.assign(FUNDS, {cerf: true, cbpf: true, rhpf: true});
     for(let y = YEARS.first; y <= YEARS.now + 1; y++){
       YEAR = y > YEARS.now ? null : y; applyYear();
       for(let m = 0; m < 8; m++){
@@ -2865,7 +2870,8 @@ function lockTiles(){
         state.iso = null; updateTiles(); take(); }
       Object.assign(LAYERS, L0); state.iso = long; updateTiles(); take();   // the caption naming a country
       // ... and the fund switch's longest words in it (D201); fewer funds only take bullets away
-      Object.assign(FUNDS, {cerf: false, cbpf: true, rhpf: true}); updateTiles(); take(); Object.assign(FUNDS, F0);
+      Object.assign(FUNDS, {cerf: false, cbpf: true, rhpf: true}); updateTiles(); take();
+      Object.assign(FUNDS, {cerf: true, cbpf: true, rhpf: true});
     }
   } finally {
     Object.assign(LAYERS, L0); Object.assign(FUNDS, F0); YEAR = Y0; state.iso = I0; applyYear(); updateTiles();
@@ -3776,7 +3782,7 @@ function countryTiles(c){
 function hiddenNote(c){
   const h = hidden(c); if(!h.length) return '';
   // its layer on: the fund switch hides it (D201) — the link ticks every fund
-  return `<div class='small' style='margin:6px 0;color:#64748b'>${esc(tr8('Not drawn by the current layers:'))} ` + h.map(f => LAYERS[f.layer]
+  return `<div class='small' style='margin:6px 0;color:#64748b'>${esc(tr8('Not drawn by the current layers:'))} ` + h.map(f => f.layers.some(l => LAYERS[l])
       ? `${esc(tr8(f.hz_label))} (<a style='cursor:pointer' onclick='allFundsOn()'>${esc(tr8('no money from {0}', fundWords()))}</a>)`
       : `${esc(tr8(f.hz_label))} (<a style='cursor:pointer' onclick='setLayer("${f.layer}", true)'>${esc(tr8(LAYER_LABEL[f.layer]).toLowerCase())}</a>)`).join(', ') + `</div>`;
 }
