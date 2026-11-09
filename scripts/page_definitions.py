@@ -94,6 +94,10 @@ GLOSSARY = [
         ("Country and Regional Funds",
          "OCHA's country-based and regional pooled funds. Their money counts as pre-arranged until an "
          "activation draws on it, and from then on it is released money, no longer committed."),
+        ("CBPF, RHPF",
+         "The two kinds of Country and Regional Funds, apart in the Map's fund switch: CBPF, the "
+         "country-based pooled funds; RHPF, the regional humanitarian pooled funds, through their "
+         "country windows. OCHA's fund registry says which kind a fund is."),
         ("Co-financing",
          "Money from outside the OCHA-managed funds pre-arranged for the framework, as reported for "
          "the year. It is not a fund: the fund switch does not apply to it."),

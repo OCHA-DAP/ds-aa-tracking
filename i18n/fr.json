@@ -1853,5 +1853,7 @@
  "The fund switch does not apply to co-financing (money from outside the OCHA-managed funds): this is the co-financing of the frameworks shown.": "Le sélecteur de fonds ne s’applique pas au cofinancement (de l’argent hors des fonds gérés par OCHA) : c’est le cofinancement des cadres affichés.",
  "no fund": "aucun fonds",
  "no money from {0}": "aucun argent de {0}",
- "of which {0}": "dont {0}"
+ "of which {0}": "dont {0}",
+ "CBPF, RHPF": "CBPF, RHPF",
+ "The two kinds of Country and Regional Funds, apart in the Map's fund switch: CBPF, the country-based pooled funds; RHPF, the regional humanitarian pooled funds, through their country windows. OCHA's fund registry says which kind a fund is.": "Les deux sortes de fonds communs pays et régionaux, séparées dans le sélecteur de fonds de la carte : CBPF, les fonds communs pays ; RHPF, les fonds communs humanitaires régionaux, par leurs guichets pays. Le registre des fonds d’OCHA dit de quelle sorte est un fonds."
 }
