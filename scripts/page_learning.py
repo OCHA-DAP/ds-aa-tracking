@@ -224,6 +224,10 @@ NEUTRAL = ("#7a8699", "#556270")
 HAZARD_LABEL = {"drought": "Drought", "flood": "Floods", "storm": "Tropical cyclones",
                 "cholera": "Cholera", "other": "Other"}
 # a country's own best key statistics, behind its curated findings: evaluations first
+# the documents that report what was learned (evaluations, monitoring reports such as PDMs, after-
+# action reviews, research, case studies): their hover card lists key results (D218: on the
+# development site, for the learning lead's review before the Learning page opens)
+LEARNING_TYPES = {"impact_evaluation", "evaluation", "monitoring_report", "aar", "research", "case_study"}
 TYPE_RANK = {"impact_evaluation": 0, "evaluation": 1, "research": 2, "aar": 3,
              "monitoring_report": 4, "case_study": 5}
 
@@ -459,6 +463,7 @@ def build_learning(page, d):
         # repeated under them when it is the same figure
         if r["ks"] and _restates(r["ks"], [featured[i]["b"] for i in r["ff"]]):
             r["ks"] = None
+        r["lr"] = 1 if r["type"] in LEARNING_TYPES else 0
         del r["type"]
 
     prem = {k: {"l": lab, "c": PREMISE_COLOR.get(k, NEUTRAL)[0],
@@ -516,10 +521,13 @@ def build_learning(page, d):
   <button type='button' class='lclear' id='lclear' hidden>{T("clear filters")}</button>
  </div>
  <div class='lbody' id='lbody'>
- <table class='data ldocs'><thead><tr><th>{T("Document")}</th><th>{T("Country")}</th><th>{T("Hazard")}</th>
-  <th class='yr'><button type='button' id='ysort' {ATTR("title", "Sort by publication date")}>{T("Published")} <span id='yarrow'>▼</span></button></th>
+ <table class='data ldocs'><thead><tr><th>{T("Document")}</th>
+  <th aria-sort='none'><button type='button' class='lsort' data-k='country' {ATTR("title", "Sort by country, A to Z")}>{T("Country")} <span class='larrow off'>↕</span></button></th>
+  <th aria-sort='none'><button type='button' class='lsort' data-k='hazard' {ATTR("title", "Sort by hazard, A to Z")}>{T("Hazard")} <span class='larrow off'>↕</span></button></th>
+  <th class='yr' aria-sort='descending'><button type='button' class='lsort' data-k='date' {ATTR("title", "Sort by publication date")}>{T("Published")} <span class='larrow'>▼</span></button></th>
   <th>{T("Link")}</th></tr></thead><tbody id='lrows'></tbody></table>
  <aside id='tpanel' class='lpanel tpanel' role='region' {ATTR("aria-label", "The document opened from the list")} tabindex='-1' hidden></aside>
+ <div id='tpeek' class='tpeek' aria-hidden='true' hidden></div>
  </div>
  {f"<p class='meta'>{TF('{n} internal document held in the database is not listed here.' if n_int == 1 else '{n} internal documents held in the database are not listed here.', n=n_int)}</p>" if n_int else ""}
 </div>
@@ -623,8 +631,22 @@ table.ldocs td.lt { width:58%; } .lt-t { font-weight:600; color:#0f2540; } .lt-p
 table.ldocs td.yr, table.ldocs th.yr { text-align:right; white-space:nowrap; }
 table.ldocs td.lk { white-space:nowrap; }
 table.ldocs td.lk a { color:#1d5aa8; text-decoration:none; } table.ldocs td.lk a:hover { text-decoration:underline; }
-#ysort { border:0; background:none; font:inherit; font-weight:700; color:inherit; cursor:pointer; padding:0; }
-#ysort:hover { color:#1d5aa8; } #yarrow { font-size:9px; }
+.lsort { border:0; background:none; font:inherit; font-weight:700; color:inherit; cursor:pointer; padding:0; text-align:inherit; }
+.lsort:hover { color:#1d5aa8; } .larrow { font-size:9px; } .larrow.off { opacity:.4; }   /* ↕: this column can sort the list too */
+/* the hover preview of a row: floats over the list (it never moves it), lets the pointer through,
+   and is only made where there is a pointer that hovers; a click opens the full panel */
+.tpeek { position:absolute; z-index:5; width:340px; max-width:calc(100% - 16px); pointer-events:none;
+  background:#fff; border:1px solid #cfd8e3; border-radius:10px; padding:12px 14px 13px;
+  box-shadow:0 2px 4px rgba(15,23,42,.10), 0 12px 28px -8px rgba(15,23,42,.30); }
+.tpeek[hidden] { display:none; }
+.tpeek .sd-k { margin:0; } .tpeek h3 { font-size:14.5px; line-height:1.3; margin:4px 0 3px; color:#0f2540; }
+.tpeek .sd-pub { font-size:12px; color:#56657a; }
+.tpeek p { font-size:12.5px; line-height:1.5; margin:8px 0 0; color:#23364d; }
+.tpeek .tp-more { font-size:11.5px; color:#1d5aa8; margin-top:9px; }
+/* key results in the hover card of a learning document */
+.tpeek h4 { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:#56657a; margin:10px 0 4px; }
+.tpeek ul.tp-kr { margin:0; padding-left:16px; } .tpeek ul.tp-kr li { font-size:12.5px; line-height:1.45; color:#16283d; margin:0 0 4px; }
+.tpeek ul.tp-kr b { color:#0f2540; } .tpeek .tp-none { font-size:12px; color:#7a8699; font-style:italic; margin:2px 0 0; }
 .lnone { color:#666; font-style:italic; }
 /* the detail panel of a finding or a document. It lives INSIDE the page — over the map, or beside
    its row in the list — and is never fixed to the window: the page may be embedded in a larger one */
@@ -957,7 +979,21 @@ function onHeadlineClick(e){
 // ---------- the repository: filter by country and hazard, sort by year, a row opens the panel
 const fC = $('f-c'), fH = $('f-h'), rows = $('lrows'), repo = $('lrepo'), lbody = $('lbody'),
       mpanel = $('mpanel'), tpanel = $('tpanel');
-const state = {desc:true, sel:null};
+// sorted by publication date, newest first, unless a column header says otherwise: country or
+// hazard A to Z (a second click reverses), the newest first within each
+const state = {key:'date', desc:true, sel:null};
+const loc = () => aaLang();
+const cmpTxt = (a, b) => a.localeCompare(b, loc(), {sensitivity:'base'});
+const byDate = (a, b) => (a.y == null) - (b.y == null) || pubKey(b) - pubKey(a) || cmpTxt(a.t, b.t);
+// a document's country and hazard as listed (in the page's language); Global and no hazard go last
+const cKey = d => d.cn.length ? d.cn.map(n => tr8(n)).sort(cmpTxt).join(', ') : null;
+const hKey = d => d.hz ? tr8(LD.hazard[d.hz] || LD.hazard.other) : null;
+function sortBy(key, a, b){
+  if(key === 'date') return state.desc ? byDate(a, b)
+    : (a.y == null) - (b.y == null) || pubKey(a) - pubKey(b) || cmpTxt(a.t, b.t);
+  const f = key === 'country' ? cKey : hKey, x = f(a), z = f(b);
+  return (x == null) - (z == null) || (x == null ? 0 : state.desc ? cmpTxt(z, x) : cmpTxt(x, z)) || byDate(a, b);
+}
 function matches(d){
   const c = fC.value, h = fH.value;
   if(c === '_global' ? d.iso.length : c && !d.iso.includes(c)) return false;
@@ -965,17 +1001,21 @@ function matches(d){
   return true;
 }
 function renderTable(){
-  const list = DOCS.filter(matches).sort((a, b) => (a.y == null) - (b.y == null)       // no year: last, either way
-    || (state.desc ? pubKey(b) - pubKey(a) : pubKey(a) - pubKey(b)) || a.t.localeCompare(b.t));
+  const list = DOCS.filter(matches).sort((a, b) => sortBy(state.key, a, b));
   rows.innerHTML = list.map(d => `<tr data-id='${d.id}' tabindex='0'>`
     + `<td class='lt'><span class='lt-t'>${esc(d.t)}</span>${d.pub ? `<span class='lt-p'>${esc(d.pub)}</span>` : ''}</td>`
-    + `<td>${d.cn.length ? esc(d.cn.map(n => tr8(n)).join(', ')) : esc(tr8('Global'))}</td><td>${d.hz ? esc(tr8(LD.hazard[d.hz] || LD.hazard.other)) : '—'}</td>`
+    + `<td>${d.cn.length ? esc(cKey(d)) : esc(tr8('Global'))}</td><td>${d.hz ? esc(tr8(LD.hazard[d.hz] || LD.hazard.other)) : '—'}</td>`
     + `<td class='yr'>${d.y == null ? '—' : esc(pubDate(d))}</td>`
     + `<td class='lk'>${d.u ? `<a href='${esc(d.u)}' target='_blank' rel='noopener'>${esc(tr8('open ↗'))}</a>` : `<span class='lnone' title='${esc(tr8('No public link recorded'))}'>${esc(tr8('none'))}</span>`}</td></tr>`).join('')
     || `<tr><td colspan='5' class='lnone'>${esc(tr8('No document matches these filters.'))}</td></tr>`;
   const filtered = !!(fC.value || fH.value);
   $('lcount').textContent = filtered ? tr8('{0} of {1} documents', list.length, DOCS.length) : tr8('{0} documents', DOCS.length);
-  $('lclear').hidden = !filtered; $('yarrow').textContent = state.desc ? '▼' : '▲';
+  $('lclear').hidden = !filtered;
+  document.querySelectorAll('#lrepo .lsort').forEach(b => { const on = b.dataset.k === state.key;
+    // ▼ descending (newest first, Z to A), ▲ ascending (oldest first, A to Z)
+    const ar = b.querySelector('.larrow'); ar.textContent = on ? (state.desc ? '▼' : '▲') : '↕'; ar.classList.toggle('off', !on);
+    b.closest('th').setAttribute('aria-sort', !on ? 'none' : state.desc ? 'descending' : 'ascending'); });
+  hidePeek();
   markRow(); placeListPanel();
 }
 function markRow(){ rows.querySelectorAll('tr.sel').forEach(tr => tr.classList.remove('sel'));
@@ -983,8 +1023,60 @@ function markRow(){ rows.querySelectorAll('tr.sel').forEach(tr => tr.classList.r
 function filterTo(iso){ fC.value = iso; fH.value = ''; renderTable(); repo.scrollIntoView({behavior:'smooth', block:'start'}); }
 fC.addEventListener('change', renderTable); fH.addEventListener('change', renderTable);
 $('lclear').addEventListener('click', () => { fC.value = ''; fH.value = ''; renderTable(); });
-$('ysort').addEventListener('click', () => { state.desc = !state.desc; renderTable(); });
+document.querySelectorAll('#lrepo .lsort').forEach(b => b.addEventListener('click', () => {
+  const k = b.dataset.k;
+  if(state.key === k) state.desc = !state.desc;
+  else { state.key = k; state.desc = k === 'date'; }        // a new column starts newest first / A to Z
+  renderTable(); }));
 rows.addEventListener('click', e => { if(e.target.closest('a')) return; const tr = e.target.closest('tr[data-id]'); if(tr) openInList(+tr.dataset.id); });
+// hovering anywhere on a row (not only its link) previews the document; a click opens it in full
+const peek = $('tpeek'), canHover = matchMedia('(hover: hover) and (pointer: fine)');
+// a document's key results: its headline findings, then its further headlines, then its key
+// statistic, clause by clause — the panel's own facts, at most three, each kept short
+function keyResults(d){
+  const out = [];
+  // a headline finding brings its figure and claim, then its secondary figures (its chips)
+  d.ff.forEach(i => { const f = F[i]; out.push(`<b>${esc(tr8(f.b))}</b> ${esc(trim(tr8(f.t), 160))}`);
+    f.ch.forEach(([v, l]) => out.push(`<b>${esc(tr8(v))}</b> ${esc(tr8(l))}`)); });
+  d.hl.forEach(h => out.push(`<b>${esc(tr8(h.b))}.</b> ${esc(trim(tr8(h.t), 160))}`));
+  if(d.ks) d.ks.split(/;\s+/).forEach(x => { x = x.trim().replace(/\.$/, ''); if(!x) return;
+    x = trim(x.charAt(0).toUpperCase() + x.slice(1), 170); out.push(esc(x) + (x.endsWith('…') ? '' : '.')); });
+  return out.slice(0, 3);
+}
+let peekId = null, peekT = null;
+const trim = (s, n) => s.length > n ? s.slice(0, s.lastIndexOf(' ', n) > n * .6 ? s.lastIndexOf(' ', n) : n).replace(/[,;:.\s]+$/, '') + '…' : s;
+function peekHTML(d){
+  const fact = d.ff.length ? (() => { const f = F[d.ff[0]]; return `${tr8(f.b)} ${tr8(f.t)}`; })()
+    : d.hl.length ? `${tr8(d.hl[0].b)}. ${tr8(d.hl[0].t)}` : d.ks || d.s || '';
+  return `<div class='sd-k'>${esc(tr8(d.ty))}${d.y ? ' · ' + esc(pubDate(d)) : ''}</div><h3>${esc(d.t)}</h3>`
+    + (d.pub ? `<div class='sd-pub'>${esc(d.pub)}</div>` : '')
+    + tagsHTML([...(d.cn.length ? d.cn : ['Global']), ...(d.hz ? [LD.hazard[d.hz] || LD.hazard.other] : [])].map(x => tr8(x)))
+    + (d.lr ? (kr => kr.length ? `<h4>${esc(tr8('Key results'))}</h4><ul class='tp-kr'>${kr.map(x => `<li>${x}</li>`).join('')}</ul>`
+                                         : `<h4>${esc(tr8('Key results'))}</h4><p class='tp-none'>${esc(tr8('No key results recorded yet.'))}</p>`)(keyResults(d))
+       : fact ? `<p>${esc(trim(fact, 260))}</p>` : '')
+    + `<div class='tp-more'>${esc(tr8('Click the row for the full details'))}</div>`;
+}
+function hidePeek(){ clearTimeout(peekT); peekId = null; peek.hidden = true; }
+function showPeek(tr){
+  const id = +tr.dataset.id, d = BYID.get(id);
+  if(!d || !tpanel.hidden) { hidePeek(); return; }   // a document is open in full: click another row to switch
+  peekId = id; peek.innerHTML = peekHTML(d); peek.hidden = false;
+  // under the row, from the start of the Country column (the title stays readable); above it
+  // when the list ends too soon or the window would cut it off
+  const box = lbody.getBoundingClientRect(), r = tr.getBoundingClientRect(), c = tr.cells[1].getBoundingClientRect();
+  const h = peek.offsetHeight, below = r.bottom + h + 8 < Math.max(innerHeight, box.bottom) || r.top - h - 8 < box.top;
+  peek.style.top = ((below ? r.bottom + 4 : r.top - h - 4) - box.top) + 'px';
+  peek.style.left = Math.max(8, Math.min(c.left - box.left, lbody.clientWidth - peek.offsetWidth - 8)) + 'px';
+}
+rows.addEventListener('mouseover', e => {
+  if(!canHover.matches) return;
+  const tr = e.target.closest('tr[data-id]');
+  if(!tr){ hidePeek(); return; }
+  if(+tr.dataset.id === peekId) return;
+  clearTimeout(peekT); peekT = setTimeout(() => showPeek(tr), peek.hidden ? 220 : 60);   // a short pause: no flicker while the pointer crosses the list
+});
+rows.addEventListener('mouseleave', hidePeek);
+rows.addEventListener('click', hidePeek);
 rows.addEventListener('keydown', e => { if(e.key !== 'Enter' && e.key !== ' ') return; const tr = e.target.closest('tr[data-id]');
   if(tr && e.target === tr){ e.preventDefault(); openInList(+tr.dataset.id); } });
 

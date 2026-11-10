@@ -1755,5 +1755,10 @@
  "OCHA technical support for anticipatory action in general, not for one hazard, and without a funding commitment.": "Apoyo técnico de OCHA a la acción anticipatoria en general, no para una amenaza concreta, y sin compromiso de financiación.",
  "OCHA supports anticipatory action here technically, in general rather than for one hazard, without a funding commitment from CERF or the Country and Regional Funds. No framework and no allocation are behind it.": "OCHA apoya técnicamente la acción anticipatoria aquí, en general y no para una amenaza concreta, sin compromiso de financiación del CERF ni de los fondos de país y regionales. No hay ningún marco ni ninguna asignación detrás.",
  "{country} — technical support, {hazard}": "{country} — apoyo técnico, {hazard}",
- "Technical support for anticipatory action in general, not for one hazard. No framework and no allocation stand behind it; the Map draws its pin with an open ring.": "Apoyo técnico a la acción anticipatoria en general, no para una amenaza concreta. No hay ningún marco ni ninguna asignación detrás; el Mapa dibuja su marcador con un anillo abierto."
+ "Technical support for anticipatory action in general, not for one hazard. No framework and no allocation stand behind it; the Map draws its pin with an open ring.": "Apoyo técnico a la acción anticipatoria en general, no para una amenaza concreta. No hay ningún marco ni ninguna asignación detrás; el Mapa dibuja su marcador con un anillo abierto.",
+ "Sort by country, A to Z": "Ordenar por país, de la A a la Z",
+ "Sort by hazard, A to Z": "Ordenar por amenaza, de la A a la Z",
+ "Click the row for the full details": "Haga clic en la fila para ver todos los detalles",
+ "Key results": "Resultados clave",
+ "No key results recorded yet.": "Aún no se han registrado resultados clave."
 }
