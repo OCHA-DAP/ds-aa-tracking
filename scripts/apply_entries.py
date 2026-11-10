@@ -23,6 +23,12 @@ A "delete" item removes ONE row by its full key — for a row that is wrong (dra
 wrong document), not one that changed. A missing row fails the file (all or nothing), and
 the deleted row is written whole to the audit (field '(delete)'), so it can be put back.
 
+An "update" item changes fields of ONE row named by its full key, key columns included —
+e.g. a window's label, which an upsert cannot change (it would insert a second window):
+    {"op": "update", "table": "window", "key": {<every key column>}, "set": {"window_name": …}}
+A missing row fails the file; the old row and the change go to the audit (field '(update)').
+Renaming a window renames the rows below it that carried its old name (window_sync_children).
+
 A "replace" item re-enters a record as a whole — e.g. a re-run backtest of a framework
 version:
     {"op": "replace", "table": T,
@@ -116,6 +122,41 @@ def _delete(conn, name, by, table, key, dry):
         {"by": by, "t": table, "k": row_key, "v": json.dumps(old, default=str)})
 
 
+def _update(conn, name, by, table, key, sets, dry):
+    """Change fields of ONE row named by its full key — key columns included (a window's label:
+    an upsert would insert a second window). The row must exist."""
+    keys, types = _key_cols(conn, table), _col_types(conn, table)
+    if set(key) != set(keys):
+        raise SystemExit(f"{name}: an update on aa.{table} must name the row by exactly its key {keys}")
+    if not sets:
+        raise SystemExit(f"{name}: an update on aa.{table} sets nothing")
+    unknown = set(sets) - set(types)
+    if unknown:
+        raise SystemExit(f"{name}: aa.{table} has no column(s) {sorted(unknown)}")
+    where = " AND ".join(f"{k} IS NOT DISTINCT FROM :k_{k}" for k in keys)
+    params = {f"k_{k}": key[k] for k in keys}
+    row_key = "/".join(str(key.get(k)) for k in keys)
+    old = conn.execute(sa.text(f"SELECT to_jsonb(t) FROM aa.{table} t WHERE {where}"), params).scalar()
+    if old is None:
+        raise SystemExit(f"{name}: no aa.{table} row {row_key} to update")
+    cols = []
+    for c, v in sets.items():
+        if types[c] in ("jsonb", "json") and not isinstance(v, str) and v is not None:
+            params[f"s_{c}"] = json.dumps(v)
+            cols.append(f"{c} = CAST(:s_{c} AS {types[c]})")
+        else:
+            params[f"s_{c}"] = v
+            cols.append(f"{c} = :s_{c}")
+    if "updated_at" in types and "updated_at" not in sets:
+        cols.append("updated_at = now()")
+    print(f"  {'(dry) ' if dry else ''}{table}: {row_key}  [update: {', '.join(sets)}]")
+    conn.execute(sa.text(f"UPDATE aa.{table} SET {', '.join(cols)} WHERE {where}"), params)
+    conn.execute(sa.text(
+        "INSERT INTO aa.entry_audit (entered_by, table_name, row_key, field, old_value, new_value) "
+        "VALUES (:by, :t, :k, '(update)', :o, :v)"),
+        {"by": by, "t": table, "k": row_key, "o": json.dumps(old, default=str), "v": json.dumps(sets, default=str)})
+
+
 SCOPE_MIN = {"country_iso3", "hazard", "version"}
 
 
@@ -159,6 +200,10 @@ def apply_file(conn, name, payload, dry=False):
             _delete(conn, name, by, item["table"], item["delete"], dry)
             n += 1
             continue
+        if item.get("op") == "update":
+            _update(conn, name, by, item["table"], dict(item.get("key") or {}), dict(item.get("set") or {}), dry)
+            n += 1
+            continue
         if item.get("op") == "replace":
             rows = item.get("rows") or []
             _replace(conn, name, by, item["table"], dict(item.get("scope") or {}), rows, dry)
@@ -166,7 +211,7 @@ def apply_file(conn, name, payload, dry=False):
                                              "rows": [{"table": item["table"], "row": r} for r in rows]}, dry)
             continue
         if item.get("op") not in (None, "upsert"):
-            raise SystemExit(f"{name}: unknown op {item['op']!r} (a row, a delete, or op: replace)")
+            raise SystemExit(f"{name}: unknown op {item['op']!r} (a row, a delete, op: update or op: replace)")
         table, row = item["table"], dict(item["row"])
         types = _col_types(conn, table)
         unknown = set(row) - set(types)
