@@ -1121,7 +1121,8 @@ ADDITIVE_MIGRATIONS = [
     """DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'framework_version_no_key'
                        AND conrelid = 'aa.framework_version'::regclass) THEN
-            ALTER TABLE aa.framework_version ADD CONSTRAINT framework_version_no_key UNIQUE (country_iso3, hazard, version_no);
+            ALTER TABLE aa.framework_version ADD CONSTRAINT framework_version_no_key UNIQUE (country_iso3, hazard, version_no)
+                DEFERRABLE INITIALLY DEFERRED;   -- renumbering shifts numbers within one file
         END IF;
     END $$""",
     # 2026-11-10 (D214): historical activations are entered raw, per event, at trigger level
@@ -1133,6 +1134,14 @@ ADDITIVE_MIGRATIONS = [
     "ALTER TABLE IF EXISTS aa.window_trigger ADD COLUMN IF NOT EXISTS analysis_end smallint",
     "ALTER TABLE IF EXISTS aa.trigger_event ADD COLUMN IF NOT EXISTS event_time timestamptz",
     "ALTER TABLE IF EXISTS aa.window_activation ADD COLUMN IF NOT EXISTS trigger_code text",
+    # a trigger is named only with its window (the key below does not check a row with no window)
+    """DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'window_activation_trigger_needs_window'
+                       AND conrelid = 'aa.window_activation'::regclass) THEN
+            ALTER TABLE aa.window_activation ADD CONSTRAINT window_activation_trigger_needs_window
+                CHECK (trigger_code IS NULL OR window_code IS NOT NULL);
+        END IF;
+    END $$""",
     """DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'window_activation_trigger_fk'
                        AND conrelid = 'aa.window_activation'::regclass) THEN
@@ -1171,6 +1180,13 @@ ADDITIVE_MIGRATIONS = [
              WHERE w.country_iso3 = NEW.country_iso3 AND w.hazard = NEW.hazard
                AND w.version = NEW.version AND w.window_name = NEW.window_name;
             IF c IS NOT NULL THEN NEW.window_code := c; END IF;
+            -- an activation moved to another window by name leaves its trigger behind (D214): a
+            -- trigger of the same code in the new window is not the one that fired
+            IF TG_TABLE_NAME = 'window_activation' AND TG_OP = 'UPDATE'
+               AND NEW.window_code IS DISTINCT FROM OLD.window_code
+               AND NEW.trigger_code IS NOT DISTINCT FROM OLD.trigger_code THEN
+                NEW.trigger_code := NULL;
+            END IF;
         END IF;
         RETURN NEW;
     END $f$""",
@@ -1877,8 +1893,10 @@ VIEWS = {
     # (aa.backtest_event) when there are some, else its simulated years
     "v_trigger_event": """
         CREATE OR REPLACE VIEW aa.v_trigger_event AS
-        WITH explicit AS (     -- a window with entered triggers takes its events from them only
-            SELECT DISTINCT country_iso3, hazard, version, window_code FROM aa.window_trigger
+        WITH explicit AS (     -- a window with entered trigger EVENTS takes its events from them
+            -- only; one whose triggers are entered but not yet their events keeps its own record
+            -- (v_trk_trigger_check lists it)
+            SELECT DISTINCT country_iso3, hazard, version, window_code FROM aa.trigger_event
         ),
         tested AS (
             SELECT DISTINCT country_iso3, hazard, version, window_code FROM aa.backtest_event
@@ -2067,5 +2085,18 @@ VIEWS = {
                     ELSE 'a simulated year no trigger met' END AS problem
         FROM te FULL JOIN sa USING (country_iso3, hazard, version, window_code, event_year)
         WHERE te.event_year IS NULL OR sa.event_year IS NULL
+        UNION ALL      -- triggers entered, their events not yet (D214)
+        SELECT DISTINCT t.country_iso3, t.hazard, t.version, t.window_code, NULL::integer,
+               'triggers entered, their events not yet'
+        FROM aa.window_trigger t
+        WHERE NOT EXISTS (SELECT 1 FROM aa.trigger_event e
+                          WHERE (e.country_iso3, e.hazard, e.version, e.window_code)
+                              = (t.country_iso3, t.hazard, t.version, t.window_code))
+          AND (EXISTS (SELECT 1 FROM aa.simulated_activation s
+                       WHERE (s.country_iso3, s.hazard, s.version, s.window_code)
+                           = (t.country_iso3, t.hazard, t.version, t.window_code))
+               OR EXISTS (SELECT 1 FROM aa.backtest_event b
+                          WHERE (b.country_iso3, b.hazard, b.version, b.window_code)
+                              = (t.country_iso3, t.hazard, t.version, t.window_code)))
     """,
 }
