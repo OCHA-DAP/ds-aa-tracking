@@ -285,7 +285,8 @@ Decisions about this site, the OCHA anticipatory action (AA) portfolio tracker, 
   - **Historical activations entered raw (D214):**
     - per storm from the documents for Cuba, Fiji, Mozambique (p.26) and Vanuatu (the team's analysis, which corrects the insurer's 2022/23 count);
     - per season from the documents for the Dry Corridor 2026, Afghanistan, Burkina Faso, Mauritania and Niger;
-    - from the insurer's counts where a document has none: Haiti, the Philippines, DRC cholera, and the Dry Corridor's Postrera, whose printed years contradict the documents' own return periods.
+    - per storm for Haiti's 2026 action and early-response windows from the team's replay of the endorsed trigger (the /2026/ page of ds-aa-hti-hurricanes: 42 storms 2002–2025, 13 activating in 10 seasons, action 2.7, early response 3.4, overall 2.4 years, as the framework states; owner, 2026-11-10: "For Haiti, there should be a per-storm record"). The replay does not compute Mobilisation storm by storm, so Haiti's readiness window copies the action storms (owner, 2026-11-10: "Let's just copy action"), as for Vanuatu; the framework states 3.0 years for it, the copy gives 2.7;
+    - from the insurer's counts where a document has none: the Philippines, DRC cholera, and the Dry Corridor's Postrera, whose printed years contradict the documents' own return periods.
 
     Kenya's severe window has none (no year where only it would pay). Cuba's Ivan (2004) did not meet the observational trigger, as the team's analysis has it (the document's annex agrees; its Tables 2 and 4 do not, nor does the workbook). Southern-hemisphere storms keep the version's season labels (by the season's end year: Evan, December 2012, is 2013), with the calendar year in the event's note.
   - **Statuses are never taken from the insurer's workbook:** the database is the record (owner, 2026-11-10).
