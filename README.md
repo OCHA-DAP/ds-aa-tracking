@@ -57,19 +57,25 @@ are kept forever (the year-end official state, for the map's time view).
 - `src/ds_aa_tracking/schema.py` — DDL (tables + views), all in schema `aa`; hierarchy
   country_hazard → framework_version → window → {window_activation, simulated_activation,
   window_funding}; ad hoc / early-action allocations off the pair (adhoc_activation)
-- **windows, triggers and the CERF app** (D207-D209): a window is keyed by CERF's
-  `window_code` (`ws`, `wt1`…, `wg1`…, `op1`…), unique in its version; the tables below it
-  (`window_funding`, `simulated_activation`, `backtest_event`, `window_activation`,
-  `window_status`) carry the code with a foreign key (deferrable, follows a code change). A row
-  written with only a window name gets its code from the name (trigger `fill_window_code`), a
-  window inserted links the rows waiting under its name, a window renamed renames the rows that
-  carried its old name; labels below a window are never rewritten (writers key on them). `framework_version.cerf_version_id` is CERF's id where CERF
-  has one. Below the window, `window_trigger` / `trigger_event` hold the OR'd conditions and
-  every event each was tested on, entered where a window has more than one; the views
-  `v_window_trigger` / `v_trigger_event` add every other window's implicit trigger `t1` from its
-  own record. The financial-exposure app reads `v_cerf_window` (CERF's `window_level` columns)
-  and `v_cerf_activation_history` (uid × year: simulated, real, total). Curation queues:
-  `v_trk_window_links` (rows naming no window, windows with no code), `v_trk_trigger_check`.
+- **windows, triggers and the CERF app** (D207-D209, D212-D214): a window is keyed by a
+  `window_code` that says what it is (`ws`, `wt_readiness`, `wg_koshi`, `op_severe`; D213),
+  unique in its version; the tables below it (`window_funding`, `simulated_activation`,
+  `backtest_event`, `window_activation`, `window_status`, `cerf_uid_crosswalk`) carry the code
+  with a foreign key (deferrable, follows a code change). A row written with only a window name
+  gets its code from the name (trigger `fill_window_code`), a window inserted links the rows
+  waiting under its name, a window renamed renames the rows that carried its old name; labels
+  below a window are never rewritten (writers key on them). Versions carry the tracker's own
+  number (`framework_version.version_no`, D212) and CERF's id (`cerf_version_id`); every uid
+  CERF's sheet or the insurer's workbook gave a window is in `cerf_uid_crosswalk`. Below the
+  window, `window_trigger` / `trigger_event` hold the OR'd conditions (with their analysis years)
+  and the historical activations RAW, per event (a storm, with its date and hour; D214): a
+  window's simulated years are written from its events, and `v_trk_trigger_check` stays empty. A
+  real activation names its trigger where known (`window_activation.trigger_code`). The views
+  `v_window_trigger` / `v_trigger_event` add every other window's implicit trigger `main` from its
+  own record. The financial-exposure app reads `v_cerf_window` (CERF's `window_level` columns,
+  uid from the tracker's numbering, `cerf_uids` beside), `v_cerf_activation_history` (uid × year:
+  distinct simulated events, real activations, total) and `v_cerf_uid_crosswalk` (old uid → new).
+  Curation queues: `v_trk_window_links`, `v_trk_trigger_check`, `v_trk_version_numbers`.
 - publishing: `.github/workflows/publish.yml` rebuilds and publishes nightly, on pushes to
   main, by hand (workflow_dispatch, optionally from a dated snapshot) and on
   `repository_dispatch` events `data-updated` (the older name `kb-updated` is still
