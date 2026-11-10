@@ -1445,7 +1445,7 @@ VIEWS = {
                       -- beat three sources and the document at 4.5M for Mozambique storm)
             SELECT DISTINCT ON (country_iso3, hazard, version, kind, fund_code, financier, window_name)
                    country_iso3, hazard, version, kind, fund_code, financier, window_name,
-                   amount_usd
+                   window_code, amount_usd
             FROM votes
             ORDER BY country_iso3, hazard, version, kind, fund_code, financier, window_name,
                      after_validity, year DESC NULLS LAST,
@@ -1488,19 +1488,17 @@ VIEWS = {
             FROM reach r JOIN edge e ON (e.country_iso3, e.hazard, e.version, e.a)
                                       = (r.country_iso3, r.hazard, r.version, r.b)
         ),
-        grp AS (
-            SELECT w.country_iso3, w.hazard, w.version, w.window_name, min(r.b) AS grp
-            FROM aa.window w JOIN reach r ON (r.country_iso3, r.hazard, r.version, r.a)
-                                           = (w.country_iso3, w.hazard, w.version, w.window_code)
-            GROUP BY 1, 2, 3, 4
+        grp AS (       -- a window's group, by its code (a budget row carries the code, D207)
+            SELECT r.country_iso3, r.hazard, r.version, r.a AS window_code, min(r.b) AS grp
+            FROM reach r GROUP BY 1, 2, 3, 4
         ),
-        g AS (         -- one amount per group
+        g AS (         -- one amount per group; a row with no code is a group of its own
             SELECT u.country_iso3, u.hazard, u.version, u.kind, u.fund_code, u.financier,
-                   coalesce(gr.grp, u.window_name) AS grp,
+                   coalesce('code:' || gr.grp, 'name:' || u.window_name) AS grp,
                    max(u.amount_usd) AS grp_amount, bool_or(u.window_name = 'unattributed') AS unatt
             FROM usable u
-            LEFT JOIN grp gr ON (gr.country_iso3, gr.hazard, gr.version, gr.window_name)
-                              = (u.country_iso3, u.hazard, u.version, u.window_name)
+            LEFT JOIN grp gr ON (gr.country_iso3, gr.hazard, gr.version, gr.window_code)
+                              = (u.country_iso3, u.hazard, u.version, u.window_code)
             GROUP BY 1, 2, 3, 4, 5, 6, 7
         ),
         w AS (

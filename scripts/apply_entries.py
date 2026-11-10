@@ -122,6 +122,9 @@ def _delete(conn, name, by, table, key, dry):
         {"by": by, "t": table, "k": row_key, "v": json.dumps(old, default=str)})
 
 
+SCOPE_MIN = {"country_iso3", "hazard", "version"}
+
+
 def _update(conn, name, by, table, key, sets, dry):
     """Change fields of ONE row named by its full key — key columns included (a window's label:
     an upsert would insert a second window). The row must exist."""
@@ -133,6 +136,10 @@ def _update(conn, name, by, table, key, sets, dry):
     unknown = set(sets) - set(types)
     if unknown:
         raise SystemExit(f"{name}: aa.{table} has no column(s) {sorted(unknown)}")
+    moved = SCOPE_MIN & set(sets)
+    if moved:   # a row never leaves its framework version this way (its rows below would follow)
+        raise SystemExit(f"{name}: an update cannot change {sorted(moved)}; relabel a version with "
+                         "scripts/relabel_version.py")
     where = " AND ".join(f"{k} IS NOT DISTINCT FROM :k_{k}" for k in keys)
     params = {f"k_{k}": key[k] for k in keys}
     row_key = "/".join(str(key.get(k)) for k in keys)
@@ -155,9 +162,6 @@ def _update(conn, name, by, table, key, sets, dry):
         "INSERT INTO aa.entry_audit (entered_by, table_name, row_key, field, old_value, new_value) "
         "VALUES (:by, :t, :k, '(update)', :o, :v)"),
         {"by": by, "t": table, "k": row_key, "o": json.dumps(old, default=str), "v": json.dumps(sets, default=str)})
-
-
-SCOPE_MIN = {"country_iso3", "hazard", "version"}
 
 
 def _replace(conn, name, by, table, scope, rows, dry):
