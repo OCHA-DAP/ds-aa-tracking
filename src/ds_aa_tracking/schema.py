@@ -1182,10 +1182,13 @@ ADDITIVE_MIGRATIONS = [
             IF c IS NOT NULL THEN NEW.window_code := c; END IF;
             -- an activation moved to another window by name leaves its trigger behind (D214): a
             -- trigger of the same code in the new window is not the one that fired
-            IF TG_TABLE_NAME = 'window_activation' AND TG_OP = 'UPDATE'
-               AND NEW.window_code IS DISTINCT FROM OLD.window_code
-               AND NEW.trigger_code IS NOT DISTINCT FROM OLD.trigger_code THEN
-                NEW.trigger_code := NULL;
+            -- (nested: NEW.trigger_code exists on window_activation only, and PL/pgSQL evaluates
+            -- the whole condition)
+            IF TG_TABLE_NAME = 'window_activation' AND TG_OP = 'UPDATE' THEN
+                IF NEW.window_code IS DISTINCT FROM OLD.window_code
+                   AND NEW.trigger_code IS NOT DISTINCT FROM OLD.trigger_code THEN
+                    NEW.trigger_code := NULL;
+                END IF;
             END IF;
         END IF;
         RETURN NEW;
@@ -1425,7 +1428,7 @@ VIEWS = {
     # ---- version funding derived from the windows under the version's rollup mode
     "v_version_funding": """
         CREATE OR REPLACE VIEW aa.v_version_funding AS
-        WITH votes AS (    -- how many sources report the same amount for the same window/year
+        WITH RECURSIVE votes AS (    -- how many sources report the same amount for the same window/year
             SELECT wf.*, count(*) OVER (PARTITION BY wf.country_iso3, wf.hazard, wf.version, wf.kind,
                                                      wf.fund_code, wf.financier, wf.window_name,
                                                      wf.year, wf.amount_usd) AS n_agree,
@@ -1466,17 +1469,63 @@ VIEWS = {
                      AND n.fund_code IS NOT DISTINCT FROM r.fund_code
                      AND n.financier IS NOT DISTINCT FROM r.financier)
         ),
+        -- windows that cannot both release (CERF's cannot_trigger_if, either way round) form one
+        -- group, which counts once at its largest amount (D215: Cuba storms' action OR
+        -- observational window, each the full envelope less readiness); a window outside any rule
+        -- is a group of its own. Groups are the connected windows, named by their smallest code.
+        edge AS (
+            SELECT country_iso3, hazard, version, window_code AS a, cannot_trigger_if AS b
+            FROM aa.window WHERE window_code IS NOT NULL AND cannot_trigger_if IS NOT NULL
+            UNION
+            SELECT country_iso3, hazard, version, cannot_trigger_if, window_code
+            FROM aa.window WHERE window_code IS NOT NULL AND cannot_trigger_if IS NOT NULL
+        ),
+        reach (country_iso3, hazard, version, a, b) AS (
+            SELECT country_iso3, hazard, version, window_code, window_code
+            FROM aa.window WHERE window_code IS NOT NULL
+            UNION
+            SELECT r.country_iso3, r.hazard, r.version, r.a, e.b
+            FROM reach r JOIN edge e ON (e.country_iso3, e.hazard, e.version, e.a)
+                                      = (r.country_iso3, r.hazard, r.version, r.b)
+        ),
+        grp AS (
+            SELECT w.country_iso3, w.hazard, w.version, w.window_name, min(r.b) AS grp
+            FROM aa.window w JOIN reach r ON (r.country_iso3, r.hazard, r.version, r.a)
+                                           = (w.country_iso3, w.hazard, w.version, w.window_code)
+            GROUP BY 1, 2, 3, 4
+        ),
+        g AS (         -- one amount per group
+            SELECT u.country_iso3, u.hazard, u.version, u.kind, u.fund_code, u.financier,
+                   coalesce(gr.grp, u.window_name) AS grp,
+                   max(u.amount_usd) AS grp_amount, bool_or(u.window_name = 'unattributed') AS unatt
+            FROM usable u
+            LEFT JOIN grp gr ON (gr.country_iso3, gr.hazard, gr.version, gr.window_name)
+                              = (u.country_iso3, u.hazard, u.version, u.window_name)
+            GROUP BY 1, 2, 3, 4, 5, 6, 7
+        ),
         w AS (
-            SELECT country_iso3, hazard, version, kind, fund_code, financier,
-                   sum(amount_usd) AS window_sum, max(amount_usd) AS window_max,
-                   count(DISTINCT window_name) AS n_windows,
-                   bool_or(window_name = 'unattributed') AS has_unattributed
-            FROM usable
+            SELECT g.country_iso3, g.hazard, g.version, g.kind, g.fund_code, g.financier,
+                   sum(g.grp_amount) AS window_sum,
+                   (SELECT max(u.amount_usd) FROM usable u
+                    WHERE (u.country_iso3, u.hazard, u.version, u.kind) = (g.country_iso3, g.hazard, g.version, g.kind)
+                      AND u.fund_code IS NOT DISTINCT FROM g.fund_code
+                      AND u.financier IS NOT DISTINCT FROM g.financier) AS window_max,
+                   (SELECT count(DISTINCT u.window_name) FROM usable u
+                    WHERE (u.country_iso3, u.hazard, u.version, u.kind) = (g.country_iso3, g.hazard, g.version, g.kind)
+                      AND u.fund_code IS NOT DISTINCT FROM g.fund_code
+                      AND u.financier IS NOT DISTINCT FROM g.financier) AS n_windows,
+                   bool_or(g.unatt) AS has_unattributed
+            FROM g
             GROUP BY 1, 2, 3, 4, 5, 6
         )
+        -- 'capped' (D215): the windows' CERF money adds up to no more than the envelope the
+        -- document states (Ethiopia drought 2026: MAM up to $10M, JJAS $3M, within $10M)
         SELECT w.country_iso3, w.hazard, w.version, w.kind, w.fund_code, w.financier,
                fv.window_rollup, w.n_windows, w.has_unattributed,
                CASE WHEN fv.window_rollup = 'exclusive' OR w.has_unattributed THEN w.window_max
+                    WHEN fv.window_rollup = 'capped' AND w.kind = 'prearranged' AND w.fund_code = 'cerf'
+                         AND fv.prearranged_usd_doc IS NOT NULL
+                         THEN least(w.window_sum, fv.prearranged_usd_doc)
                     ELSE w.window_sum END AS total_usd
         FROM w LEFT JOIN aa.framework_version fv USING (country_iso3, hazard, version)
     """,
