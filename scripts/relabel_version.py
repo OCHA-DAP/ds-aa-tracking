@@ -152,7 +152,15 @@ def main():
             print("dry run — nothing changed (--write to apply)")
             return
 
+        # aa.window first: since D207 its new version cascades (ON UPDATE CASCADE) to the coded
+        # rows below it, so each table is counted again just before its own update
+        plan.sort(key=lambda x: x[0] != "window")
         for t, col, n, where, extra in plan:
+            if t != "window":
+                n = conn.execute(sa.text(f"SELECT count(*) FROM aa.{t} WHERE {where}"),
+                                 {**pair, **extra}).scalar()
+                if not n:
+                    continue
             sets = (
                 f"{col} = CAST(:new AS {cols[t][col]})" if col == "valid_from" else f"{col} = :new"
             )

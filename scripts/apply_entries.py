@@ -30,7 +30,10 @@ version:
      "rows": [{...}, ...]}
 The given rows BECOME the scope's rows in T: every row in the scope is deleted (each audited
 whole, like a delete) and the rows are inserted (each must sit inside the scope), so years
-that dropped out of the re-run go too. The scope must name one version.
+that dropped out of the re-run go too. The scope must name one version. Since D207 the rows
+below a window point at it by window_code (a deferred foreign key): a replace of aa.window must
+give the windows their codes again, and a window that still has coded rows below it cannot be
+deleted (the file fails at its end, as a whole).
 
 A file that fails (a bad key, an unknown column, a constraint) fails as a whole, stays
 pending, and never blocks the files after it. So does a file with any item on a mirror
