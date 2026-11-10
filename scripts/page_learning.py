@@ -527,8 +527,8 @@ def build_learning(page, d):
   <th class='yr' aria-sort='descending'><button type='button' class='lsort' data-k='date' {ATTR("title", "Sort by publication date")}>{T("Published")} <span class='larrow'>▼</span></button></th>
   <th>{T("Link")}</th></tr></thead><tbody id='lrows'></tbody></table>
  <aside id='tpanel' class='lpanel tpanel' role='region' {ATTR("aria-label", "The document opened from the list")} tabindex='-1' hidden></aside>
- <div id='tpeek' class='tpeek' aria-hidden='true' hidden></div>
  </div>
+ <div id='tpeek' class='tpeek' aria-hidden='true' hidden></div>
  {f"<p class='meta'>{TF('{n} internal document held in the database is not listed here.' if n_int == 1 else '{n} internal documents held in the database are not listed here.', n=n_int)}</p>" if n_int else ""}
 </div>
 <script>window.LD = {data_js};</script>
@@ -616,7 +616,7 @@ LEARNING_CSS = r"""
 .hlstack .hc-h, .hlstack .hc-f, .hlstack .hc-k { grid-column:1/-1; margin:0; }
 .hlstack .hl { width:auto; box-shadow:none; }
 /* the repository */
-.lrepo { margin-top:28px; }
+.lrepo { margin-top:28px; position:relative; }   /* the hover card is placed against it: the list's own box clips */
 .lrepo h2 { margin:0 0 6px; }
 .lbar { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; margin:8px 0 10px; }
 .lbar label { font-size:12.5px; color:#445; }
@@ -1062,11 +1062,12 @@ function showPeek(tr){
   if(!d || !tpanel.hidden) { hidePeek(); return; }   // a document is open in full: click another row to switch
   peekId = id; peek.innerHTML = peekHTML(d); peek.hidden = false;
   // under the row, from the start of the Country column (the title stays readable); above it
-  // when the list ends too soon or the window would cut it off
-  const box = lbody.getBoundingClientRect(), r = tr.getBoundingClientRect(), c = tr.cells[1].getBoundingClientRect();
-  const h = peek.offsetHeight, below = r.bottom + h + 8 < Math.max(innerHeight, box.bottom) || r.top - h - 8 < box.top;
+  // when the window would cut it off below and has the room above. Placed against the whole
+  // list section, not the list's own box (which scrolls sideways and so clips what leaves it)
+  const box = repo.getBoundingClientRect(), r = tr.getBoundingClientRect(), c = tr.cells[1].getBoundingClientRect();
+  const h = peek.offsetHeight, below = r.bottom + h + 8 < innerHeight || r.top - h - 8 < 0;
   peek.style.top = ((below ? r.bottom + 4 : r.top - h - 4) - box.top) + 'px';
-  peek.style.left = Math.max(8, Math.min(c.left - box.left, lbody.clientWidth - peek.offsetWidth - 8)) + 'px';
+  peek.style.left = Math.max(8, Math.min(c.left - box.left, repo.clientWidth - peek.offsetWidth - 8)) + 'px';
 }
 rows.addEventListener('mouseover', e => {
   if(!canHover.matches) return;
@@ -1160,7 +1161,7 @@ function openFinding(i, from){
 // with the rows below moved down to make room
 function openInList(id){
   const d = BYID.get(id); if(!d) return;
-  closeMapPanel(false); closeListPanel(false);
+  hidePeek(); closeMapPanel(false); closeListPanel(false);
   openerKey = `#lrows tr[data-id='${id}']`; opener = document.querySelector(openerKey);
   state.sel = id; tpanel.innerHTML = closeBtn() + docHTML(d, {}); tpanel.hidden = false; lbody.classList.add('open');
   markRow(); placeListPanel(); tpanel.focus({preventScroll:true});
