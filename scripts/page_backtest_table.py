@@ -1,4 +1,4 @@
-"""Historical activations, checked by eye (historical-activations.html, admin site; D220).
+"""Historical activations, checked by eye (historical-activations.html, admin site; D221).
 
 Owner, 2026-11-11: "a really simple table that is one row per year, with columns grouped and
 collapsible by framework, per window within each framework, per trigger within each window. It
@@ -9,7 +9,7 @@ years are."
 
 One table. A row is a year (or a month); a column is a framework, opened into its windows, a window
 opened into its triggers. A cell says whether the trigger would have been met: yes, no, no data (a
-year inside the analysis years that could not be assessed, D220) or blank (outside the analysis
+year inside the analysis years that could not be assessed, D221) or blank (outside the analysis
 years). The line under each column's name gives its analysis years. Real activations of the version
 are marked apart from the simulated ones.
 

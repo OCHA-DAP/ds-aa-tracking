@@ -3598,7 +3598,7 @@ def version_start(df):
 
 
 def backtest_gaps(wv):
-    """Years inside a version's analysis years that none of its windows could assess (D220): a
+    """Years inside a version's analysis years that none of its windows could assess (D221): a
     year every window with gap years lists, when every window lists some."""
     if not len(wv) or "analysis_gap_years" not in wv.columns:
         return set()

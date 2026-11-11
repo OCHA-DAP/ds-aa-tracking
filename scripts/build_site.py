@@ -903,7 +903,7 @@ def main():
     admin_page.build_admin(page)
     import page_usage   # the open site's page counts, as a dashboard (D197)
     page_usage.build(e, page, DATA_STAMP)
-    import page_backtest_table   # historical activations per framework, window and trigger, to check by eye (D220)
+    import page_backtest_table   # historical activations per framework, window and trigger, to check by eye (D221)
     page_backtest_table.build(e, page, DATA_STAMP)
     import page_climate
     page_climate.build(e, page)

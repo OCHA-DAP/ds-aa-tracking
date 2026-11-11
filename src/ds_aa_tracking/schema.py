@@ -1134,7 +1134,7 @@ ADDITIVE_MIGRATIONS = [
     "ALTER TABLE IF EXISTS aa.window_trigger ADD COLUMN IF NOT EXISTS analysis_end smallint",
     "ALTER TABLE IF EXISTS aa.trigger_event ADD COLUMN IF NOT EXISTS event_time timestamptz",
     "ALTER TABLE IF EXISTS aa.window_activation ADD COLUMN IF NOT EXISTS trigger_code text",
-    # 2026-11-11 (D220): years inside the analysis span that the backtest could not assess (no
+    # 2026-11-11 (D221): years inside the analysis span that the backtest could not assess (no
     # data): they are no years without an activation, so they leave the return period's
     # denominator. On the window, and on a trigger where its own differ.
     "ALTER TABLE IF EXISTS aa.window ADD COLUMN IF NOT EXISTS analysis_gap_years smallint[]",
@@ -1309,7 +1309,7 @@ VIEWS = {
                round(count(a.event_year)::numeric
                      / nullif(w.n_years, 0), 3)                     AS activation_prob,
                w.rp_reported, w.prob_reported, w.analysis_gap_years
-        FROM (   -- the years assessed: the span less the years with no data inside it (D220)
+        FROM (   -- the years assessed: the span less the years with no data inside it (D221)
             SELECT x.*, x.analysis_end - x.analysis_start + 1
                         - (SELECT count(DISTINCT g) FROM unnest(x.analysis_gap_years) g
                            WHERE g BETWEEN x.analysis_start AND x.analysis_end) AS n_years
@@ -1334,7 +1334,7 @@ VIEWS = {
                    bool_or(all_in) AS all_in, sum(allocation_usd) AS total_budget
             FROM aa.window GROUP BY 1, 2, 3
         ),
-        gap AS (   -- a year no window assessed (outside its years, or a gap in them) leaves the count (D220)
+        gap AS (   -- a year no window assessed (outside its years, or a gap in them) leaves the count (D221)
             SELECT d.country_iso3, d.hazard, d.version, count(*) AS n
             FROM dims d CROSS JOIN LATERAL generate_series(d.a0, d.a1) y
             WHERE NOT EXISTS (
