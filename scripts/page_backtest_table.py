@@ -39,20 +39,23 @@ READS = {
 }
 
 CSS = """
-.ha-intro { max-width:900px; color:#444; margin:0 0 10px; line-height:1.5; }
-.ha-live { font-size:12.5px; color:#555; margin:0 0 10px; min-height:1.2em; }
+.ha-intro { color:#444; margin:0 0 4px; line-height:1.4; font-size:13px; }
+.ha-live { font-size:12px; color:#555; margin:0 0 6px; min-height:1.2em; }
 .ha-live::before { content:''; display:inline-block; width:8px; height:8px; border-radius:50%;
   background:#9e9e9e; margin-right:6px; vertical-align:1px; }
 .ha-live.on::before { background:#1c7c3c; } .ha-live.off { color:#8a5c0a; } .ha-live.off::before { background:#c27c0e; }
-.ha-bar { display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin:0 0 10px; font-size:13px; }
+.ha-bar { display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin:0 0 6px; font-size:13px; }
 .ha-bar label { color:#555; } .ha-bar select, .ha-bar input[type=search] { font-size:13px; padding:4px 6px; }
 .ha-seg { display:inline-flex; border:1px solid #c9c9c9; border-radius:6px; overflow:hidden; }
 .ha-seg button { border:0; background:#fff; padding:5px 12px; font-size:13px; cursor:pointer; color:#333; }
 .ha-seg button + button { border-left:1px solid #c9c9c9; }
 .ha-seg button[aria-pressed='true'] { background:#1f2a44; color:#fff; }
-.ha-key { display:flex; gap:14px; flex-wrap:wrap; font-size:12.5px; color:#444; margin:0 0 10px; align-items:center; }
+.ha-key { display:flex; gap:14px; flex-wrap:wrap; font-size:12.5px; color:#444; margin:0 0 6px; align-items:center; }
 .ha-key span.c { display:inline-block; min-width:44px; text-align:center; padding:1px 6px; border:1px solid #ddd; margin-right:4px; }
-.ha-wrap { background:transparent; }   /* no box of its own: the page scrolls, the headings stay in view */
+/* the page does not scroll: the text and controls stay put, only the table scrolls */
+#ha-app { position:fixed; left:0; right:0; bottom:0; top:0; display:flex; flex-direction:column; padding:8px 16px 0;
+  background:#f7f7f7; box-sizing:border-box; }
+.ha-wrap { flex:1 1 auto; min-height:0; overflow:auto; border-top:1px solid #d5d5d5; }
 .ha-t { border-collapse:separate; border-spacing:0; font-size:11.5px; background:#fff; border-left:1px solid #d5d5d5; }
 .ha-t th, .ha-t td { border-right:1px solid #e3e3e3; border-bottom:1px solid #e3e3e3; padding:2px 3px; white-space:nowrap; }
 .ha-t thead th { position:sticky; background:#f4f5f7; z-index:2; text-align:center; font-weight:600; vertical-align:bottom; }
@@ -106,14 +109,10 @@ def build(e, page, stamp):
     from admin_page import PROXY_URL, site_token
     js = json.dumps({"rows": _rows(e), "stamp": stamp}, ensure_ascii=False).replace("</", "<\\/")
     body = f"""<style>{CSS}</style>
-<p class='ha-intro'>What each framework's triggers would have done in past years, as recorded in the
-database, to check by eye. A row is a year; a column is a framework. Open a framework to see its
-windows, and a window to see its triggers. Hold the pointer over a heading for its full name, and
-over a cell for the events behind it. The line under each name gives the analysis years: only
-those years count towards the return period, and the bottom line counts the years met among them.
-A real activation recorded against no window shows only on the closed framework column. A
-correction is made in the <a href='admin.html#trigger_event'>data admin</a> and shows here on a
-reload (there, a list of years is typed with braces: <code>{{2020,2021}}</code>).</p>
+<div id='ha-app'>
+<p class='ha-intro'>Past years as recorded, to check by eye. Open a framework for its windows, a
+window for its triggers. Hover a heading or a cell for detail. Only the analysis years under each
+name count. Fix a value in the <a href='admin.html#trigger_event'>data admin</a>, then reload.</p>
 <p class='ha-live' id='ha-live' role='status'></p>
 <div class='ha-bar'>
  <span class='ha-seg' role='group' aria-label='Rows'>
@@ -136,6 +135,7 @@ reload (there, a list of years is typed with braces: <code>{{2020,2021}}</code>)
  <span><span class='c' style='outline:2px solid #c0392b;outline-offset:-2px'>Yes</span>recorded outside the analysis years: check</span>
 </div>
 <div class='ha-wrap' id='ha-wrap'><div class='ha-empty'>Loading…</div></div>
+</div>
 <script>
 window.PROXY = new URLSearchParams(location.search).get('proxy') || '{PROXY_URL}';
 window.SITE_TOKEN = '{site_token()}';
@@ -394,6 +394,10 @@ async function live(){
     el.textContent = `The database could not be read (${err.message}): showing the copy this page was built from (${BUILT.stamp}).`;
   }
 }
+const app = $('ha-app'), hold = document.createElement('div');
+app.parentNode.insertBefore(hold, app);
+function place(){ app.style.top = Math.max(0, hold.getBoundingClientRect().top + window.scrollY) + 'px'; }
+document.documentElement.style.overflow = 'hidden'; place(); window.addEventListener('resize', place);
 use(BUILT.rows);
 $('ha-live').textContent = 'Reading the database…';
 live();
