@@ -76,6 +76,8 @@ are kept forever (the year-end official state, for the map's time view).
   uid from the tracker's numbering, `cerf_uids` beside), `v_cerf_activation_history` (uid × year:
   distinct simulated events, real activations, total) and `v_cerf_uid_crosswalk` (old uid → new).
   Curation queues: `v_trk_window_links`, `v_trk_trigger_check`, `v_trk_version_numbers`.
+  For readers of the old CERF `window_level` / `activation_history` sheets (the financial-exposure
+  app): [docs/reading-windows-and-budgets.md](docs/reading-windows-and-budgets.md).
 - publishing: `.github/workflows/publish.yml` rebuilds and publishes nightly, on pushes to
   main, by hand (workflow_dispatch, optionally from a dated snapshot) and on
   `repository_dispatch` events `data-updated` (the older name `kb-updated` is still
