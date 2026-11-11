@@ -2998,12 +2998,14 @@ function fixHeight(){
   if(state.iso) return;
   maprow.style.setProperty('--maph', Math.round(w * VB.h / VB.w) + 'px');
 }
+// the hazard's name beside a pin; technical support for no specific hazard has none (D219): its open ring stands alone
+function hlab(f){ return f.general ? '' : `<span class='hlab'>${esc(tr8(f.hz_label))}</span>`; }
 // phones: callouts are unusable at 350 px, so the panel lists the countries instead
 function renderWorldList(){
   const rows = Object.entries(L).filter(([iso,c]) => vis(c).length).sort((a,b)=>tr8(a[1].name).localeCompare(tr8(b[1].name))).map(([iso,c]) =>
     `<div class='fcardx wl' data-iso='${iso}' role='button' tabindex='0' style='--hz:${hzColor(vis(c)[0].hazard)}' onclick='selectCountry("${iso}", null, null, {focus: true})'>
       <div class='fhead'><b>${esc(tr8(c.name))}</b><span class='muted'>${nounCount(vis(c))}</span></div>
-      <div class='wl-pins'>${vis(c).map(f=>`<span class='wl-pin'>${iconHTML(f)}<span class='hlab'>${esc(tr8(f.hz_label))}</span> ${f.general ? techBadge() : badge(f.disp)}${actChip(f)}</span>`).join('')}</div>
+      <div class='wl-pins'>${vis(c).map(f=>`<span class='wl-pin'>${iconHTML(f)}${f.general ? `<span class='sr'>${esc(tr8(f.hz_label))}</span>` : hlab(f)} ${f.general ? techBadge() : badge(f.disp)}${actChip(f)}</span>`).join('')}</div>
     </div>`).join('');
   side.innerHTML = `<div class='muted' style='margin:2px 0 8px'>${esc(tr8('Tap a country to zoom in.'))}</div><div class='fwlist'>${rows}</div>`;
 }
@@ -3540,7 +3542,7 @@ function buildCallouts(){
     const el = document.createElement('div'); el.className = 'callout';
     el.innerHTML = `<span class='cname' data-iso='${iso}'>${esc(tr8(c.name))}</span>` +
       fws.map(f => { const extra = Math.ceil(Math.min(f.n_act||0,16)/4) - 1;   // stacked activation-dot rows need head room
-        return `<span class='hrow'${extra>0?` style='margin-top:${extra*11}px'`:''}>${iconHTML(f)}<span class='hlab'>${esc(tr8(f.hz_label))}</span></span>`; }).join('');
+        return `<span class='hrow'${extra>0?` style='margin-top:${extra*11}px'`:''}>${iconHTML(f)}${hlab(f)}</span>`; }).join('');
     const cn = el.querySelector('.cname'); cn.onclick = e => { e.stopPropagation(); selectCountry(iso, null, null, {focus: true}); };
     cn.setAttribute('role', 'button'); cn.tabIndex = 0;
     el.querySelectorAll('.iconbox').forEach(ib => { ib.onclick = e => { e.stopPropagation(); selectCountry(iso, ib.dataset.hz, null, {focus: true}); };
