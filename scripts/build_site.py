@@ -268,6 +268,7 @@ NAV_ADMIN = """
    <a href="index.html">All pages</a>
    <a href="admin.html">Data admin</a>
    <a href="entry.html">Data entry</a>
+   <a href="historical-activations.html">Historical activations</a>
    <a href="schema.html">DB schema</a>
   </nav>
   <a class="tosite" href="../dev/index.html">Site (development version) →</a>
@@ -281,6 +282,8 @@ ADMIN_HOME = [
         ("admin.html", "browse and edit every table of the tracking database"),
         ("entry.html", "enter or ingest a framework: upload the PDF or fill the form"),
         ("schema.html", "every table and view of the database, with its columns"),
+        ("historical-activations.html", "what each trigger would have done in past years, by framework, "
+                                        "window and trigger, with the analysis years: to check the record"),
     ]),
     ("Site", [
         ("usage.html", "how the open site is used: page views, map panels opened, languages, "
@@ -900,6 +903,8 @@ def main():
     admin_page.build_admin(page)
     import page_usage   # the open site's page counts, as a dashboard (D197)
     page_usage.build(e, page, DATA_STAMP)
+    import page_backtest_table   # historical activations per framework, window and trigger, to check by eye (D220)
+    page_backtest_table.build(e, page, DATA_STAMP)
     import page_climate
     page_climate.build(e, page)
     import page_accessibility
