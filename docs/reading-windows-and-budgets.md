@@ -132,6 +132,9 @@ framework (country_iso3, hazard)
 - **Blank or zero:** each trigger's analysis years are in `v_window_trigger` (`analysis_start`,
   `analysis_end`; the window's years where the trigger has none). A year inside that range with no
   event is 0, meaning assessed with no activation. A year outside it is blank, meaning not assessed.
+  A year inside the range that could not be assessed (no data) is listed in `analysis_gap_years`
+  (on `v_window_trigger` as an array, on `v_cerf_window` as text, `2020,2021`): treat it as blank
+  too. The probability already leaves these years out.
   `v_cerf_activation_history` only has rows for years with an event, so the zeros have to be added
   (query 2 below).
 - **Season labels:** southern-hemisphere storms are labelled by the season's end year (Evan, December
@@ -175,13 +178,15 @@ ORDER BY uid;
 
 ```sql
 WITH w AS (
-  SELECT c.uid, min(t.analysis_start) AS a0, max(t.analysis_end) AS a1
+  SELECT c.uid, min(t.analysis_start) AS a0, max(t.analysis_end) AS a1,
+         string_to_array(c.analysis_gap_years, ',')::int[] AS gaps   -- years with no data
   FROM aa.v_cerf_window c
   JOIN aa.v_window_trigger t USING (country_iso3, hazard, version, window_code)
   WHERE c.status = 'Active'
-  GROUP BY c.uid)
+  GROUP BY c.uid, c.analysis_gap_years)
 SELECT w.uid, y.year,
        CASE WHEN h.year IS NOT NULL THEN h.n_simulated
+            WHEN y.year = ANY (w.gaps) THEN NULL
             WHEN y.year BETWEEN w.a0 AND w.a1 THEN 0 END AS n_simulated,   -- NULL = not assessed
        coalesce(h.n_real, 0) AS n_real
 FROM w

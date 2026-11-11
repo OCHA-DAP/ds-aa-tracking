@@ -1134,6 +1134,11 @@ ADDITIVE_MIGRATIONS = [
     "ALTER TABLE IF EXISTS aa.window_trigger ADD COLUMN IF NOT EXISTS analysis_end smallint",
     "ALTER TABLE IF EXISTS aa.trigger_event ADD COLUMN IF NOT EXISTS event_time timestamptz",
     "ALTER TABLE IF EXISTS aa.window_activation ADD COLUMN IF NOT EXISTS trigger_code text",
+    # 2026-11-11 (D221): years inside the analysis span that the backtest could not assess (no
+    # data): they are no years without an activation, so they leave the return period's
+    # denominator. On the window, and on a trigger where its own differ.
+    "ALTER TABLE IF EXISTS aa.window ADD COLUMN IF NOT EXISTS analysis_gap_years smallint[]",
+    "ALTER TABLE IF EXISTS aa.window_trigger ADD COLUMN IF NOT EXISTS analysis_gap_years smallint[]",
     # a trigger is named only with its window (the key below does not check a row with no window)
     """DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'window_activation_trigger_needs_window'
@@ -1297,20 +1302,25 @@ VIEWS = {
         SELECT w.country_iso3, w.hazard, w.version, w.window_name, w.kb_framework,
                w.version AS kb_version, w.all_in,
                w.allocation_usd, w.analysis_start, w.analysis_end,
-               (w.analysis_end - w.analysis_start + 1)              AS analysis_years,
+               w.n_years::int                                       AS analysis_years,
                count(a.event_year)                                  AS n_activations,
-               round((w.analysis_end - w.analysis_start + 1 + 1.0)
+               round((w.n_years + 1.0)
                      / nullif(count(a.event_year), 0), 2)           AS return_period,
                round(count(a.event_year)::numeric
-                     / nullif(w.analysis_end - w.analysis_start + 1, 0), 3) AS activation_prob,
-               w.rp_reported, w.prob_reported
-        FROM aa.window w
+                     / nullif(w.n_years, 0), 3)                     AS activation_prob,
+               w.rp_reported, w.prob_reported, w.analysis_gap_years
+        FROM (   -- the years assessed: the span less the years with no data inside it (D221)
+            SELECT x.*, x.analysis_end - x.analysis_start + 1
+                        - (SELECT count(DISTINCT g) FROM unnest(x.analysis_gap_years) g
+                           WHERE g BETWEEN x.analysis_start AND x.analysis_end) AS n_years
+            FROM aa.window x
+        ) w
         LEFT JOIN aa.simulated_activation a
           ON (a.country_iso3, a.hazard, a.version, a.window_name)
            = (w.country_iso3, w.hazard, w.version, w.window_name)
         GROUP BY w.country_iso3, w.hazard, w.version, w.window_name, w.kb_framework, w.all_in,
-                 w.allocation_usd, w.analysis_start, w.analysis_end, w.rp_reported,
-                 w.prob_reported
+                 w.allocation_usd, w.analysis_start, w.analysis_end, w.n_years, w.rp_reported,
+                 w.prob_reported, w.analysis_gap_years
     """,
     "v_framework_performance": """
         CREATE OR REPLACE VIEW aa.v_framework_performance AS
@@ -1323,19 +1333,31 @@ VIEWS = {
                    min(analysis_start) AS a0, max(analysis_end) AS a1,
                    bool_or(all_in) AS all_in, sum(allocation_usd) AS total_budget
             FROM aa.window GROUP BY 1, 2, 3
+        ),
+        gap AS (   -- a year no window assessed (outside its years, or a gap in them) leaves the count (D221)
+            SELECT d.country_iso3, d.hazard, d.version, count(*) AS n
+            FROM dims d CROSS JOIN LATERAL generate_series(d.a0, d.a1) y
+            WHERE NOT EXISTS (
+                SELECT 1 FROM aa.window w
+                WHERE (w.country_iso3, w.hazard, w.version) = (d.country_iso3, d.hazard, d.version)
+                  AND y BETWEEN w.analysis_start AND w.analysis_end
+                  AND (y = ANY (coalesce(w.analysis_gap_years, '{}'))) IS NOT TRUE)
+            GROUP BY 1, 2, 3
         )
         SELECT d.country_iso3, d.hazard, d.version, d.kb_framework, d.version AS kb_version,
-               d.a1 - d.a0 + 1                                    AS analysis_years,
+               (d.a1 - d.a0 + 1 - coalesce(g.n, 0))::int          AS analysis_years,
                count(a.event_year)                                AS n_activation_years,
-               round((d.a1 - d.a0 + 1 + 1.0)
+               round((d.a1 - d.a0 + 1 - coalesce(g.n, 0) + 1.0)
                      / nullif(count(a.event_year), 0), 2)         AS overall_return_period,
                round(count(a.event_year)::numeric
-                     / nullif(d.a1 - d.a0 + 1, 0), 3)             AS overall_activation_prob,
+                     / nullif(d.a1 - d.a0 + 1 - coalesce(g.n, 0), 0), 3) AS overall_activation_prob,
                d.all_in, d.total_budget
         FROM dims d
+        LEFT JOIN gap g
+          ON (g.country_iso3, g.hazard, g.version) = (d.country_iso3, d.hazard, d.version)
         LEFT JOIN act a
           ON (a.country_iso3, a.hazard, a.version) = (d.country_iso3, d.hazard, d.version)
-        GROUP BY d.country_iso3, d.hazard, d.version, d.kb_framework, d.a0, d.a1, d.all_in,
+        GROUP BY d.country_iso3, d.hazard, d.version, d.kb_framework, d.a0, d.a1, g.n, d.all_in,
                  d.total_budget
     """,
     # the old crosswalk shape, for readers still keyed (kb_framework, kb_version, country_iso3)
@@ -1842,6 +1864,13 @@ VIEWS = {
         JOIN aa.window w USING (country_iso3, hazard, version, window_name)
         WHERE s.event_year NOT BETWEEN w.analysis_start AND w.analysis_end
         UNION ALL
+        SELECT 'error', 'simulated year in a year recorded as not assessed',
+               s.country_iso3, s.hazard, s.version, s.window_name,
+               s.event_year || ' is one of the window''s gap years'
+        FROM aa.simulated_activation s
+        JOIN aa.window w USING (country_iso3, hazard, version, window_name)
+        WHERE s.event_year = ANY (w.analysis_gap_years)
+        UNION ALL
         SELECT 'error', 'backtest under a label that is no version',
                w.country_iso3, w.hazard, w.version, w.window_name, 'not in framework_version'
         FROM aa.window w
@@ -1922,13 +1951,15 @@ VIEWS = {
         SELECT t.country_iso3, t.hazard, t.version, t.window_code, t.trigger_code, t.name, t.basis,
                t.indicator, t.threshold, t.lead_time, t.source, false AS implicit,
                coalesce(t.analysis_start, w.analysis_start) AS analysis_start,
-               coalesce(t.analysis_end, w.analysis_end) AS analysis_end
+               coalesce(t.analysis_end, w.analysis_end) AS analysis_end,
+               coalesce(t.analysis_gap_years, w.analysis_gap_years) AS analysis_gap_years
         FROM aa.window_trigger t
         LEFT JOIN aa.window w ON (w.country_iso3, w.hazard, w.version, w.window_code)
                                = (t.country_iso3, t.hazard, t.version, t.window_code)
         UNION ALL
         SELECT w.country_iso3, w.hazard, w.version, w.window_code, 'main', w.window_name, w.basis,
-               NULL, NULL, NULL, 'window', true, w.analysis_start, w.analysis_end
+               NULL, NULL, NULL, 'window', true, w.analysis_start, w.analysis_end,
+               w.analysis_gap_years
         FROM aa.window w
         WHERE w.window_code IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM aa.window_trigger t
@@ -2017,7 +2048,8 @@ VIEWS = {
                CASE WHEN w.cannot_trigger_if IS NOT NULL
                     THEN w.framework_version_id || '_' || w.cannot_trigger_if END AS cannot_trigger_if,
                array_to_string(w.monitor_months, ',') AS monitor_months,
-               w.analysis_start, w.analysis_end
+               w.analysis_start, w.analysis_end,
+               array_to_string(w.analysis_gap_years, ',') AS analysis_gap_years
         FROM win w
         LEFT JOIN aa.v_window_budget b
                ON (b.country_iso3, b.hazard, b.version, b.window_code, b.kind, b.fund_code)
