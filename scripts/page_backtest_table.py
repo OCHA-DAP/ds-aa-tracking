@@ -53,9 +53,13 @@ CSS = """
 .ha-key { display:flex; gap:14px; flex-wrap:wrap; font-size:12.5px; color:#444; margin:0 0 6px; align-items:center; }
 .ha-key span.c { display:inline-block; min-width:44px; text-align:center; padding:1px 6px; border:1px solid #ddd; margin-right:4px; }
 /* the page does not scroll: the text and controls stay put, only the table scrolls */
-#ha-app { position:fixed; left:0; right:0; bottom:0; top:0; display:flex; flex-direction:column; padding:8px 16px 0;
-  background:#f7f7f7; box-sizing:border-box; }
-.ha-wrap { flex:1 1 auto; min-height:0; overflow:auto; border-top:1px solid #d5d5d5; }
+#ha-app { position:fixed; left:0; right:0; bottom:0; top:0; display:flex; flex-direction:column; padding:8px 16px 8px;
+  background:#f7f7f7; box-sizing:border-box; overscroll-behavior:none; }
+.ha-wrap { flex:1 1 auto; min-height:0; overflow:auto; border-top:1px solid #d5d5d5; overscroll-behavior:none; }
+/* scroll bars with a place of their own, so they never lie over the bottom row or the last column */
+.ha-wrap::-webkit-scrollbar { width:12px; height:12px; }
+.ha-wrap::-webkit-scrollbar-thumb { background:#b5bac4; border-radius:6px; border:2px solid #f7f7f7; }
+.ha-wrap::-webkit-scrollbar-track, .ha-wrap::-webkit-scrollbar-corner { background:#f7f7f7; }
 .ha-t { border-collapse:separate; border-spacing:0; font-size:11.5px; background:#fff; border-left:1px solid #d5d5d5; }
 .ha-t th, .ha-t td { border-right:1px solid #e3e3e3; border-bottom:1px solid #e3e3e3; padding:2px 3px; white-space:nowrap; }
 .ha-t thead th { position:sticky; background:#f4f5f7; z-index:2; text-align:center; font-weight:600; vertical-align:bottom; }
@@ -397,7 +401,7 @@ async function live(){
 const app = $('ha-app'), hold = document.createElement('div');
 app.parentNode.insertBefore(hold, app);
 function place(){ app.style.top = Math.max(0, hold.getBoundingClientRect().top + window.scrollY) + 'px'; }
-document.documentElement.style.overflow = 'hidden'; place(); window.addEventListener('resize', place);
+document.documentElement.style.overflow = 'hidden'; document.documentElement.style.overscrollBehavior = 'none'; place(); window.addEventListener('resize', place);
 use(BUILT.rows);
 $('ha-live').textContent = 'Reading the database…';
 live();
