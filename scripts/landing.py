@@ -3005,7 +3005,7 @@ function renderWorldList(){
   const rows = Object.entries(L).filter(([iso,c]) => vis(c).length).sort((a,b)=>tr8(a[1].name).localeCompare(tr8(b[1].name))).map(([iso,c]) =>
     `<div class='fcardx wl' data-iso='${iso}' role='button' tabindex='0' style='--hz:${hzColor(vis(c)[0].hazard)}' onclick='selectCountry("${iso}", null, null, {focus: true})'>
       <div class='fhead'><b>${esc(tr8(c.name))}</b><span class='muted'>${nounCount(vis(c))}</span></div>
-      <div class='wl-pins'>${vis(c).map(f=>`<span class='wl-pin'>${iconHTML(f)}${hlab(f)} ${f.general ? techBadge() : badge(f.disp)}${actChip(f)}</span>`).join('')}</div>
+      <div class='wl-pins'>${vis(c).map(f=>`<span class='wl-pin'>${iconHTML(f)}${f.general ? `<span class='sr'>${esc(tr8(f.hz_label))}</span>` : hlab(f)} ${f.general ? techBadge() : badge(f.disp)}${actChip(f)}</span>`).join('')}</div>
     </div>`).join('');
   side.innerHTML = `<div class='muted' style='margin:2px 0 8px'>${esc(tr8('Tap a country to zoom in.'))}</div><div class='fwlist'>${rows}</div>`;
 }
