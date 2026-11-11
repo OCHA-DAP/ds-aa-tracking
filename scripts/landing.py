@@ -3699,8 +3699,9 @@ function clashCost(Lb, k){
   }
   return c;
 }
-function bestPlace(Lb){
-  let best = null, bc = Infinity;
+// the cheapest place for a callout against the others; with a bound, only a place cheaper than it
+function bestPlace(Lb, bound = Infinity){
+  let best = null, bc = bound;
   for(const k of Lb.cands){ if(k.c >= bc) break; const c = k.c + clashCost(Lb, k); if(c < bc){ bc = c; best = k; } }   // cheapest first
   return [best, bc];
 }
@@ -3740,7 +3741,7 @@ function groupCost(g){
   return c;
 }
 // A callout left far from its dot because one or two other callouts hold the nearer room: it
-// takes a nearer place, the others find their best places again, and the exchange is kept if
+// takes a place cheaper on its own (as a rule a nearer one), the others find their best places again, and the exchange is kept if
 // they are better off together. Farthest callouts first.
 function relieve(){
   const reach = Lb => Math.hypot(Lb.at.ax-Lb.px, Lb.at.ay-Lb.py);
@@ -3755,8 +3756,13 @@ function relieve(){
       if(!inWay.length || inWay.length > 2) continue;
       tries++;
       const g = [a, ...inWay], was = g.map(l => l.at), before = groupCost(g);
-      a.at = k; inWay.forEach(o => { o.at = null; }); inWay.forEach(o => { o.at = bestPlace(o)[0]; });
-      if(inWay.every(o => o.at) && groupCost(g) < before - .5){ any = true; break; }
+      a.at = k; inWay.forEach(o => { o.at = null; });
+      // what the others may still cost for the exchange to pay: each looks no further than that
+      let left = before - .5 - costOf(a), ok = true;
+      inWay.forEach((o, i) => { if(!ok) return;
+        const rest = inWay.slice(i+1).reduce((t, r) => t + r.cands[0].c, 0), [place, c] = bestPlace(o, left - rest);
+        if(place){ o.at = place; left -= c; } else ok = false; });
+      if(ok){ any = true; break; }
       g.forEach((l, i) => { l.at = was[i]; });
     }
   }
@@ -3795,16 +3801,17 @@ function placeAll(W, H){
   const order = labels.slice().sort((a, b) => b.crowd - a.crowd || (a.iso < b.iso ? -1 : 1));
   order.forEach(Lb => { Lb.at = bestPlace(Lb)[0]; });
   anneal();
-  for(let sweep = 0; sweep < 20; sweep++){
+  // each callout re-placed on its ring against the others, until none moves
+  const settle = () => { for(let sweep = 0; sweep < 20; sweep++){
     let moved = false;
     for(const Lb of order){ if(!Lb.at) continue;
       const now = costOf(Lb), [k, c] = bestPlace(Lb);
       if(k && k !== Lb.at && c < now - .5){ Lb.at = k; moved = true; } }
-    if(!moved) break;
-  }
-  nudge(W, H);
-  // a far callout may change places with the one in its way (twice at most), then all slide again
-  for(let round = 0; round < 2 && relieve(); round++) nudge(W, H);
+    if(!moved) break; } };
+  settle(); nudge(W, H);
+  // a far callout may change places with those in its way (twice at most); the rest then take
+  // any ring place that freed, and all slide again
+  for(let round = 0; round < 2 && relieve(); round++){ settle(); nudge(W, H); }
 }
 // relayout whenever the map's rendered size changes (window resize, sidebar sliding in or
 // out) — callouts are positioned in CSS px, so a stale width puts them off the countries
