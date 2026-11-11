@@ -1025,7 +1025,7 @@ def _fetch(e):
         """SELECT w.country_iso3, r.country_name, w.hazard, w.version, w.window_name,
                   w.basis, w.all_in, w.allocation_usd,
                   p.return_period, p.activation_prob, p.n_activations, p.analysis_years,
-                  p.analysis_start, p.analysis_end, s.triggered, s.triggered_on, l.lifecycle,
+                  p.analysis_start, p.analysis_end, to_jsonb(w) -> 'analysis_gap_years' AS analysis_gap_years, s.triggered, s.triggered_on, l.lifecycle,
                   (l.latest_version = w.version) AS is_latest
            FROM aa.window w
            JOIN aa.country_hazard r ON r.country_iso3 = w.country_iso3 AND r.hazard = w.hazard
@@ -3597,6 +3597,16 @@ def version_start(df):
     return pd.to_datetime(df["valid_from"].astype(str), errors="coerce").fillna(lab)
 
 
+def backtest_gaps(wv):
+    """Years inside a version's analysis years that none of its windows could assess (D220): a
+    year every window with gap years lists, when every window lists some."""
+    if not len(wv) or "analysis_gap_years" not in wv.columns:
+        return set()
+    sets = [{int(y) for y in g} if g is not None and not isinstance(g, float) else set()
+            for g in wv["analysis_gap_years"]]
+    return set.intersection(*sets) if sets else set()
+
+
 def backtest_span(ss, wv, vf_y):
     """(first, last, n or None) years a version's backtest analysed. The windows' analysis_start ..
     analysis_end when recorded, the end capped at the year before the version took effect
@@ -3619,7 +3629,8 @@ def backtest_span(ss, wv, vf_y):
     if smin is not None:
         y0, y1 = min(y0, smin), max(y1, smax)
     recorded = len(a0) or len(a1) or len(ny)   # n only when the analysis says how long it ran
-    return y0, y1, (y1 - y0 + 1) if recorded else None
+    gaps = {y for y in backtest_gaps(wv) if y0 <= y <= y1} - ({int(y) for y in ss["sim_year"]} if len(ss) else set())
+    return y0, y1, (y1 - y0 + 1 - len(gaps)) if recorded else None
 
 
 def untested_windows(ss, wv, ev=None):
@@ -3752,7 +3763,7 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
     if len(ss) or n_after or t_rows:
         y0, y1, n_years = backtest_span(ss, wv, vf_y)
         labelled = ss[ss["event_label"].fillna("").astype(str) != ""]
-        sim_years = set(range(y0, y1 + 1))
+        sim_years = set(range(y0, y1 + 1)) - backtest_gaps(wv)   # a year with no data is greyed out
         if vf_y:
             use_years = set(range(vf_y, max(vf_y, pd.Timestamp.now().year) + 1))
         for y in sorted(sim_years | use_years):

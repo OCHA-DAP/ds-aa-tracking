@@ -28,7 +28,8 @@ PAGE, TITLE = "historical-activations.html", "Historical activations"
 READS = {
     "framework_version": ["country_iso3", "hazard", "version", "version_no", "kb_status", "valid_from", "valid_until"],
     "country_hazard": ["country_iso3", "hazard", "country_name", "retired"],
-    "window": ["country_iso3", "hazard", "version", "window_code", "window_name", "basis"],
+    "window": ["country_iso3", "hazard", "version", "window_code", "window_name", "basis",
+               "analysis_start", "analysis_end", "analysis_gap_years"],
     "v_window_trigger": ["country_iso3", "hazard", "version", "window_code", "trigger_code", "name", "basis",
                          "threshold", "implicit", "analysis_start", "analysis_end", "analysis_gap_years"],
     "v_trigger_event": ["country_iso3", "hazard", "version", "window_code", "trigger_code", "event_year",
@@ -111,8 +112,10 @@ def build(e, page, stamp):
 <p class='ha-intro'>What each framework's triggers would have done in past years, as recorded in the
 database, to check by eye. A row is a year; a column is a framework. Open a framework to see its
 windows, and a window to see its triggers. The line under each name gives the analysis years: only
-those years count towards the return period. A correction is made in the
-<a href='admin.html#trigger_event'>data admin</a> and shows here on a reload.</p>
+those years count towards the return period, and the bottom line counts the years met among them.
+A real activation recorded against no window shows only on the closed framework column. A
+correction is made in the <a href='admin.html#trigger_event'>data admin</a> and shows here on a
+reload (there, a list of years is typed with braces: <code>{{2020,2021}}</code>).</p>
 <p class='ha-live' id='ha-live' role='status'></p>
 <div class='ha-bar'>
  <span class='ha-seg' role='group' aria-label='Rows'>
@@ -163,20 +166,27 @@ function model(R){
   for(const r of R.country_hazard||[]){ names[r.country_iso3] = r.country_name || names[r.country_iso3]; retired[r.country_iso3+'|'+r.hazard] = !!r.retired; }
   const vkey = r => [r.country_iso3, r.hazard, r.version].join('|'), wkey = r => vkey(r)+'|'+r.window_code;
   const V = {}, W = {}, T = {};
-  for(const r of R.framework_version||[]) V[vkey(r)] = {...r, windows:[]};
+  for(const r of R.framework_version||[]) V[vkey(r)] = {...r, windows:[], loose:[]};
   for(const r of R.window||[]){ if(r.window_code==null || !V[vkey(r)]) continue;
-    const w = W[wkey(r)] = {code:r.window_code, name:r.window_name, basis:r.basis, triggers:[], real:[]}; V[vkey(r)].windows.push(w); }
+    const w = W[wkey(r)] = {code:r.window_code, name:r.window_name, basis:r.basis, triggers:[], real:[],
+      a0:r.analysis_start==null?null:+r.analysis_start, a1:r.analysis_end==null?null:+r.analysis_end, gaps:arr(r.analysis_gap_years)};
+    V[vkey(r)].windows.push(w); }
   for(const r of R.v_window_trigger||[]){ const w = W[wkey(r)]; if(!w) continue;
     const t = {code:r.trigger_code, name:r.name, basis:r.basis, threshold:r.threshold, implicit:!!r.implicit,
                a0:r.analysis_start==null?null:+r.analysis_start, a1:r.analysis_end==null?null:+r.analysis_end,
                gaps:arr(r.analysis_gap_years), ev:[]};
     T[wkey(r)+'|'+r.trigger_code] = t; w.triggers.push(t); }
-  for(const r of R.v_trigger_event||[]){ const t = T[wkey(r)+'|'+r.trigger_code]; if(!t) continue;
+  for(const r of R.v_trigger_event||[]){ let t = T[wkey(r)+'|'+r.trigger_code];
+    if(!t){ // the window's own record, where its triggers are entered but not their events: its own column
+      const w = W[wkey(r)]; if(!w) continue;
+      t = T[wkey(r)+'|'+r.trigger_code] = {code:r.trigger_code, name:"the window's own record (not entered per trigger)", basis:w.basis,
+        threshold:null, implicit:true, a0:w.a0, a1:w.a1, gaps:w.gaps, ev:[]}; w.triggers.push(t); }
     const d = r.event_time || r.event_date || null;
     t.ev.push({y:+r.event_year, label:r.event_label||'', date:d, dy:d?+d.slice(0,4):null, dm:d?+d.slice(5,7):null,
                met:r.met===true||r.met==='true'||r.met==='t', value:r.value, unit:r.unit, from:r.recorded_in}); }
-  for(const r of R.window_activation||[]){ const w = W[wkey(r)]; if(!w || !/^\d{4}/.test(r.event_date||'')) continue;
-    w.real.push({y:+r.event_date.slice(0,4), m:r.event_date.length>=7?+r.event_date.slice(5,7):null, date:r.event_date,
+  for(const r of R.window_activation||[]){ if(!/^\d{4}/.test(r.event_date||'')) continue;
+    const w = W[wkey(r)], v = V[vkey(r)]; if(!w && !v) continue;
+    (w ? w.real : v.loose).push({y:+r.event_date.slice(0,4), m:r.event_date.length>=7?+r.event_date.slice(5,7):null, date:r.event_date,
                  label:r.event_label||'', trig:r.trigger_code||null}); }
   const F = {};
   for(const v of Object.values(V)){ if(!v.windows.length) continue;
@@ -204,7 +214,7 @@ function cellOf(t, row){
   if(row.m === undefined) ev = t.ev.filter(e=>e.y===row.y);
   else if(row.m === null) ev = t.ev.filter(e=>e.y===row.y && e.dm==null);
   else ev = t.ev.filter(e=>e.dy===row.y && e.dm===row.m);
-  const met = ev.filter(e=>e.met), gap = t.gaps.includes(row.y), ins = inSpan(t, row.y);
+  const met = ev.filter(e=>e.met), ins = inSpan(t, row.y), gap = ins && t.gaps.includes(row.y);
   let s;
   if(met.length) s = 'yes';
   else if(ev.length) s = 'no';
@@ -249,21 +259,27 @@ function columns(fws){
   }
   return cols;
 }
-function yearsText(trigs){
+// the years a column's triggers assessed: null where no analysis years are recorded
+function assessed(trigs){
   const ts = trigs.map(x=>x.t).filter(span);
-  if(!ts.length) return "analysis years not recorded";
+  if(!ts.length) return null;
   const a0 = Math.min(...ts.map(t=>t.a0)), a1 = Math.max(...ts.map(t=>t.a1));
   const ok = y => ts.some(t=>inSpan(t,y) && !t.gaps.includes(y));
-  const gaps = []; let n = 0;
-  for(let y=a0; y<=a1; y++){ if(ok(y)) n++; else gaps.push(y); }
-  const same = ts.every(t=>t.a0===a0 && t.a1===a1);
-  return `${a0}–${a1}${same?'':' (differs by trigger)'} · ${n} year${n===1?'':'s'}` + (gaps.length ? `<br>no data: ${gaps.join(', ')}` : '');
+  const gaps = [], years = new Set();
+  for(let y=a0; y<=a1; y++){ if(ok(y)) years.add(y); else gaps.push(y); }
+  return {a0, a1, years, gaps, same: ts.every(t=>t.a0===a0 && t.a1===a1)};
+}
+function yearsText(trigs){
+  const a = assessed(trigs);
+  if(!a) return "analysis years not recorded";
+  const n = a.years.size;
+  return `${a.a0}–${a.a1}${a.same?'':' (differs by trigger)'} · ${n} year${n===1?'':'s'}` + (a.gaps.length ? `<br>no data: ${a.gaps.join(', ')}` : '');
 }
 function rowsOf(cols){
   let lo = Infinity, hi = -Infinity;
   const see = y => { if(y!=null && isFinite(y)){ lo = Math.min(lo,y); hi = Math.max(hi,y); } };
   for(const c of cols){ for(const {t} of c.trigs){ see(t.a0); see(t.a1); t.ev.forEach(e=>{ see(e.y); if(S.gran==='month') see(e.dy); }); }
-    c.wins.forEach(w=>w.real.forEach(r=>see(r.y))); }
+    c.wins.forEach(w=>w.real.forEach(r=>see(r.y))); if(c.level==='fw') c.v.loose.forEach(r=>see(r.y)); }
   const rows = [];
   if(!isFinite(lo)) return rows;
   for(let y=hi; y>=lo; y--){
@@ -302,14 +318,16 @@ function draw(){
   // body
   const rows = rowsOf(cols); CELLS = [];
   let body = '';
-  const tot = cols.map(()=>({yes:0, ok:0}));
+  const tot = cols.map(c=>({yes:0, a:assessed(c.trigs)}));
   for(const r of rows){
     let tds = '', any = false;
     cols.forEach((c, i)=>{
       const m = merge(c.trigs.map(({t})=>({...cellOf(t, r), t})));
       const real = c.wins.flatMap(w=>realIn(w, c.trigs.filter(x=>x.w===w).map(x=>x.t), r).map(x=>({...x, win:w.code})));
-      if(r.m===undefined){ if(m.s==='yes') tot[i].yes++; if(m.s==='yes' || m.s==='no') tot[i].ok++; }
-      const has = m.ev.length || real.length; if(has || m.s==='gap') any = true;
+      // a real activation recorded against no window of the version: on the framework's own column
+      if(c.level==='fw') real.push(...c.v.loose.filter(x=>x.y===r.y && (r.m===undefined || (r.m===null ? x.m==null : x.m===r.m))).map(x=>({...x, win:'window not recorded'})));
+      if(r.m===undefined && m.s==='yes' && tot[i].a && tot[i].a.years.has(r.y)) tot[i].yes++;
+      const has = m.ev.length || real.length; if(has || (m.s==='gap' && r.m===undefined)) any = true;
       const txt = m.s==='yes' ? (m.n>1 ? `Yes ×${m.n}` : 'Yes') : m.s==='no' ? 'No' : m.s==='gap' ? 'no data' : '';
       const id = CELLS.push({c, r, m, real}) - 1;
       tds += `<td class='${m.s}${m.warn?' warn':''}${has?' ev':''}${c.fe?' fe':''}'${has?` data-i='${id}' tabindex='0'`:''}>${txt}${real.length?`<span class='real' title='Real activation'>real</span>`:''}</td>`;
@@ -318,7 +336,7 @@ function draw(){
     if(r.m===null && !any) continue;      // the 'month not recorded' line only where it holds something
     body += `<tr><td class='y'>${esc(r.label)}</td>${tds}</tr>`;
   }
-  const foot = S.gran==='year' ? `<tfoot><tr><td class='y'>Years met / assessed</td>${cols.map((c,i)=>`<td class='${c.fe?'fe':''}'>${tot[i].yes} / ${tot[i].ok}</td>`).join('')}</tr></tfoot>` : '';
+  const foot = S.gran==='year' ? `<tfoot><tr><td class='y'>Years met / assessed</td>${cols.map((c,i)=>`<td class='${c.fe?'fe':''}'>${tot[i].a ? tot[i].yes+' / '+tot[i].a.years.size : 'not recorded'}</td>`).join('')}</tr></tfoot>` : '';
   wrap.innerHTML = `<table class='ha-t'><thead>${h1}</tr>${h2}</tr>${h3}</tr>${h4}</tr></thead><tbody>${body}</tbody>${foot}</table>`;
   // sticky header rows sit under one another
   const tb = wrap.querySelector('table'), hs = [...tb.tHead.rows].map(r=>r.getBoundingClientRect().height);
@@ -327,7 +345,7 @@ function draw(){
 function detail(i){
   const {c, r, m, real} = CELLS[i], d = $('ha-detail'), v = c.v;
   const where = `${c.f.name} · ${HAZ[c.f.hazard]||c.f.hazard} · ${v.version}` + (c.level!=='fw' ? ` · ${c.w.code}` : '') + (c.level==='trig' ? ` · ${c.trigs[0].t.code}` : '');
-  const link = t => `admin.html#${t}/?f.country_iso3=${encodeURIComponent(c.f.iso3)}&f.hazard=${encodeURIComponent(c.f.hazard)}&f.version=${encodeURIComponent(v.version)}`;
+  const link = t => `admin.html#${t}/?f.country_iso3=${encodeURIComponent(c.f.iso3)}&f.hazard=${encodeURIComponent(c.f.hazard)}&f.version=${encodeURIComponent(v.version).replace(/'/g,'%27')}`;
   const src = {trigger_event:'trigger_event', backtest_event:'backtest_event', simulated_activation:'simulated_activation'};
   let html = `<h3>${esc(where)} — ${esc(r.label)}</h3>`;
   if(m.ev.length) html += `<table><tr><th>Trigger</th><th>Event</th><th>Filed under</th><th>Date</th><th>Met</th><th>Value</th><th>Recorded in</th></tr>` +

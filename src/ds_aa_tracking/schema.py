@@ -1302,7 +1302,7 @@ VIEWS = {
         SELECT w.country_iso3, w.hazard, w.version, w.window_name, w.kb_framework,
                w.version AS kb_version, w.all_in,
                w.allocation_usd, w.analysis_start, w.analysis_end,
-               w.n_years                                            AS analysis_years,
+               w.n_years::int                                       AS analysis_years,
                count(a.event_year)                                  AS n_activations,
                round((w.n_years + 1.0)
                      / nullif(count(a.event_year), 0), 2)           AS return_period,
@@ -1334,18 +1334,18 @@ VIEWS = {
                    bool_or(all_in) AS all_in, sum(allocation_usd) AS total_budget
             FROM aa.window GROUP BY 1, 2, 3
         ),
-        gap AS (   -- a year no window with years could assess leaves the count (D220)
+        gap AS (   -- a year no window assessed (outside its years, or a gap in them) leaves the count (D220)
             SELECT d.country_iso3, d.hazard, d.version, count(*) AS n
             FROM dims d CROSS JOIN LATERAL generate_series(d.a0, d.a1) y
             WHERE NOT EXISTS (
                 SELECT 1 FROM aa.window w
                 WHERE (w.country_iso3, w.hazard, w.version) = (d.country_iso3, d.hazard, d.version)
-                  AND w.analysis_start IS NOT NULL AND w.analysis_end IS NOT NULL
-                  AND NOT (y = ANY (coalesce(w.analysis_gap_years, '{}'))))
+                  AND y BETWEEN w.analysis_start AND w.analysis_end
+                  AND (y = ANY (coalesce(w.analysis_gap_years, '{}'))) IS NOT TRUE)
             GROUP BY 1, 2, 3
         )
         SELECT d.country_iso3, d.hazard, d.version, d.kb_framework, d.version AS kb_version,
-               d.a1 - d.a0 + 1 - coalesce(g.n, 0)                 AS analysis_years,
+               (d.a1 - d.a0 + 1 - coalesce(g.n, 0))::int          AS analysis_years,
                count(a.event_year)                                AS n_activation_years,
                round((d.a1 - d.a0 + 1 - coalesce(g.n, 0) + 1.0)
                      / nullif(count(a.event_year), 0), 2)         AS overall_return_period,
