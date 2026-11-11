@@ -52,36 +52,33 @@ CSS = """
 .ha-seg button[aria-pressed='true'] { background:#1f2a44; color:#fff; }
 .ha-key { display:flex; gap:14px; flex-wrap:wrap; font-size:12.5px; color:#444; margin:0 0 10px; align-items:center; }
 .ha-key span.c { display:inline-block; min-width:44px; text-align:center; padding:1px 6px; border:1px solid #ddd; margin-right:4px; }
-.ha-wrap { overflow:auto; max-height:78vh; border:1px solid #d5d5d5; background:#fff; }
-.ha-t { border-collapse:separate; border-spacing:0; font-size:12.5px; }
-.ha-t th, .ha-t td { border-right:1px solid #e3e3e3; border-bottom:1px solid #e3e3e3; padding:3px 6px; white-space:nowrap; }
-.ha-t thead th { position:sticky; background:#f4f5f7; z-index:2; text-align:center; font-weight:600; vertical-align:top; }
-.ha-t thead tr.r1 th { top:0; background:#1f2a44; color:#fff; border-right:2px solid #fff; text-align:left; }
+.ha-wrap { background:transparent; }   /* no box of its own: the page scrolls, the headings stay in view */
+.ha-t { border-collapse:separate; border-spacing:0; font-size:11.5px; background:#fff; border-left:1px solid #d5d5d5; }
+.ha-t th, .ha-t td { border-right:1px solid #e3e3e3; border-bottom:1px solid #e3e3e3; padding:2px 3px; white-space:nowrap; }
+.ha-t thead th { position:sticky; background:#f4f5f7; z-index:2; text-align:center; font-weight:600; vertical-align:bottom; }
+.ha-t thead tr.r1 th { top:0; background:#1f2a44; color:#fff; border-right:2px solid #fff; vertical-align:top; line-height:1.25; }
 .ha-t thead tr.r2 th { top:var(--h1); } .ha-t thead tr.r3 th { top:calc(var(--h1) + var(--h2)); font-weight:400; }
-.ha-t thead tr.r4 th { top:calc(var(--h1) + var(--h2) + var(--h3)); font-weight:400; color:#555; font-size:11.5px; white-space:normal; min-width:92px; }
+.ha-t thead tr.r4 th { top:calc(var(--h1) + var(--h2) + var(--h3)); font-weight:400; color:#555; font-size:10.5px; line-height:1.2; vertical-align:top; }
 .ha-t th.y, .ha-t td.y { position:sticky; left:0; z-index:1; background:#f4f5f7; font-weight:600; text-align:left; }
-.ha-t thead th.y { z-index:3; }
+.ha-t thead th.y { z-index:3; vertical-align:top; }
 .ha-t thead tr.r1 th.y { background:#1f2a44; }
 .ha-t tbody td { text-align:center; cursor:default; }
 .ha-t td.fe, .ha-t th.fe { border-right:2px solid #9aa3b5; }
 .ha-t td.yes { background:#1c7c3c; color:#fff; font-weight:600; }
 .ha-t td.no { background:#fff; color:#8a8a8a; }
-.ha-t td.gap { background:repeating-linear-gradient(45deg, #fbe9c9, #fbe9c9 4px, #fff 4px, #fff 8px); color:#7a5200; font-size:11.5px; }
+.ha-t td.gap { background:repeating-linear-gradient(45deg, #fbe9c9, #fbe9c9 4px, #fff 4px, #fff 8px); color:#7a5200; font-size:10px; }
 .ha-t td.out { background:#ececec; color:#ececec; }
 .ha-t td.mid { background:#fff; }
 .ha-t td.warn { outline:2px solid #c0392b; outline-offset:-2px; }
-.ha-t td.ev { cursor:pointer; }
-.ha-t td .real { display:inline-block; margin-left:4px; padding:0 4px; border-radius:8px; background:#fff; color:#1f2a44;
-  border:1.5px solid #1f2a44; font-size:10.5px; font-weight:700; }
-.ha-t tfoot td { position:sticky; bottom:0; background:#f4f5f7; font-size:11.5px; text-align:center; border-top:2px solid #9aa3b5; }
+.ha-t td .real { display:inline-block; margin-left:2px; padding:0 3px; border-radius:8px; background:#fff; color:#1f2a44;
+  border:1.5px solid #1f2a44; font-size:9.5px; font-weight:700; line-height:1.2; }
+.ha-t tfoot td { position:sticky; bottom:0; background:#f4f5f7; font-size:10.5px; text-align:center; border-top:2px solid #9aa3b5; }
 .ha-t tfoot td.y { z-index:3; }
-.ha-tg { cursor:pointer; background:none; border:0; color:inherit; font:inherit; padding:0 4px 0 0; }
-.ha-t thead select { font-size:11.5px; max-width:210px; margin-left:6px; }
-.ha-t thead .sub { font-weight:400; font-size:11.5px; opacity:.85; }
-.ha-wn { max-width:230px; overflow:hidden; text-overflow:ellipsis; display:inline-block; vertical-align:bottom; }
-.ha-detail { margin:10px 0 0; padding:10px 12px; border:1px solid #d5d5d5; background:#fff; font-size:13px; }
-.ha-detail h3 { margin:0 0 6px; font-size:14px; } .ha-detail table { border-collapse:collapse; font-size:12.5px; }
-.ha-detail td, .ha-detail th { padding:2px 10px 2px 0; text-align:left; border-bottom:1px solid #eee; }
+.ha-tg { cursor:pointer; background:none; border:0; color:inherit; font:inherit; padding:0 2px 0 0; }
+.ha-t thead select { font-size:10.5px; width:46px; padding:0; }
+.ha-t thead .sub { font-weight:400; font-size:10.5px; opacity:.85; }
+.ha-v { writing-mode:vertical-rl; transform:rotate(180deg); max-height:130px; overflow:hidden; text-overflow:ellipsis;
+  display:inline-block; text-align:left; }
 .ha-empty { padding:14px; color:#666; font-style:italic; }
 """
 
@@ -111,7 +108,8 @@ def build(e, page, stamp):
     body = f"""<style>{CSS}</style>
 <p class='ha-intro'>What each framework's triggers would have done in past years, as recorded in the
 database, to check by eye. A row is a year; a column is a framework. Open a framework to see its
-windows, and a window to see its triggers. The line under each name gives the analysis years: only
+windows, and a window to see its triggers. Hold the pointer over a heading for its full name, and
+over a cell for the events behind it. The line under each name gives the analysis years: only
 those years count towards the return period, and the bottom line counts the years met among them.
 A real activation recorded against no window shows only on the closed framework column. A
 correction is made in the <a href='admin.html#trigger_event'>data admin</a> and shows here on a
@@ -134,11 +132,10 @@ reload (there, a list of years is typed with braces: <code>{{2020,2021}}</code>)
  <span><span class='c' style='color:#8a8a8a'>No</span>assessed, not triggered</span>
  <span><span class='c' style='background:repeating-linear-gradient(45deg,#fbe9c9,#fbe9c9 4px,#fff 4px,#fff 8px);color:#7a5200'>no data</span>inside the analysis years, could not be assessed</span>
  <span><span class='c' style='background:#ececec'>&nbsp;</span>outside the analysis years</span>
- <span><span class='c' style='border:1.5px solid #1f2a44;border-radius:8px;min-width:0;font-weight:700;font-size:10.5px'>real</span>the version really activated</span>
+ <span><span class='c' style='border:1.5px solid #1f2a44;border-radius:8px;min-width:0;font-weight:700;font-size:10.5px'>R</span>the version really activated</span>
  <span><span class='c' style='outline:2px solid #c0392b;outline-offset:-2px'>Yes</span>recorded outside the analysis years: check</span>
 </div>
 <div class='ha-wrap' id='ha-wrap'><div class='ha-empty'>Loading…</div></div>
-<div class='ha-detail' id='ha-detail' hidden></div>
 <script>
 window.PROXY = new URLSearchParams(location.search).get('proxy') || '{PROXY_URL}';
 window.SITE_TOKEN = '{site_token()}';
@@ -271,9 +268,9 @@ function assessed(trigs){
 }
 function yearsText(trigs){
   const a = assessed(trigs);
-  if(!a) return "analysis years not recorded";
+  if(!a) return "<span title='analysis years not recorded'>years not<br>recorded</span>";
   const n = a.years.size;
-  return `${a.a0}–${a.a1}${a.same?'':' (differs by trigger)'} · ${n} year${n===1?'':'s'}` + (a.gaps.length ? `<br>no data: ${a.gaps.join(', ')}` : '');
+  return `<span title='analysis years${a.same?'':' (they differ by trigger)'}'>${a.a0}–${a.a1}${a.same?'':'*'}<br>${n} yr${n===1?'':'s'}</span>` + (a.gaps.length ? `<br>no data:<br>${a.gaps.join('<br>')}` : '');
 }
 function rowsOf(cols){
   let lo = Infinity, hi = -Infinity;
@@ -290,33 +287,32 @@ function rowsOf(cols){
 }
 
 // ---------- draw
-let CELLS = [];
 function draw(){
   const fws = shown(), cols = columns(fws), wrap = $('ha-wrap');
-  $('ha-detail').hidden = true;
   if(!cols.length){ wrap.innerHTML = "<div class='ha-empty'>No framework matches.</div>"; return; }
-  // header 1: frameworks
+  // header 1: frameworks (ISO3 and hazard; the full name on hover)
   let h1 = "<tr class='r1'><th class='y' rowspan='4'>" + (S.gran==='year'?'Year':'Month') + "</th>", h2 = "<tr class='r2'>", h3 = "<tr class='r3'>", h4 = "<tr class='r4'>";
+  const vtxt = x => (x.version_no!=null ? 'v'+x.version_no+' · ' : '') + x.version + ' · ' + (x.kb_status||'');
   for(const f of fws){
     const v = verOf(f), mine = cols.filter(c=>c.f===f), open = !!S.openFw[f.key];
-    const opts = f.versions.map(x=>`<option value='${esc(x.version)}'${x===v?' selected':''}>${x.version_no!=null?'v'+esc(x.version_no)+' · ':''}${esc(x.version)} · ${esc(x.kb_status||'')}</option>`).join('');
-    h1 += `<th class='fe' colspan='${mine.length}'><button class='ha-tg' data-fw='${esc(f.key)}' title='${open?'Close':'Open'} the windows' aria-expanded='${open}'>${open?'▾':'▸'}</button>${esc(f.name)} · ${esc(HAZ[f.hazard]||f.hazard)}` +
-      (f.versions.length>1 ? `<select data-ver='${esc(f.key)}' aria-label='Version'>${opts}</select>` : ` <span class='sub'>${v.version_no!=null?'v'+esc(v.version_no)+' · ':''}${esc(v.version)} · ${esc(v.kb_status||'')}</span>`) + `</th>`;
+    const opts = f.versions.map(x=>`<option value='${esc(x.version)}'${x===v?' selected':''}>${esc(vtxt(x))}</option>`).join('');
+    h1 += `<th class='fe' colspan='${mine.length}' title='${esc(f.name+' · '+(HAZ[f.hazard]||f.hazard)+' · '+vtxt(v))}'><button class='ha-tg' data-fw='${esc(f.key)}' title='${open?'Close':'Open'} the windows' aria-expanded='${open}'>${open?'▾':'▸'}</button>${esc(f.iso3)}<br><span class='sub'>${esc((HAZ[f.hazard]||f.hazard).toLowerCase())}</span><br>` +
+      (f.versions.length>1 ? `<select data-ver='${esc(f.key)}' aria-label='Version' title='${esc(vtxt(v))}'>${opts}</select>` : `<span class='sub'>${v.version_no!=null?'v'+esc(v.version_no):esc(v.version)}</span>`) + `</th>`;
   }
   for(let i=0; i<cols.length; i++){
     const c = cols[i], fe = c.fe ? ' fe' : '';
-    if(c.level==='fw'){ h2 += `<th class='${fe}' rowspan='2'>any of ${c.wins.length} window${c.wins.length===1?'':'s'}</th>`; }
+    if(c.level==='fw'){ h2 += `<th class='${fe}' rowspan='2' title='any of its ${c.wins.length} window${c.wins.length===1?'':'s'}'><span class='sub'>any</span></th>`; }
     else if(c.level==='win'){ const can = c.w.triggers.length > 1;
-      h2 += `<th class='${fe}' rowspan='2' title='${esc(c.w.name)}'>${can?`<button class='ha-tg' data-win='${esc(c.wk)}' title='Open the triggers' aria-expanded='false'>▸</button>`:''}<span class='ha-wn'>${esc(c.w.code)}</span><br><span class='sub ha-wn'>${esc(c.w.name)}</span>${can?`<br><span class='sub'>any of ${c.w.triggers.length} triggers</span>`:''}</th>`; }
+      h2 += `<th class='${fe}' rowspan='2' title='${esc(c.w.name)}${can?` (any of ${c.w.triggers.length} triggers)`:''}'><span class='ha-v'>${esc(c.w.code)}</span>${can?`<br><button class='ha-tg' data-win='${esc(c.wk)}' title='Open the triggers' aria-expanded='false'>▸</button>`:''}</th>`; }
     else { const first = i===0 || cols[i-1].w!==c.w || cols[i-1].level!=='trig';
       if(first){ const n = c.w.triggers.length, last = cols[i+n-1];
-        h2 += `<th class='${last&&last.fe?'fe':''}' colspan='${n}' title='${esc(c.w.name)}'><button class='ha-tg' data-win='${esc(c.wk)}' title='Close the triggers' aria-expanded='true'>▾</button><span class='ha-wn'>${esc(c.w.code)}</span> <span class='sub ha-wn'>${esc(c.w.name)}</span></th>`; }
+        h2 += `<th class='${last&&last.fe?'fe':''}' colspan='${n}' title='${esc(c.w.name)}'><button class='ha-tg' data-win='${esc(c.wk)}' title='Close the triggers' aria-expanded='true'>▾</button>${esc(c.w.code)}</th>`; }
       const t = c.trigs[0].t;
-      h3 += `<th class='${fe}' title='${esc([t.name, t.threshold].filter(Boolean).join(' — '))}'><span class='ha-wn'>${esc(t.code)}</span></th>`; }
+      h3 += `<th class='${fe}' title='${esc([t.name, t.threshold].filter(Boolean).join(' — '))}'><span class='ha-v'>${esc(t.code)}</span></th>`; }
     h4 += `<th class='${fe}'>${yearsText(c.trigs)}</th>`;
   }
   // body
-  const rows = rowsOf(cols); CELLS = [];
+  const rows = rowsOf(cols);
   let body = '';
   const tot = cols.map(c=>({yes:0, a:assessed(c.trigs)}));
   for(const r of rows){
@@ -328,33 +324,22 @@ function draw(){
       if(c.level==='fw') real.push(...c.v.loose.filter(x=>x.y===r.y && (r.m===undefined || (r.m===null ? x.m==null : x.m===r.m))).map(x=>({...x, win:'window not recorded'})));
       if(r.m===undefined && m.s==='yes' && tot[i].a && tot[i].a.years.has(r.y)) tot[i].yes++;
       const has = m.ev.length || real.length; if(has || (m.s==='gap' && r.m===undefined)) any = true;
-      const txt = m.s==='yes' ? (m.n>1 ? `Yes ×${m.n}` : 'Yes') : m.s==='no' ? 'No' : m.s==='gap' ? 'no data' : '';
-      const id = CELLS.push({c, r, m, real}) - 1;
-      tds += `<td class='${m.s}${m.warn?' warn':''}${has?' ev':''}${c.fe?' fe':''}'${has?` data-i='${id}' tabindex='0'`:''}>${txt}${real.length?`<span class='real' title='Real activation'>real</span>`:''}</td>`;
+      const txt = m.s==='yes' ? (m.n>1 ? `Yes×${m.n}` : 'Yes') : m.s==='no' ? 'No' : m.s==='gap' ? 'no data' : '';
+      // what is behind the cell, on hover: the events tested and the real activations
+      const tip = has ? [...new Set(m.ev.map(e=>(e.label||'the year')+(e.date?' '+e.date:'')+(e.met?': met':': not met')))]
+        .concat(real.map(x=>'real activation '+x.date+(x.label?' '+x.label:''))).join('; ') + (m.warn?' — outside the analysis years: check':'') : '';
+      tds += `<td class='${m.s}${m.warn?' warn':''}${c.fe?' fe':''}'${tip?` title='${esc(tip)}'`:''}>${txt}${real.length?`<span class='real'>R</span>`:''}</td>`;
     });
     if(S.hide && !any) continue;
     if(r.m===null && !any) continue;      // the 'month not recorded' line only where it holds something
     body += `<tr><td class='y'>${esc(r.label)}</td>${tds}</tr>`;
   }
-  const foot = S.gran==='year' ? `<tfoot><tr><td class='y'>Years met / assessed</td>${cols.map((c,i)=>`<td class='${c.fe?'fe':''}'>${tot[i].a ? tot[i].yes+' / '+tot[i].a.years.size : 'not recorded'}</td>`).join('')}</tr></tfoot>` : '';
+  const foot = S.gran==='year' ? `<tfoot><tr><td class='y'>Met / assessed</td>${cols.map((c,i)=>`<td class='${c.fe?'fe':''}'>${tot[i].a ? tot[i].yes+'/'+tot[i].a.years.size : '—'}</td>`).join('')}</tr></tfoot>` : '';
   wrap.innerHTML = `<table class='ha-t'><thead>${h1}</tr>${h2}</tr>${h3}</tr>${h4}</tr></thead><tbody>${body}</tbody>${foot}</table>`;
   // sticky header rows sit under one another
   const tb = wrap.querySelector('table'), hs = [...tb.tHead.rows].map(r=>r.getBoundingClientRect().height);
   ['--h1','--h2','--h3'].forEach((k,i)=>tb.style.setProperty(k, hs[i]+'px'));
 }
-function detail(i){
-  const {c, r, m, real} = CELLS[i], d = $('ha-detail'), v = c.v;
-  const where = `${c.f.name} · ${HAZ[c.f.hazard]||c.f.hazard} · ${v.version}` + (c.level!=='fw' ? ` · ${c.w.code}` : '') + (c.level==='trig' ? ` · ${c.trigs[0].t.code}` : '');
-  const link = t => `admin.html#${t}/?f.country_iso3=${encodeURIComponent(c.f.iso3)}&f.hazard=${encodeURIComponent(c.f.hazard)}&f.version=${encodeURIComponent(v.version).replace(/'/g,'%27')}`;
-  const src = {trigger_event:'trigger_event', backtest_event:'backtest_event', simulated_activation:'simulated_activation'};
-  let html = `<h3>${esc(where)} — ${esc(r.label)}</h3>`;
-  if(m.ev.length) html += `<table><tr><th>Trigger</th><th>Event</th><th>Filed under</th><th>Date</th><th>Met</th><th>Value</th><th>Recorded in</th></tr>` +
-    m.ev.sort((a,b)=>(a.date||'').localeCompare(b.date||'') || a.label.localeCompare(b.label)).map(e=>`<tr><td>${esc(e.trig)}</td><td>${esc(e.label)||'(the year)'}</td><td>${e.y}</td><td>${esc(e.date)||'not recorded'}</td><td>${e.met?'yes':'no'}</td><td>${e.value==null?'':esc(e.value)+' '+esc(e.unit||'')}</td><td><a href='${link(src[e.from]||'trigger_event')}'>${esc(e.from)}</a></td></tr>`).join('') + `</table>`;
-  if(real.length) html += `<p><b>Real activation${real.length>1?'s':''}:</b> ` + real.map(x=>`${esc(x.date)} ${esc(x.label)} (${esc(x.win)}${x.trig?', '+esc(x.trig):''})`).join('; ') + ` · <a href='${link('window_activation')}'>window_activation</a></p>`;
-  if(m.warn) html += `<p style='color:#c0392b'>A met event sits outside this trigger's analysis years (or in a year recorded as no data): the event or the years are wrong.</p>`;
-  d.innerHTML = html; d.hidden = false; d.scrollIntoView({block:'nearest'});
-}
-
 // ---------- controls
 function fillHazards(){ const hz = [...new Set(FW.map(f=>f.hazard))].sort(), el = $('ha-hz');
   el.innerHTML = "<option value=''>all</option>" + hz.map(h=>`<option value='${esc(h)}'>${esc(HAZ[h]||h)}</option>`).join(''); el.value = S.hz; }
@@ -371,12 +356,10 @@ $('ha-q').oninput = e=>{ S.q = e.target.value; draw(); };
 $('ha-old').onchange = e=>{ S.old = e.target.checked; draw(); };
 $('ha-hide').onchange = e=>{ S.hide = e.target.checked; draw(); };
 $('ha-wrap').addEventListener('click', e=>{
-  const fw = e.target.closest('[data-fw]'), win = e.target.closest('[data-win]'), td = e.target.closest('td[data-i]');
+  const fw = e.target.closest('[data-fw]'), win = e.target.closest('[data-win]');
   if(fw){ S.openFw[fw.dataset.fw] = !S.openFw[fw.dataset.fw]; draw(); }
   else if(win){ S.openWin[win.dataset.win] = !S.openWin[win.dataset.win]; draw(); }
-  else if(td) detail(+td.dataset.i);
 });
-$('ha-wrap').addEventListener('keydown', e=>{ const td = e.target.closest('td[data-i]'); if(td && (e.key==='Enter' || e.key===' ')){ e.preventDefault(); detail(+td.dataset.i); } });
 $('ha-wrap').addEventListener('change', e=>{ const s = e.target.closest('select[data-ver]'); if(s){ S.ver[s.dataset.ver] = s.value; draw(); } });
 
 // ---------- data: the copy built into the page, then the database itself
