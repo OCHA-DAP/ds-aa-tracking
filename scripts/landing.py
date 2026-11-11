@@ -2080,7 +2080,7 @@ def build_landing(page, d, e):
     for iso, cd in countries.items():
         if not cd.get("name"):                        # non-framework-only country: Natural Earth name
             cd["name"] = (wdata.get(iso) or {}).get("n") or iso
-        cd["lbbox"] = bboxes.get(iso)                 # layout box (world file, largest polygon)
+        cd["lbbox"] = bboxes.get(iso)                 # the country's box (world file, largest polygon): its dot and the phone overview
         cd["centroid"] = CENTROID.get(iso) or (
             [(cd["lbbox"][1] + cd["lbbox"][3]) / 2, (cd["lbbox"][0] + cd["lbbox"][2]) / 2]
             if cd["lbbox"] else None)
@@ -3584,26 +3584,32 @@ function shadeGrids(W, H){
     for(let y = 0; y < h; y++){ let row = 0;
       for(let x = 0; x < w; x++){ row += px[4*(y*w+x)+3]/255; sat[(y+1)*(w+1)+x+1] = sat[y*(w+1)+x+1] + row; } }
     const total = sat[(w+1)*(h+1)-1];
-    if(total > 0) out.push({S, x0, y0, w, h, sat, total});
+    if(total >= 1) out.push({S, x0, y0, w, h, sat, total});   // a speck of an island has its dot's clear space
   });
   return out;
 }
-// What a box costs for the shaded countries under it: for each country, the larger of the share
-// of the box that is over it and the share of the country that is under the box (a callout on
-// a small country hides it, however little of the callout that takes), square-rooted, so that
-// a corner of a country under the callout already counts for a good deal.
+// The summed grid read at a fractional cell position (between the four corners), so that a box
+// is measured on its own area and not on the cells it touches.
+function satAt(g, x, y){
+  x = Math.max(0, Math.min(g.w, x)); y = Math.max(0, Math.min(g.h, y));
+  const xa = Math.floor(x), ya = Math.floor(y), xb = Math.min(g.w, xa+1), yb = Math.min(g.h, ya+1), fx = x-xa, fy = y-ya, w = g.w+1;
+  return (g.sat[ya*w+xa]*(1-fx) + g.sat[ya*w+xb]*fx)*(1-fy) + (g.sat[yb*w+xa]*(1-fx) + g.sat[yb*w+xb]*fx)*fy;
+}
+// What a box costs for the shaded countries under it, from 0 to 1: the larger of the share of
+// the box that is over shaded countries and the largest share of any one country that is under
+// the box (a callout on a small country hides it, however little of the callout that takes),
+// square-rooted, so that a corner of a country under the callout already counts for a good deal.
 function shadedCost(x1, y1, x2, y2){
-  let c = 0;
+  let over = 0, hidden = 0;
   for(const g of SHADE){
-    const a = Math.max(0, Math.floor(x1/g.S)-g.x0), b = Math.min(g.w, Math.ceil(x2/g.S)-g.x0);
-    const t = Math.max(0, Math.floor(y1/g.S)-g.y0), d = Math.min(g.h, Math.ceil(y2/g.S)-g.y0);
-    if(b <= a || d <= t) continue;
-    const w = g.w+1, under = g.sat[d*w+b] - g.sat[t*w+b] - g.sat[d*w+a] + g.sat[t*w+a];
+    const a = x1/g.S-g.x0, b = x2/g.S-g.x0, t = y1/g.S-g.y0, d = y2/g.S-g.y0;
+    if(b <= 0 || a >= g.w || d <= 0 || t >= g.h) continue;
+    const under = satAt(g, b, d) - satAt(g, b, t) - satAt(g, a, d) + satAt(g, a, t);
     if(under <= 0) continue;
-    const box = (x2-x1)*(y2-y1)/(g.S*g.S);
-    c += Math.sqrt(Math.min(1, Math.max(under/box, under/g.total)));
+    over += under; hidden = Math.max(hidden, under/g.total);
   }
-  return c;
+  const box = (x2-x1)*(y2-y1)/16;   // in cells (S = 4)
+  return Math.sqrt(Math.min(1, Math.max(over/box, hidden)));
 }
 function segCross(p1, p2, p3, p4){
   const d = (a,b,c) => (c[0]-a[0])*(b[1]-a[1]) - (b[0]-a[0])*(c[1]-a[1]);
@@ -3618,8 +3624,8 @@ function segHitsRect(p, q, x1, y1, x2, y2){
 // directions, eight distances, and at each either the callout's box or its first pin that far
 // from the dot. A place's cost is the leader's length, plus a price for each thing that makes
 // the map hard to read: sitting on another callout or on a country's dot, a leader that
-// crosses another leader or runs through a callout (its own words included), and covering the
-// shaded countries' shapes. Callouts are placed most-crowded first, shuffled
+// crosses another leader or runs through a callout (its own words included), covering the
+// shaded countries' shapes, and, a little, leaving the country's usual side (dir). Callouts are placed most-crowded first, shuffled
 // (anneal), then each is re-placed against the others until none moves: the total cost is what
 // is brought down, so one callout may take a dearer place to free a better one for another.
 // Overlap is a price, not a rule: on a map too small for its callouts some still overlap.
