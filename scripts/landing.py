@@ -2080,7 +2080,7 @@ def build_landing(page, d, e):
     for iso, cd in countries.items():
         if not cd.get("name"):                        # non-framework-only country: Natural Earth name
             cd["name"] = (wdata.get(iso) or {}).get("n") or iso
-        cd["lbbox"] = bboxes.get(iso)                 # layout box (world file, largest polygon)
+        cd["lbbox"] = bboxes.get(iso)                 # the country's box (world file, largest polygon): its dot and the phone overview
         cd["centroid"] = CENTROID.get(iso) or (
             [(cd["lbbox"][1] + cd["lbbox"][3]) / 2, (cd["lbbox"][0] + cd["lbbox"][2]) / 2]
             if cd["lbbox"] else None)
@@ -2371,7 +2371,8 @@ LANDING_CSS = r"""
 .leadersvg { position:absolute; inset:0; width:100%; height:100%; overflow:visible; }
 .leader { stroke:#94a3b8; stroke-width:1; stroke-linecap:round; }
 .cdot { fill:#334155; stroke:#fff; stroke-width:1.6; }
-.callout { position:absolute; display:flex; flex-direction:column; align-items:flex-start; pointer-events:auto; visibility:hidden; }
+.callout { position:absolute; display:flex; flex-direction:column; align-items:flex-start; visibility:hidden; }   /* only its name and pins take the pointer: the country under the rest stays clickable (D220) */
+.callout .cname, .callout .iconbox { pointer-events:auto; }
 .cname { font-weight:650; font-size:11px; color:#0f2540; white-space:nowrap; line-height:1.15; margin-bottom:1px; cursor:pointer; letter-spacing:.1px; text-shadow:0 0 3px #fff,0 0 3px #fff; }
 .cname:hover { text-decoration:underline; }
 .hrow { display:flex; align-items:center; gap:4px; margin:1px 0; }
@@ -3530,7 +3531,7 @@ function updateTiles(){
     + (past ? ' · ' + tr8('as at 31 December {0}', YEAR) : YEAR != null ? ' · ' + tr8('{0}, as of today', YEAR) : '');
 }
 
-// ---------- callouts: one per country, laid out clear of every framework country
+// ---------- callouts: one per country, each as near its country's dot as the others allow
 const NS = 'http://www.w3.org/2000/svg';
 let labels = [];
 // one callout per country with something on the enabled layers; rebuilt on every layer change
@@ -3557,124 +3558,200 @@ function buildCallouts(){
     lpane.appendChild(el);
     const ln = document.createElementNS(NS, 'line'); ln.setAttribute('class','leader'); leaders.appendChild(ln);
     const dot = document.createElementNS(NS, 'circle'); dot.setAttribute('class','cdot'); dot.setAttribute('r','3.5'); leaders.appendChild(dot);
-    labels.push({iso, lat:c.centroid[0], lon:c.centroid[1], dir:c.dir, el, ln, dot, bbox:c.lbbox});
+    labels.push({iso, lat:c.centroid[0], lon:c.centroid[1], dir:c.dir, el, ln, dot});
   });
 }
-let PAD = 8, GAP = 4; let ALLRECTS = [];
-function rectOf(bbox){ if(!bbox || bbox[2]-bbox[0] > 170) return null;
-  const [x1,y1] = toPx(bbox[0], bbox[3]), [x2,y2] = toPx(bbox[2], bbox[1]);
-  return {x1:Math.min(x1,x2), y1:Math.min(y1,y2), x2:Math.max(x1,x2), y2:Math.max(y1,y2)}; }
-function clampAll(W, H){ labels.forEach(Lb => {
-  if(Lb.cx - Lb.w/2 < 3) Lb.cx = 3 + Lb.w/2; if(Lb.cx + Lb.w/2 > W-3) Lb.cx = W-3-Lb.w/2;
-  if(Lb.cy - Lb.h/2 < 3) Lb.cy = 3 + Lb.h/2; if(Lb.cy + Lb.h/2 > H-3) Lb.cy = H-3-Lb.h/2; }); }
-function ejectCountries(Lb){
-  const bx1 = Lb.cx-Lb.w/2-GAP, by1 = Lb.cy-Lb.h/2-GAP, bx2 = Lb.cx+Lb.w/2+GAP, by2 = Lb.cy+Lb.h/2+GAP;
-  let best = null, bestA = 0;
-  for(const r of ALLRECTS){ const ox = Math.min(bx2,r.x2)-Math.max(bx1,r.x1), oy = Math.min(by2,r.y2)-Math.max(by1,r.y1);
-    if(ox>0 && oy>0){ const a = Math.min(ox,oy); if(a>bestA){ bestA=a; best=r; } } }
-  if(!best) return false;
-  const pushL = best.x1-bx2, pushR = best.x2-bx1, pushU = best.y1-by2, pushD = best.y2-by1;
-  const cands = [[Math.abs(pushL),pushL,0],[Math.abs(pushR),pushR,0],[Math.abs(pushU),0,pushU],[Math.abs(pushD),0,pushD]].sort((a,b)=>a[0]-b[0]);
-  const bias = cands.filter(c => (c[1]*Lb.dir[0] + c[2]*Lb.dir[1]) >= 0);
-  const pick = (bias[0] && bias[0][0] <= cands[0][0]*1.6) ? bias[0] : cands[0];
-  Lb.cx += pick[1]; Lb.cy += pick[2]; return true;
+const PAD = 8;   // clear space kept between two callouts
+let KEEPOUT = [];   // rectangles no callout may touch: the legend
+// The shaded countries' shapes, each as a coarse grid over its own box (one cell per four
+// pixels each way), summed so that how much of a country lies under any box is four look-ups.
+// Drawn from the map's own paths.
+let SHADE = [];
+let ROOM = 1;   // a small map has little free room, so covering a country is charged less there (D220)
+function shadeGrids(W, H){
+  const S = 4, gw = Math.ceil(W/S), gh = Math.ceil(H/S), k = kpx()/S, out = [];
+  const cv = document.createElement('canvas'); cv.width = gw; cv.height = gh;
+  const ctx = cv.getContext('2d', {willReadFrequently: true});
+  if(!ctx || !gw || !gh) return out;
+  svg.querySelectorAll('.cty.on').forEach(el => {
+    let bb; try { bb = el.getBBox(); } catch(e){ return; }
+    const x0 = Math.max(0, Math.floor(bb.x*k)), y0 = Math.max(0, Math.floor(bb.y*k));
+    const w = Math.min(gw, Math.ceil((bb.x+bb.width)*k)) - x0, h = Math.min(gh, Math.ceil((bb.y+bb.height)*k)) - y0;
+    if(w <= 0 || h <= 0) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, gw, gh); ctx.setTransform(k, 0, 0, k, 0, 0);
+    ctx.fill(new Path2D(el.getAttribute('d')));
+    const px = ctx.getImageData(x0, y0, w, h).data, sat = new Float64Array((w+1)*(h+1));
+    for(let y = 0; y < h; y++){ let row = 0;
+      for(let x = 0; x < w; x++){ row += px[4*(y*w+x)+3]/255; sat[(y+1)*(w+1)+x+1] = sat[y*(w+1)+x+1] + row; } }
+    const total = sat[(w+1)*(h+1)-1];
+    if(total >= 1) out.push({S, x0, y0, w, h, sat, total});   // a speck of an island has its dot's clear space
+  });
+  return out;
 }
-function separate(iters, W, H){
-  for(let s=0; s<iters; s++){
-    let clean = true;
-    for(let i=0;i<labels.length;i++) for(let j=i+1;j<labels.length;j++){
-      const a = labels[i], b = labels[j];
-      const ax = a.cx-a.w/2, ay = a.cy-a.h/2, bx = b.cx-b.w/2, by = b.cy-b.h/2;
-      if(ax < bx+b.w+PAD && ax+a.w+PAD > bx && ay < by+b.h+PAD && ay+a.h+PAD > by){
-        clean = false;
-        const ox = Math.min(ax+a.w, bx+b.w)-Math.max(ax,bx)+PAD, oy = Math.min(ay+a.h, by+b.h)-Math.max(ay,by)+PAD;
-        if(ox <= oy){ const hx = ox/2+.5; if(a.cx < b.cx){ a.cx-=hx; b.cx+=hx; } else { a.cx+=hx; b.cx-=hx; } }
-        else { const hy = oy/2+.5; if(a.cy < b.cy){ a.cy-=hy; b.cy+=hy; } else { a.cy+=hy; b.cy-=hy; } }
-      }
-    }
-    labels.forEach(Lb => { if(ejectCountries(Lb)) clean = false; });
-    clampAll(W, H);
-    if(clean) return true;
+// The summed grid read at a fractional cell position (between the four corners), so that a box
+// is measured on its own area and not on the cells it touches.
+function satAt(g, x, y){
+  x = Math.max(0, Math.min(g.w, x)); y = Math.max(0, Math.min(g.h, y));
+  const xa = Math.floor(x), ya = Math.floor(y), xb = Math.min(g.w, xa+1), yb = Math.min(g.h, ya+1), fx = x-xa, fy = y-ya, w = g.w+1;
+  return (g.sat[ya*w+xa]*(1-fx) + g.sat[ya*w+xb]*fx)*(1-fy) + (g.sat[yb*w+xa]*(1-fx) + g.sat[yb*w+xb]*fx)*fy;
+}
+// What a box costs for the shaded countries under it, from 0 to 1: the larger of the share of
+// the box that is over shaded countries and the largest share of any one country that is under
+// the box (a callout on a small country hides it, however little of the callout that takes),
+// square-rooted, so that a corner of a country under the callout already counts for a good deal.
+function shadedCost(x1, y1, x2, y2){
+  let over = 0, hidden = 0;
+  for(const g of SHADE){
+    const a = x1/g.S-g.x0, b = x2/g.S-g.x0, t = y1/g.S-g.y0, d = y2/g.S-g.y0;
+    if(b <= 0 || a >= g.w || d <= 0 || t >= g.h) continue;
+    const under = satAt(g, b, d) - satAt(g, b, t) - satAt(g, a, d) + satAt(g, a, t);
+    if(under <= 0) continue;
+    over += under; hidden = Math.max(hidden, under/g.total);
   }
-  return false;
+  const box = (x2-x1)*(y2-y1)/16;   // in cells (S = 4)
+  return Math.sqrt(Math.min(1, Math.max(over/box, hidden)));
 }
-// leader-line tidy-up: a leader should not cross another leader nor run through another
-// label. Swap the positions of two labels whenever that lowers the total count, then let
-// the overlap pass settle; stop when a full sweep changes nothing.
-function anchorOf(Lb){ return [Lb.cx-Lb.w/2+Lb.iox, Lb.cy-Lb.h/2+Lb.ioy]; }
 function segCross(p1, p2, p3, p4){
   const d = (a,b,c) => (c[0]-a[0])*(b[1]-a[1]) - (b[0]-a[0])*(c[1]-a[1]);
   const d1 = d(p3,p4,p1), d2 = d(p3,p4,p2), d3 = d(p1,p2,p3), d4 = d(p1,p2,p4);
   return ((d1>0&&d2<0)||(d1<0&&d2>0)) && ((d3>0&&d4<0)||(d3<0&&d4>0)); }
-function segHitsBox(p, q, Lb){
-  const x1 = Lb.cx-Lb.w/2, y1 = Lb.cy-Lb.h/2, x2 = x1+Lb.w, y2 = y1+Lb.h;
+function segHitsRect(p, q, x1, y1, x2, y2){
   if(Math.max(p[0],q[0]) < x1 || Math.min(p[0],q[0]) > x2 || Math.max(p[1],q[1]) < y1 || Math.min(p[1],q[1]) > y2) return false;
   const c = [[x1,y1],[x2,y1],[x2,y2],[x1,y2]];
   for(let i=0;i<4;i++) if(segCross(p, q, c[i], c[(i+1)%4])) return true;
   return false; }
-function badness(){
-  let n = 0; const A = labels.map(anchorOf);
-  for(let i=0;i<labels.length;i++){ const pi = [labels[i].px, labels[i].py];
-    for(let j=0;j<labels.length;j++){ if(i===j) continue;
-      if(j>i && segCross(pi, A[i], [labels[j].px, labels[j].py], A[j])) n += 2;
-      if(segHitsBox(pi, A[i], labels[j])) n += 1; } }
-  return n; }
-function overlaps(){ let n = 0;
-  for(let i=0;i<labels.length;i++) for(let j=i+1;j<labels.length;j++){ const a = labels[i], b = labels[j];
-    if(Math.abs(a.cx-b.cx)*2 < a.w+b.w+PAD && Math.abs(a.cy-b.cy)*2 < a.h+b.h+PAD) n++; }
-  return n; }
-function layoutScore(){ return badness() + 10*overlaps(); }
-function uncross(W, H){
-  for(let pass=0; pass<6; pass++){
-    let changed = false;
-    // candidate pairs: leaders that cross, or a leader running through the other label
-    const A = labels.map(anchorOf), cands = [];
-    for(let i=0;i<labels.length;i++) for(let j=i+1;j<labels.length;j++){
-      const a = labels[i], b = labels[j], pa = [a.px,a.py], pb = [b.px,b.py];
-      if(segCross(pa, A[i], pb, A[j]) || segHitsBox(pa, A[i], b) || segHitsBox(pb, A[j], a)) cands.push([a, b]); }
-    for(const [a, b] of cands){
-      const snap = labels.map(l => [l.cx, l.cy]), cur = layoutScore();
-      const sa = [a.cx, a.cy]; a.cx = b.cx; a.cy = b.cy; b.cx = sa[0]; b.cy = sa[1];
-      separate(300, W, H);
-      if(layoutScore() < cur) changed = true;
-      else labels.forEach((l, k) => { l.cx = snap[k][0]; l.cy = snap[k][1]; });   // keep only improvements
-    }
-    if(!changed) break;
+// Placement (D220). Each callout has a ring of candidate places around its country's dot: sixteen
+// directions, eight distances, and at each either the callout's box or its first pin that far
+// from the dot. A place's cost is the leader's length, plus a price for each thing that makes
+// the map hard to read: sitting on another callout or on a country's dot, a leader that
+// crosses another leader or runs through a callout (its own words included), covering the
+// shaded countries' shapes, and, a little, leaving the country's usual side (dir). Callouts are placed most-crowded first, shuffled
+// (anneal), then each is re-placed against the others until none moves: the total cost is what
+// is brought down, so one callout may take a dearer place to free a better one for another.
+// Overlap is a price, not a rule: on a map too small for its callouts some still overlap.
+const RING_DIRS = 16, RING_DISTS = [8, 18, 30, 46, 66, 92, 126, 170];
+const COST = { far: 300, overlap: 4000, dot: 1500, through: 500, cross: 300, ownText: 1.5, shaded: 80, dir: 10 };
+const DOT_M = 6;   // clear space kept round a country's dot
+function candidatesOf(Lb, W, H){
+  if(!Lb.w || !Lb.h) return [];   // hidden (phones list the countries instead): only its dot is drawn
+  const out = [], dl = Math.hypot(Lb.dir[0], Lb.dir[1]) || 1, dx = Lb.dir[0]/dl, dy = Lb.dir[1]/dl;
+  const add = (slot, x1, y1, ux, uy) => {
+    const x2 = x1+Lb.w, y2 = y1+Lb.h;
+    if(x1 < 3 || y1 < 3 || x2 > W-3 || y2 > H-3) return;
+    if(Lb.px > x1-DOT_M && Lb.px < x2+DOT_M && Lb.py > y1-DOT_M && Lb.py < y2+DOT_M) return;   // on its own dot
+    const ax = x1+Lb.iox, ay = y1+Lb.ioy, vx = Lb.px-ax, vy = Lb.py-ay, len = Math.hypot(vx, vy);
+    // how far the leader runs under the callout's own words before it reaches the pin
+    const tx = vx > 0 ? (x2-ax)/vx : vx < 0 ? (x1-ax)/vx : Infinity, ty = vy > 0 ? (y2-ay)/vy : vy < 0 ? (y1-ay)/vy : Infinity;
+    const inside = Math.min(1, tx, ty)*len;
+    let c = len + len*len/COST.far + COST.ownText*Math.max(0, inside-16) + COST.dir*(1-(ux*dx+uy*dy));
+    for(const r of KEEPOUT) if(Math.min(x2,r.x2) > Math.max(x1,r.x1) && Math.min(y2,r.y2) > Math.max(y1,r.y1)) return;
+    c += COST.shaded*ROOM*shadedCost(x1, y1, x2, y2);
+    out.push({slot, x1, y1, x2, y2, ax, ay, c});
+  };
+  for(let k=0; k<RING_DIRS; k++){
+    const t = 2*Math.PI*k/RING_DIRS, ux = Math.cos(t), uy = Math.sin(t);
+    const edge = Math.min(Math.abs(ux) > 1e-6 ? Lb.w/2/Math.abs(ux) : Infinity, Math.abs(uy) > 1e-6 ? Lb.h/2/Math.abs(uy) : Infinity);
+    RING_DISTS.forEach((d, j) => {
+      // two places per direction and distance: the callout's box d away from the dot, and
+      // the callout's first pin d away from the dot
+      add(2*(j*RING_DIRS+k), Lb.px + ux*(d+edge) - Lb.w/2, Lb.py + uy*(d+edge) - Lb.h/2, ux, uy);
+      add(2*(j*RING_DIRS+k)+1, Lb.px + ux*(d+14) - Lb.iox, Lb.py + uy*(d+14) - Lb.ioy, ux, uy);
+    });
   }
+  return out.sort((a, b) => a.c - b.c);
 }
+// what a place costs against the callouts already placed, and against every country's dot
+function clashCost(Lb, k){
+  let c = 0; const p = [Lb.px, Lb.py], a = [k.ax, k.ay];
+  const lx1 = Math.min(Lb.px, k.x1), lx2 = Math.max(Lb.px, k.x2), ly1 = Math.min(Lb.py, k.y1), ly2 = Math.max(Lb.py, k.y2);   // the callout and its leader
+  for(const o of labels){ if(o === Lb) continue;
+    if(o.px > k.x1-DOT_M && o.px < k.x2+DOT_M && o.py > k.y1-DOT_M && o.py < k.y2+DOT_M) c += COST.dot;
+    if(!o.at) continue;
+    const q = o.at, ox = Math.min(k.x2, q.x2)-Math.max(k.x1, q.x1)+PAD, oy = Math.min(k.y2, q.y2)-Math.max(k.y1, q.y1)+PAD;
+    if(ox > 0 && oy > 0) c += COST.overlap + ox*oy;
+    // the two leaders' boxes apart: neither leader can meet the other or its callout
+    if(Math.max(o.px, q.x2) < lx1 || Math.min(o.px, q.x1) > lx2 || Math.max(o.py, q.y2) < ly1 || Math.min(o.py, q.y1) > ly2) continue;
+    const op = [o.px, o.py], oa = [q.ax, q.ay];
+    if(segCross(p, a, op, oa)) c += COST.cross;
+    if(segHitsRect(p, a, q.x1, q.y1, q.x2, q.y2)) c += COST.through;
+    if(segHitsRect(op, oa, k.x1, k.y1, k.x2, k.y2)) c += COST.through;
+  }
+  return c;
+}
+function bestPlace(Lb){
+  let best = null, bc = Infinity;
+  for(const k of Lb.cands){ if(k.c >= bc) break; const c = k.c + clashCost(Lb, k); if(c < bc){ bc = c; best = k; } }   // cheapest first
+  return [best, bc];
+}
+// Annealing: each callout in turn tries a place at random and keeps it if the map is better
+// for it, or, early on, now and then if it is worse, so that a crowd can shuffle out of a bad
+// arrangement; the best arrangement seen is the one kept. Each callout draws from its own
+// stream of numbers, seeded by its country's code, and picks a place by its slot on the ring
+// (not by its rank among the places that fit), so the same map always gives the same layout
+// and a map one pixel wider disturbs it little.
+function anneal(){
+  const live = labels.filter(Lb => Lb.at && Lb.cands.length > 1).sort((a, b) => a.iso < b.iso ? -1 : 1);
+  if(live.length < 2) return;
+  live.forEach(Lb => { let h = 2166136261; for(const ch of Lb.iso) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+    Lb.seed = h; Lb.slots = []; Lb.cands.forEach(k => { Lb.slots[k.slot] = k; }); });
+  const rnd = Lb => { Lb.seed = Lb.seed + 0x6D2B79F5 | 0; let t = Math.imul(Lb.seed ^ Lb.seed >>> 15, 1 | Lb.seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const steps = Math.min(2500*live.length, 120000), T0 = 200, T1 = 1, ND = RING_DISTS.length;
+  let cur = 0, best = 0, moves = 0; let keep = live.map(Lb => Lb.at);
+  live.forEach(Lb => { Lb.costAt = -1; });
+  for(let i = 0; i < steps; i++){
+    const T = T0*Math.pow(T1/T0, i/steps), Lb = live[i % live.length];
+    const r = rnd(Lb), dir = Math.floor(rnd(Lb)*RING_DIRS), fam = rnd(Lb) < .5 ? 0 : 1, u = rnd(Lb);
+    const k = Lb.slots[2*(Math.floor(r*r*ND)*RING_DIRS + dir) + fam];   // near places more often
+    if(!k || k === Lb.at) continue;
+    if(Lb.costAt !== moves){ Lb.cost = costOf(Lb); Lb.costAt = moves; }   // its cost where it is holds until a callout moves
+    const d = k.c + clashCost(Lb, k) - Lb.cost;
+    if(d < 0 || u < Math.exp(-d/T)){ Lb.at = k; cur += d; moves++;
+      if(cur < best - 1e-6){ best = cur; keep = live.map(l => l.at); } }
+  }
+  live.forEach((Lb, i) => { Lb.at = keep[i]; });
+}
+function costOf(Lb){ return Lb.at.c + clashCost(Lb, Lb.at); }
 function runLayout(){
   legendHome();
   const r = svg.getBoundingClientRect(), W = r.width, H = r.height;
   if(!W) return;
   const mobile = window.matchMedia('(max-width: 760px)').matches;
-  mapbox.classList.toggle('compact', mobile); PAD = mobile ? 3 : 8; GAP = mobile ? 2 : 4;
-  ALLRECTS = labels.map(Lb => rectOf(Lb.bbox)).filter(Boolean);
+  mapbox.classList.toggle('compact', mobile);
   const lr = legend.getBoundingClientRect(), mr = mapbox.getBoundingClientRect();
-  if(lr.width && !legend.classList.contains('below')) ALLRECTS.push({x1:lr.left-mr.left-6, y1:lr.top-mr.top-6, x2:lr.right-mr.left+6, y2:lr.bottom-mr.top+6});
+  KEEPOUT = lr.width && !legend.classList.contains('below') ? [{x1:lr.left-mr.left-6, y1:lr.top-mr.top-6, x2:lr.right-mr.left+6, y2:lr.bottom-mr.top+6}] : [];
+  SHADE = mobile ? [] : shadeGrids(W, H); ROOM = Math.max(.25, Math.min(1, (W-600)/700));
   labels.forEach(Lb => {
     const p = toPx(Lb.lon, Lb.lat); Lb.px = p[0]; Lb.py = p[1];
     Lb.w = Lb.el.offsetWidth; Lb.h = Lb.el.offsetHeight;
     const ib = Lb.el.querySelector('.iconbox');
     Lb.iox = ib ? ib.offsetLeft + ib.offsetWidth/2 : 12; Lb.ioy = ib ? ib.offsetTop + ib.offsetHeight/2 : Lb.h/2;
-    const rc = rectOf(Lb.bbox);
-    const dl = Math.hypot(Lb.dir[0], Lb.dir[1]) || 1, ux = Lb.dir[0]/dl, uy = Lb.dir[1]/dl;
-    const cx0 = rc ? (rc.x1+rc.x2)/2 : Lb.px, cy0 = rc ? (rc.y1+rc.y2)/2 : Lb.py;
-    const hx = rc ? (rc.x2-rc.x1)/2 : 0, hy = rc ? (rc.y2-rc.y1)/2 : 0;
-    const reach = Math.abs(ux)*hx + Math.abs(uy)*hy + GAP + Math.abs(ux)*Lb.w/2 + Math.abs(uy)*Lb.h/2 + 2;
-    Lb.cx = cx0 + ux*reach; Lb.cy = cy0 + uy*reach;
   });
-  for(let step=0; step<55; step++){
-    labels.forEach(Lb => { Lb.cx += (Lb.px-Lb.cx)*.06; Lb.cy += (Lb.py-Lb.cy)*.06; ejectCountries(Lb); });
-    separate(10, W, H);
-  }
-  separate(700, W, H);
-  uncross(W, H);
+  placeAll(W, H);
   labels.forEach(Lb => {
-    Lb.el.style.visibility = 'visible'; Lb.el.style.left = (Lb.cx-Lb.w/2)+'px'; Lb.el.style.top = (Lb.cy-Lb.h/2)+'px';
+    // no place on the map at all (a dot off the edge): beside the dot, as near as the map allows
+    const k = Lb.at || {x1: Math.max(3, Math.min(W-3-Lb.w, Lb.px+10)), y1: Math.max(3, Math.min(H-3-Lb.h, Lb.py-Lb.h/2))};
+    Lb.el.style.visibility = 'visible'; Lb.el.style.left = k.x1+'px'; Lb.el.style.top = k.y1+'px';
     Lb.ln.setAttribute('x1', Lb.px); Lb.ln.setAttribute('y1', Lb.py);
-    Lb.ln.setAttribute('x2', Lb.cx-Lb.w/2+Lb.iox); Lb.ln.setAttribute('y2', Lb.cy-Lb.h/2+Lb.ioy);
+    Lb.ln.setAttribute('x2', k.x1+Lb.iox); Lb.ln.setAttribute('y2', k.y1+Lb.ioy);
     Lb.dot.setAttribute('cx', Lb.px); Lb.dot.setAttribute('cy', Lb.py);
   });
+}
+// every callout's place (Lb.at), from the dots, the callouts' sizes and the shaded countries
+function placeAll(W, H){
+  labels.forEach(Lb => { Lb.at = null; });
+  labels.forEach(Lb => { Lb.cands = candidatesOf(Lb, W, H);
+    Lb.crowd = labels.reduce((n, o) => n + (o !== Lb && Math.hypot(o.px-Lb.px, o.py-Lb.py) < 140 ? 1 : 0), 0); });
+  const order = labels.slice().sort((a, b) => b.crowd - a.crowd || (a.iso < b.iso ? -1 : 1));
+  order.forEach(Lb => { Lb.at = bestPlace(Lb)[0]; });
+  anneal();
+  for(let sweep = 0; sweep < 20; sweep++){
+    let moved = false;
+    for(const Lb of order){ if(!Lb.at) continue;
+      const now = costOf(Lb), [k, c] = bestPlace(Lb);
+      if(k && k !== Lb.at && c < now - .5){ Lb.at = k; moved = true; } }
+    if(!moved) break;
+  }
 }
 // relayout whenever the map's rendered size changes (window resize, sidebar sliding in or
 // out) — callouts are positioned in CSS px, so a stale width puts them off the countries
