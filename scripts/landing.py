@@ -3558,13 +3558,53 @@ function buildCallouts(){
     lpane.appendChild(el);
     const ln = document.createElementNS(NS, 'line'); ln.setAttribute('class','leader'); leaders.appendChild(ln);
     const dot = document.createElementNS(NS, 'circle'); dot.setAttribute('class','cdot'); dot.setAttribute('r','3.5'); leaders.appendChild(dot);
-    labels.push({iso, lat:c.centroid[0], lon:c.centroid[1], dir:c.dir, el, ln, dot, bbox:c.lbbox});
+    labels.push({iso, lat:c.centroid[0], lon:c.centroid[1], dir:c.dir, el, ln, dot});
   });
 }
-const PAD = 8; let ALLRECTS = [];   // clear space kept between two callouts
-function rectOf(bbox){ if(!bbox || bbox[2]-bbox[0] > 170) return null;
-  const [x1,y1] = toPx(bbox[0], bbox[3]), [x2,y2] = toPx(bbox[2], bbox[1]);
-  return {x1:Math.min(x1,x2), y1:Math.min(y1,y2), x2:Math.max(x1,x2), y2:Math.max(y1,y2)}; }
+const PAD = 8;   // clear space kept between two callouts
+let KEEPOUT = [];   // rectangles no callout may touch: the legend
+// The shaded countries' shapes, each as a coarse grid over its own box (one cell per four
+// pixels each way), summed so that how much of a country lies under any box is four look-ups.
+// Drawn from the map's own paths.
+let SHADE = [];
+let ROOM = 1;   // a small map has little free room, so covering a country is charged less there (D220)
+function shadeGrids(W, H){
+  const S = 4, gw = Math.ceil(W/S), gh = Math.ceil(H/S), k = kpx()/S, out = [];
+  const cv = document.createElement('canvas'); cv.width = gw; cv.height = gh;
+  const ctx = cv.getContext('2d', {willReadFrequently: true});
+  if(!ctx || !gw || !gh) return out;
+  svg.querySelectorAll('.cty.on').forEach(el => {
+    let bb; try { bb = el.getBBox(); } catch(e){ return; }
+    const x0 = Math.max(0, Math.floor(bb.x*k)), y0 = Math.max(0, Math.floor(bb.y*k));
+    const w = Math.min(gw, Math.ceil((bb.x+bb.width)*k)) - x0, h = Math.min(gh, Math.ceil((bb.y+bb.height)*k)) - y0;
+    if(w <= 0 || h <= 0) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, gw, gh); ctx.setTransform(k, 0, 0, k, 0, 0);
+    ctx.fill(new Path2D(el.getAttribute('d')));
+    const px = ctx.getImageData(x0, y0, w, h).data, sat = new Float64Array((w+1)*(h+1));
+    for(let y = 0; y < h; y++){ let row = 0;
+      for(let x = 0; x < w; x++){ row += px[4*(y*w+x)+3]/255; sat[(y+1)*(w+1)+x+1] = sat[y*(w+1)+x+1] + row; } }
+    const total = sat[(w+1)*(h+1)-1];
+    if(total > 0) out.push({S, x0, y0, w, h, sat, total});
+  });
+  return out;
+}
+// What a box costs for the shaded countries under it: for each country, the larger of the share
+// of the box that is over it and the share of the country that is under the box (a callout on
+// a small country hides it, however little of the callout that takes), square-rooted, so that
+// a corner of a country under the callout already counts for a good deal.
+function shadedCost(x1, y1, x2, y2){
+  let c = 0;
+  for(const g of SHADE){
+    const a = Math.max(0, Math.floor(x1/g.S)-g.x0), b = Math.min(g.w, Math.ceil(x2/g.S)-g.x0);
+    const t = Math.max(0, Math.floor(y1/g.S)-g.y0), d = Math.min(g.h, Math.ceil(y2/g.S)-g.y0);
+    if(b <= a || d <= t) continue;
+    const w = g.w+1, under = g.sat[d*w+b] - g.sat[t*w+b] - g.sat[d*w+a] + g.sat[t*w+a];
+    if(under <= 0) continue;
+    const box = (x2-x1)*(y2-y1)/(g.S*g.S);
+    c += Math.sqrt(Math.min(1, Math.max(under/box, under/g.total)));
+  }
+  return c;
+}
 function segCross(p1, p2, p3, p4){
   const d = (a,b,c) => (c[0]-a[0])*(b[1]-a[1]) - (b[0]-a[0])*(c[1]-a[1]);
   const d1 = d(p3,p4,p1), d2 = d(p3,p4,p2), d3 = d(p1,p2,p3), d4 = d(p1,p2,p4);
@@ -3579,16 +3619,16 @@ function segHitsRect(p, q, x1, y1, x2, y2){
 // from the dot. A place's cost is the leader's length, plus a price for each thing that makes
 // the map hard to read: sitting on another callout or on a country's dot, a leader that
 // crosses another leader or runs through a callout (its own words included), and covering the
-// rectangles round the labelled countries. Callouts are placed most-crowded first, shuffled
+// shaded countries' shapes. Callouts are placed most-crowded first, shuffled
 // (anneal), then each is re-placed against the others until none moves: the total cost is what
 // is brought down, so one callout may take a dearer place to free a better one for another.
 // Overlap is a price, not a rule: on a map too small for its callouts some still overlap.
 const RING_DIRS = 16, RING_DISTS = [8, 18, 30, 46, 66, 92, 126, 170];
-const COST = { far: 300, overlap: 4000, dot: 1500, through: 500, cross: 300, ownText: 1.5, shaded: 70, dir: 10 };
+const COST = { far: 300, overlap: 4000, dot: 1500, through: 500, cross: 300, ownText: 1.5, shaded: 80, dir: 10 };
 const DOT_M = 6;   // clear space kept round a country's dot
 function candidatesOf(Lb, W, H){
   if(!Lb.w || !Lb.h) return [];   // hidden (phones list the countries instead): only its dot is drawn
-  const out = [], dl = Math.hypot(Lb.dir[0], Lb.dir[1]) || 1, dx = Lb.dir[0]/dl, dy = Lb.dir[1]/dl, area = Lb.w*Lb.h;
+  const out = [], dl = Math.hypot(Lb.dir[0], Lb.dir[1]) || 1, dx = Lb.dir[0]/dl, dy = Lb.dir[1]/dl;
   const add = (slot, x1, y1, ux, uy) => {
     const x2 = x1+Lb.w, y2 = y1+Lb.h;
     if(x1 < 3 || y1 < 3 || x2 > W-3 || y2 > H-3) return;
@@ -3598,10 +3638,8 @@ function candidatesOf(Lb, W, H){
     const tx = vx > 0 ? (x2-ax)/vx : vx < 0 ? (x1-ax)/vx : Infinity, ty = vy > 0 ? (y2-ay)/vy : vy < 0 ? (y1-ay)/vy : Infinity;
     const inside = Math.min(1, tx, ty)*len;
     let c = len + len*len/COST.far + COST.ownText*Math.max(0, inside-16) + COST.dir*(1-(ux*dx+uy*dy));
-    let shaded = 0;
-    for(const r of ALLRECTS){ const ox = Math.min(x2,r.x2)-Math.max(x1,r.x1), oy = Math.min(y2,r.y2)-Math.max(y1,r.y1);
-      if(ox > 0 && oy > 0){ if(r.keepOut) return; shaded += ox*oy; } }
-    c += COST.shaded*Math.min(1, shaded/area);
+    for(const r of KEEPOUT) if(Math.min(x2,r.x2) > Math.max(x1,r.x1) && Math.min(y2,r.y2) > Math.max(y1,r.y1)) return;
+    c += COST.shaded*ROOM*shadedCost(x1, y1, x2, y2);
     out.push({slot, x1, y1, x2, y2, ax, ay, c});
   };
   for(let k=0; k<RING_DIRS; k++){
@@ -3674,9 +3712,9 @@ function runLayout(){
   if(!W) return;
   const mobile = window.matchMedia('(max-width: 760px)').matches;
   mapbox.classList.toggle('compact', mobile);
-  ALLRECTS = labels.map(Lb => rectOf(Lb.bbox)).filter(Boolean);
   const lr = legend.getBoundingClientRect(), mr = mapbox.getBoundingClientRect();
-  if(lr.width && !legend.classList.contains('below')) ALLRECTS.push({x1:lr.left-mr.left-6, y1:lr.top-mr.top-6, x2:lr.right-mr.left+6, y2:lr.bottom-mr.top+6, keepOut:true});
+  KEEPOUT = lr.width && !legend.classList.contains('below') ? [{x1:lr.left-mr.left-6, y1:lr.top-mr.top-6, x2:lr.right-mr.left+6, y2:lr.bottom-mr.top+6}] : [];
+  SHADE = mobile ? [] : shadeGrids(W, H); ROOM = Math.max(.25, Math.min(1, (W-600)/700));
   labels.forEach(Lb => {
     const p = toPx(Lb.lon, Lb.lat); Lb.px = p[0]; Lb.py = p[1];
     Lb.w = Lb.el.offsetWidth; Lb.h = Lb.el.offsetHeight;
