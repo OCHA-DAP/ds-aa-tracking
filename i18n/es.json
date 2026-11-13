@@ -1779,5 +1779,6 @@
  "{0} pre-arranged outside a framework, not yet released": "{0} preestablecidos fuera de marco, aún no liberados",
  "{country} {hazard} — pre-arranged outside a framework": "{country}, {hazard} — preestablecido fuera de marco",
  "· outside a framework, not yet released": " · fuera de marco, aún no liberado",
- "· {0} of it outside a framework, not yet released": " · de ello, {0} fuera de marco, aún no liberados"
+ "· {0} of it outside a framework, not yet released": " · de ello, {0} fuera de marco, aún no liberados",
+ "until {0}": "hasta {0}"
 }

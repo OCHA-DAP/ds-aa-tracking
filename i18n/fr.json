@@ -1885,5 +1885,6 @@
  "{0} pre-arranged outside a framework, not yet released": "{0} pré-arrangés hors cadre, pas encore débloqués",
  "{country} {hazard} — pre-arranged outside a framework": "{country}, {hazard} — pré-arrangé hors cadre",
  "· outside a framework, not yet released": " · hors cadre, pas encore débloqué",
- "· {0} of it outside a framework, not yet released": " · dont {0} hors cadre, pas encore débloqués"
+ "· {0} of it outside a framework, not yet released": " · dont {0} hors cadre, pas encore débloqués",
+ "until {0}": "jusqu’à {0}"
 }

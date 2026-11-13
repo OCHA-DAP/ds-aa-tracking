@@ -93,7 +93,9 @@ Counting rules (an LLM summing these files without them gets wrong totals):
 
 - Pre-arranged funding is a STOCK: the envelope in place for a framework in a given year.
   Never add it across years, and never add it to released money. "Pre-arranged in 2026" is
-  the sum over frameworks of the 2026 rows only (aa-prearranged-funding{funding_annual}). The
+  the sum over frameworks of the 2026 rows only (aa-prearranged-funding{funding_annual}; its
+  rows of `source` `non-framework` belong to no framework and are left out of that sum: see
+  "Money pre-arranged outside a framework" below). The
   current year's figure comes from the framework records (source `framework-record`): for each
   live framework, the envelope of its most recent version that has one, all funds.
   `prearranged_usd` in aa-frameworks is that same figure per framework{"; " + "; ".join(sums) if sums else ""}.
@@ -555,7 +557,8 @@ def build(d, e, live, out, snapshot_at):
                 "shows it, the pre-arranged funding in place now (`prearranged_usd`, all funds; "
                 "`prearranged_cerf_usd` its CERF part; the envelope of `prearranged_version`, counted "
                 "twice where `activations_per_year` is 2; these sum to the current-year rows of "
-                f"aa-prearranged-funding{' and aa-funding-annual' if on('funding-annual') else ''}), "
+                f"aa-prearranged-funding{' and aa-funding-annual' if on('funding-annual') else ''} "
+                "on the current-frameworks layer, `source` framework-record), "
                 "`prearranged_outside_framework_usd` (money a fund has pre-arranged for the pair outside "
                 "a framework and not yet released: never part of `prearranged_usd`, counted on the map "
                 "only while its non-framework layer is on), this "

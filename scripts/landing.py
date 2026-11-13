@@ -1260,7 +1260,7 @@ def assemble(d, e):
                   agency, sector, amount_usd, provenance
            FROM aa.v_window_funding_split
            WHERE amount_usd IS NOT NULL AND (agency IS NOT NULL OR sector IS NOT NULL)""", e)
-    from dashboards import (BT_EVENT_COLS, EXCLUDED_EVENT_TYPES, _loose, adhoc_pre_in_year, funding_sql, read_backtest_events,
+    from dashboards import (BT_EVENT_COLS, EXCLUDED_EVENT_TYPES, _loose, funding_sql, read_backtest_events,
                             read_simulated, sim_before_start, sim_when, tested_rows, untested_windows)
     sim = read_simulated(e)   # with event_date / event_time when the DB has them
     bte = d.get("bt_events")   # every event a backtest tested, met or not (D189)
@@ -1700,9 +1700,11 @@ def assemble(d, e):
             layers.append("framework")                # active · updating · development
         if disp == "retired" or any(k[:2] == (c, h) for k in old_v):
             layers.append("retired")                  # retired, or hosts a replaced framework
-        if n_adhoc.get((c, h)) or any(adhoc_pre_in_year(x["date"], x["until"], TODAY.year, TODAY)
-                                      for x in pre_ad.get((c, h), [])):
-            layers.append("adhoc")                    # non-framework AA money on the pair: released, or pre-arranged (D223)
+        if n_adhoc.get((c, h)) or pre_ad.get((c, h)):
+            # non-framework AA money on the pair: released, or pre-arranged (D223). A record that has
+            # ended keeps the pair on the map for the years it counted: the page takes the layer off
+            # in a year with neither (applyYear)
+            layers.append("adhoc")
         if tech:
             layers.append("tech")                     # OCHA technical support, whatever the lifecycle
         if not layers:
@@ -2910,7 +2912,10 @@ function applyYear(){
   const Y = String(YEAR), D = dateY();
   Object.values(L).forEach(c => c.fws.forEach(f => {
     const B = LIVE.get(f); Object.assign(f, B); f.pre_drv = false; f.pre_apy = null; f.pre_fy = null;
-    if(YEAR == null) return;
+    if(YEAR == null){   // all years, to today: a pair whose only non-framework money was pre-arranged and has ended has none today
+      if(B.layers.includes('adhoc') && !B.n_adhoc && !preAdRows(f, true).length){
+        f.layers = B.layers.filter(l => l !== 'adhoc'); f.layer = LAYER_ORDER.find(l => f.layers.includes(l)) || null; }
+      return; }
     const acts = f.activations.filter(a => String(a.date).slice(0, 4) === Y), H = f.hist || {};
     f.n_act = acts.filter(a => a.type === 'framework_aa' && !isOld(a)).length; f.n_act_all = acts.length;
     f.n_adhoc = (H.adhoc || []).filter(y => String(y) === Y).length;
@@ -4247,8 +4252,10 @@ function fundTitle(x, c){
 // year shown: the fund, the amount, since when and the people it targets
 function preAdBlock(f){
   const c = L[state.iso], rows = LAYERS.adhoc ? preAdRows(f, true) : []; if(!rows.length) return '';
+  // a record that has ended (a past year's view): until when
+  const ended = x => x.until ? ' · ' + esc(tr8('until {0}', dayOf(x.until) ? shortDate(x.until) + ' ' + String(x.until).slice(0, 4) : String(x.until))) : '';
   return `<h4>${esc(tr8('Pre-arranged, not yet released ({0})', rows.length))}</h4>` + rows.map(x => `<div class='trig'><div class='tn'>${esc(fundTitle(x, c))}</div>
-      <div class='tt'><b>${x.usd != null ? money(x.usd) : esc(tr8('amount not recorded'))}</b> · ${esc(tr8('since {0}', preAdWhen(x)))}${x.people ? ' · ' + esc(tr8('{0} people targeted', num(x.people))) : ''}</div></div>`).join('')
+      <div class='tt'><b>${x.usd != null ? money(x.usd) : esc(tr8('amount not recorded'))}</b> · ${esc(tr8('since {0}', preAdWhen(x)))}${ended(x)}${x.people ? ' · ' + esc(tr8('{0} people targeted', num(x.people))) : ''}</div></div>`).join('')
     + `<p class='muted small'>${esc(tr8('Set aside by the fund for anticipatory action outside a framework. It counts as pre-arranged money, and as released money only once the fund releases it.'))}</p>`;
 }
 // the pair's non-framework allocations (in the year shown): for each, the fund it came from, the

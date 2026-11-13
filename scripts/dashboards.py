@@ -786,6 +786,19 @@ def read_adhoc_prearranged(e):
     without the table yet (a snapshot taken before the schema run)."""
     if pd.read_sql("SELECT to_regclass('aa.adhoc_prearranged') AS r", e)["r"].iloc[0] is None:
         return pd.DataFrame(columns=PRE_ADHOC_COLS)
+    # a record still open whose money shows as released too: its allocation is named by an
+    # activation's funding row, or a non-framework allocation of the same pair and label is dated
+    # on or after it. The hand-over is an entry (the record gets its ended_date): say so, loudly
+    for x in pd.read_sql(
+            """SELECT p.country_iso3, p.hazard, p.arranged_date, p.event_label FROM aa.adhoc_prearranged p
+               WHERE p.ended_date IS NULL AND (
+                   EXISTS (SELECT 1 FROM aa.activation_funding f WHERE f.allocation_code = p.allocation_code)
+                   OR EXISTS (SELECT 1 FROM aa.adhoc_activation a
+                              WHERE a.country_iso3 = p.country_iso3 AND a.hazard = p.hazard
+                                AND a.event_label = p.event_label AND a.event_type = 'adhoc_aa'
+                                AND a.event_date >= p.arranged_date))""", e).itertuples():
+        print(f"::warning::{x.country_iso3} {x.hazard} {x.arranged_date} {x.event_label}: pre-arranged outside a "
+              f"framework with no end date, and released too: it counts as both until the record gets its ended_date")
     return pd.read_sql(
         """SELECT p.country_iso3, p.hazard, p.arranged_date, p.event_label, p.fund_code,
                   p.allocation_code, p.amount_usd, p.people_targeted, p.ended_date, p.comments,
@@ -1864,7 +1877,10 @@ def _money_flows(d, pre, act):
             final = node if named else f"{cat}|{RECIPIENT_PLURAL[cat]}"
             on(node, v / osum * amount, final)
 
+    warned = set()
     # ---------------- pre-arranged, as at the end of each year (never summed over years)
+    if "allocation_code" not in pre:
+        pre = pre.assign(allocation_code=None)
     P = pre[(pre["kind"] == "prearranged") & (pre["fund_code"] != "all") & (pre["year"] <= today.year)]
     # money pre-arranged outside a framework (source 'non-framework', D223) is the non-framework
     # layer's, whatever the pair's status
@@ -1885,7 +1901,18 @@ def _money_flows(d, pre, act):
                 # records have its projects; never the fund's other AA projects of the year
                 ac = getattr(r, "allocation_code", None)
                 o = ca_by.get(ac) if isinstance(ac, str) else None
-                if fc != "cerf" and o is not None and float(o.sum()) > 0:
+                # an allocation that paid for more than the record (Kenya's priority area: the
+                # anticipatory top-ups and an early-response package) has projects well over the
+                # amount: its grantees are known only once the record's own projects are listed
+                # (aa.activation_funding_project), as for a release (D192)
+                mixed = o is not None and float(o.sum()) > 1.1 * float(
+                    py.loc[(py["source"] == "non-framework") & (py["allocation_code"] == ac), "amount_usd"].sum())
+                if mixed and (ac, y) not in warned:
+                    warned.add((ac, y))
+                    print(f"::warning::money flows: allocation {ac} has ${float(o.sum()):,.0f} of projects for "
+                          f"${amount:,.0f} pre-arranged outside a framework: list the record's projects "
+                          f"(aa.activation_funding_project) to show its grantees")
+                if fc != "cerf" and o is not None and float(o.sum()) > 0 and not mixed:
                     grantees("p", y, fc, amount, g, rg, c, ac)
                 else:
                     add("p", y, "f", "f:" + fc, "a:nr|" + ("agencies not recorded" if fc == "cerf" else
@@ -2853,7 +2880,9 @@ function fwFromHash(){ const m = /[#&]fw=([^&]*)/.exec(location.hash); if(!m) re
 // the list follows the page: each line's pre-arranged money now (the fund switch applies), lines
 // the layers or the hazard / region filter leave out dimmed, and the total — the tile's figure
 function fwPaint(s, N){
-  const amt = groupSum(D.now.filter(r=>ftOK(r.ft, s)), r=>r.k, r=>r.total_usd);
+  // a framework's line is its framework's money: money pre-arranged outside a framework on the same
+  // country and hazard (the non-framework layer's rows) is no part of it
+  const amt = groupSum(D.now.filter(r=>ftOK(r.ft, s) && r.g!=='a'), r=>r.k, r=>r.total_usd);
   const inView = f => f.lc ? (!s.hz||f.hz===s.hz) && (!s.rg||f.region===s.rg) && ((f.g==='r' ? relOK : layerOK)(f.g, s) || (!!f.g2 && relOK(f.g2, s))) : !s.rg && s.adh;
   const ticked = f => !s.fws || s.fws.has(f.k), gsum = {};
   fwLines().forEach(l=>{ const f = FWBY[l.dataset.k], a = amt[f.k], v = inView(f);
@@ -2866,10 +2895,14 @@ function fwPaint(s, N){
     gl.querySelector('.amt').textContent = gsum[gl.dataset.g] ? M2(gsum[gl.dataset.g]) : ''; });
   const fws = FWL.filter(f=>f.lc), rest = FWL.filter(f=>!f.lc), nOn = fws.filter(ticked).length, xOn = rest.filter(ticked).length;
   const count = tr8('{0} of {1} frameworks ticked', nOn, N_FW) + (xOn<rest.length ? ' · ' + tr8('{0} of {1} countries with non-framework allocations only', xOn, rest.length) : '');
-  const tot = sumOf(N, r=>r.total_usd), nc = sumOf(N.filter(r=>r.ft==='cerf'), r=>r.total_usd);
-  fwSum.innerHTML = `<b>${count}</b> · ` + (!s.cur ? tr8('pre-arranged now: tick <i>Current frameworks</i> in the bar')
+  // the frameworks' money, as the lines above add up; what is pre-arranged outside a framework
+  // (the non-framework layer on) is named after it, as on the tile
+  const NF = N.filter(r=>r.g!=='a'), na = sumOf(N.filter(r=>r.g==='a'), r=>r.total_usd);
+  const tot = sumOf(NF, r=>r.total_usd), nc = sumOf(NF.filter(r=>r.ft==='cerf'), r=>r.total_usd);
+  const naTxt = na ? ' · ' + tr8('{0} pre-arranged outside a framework, not yet released', M2(na)) : '';
+  fwSum.innerHTML = `<b>${count}</b> · ` + (!s.cur ? tr8('pre-arranged now: tick <i>Current frameworks</i> in the bar') + naTxt
     : tr8('pre-arranged now <b>{0}</b>', M2(tot)) + (s.fund==='cerf' ? tr8(', CERF only') : s.fund==='pooled' ? tr8(', Country and Regional Funds only')
-        : tr8(' (CERF {0} · Country and Regional Funds {1})', M2(nc), M2(tot-nc))) + (s.hz||s.rg ? tr8(', within the hazard / region filter') : ''));
+        : tr8(' (CERF {0} · Country and Regional Funds {1})', M2(nc), M2(tot-nc))) + (s.hz||s.rg ? tr8(', within the hazard / region filter') : '') + naTxt);
   fwLab.textContent = s.fws ? tr8('Frameworks: {0} of {1} ▾', nOn, N_FW) : tr8('Frameworks: all ▾');
   fwPick.classList.toggle('on', !!s.fws);
   fwNote.style.display = fwFlowNote.style.display = s.fws ? '' : 'none';
