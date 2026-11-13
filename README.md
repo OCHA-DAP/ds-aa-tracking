@@ -56,7 +56,9 @@ are kept forever (the year-end official state, for the map's time view).
 
 - `src/ds_aa_tracking/schema.py` — DDL (tables + views), all in schema `aa`; hierarchy
   country_hazard → framework_version → window → {window_activation, simulated_activation,
-  window_funding}; ad hoc / early-action allocations off the pair (adhoc_activation)
+  window_funding}; ad hoc / early-action allocations off the pair (adhoc_activation), and money a
+  fund has pre-arranged outside a framework and not yet released (adhoc_prearranged, D223:
+  never an activation, never released money)
 - **windows, triggers and the CERF app** (D207-D209, D212-D214): a window is keyed by a
   `window_code` that says what it is (`ws`, `wt_readiness`, `wg_koshi`, `op_severe`; D213),
   unique in its version; the tables below it (`window_funding`, `simulated_activation`,

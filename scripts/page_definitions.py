@@ -75,8 +75,8 @@ GLOSSARY = [
         ("Activation (framework activation)",
          "A trigger of a framework version was met and its pre-arranged money was released."),
         ("Non-framework allocation",
-         "Countries and hazards that received anticipatory-action money without a framework version. "
-         "Released money only: nothing is pre-arranged for it."),
+         "Countries and hazards with anticipatory-action money outside a framework: money released "
+         "without a framework version, or money a fund has pre-arranged and not yet released."),
         ("Two activations a year",
          "Frameworks marked * allow two activations a year: their CERF envelope is counted twice, and "
          "the CERF budget per activation is half of it. Country and Regional Fund envelopes count once."),
@@ -85,7 +85,8 @@ GLOSSARY = [
         ("Pre-arranged",
          "The envelope committed to a framework, in place on a date: for every active, being-updated "
          "or in-development framework, the envelope of its most recent version that has one. A stock, "
-         "never added over years."),
+         "never added over years. With the non-framework allocations layer on, also the money a fund "
+         "has pre-arranged outside a framework and not yet released."),
         ("Released",
          "What went out in a year: the allocations drawn by framework activations, plus the "
          "non-framework allocations when that layer is on. A flow, per year. Pre-arranged and released "

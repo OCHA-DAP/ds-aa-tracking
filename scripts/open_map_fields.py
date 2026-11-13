@@ -39,7 +39,8 @@ MAP_FIELDS = {
         "status_label": "`status` in words",
         "disp": "the map's status of the pair, the one every figure counts by: active, updating (being "
                 "updated) or development for a current framework; retired; pipeline (conversations only, "
-                "drawn for technical support); adhoc (non-framework allocations only). Equals `lifecycle` "
+                "drawn for technical support); adhoc (non-framework money only: allocations released, or money "
+                "pre-arranged and not yet released, `pre_ad`). Equals `lifecycle` "
                 "in aa-frameworks where the pair has a framework",
         "disp_label": "`disp` in words; for a `general` pair the page shows technical support instead",
         "layers": "the map layers the pair is drawn on: framework (current frameworks), retired, adhoc "
@@ -58,6 +59,12 @@ MAP_FIELDS = {
         "n_act": "framework activations of the pair's current framework",
         "n_act_all": "activation records on the pair, of any kind",
         "n_adhoc": "non-framework allocations on the pair",
+        "pre_ad": "money a fund has pre-arranged for the pair outside a framework and not yet released: "
+                  "[{date (when it was arranged), label, fund, code (the fund's allocation, when it has one), "
+                  "usd, people (targeted), until (when it ended: released, withdrawn or lapsed; blank: still "
+                  "pre-arranged), fk and fs (the fund's kind and its box in the map's fund switch)}]. Never an "
+                  "activation and never released money; not in `pre_now`. The map adds it to pre-arranged money "
+                  "while its non-framework layer is on",
         "adhoc_cerf": "CERF allocations tagged as anticipatory on the pair outside any framework, from "
                       "CERF's records: [{code (CERF's allocation code), year, emergency, title, usd, how "
                       "(how it was matched to the pair), event, url (CERF's page), agencies, sectors, "
@@ -216,6 +223,9 @@ TILE_FIELDS = {
     "n_fw": "frameworks on the current-frameworks layer", "n_ctry": "the countries they are in",
     "n_active": "of them active", "n_upd": "being updated", "n_dev": "in development",
     "pre": "pre-arranged now, all funds", "pre_cerf": "its CERF part",
+    "pre_ad": "of `pre`, the money pre-arranged outside a framework and not yet released: counted only "
+              "while the non-framework layer is on (0 in `headline`; `headline_non_framework` has it)",
+    "n_pre_ad": "the records `pre_ad` adds up", "n_pre_ad_ctry": "the countries they are in",
     "pre_pooled": "its Country and Regional Funds part", "pre_all": "its part not split by fund",
     "pre_cbpf": "of the Country and Regional Funds part, the country-based pooled funds'",
     "pre_rhpf": "of the Country and Regional Funds part, the regional humanitarian pooled funds'",

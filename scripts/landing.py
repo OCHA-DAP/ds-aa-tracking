@@ -875,7 +875,7 @@ def status_help_html(open_=False):
   </svg>
   <div class='sh-layers'>
    {TB("<b>Map layers.</b>")} <span class='dot' style='background:{STATUS_COLOR["active"]}'></span>{TB("<b>Current frameworks</b> — every framework whose status is active, being updated or in development (the default view; the headline figures follow whatever is shown).")}
-   <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span>{TB("<b>Non-framework allocations</b> — countries and hazards that received anticipatory-action money without a framework version (light green; a framework that also received non-framework money stays drawn as a framework).")}
+   <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span>{TB("<b>Non-framework allocations</b> — countries and hazards with anticipatory-action money outside a framework: released, or pre-arranged and not yet released (light green; a framework that also has non-framework money stays drawn as a framework).")}
    <span class='dot' style='background:{LAYER_COLOR["retired"]}'></span>{TB("<b>Retired</b> — frameworks flagged retired, drawn in grey so past coverage can be compared with today's.")}
    <span class='dot dot-hollow' style='border-color:{LAYER_COLOR["tech"]}'></span>{TB("<b>Technical support</b> — countries where OCHA supported the framework technically without a funding commitment, whatever their status (including pipeline ones like Palau and Tonga), drawn as a hollow teal pin.")}
   </div>
@@ -1104,13 +1104,16 @@ def framework_status_by_year(d, e):
     ad = _try_sql(e, f"SELECT country_iso3, hazard, count(*) AS n FROM aa.adhoc_activation "
                      f"WHERE event_type NOT IN ({excl}) GROUP BY 1, 2", ["country_iso3", "hazard", "n"])
     n_adhoc = {(a.country_iso3, a.hazard): int(a.n) for a in ad.itertuples()}
+    pa_ = d.get("pre_adhoc")
+    pre_ad_pairs = set(zip(pa_["country_iso3"], pa_["hazard"])) if pa_ is not None else set()   # D223
     old_pairs = {(c, h) for c, h, _ in (d.get("old") or set())}
     gho = {(c, int(y)): bool(g) for c, y, g in zip(d["gho"]["country_iso3"], d["gho"]["year"], d["gho"]["in_gho"])}
     rows = []
     for r in d["current"].itertuples():
         c, h, lc = r.country_iso3, r.hazard, _s(r.lifecycle)
         is_fw = lc in ("active", "updating", "development", "retired")
-        if not (is_fw or (c, h) in old_pairs or n_adhoc.get((c, h)) or bool(_f(r.technical_support) or False)):
+        if not (is_fw or (c, h) in old_pairs or n_adhoc.get((c, h)) or (c, h) in pre_ad_pairs
+                or bool(_f(r.technical_support) or False)):
             continue
         by = {}
         for y in range(YEAR_FIRST, cy):
@@ -1257,7 +1260,7 @@ def assemble(d, e):
                   agency, sector, amount_usd, provenance
            FROM aa.v_window_funding_split
            WHERE amount_usd IS NOT NULL AND (agency IS NOT NULL OR sector IS NOT NULL)""", e)
-    from dashboards import (BT_EVENT_COLS, EXCLUDED_EVENT_TYPES, _loose, funding_sql, read_backtest_events,
+    from dashboards import (BT_EVENT_COLS, EXCLUDED_EVENT_TYPES, _loose, adhoc_pre_in_year, funding_sql, read_backtest_events,
                             read_simulated, sim_before_start, sim_when, tested_rows, untested_windows)
     sim = read_simulated(e)   # with event_date / event_time when the DB has them
     bte = d.get("bt_events")   # every event a backtest tested, met or not (D189)
@@ -1321,6 +1324,16 @@ def assemble(d, e):
     reach_row = {code: g.sort_values(["event_date", "window_name"]).index[0]
                  for code, g in cerf_f.groupby("allocation_code")}
     n_adhoc = {(a.country_iso3, a.hazard): int(a.n) for a in adhoc.itertuples()}
+    # money a fund has pre-arranged outside a framework and not yet released (D223;
+    # dashboards.read_adhoc_prearranged): on the pair, drawn on the non-framework layer and added
+    # to pre-arranged money while that layer is on — never an activation, never released money
+    pre_ad = {}
+    for x in (d["pre_adhoc"].itertuples() if d.get("pre_adhoc") is not None else ()):
+        code = _s(x.allocation_code)
+        pre_ad.setdefault((x.country_iso3, x.hazard), []).append({
+            "date": str(x.arranged_date), "label": _s(x.event_label), "fund": x.fund_code, "code": code,
+            "usd": _num(x.amount_usd), "people": _num(x.people_targeted), "until": _s(x.ended_date),
+            "fk": _fund_kind(x.fund_code, code, freg), "fs": _switch_fund(x.fund_code, code, freg, x.country_iso3)})
     hist = d.get("_hist") or _year_history(d, e, excl, _try)   # the year selector's dated records, per pair (read once per build)
     from dashboards import NOT_SOCIAL_SQL
     learn = _try(
@@ -1409,7 +1422,7 @@ def assemble(d, e):
     extra = [{"country_iso3": c_, "hazard": h_, "country_name": iso_name.get(c_),
               "region": iso_region.get(c_), "lifecycle": None, "technical_support": False,
               "retired": False, "synthetic": True}
-             for (c_, h_) in sorted(n_adhoc) if (c_, h_) not in have]
+             for (c_, h_) in sorted(set(n_adhoc) | set(pre_ad)) if (c_, h_) not in have]
     if extra:
         cur = pd.concat([cur, pd.DataFrame(extra)], ignore_index=True)
 
@@ -1687,8 +1700,9 @@ def assemble(d, e):
             layers.append("framework")                # active · updating · development
         if disp == "retired" or any(k[:2] == (c, h) for k in old_v):
             layers.append("retired")                  # retired, or hosts a replaced framework
-        if n_adhoc.get((c, h)):
-            layers.append("adhoc")                    # non-framework AA allocations on the pair
+        if n_adhoc.get((c, h)) or any(adhoc_pre_in_year(x["date"], x["until"], TODAY.year, TODAY)
+                                      for x in pre_ad.get((c, h), [])):
+            layers.append("adhoc")                    # non-framework AA money on the pair: released, or pre-arranged (D223)
         if tech:
             layers.append("tech")                     # OCHA technical support, whatever the lifecycle
         if not layers:
@@ -1709,6 +1723,7 @@ def assemble(d, e):
             "disp": disp, "disp_label": DISP_LABEL.get(disp, disp), "ring": ring, "n_act": n_fw_act,
             "n_act_all": len(activations), "n_adhoc": n_adhoc.get((c, h), 0),
             "adhoc_cerf": adhoc_cerf.get((c, h), []),
+            "pre_ad": pre_ad.get((c, h), []),         # pre-arranged outside a framework, not yet released (D223)
             "layers": layers, "layer": next(l for l in LAYER_ORDER if l in layers),
             "tech": tech,
             "general": general,                      # technical support for no specific hazard (D202)
@@ -1915,6 +1930,17 @@ def cof_of(f, year=None):
     return (f.get("cofin_y") or {}).get(str(year or TODAY.year))
 
 
+def pre_ad_rows(countries, layers, year=None):
+    """[(iso3, record)]: the money pre-arranged outside a framework and not yet released (D223;
+    a pair's `pre_ad`) that counts for `year` (None: today) while the non-framework layer is on —
+    preAdRows() in LANDING_JS; the year rule is dashboards.adhoc_pre_in_year."""
+    from dashboards import adhoc_pre_in_year
+    if "adhoc" not in layers:
+        return []
+    return [(iso, x) for iso, cd in countries.items() for f in cd["fws"] for x in (f.get("pre_ad") or [])
+            if adhoc_pre_in_year(x["date"], x.get("until"), year or TODAY.year, TODAY)]
+
+
 def tile_figures(countries, layers, year=None):
     """Headline figures for a set of enabled layers — mirrors updateTiles() in LANDING_JS.
     A pair is shown when any of its layers is enabled; the stock figures (count, pre-arranged
@@ -1938,14 +1964,22 @@ def tile_figures(countries, layers, year=None):
         if x["fund"] != "cerf" and not (x["code"] and x["code"] in seen):
             seen.add(x["code"]); pool.append(x)
     ptgt = [x for x in pool if x.get("planned")]
-    part = lambda k: sum(((f["pre_parts"] or {}).get(k) or 0) for f in fw)
+    # pre-arranged outside a framework, not yet released (D223): counted with pre-arranged money
+    # while the non-framework layer is on (preAdRows() in LANDING_JS); a stock, as at `year`
+    pad = pre_ad_rows(countries, layers, year)
+    part = lambda k: (sum(((f["pre_parts"] or {}).get(k) or 0) for f in fw)
+                      + sum(x["usd"] or 0 for _, x in pad
+                            if (x.get("fs") in ("cbpf", "rhpf") if k == "pooled" else x.get("fs") == k)))
     return {"n_fw": len(fw),
             # the countries those frameworks are in (owner, 2026-11-02: "29 frameworks in XX countries")
             "n_ctry": sum(1 for cd in countries.values() if any(id(f) in {id(g) for g in fw} for f in cd["fws"])),
             "n_active": sum(1 for f in fw if f["disp"] == "active"),
             "n_upd": sum(1 for f in fw if f["disp"] == "updating"),
             "n_dev": sum(1 for f in fw if f["disp"] == "development"),
-            "pre": sum(f["pre_now"] or 0 for f in fw),
+            "pre": sum(f["pre_now"] or 0 for f in fw) + sum(x["usd"] or 0 for _, x in pad),
+            # ... the part of it outside a framework (D223), and the countries it is in
+            "pre_ad": sum(x["usd"] or 0 for _, x in pad), "n_pre_ad": len(pad),
+            "n_pre_ad_ctry": len({iso for iso, _ in pad}),
             "covered": sum(f["covered"] or 0 for f in fw),
             "n_cov": sum(1 for f in fw if f["covered"]),
             "n_act": len(acts),
@@ -2118,6 +2152,9 @@ def build_landing(page, d, e):
     ns_reach = not_shown((ad["n_rep"] or ad["n_tgt"] or ad["n_ptgt"]) and f"non-framework allocations {est(ad)}",
                          (rt["n_rep"] or rt["n_tgt"] or rt["n_ptgt"]) and f"retired frameworks {est(rt)}")
 
+    # pre-arranged outside a framework, not yet released (D223): the non-framework layer adds it
+    ns_pre = not_shown(ad["pre_ad"] and f"{_money(ad['pre_ad'])} pre-arranged outside a framework, not yet released")
+
     def funds(cerf, cbpf, rhpf, other=0):   # fundBullets() in LANDING_JS (every fund ticked)
         return [x for x in (cerf >= 5e4 and f"CERF {_money(cerf)}", cbpf >= 5e4 and f"CBPF {_money(cbpf)}",
                             rhpf >= 5e4 and f"RHPF {_money(rhpf)}",
@@ -2178,7 +2215,7 @@ def build_landing(page, d, e):
              [f"{t['n_active']} active", f"{t['n_upd']} being updated", f"{t['n_dev']} in development"]),
         tile("t-pre", "money", "Pre-arranged", _tile_money(t["pre"]), "pre-arranged now",
              funds(t["pre_cerf"], t["pre_cbpf"], t["pre_rhpf"], t["pre_all"]),
-             " ".join([PRE_NOTE] + apy_notes(t["apy"])) if t["n_fw"] else ""),
+             " ".join([PRE_NOTE] + apy_notes(t["apy"]) + ([ns_pre] if ns_pre else [])) if t["n_fw"] else ns_pre),
         # co-financing beside pre-arranged (owner, 2026-10-30)
         tile("t-cof", "cofin", "Co-financing", _tile_money(t["cofin"]) if t["n_cofin"] else "—",
              "co-financing pre-arranged now",
@@ -2251,7 +2288,7 @@ def build_landing(page, d, e):
  <p class='fwt-cap' id='fwtcap'></p>
  <div class='fwt-scroll'><table class='fwtab' id='fwtab'></table></div>
  <p class='fwt-note' id='fwtfoot' hidden></p>
- <p class='fwt-note'>{TB("<b>Return period</b>: how often the framework's latest version would activate (any of its trigger windows, in a year), as the framework states it where it does, otherwise from its historical simulation. <b>Pre-arranged (OCHA-managed funds)</b>: for each framework, the envelope of its most recent version that has one, from CERF and the Country and Regional Funds; a framework being updated keeps its last envelope, and one in development shows the envelope recorded for it so far. <b>Co-financing</b>: money from outside the OCHA-managed funds pre-arranged for the framework, as reported for the year (the Financing page's figure). <b>Activations</b> and <b>released from OCHA</b> count the activations of the rows listed. Non-framework allocations and retired frameworks are listed while their layer is on in the map legend; <b>All years, to today</b> switches retired frameworks on. Released money is split by fund as pre-arranged money is, and is net of money refunded after an activation was stopped; a CERF amount that OneGMS has not recorded yet is provisional. Click a country to open it on the map; click a column heading to sort.")}</p>
+ <p class='fwt-note'>{TB("<b>Return period</b>: how often the framework's latest version would activate (any of its trigger windows, in a year), as the framework states it where it does, otherwise from its historical simulation. <b>Pre-arranged (OCHA-managed funds)</b>: for each framework, the envelope of its most recent version that has one, from CERF and the Country and Regional Funds; a framework being updated keeps its last envelope, and one in development shows the envelope recorded for it so far. <b>Co-financing</b>: money from outside the OCHA-managed funds pre-arranged for the framework, as reported for the year (the Financing page's figure). <b>Activations</b> and <b>released from OCHA</b> count the activations of the rows listed. Non-framework allocations and retired frameworks are listed while their layer is on in the map legend; with the non-framework layer on, pre-arranged money also counts what a fund has pre-arranged outside a framework and not yet released; <b>All years, to today</b> switches retired frameworks on. Released money is split by fund as pre-arranged money is, and is net of money refunded after an activation was stopped; a CERF amount that OneGMS has not recorded yet is provisional. Click a country to open it on the map; click a column heading to sort.")}</p>
 </section>
 <!-- 2026-10-02 meeting: the internal links that sat here (dashboards, explorer, data entry,
      data & schema review) were easy to miss below the map; they all live in the Internal menu -->
@@ -2705,11 +2742,29 @@ function preOf(f){ if(allFunds()) return f.pre_now;
 // a country's pooled-fund rows of no single framework in a past year ([usd, inferred?, activations a
 // year, {fund: usd}]), under the switch
 const preXOf = x => allFunds() ? x[0] : FKEYS.reduce((s, k) => s + (FUNDS[k] ? (x[3] || {})[k] || 0 : 0), 0);
-// the boxes a pair has money from on layer l: the envelope (the current-frameworks layer) and the
-// activations that layer counts (flowActs) in the year shown
+// money a fund has pre-arranged outside a framework and not yet released (D223; f.pre_ad): a stock,
+// counted with pre-arranged money while the non-framework layer is on. The records in place in the
+// year shown: a past year, from the year it was arranged to the year it ended; this year (and all
+// years), not ended by today — dashboards.adhoc_pre_in_year and landing.pre_ad_rows in Python.
+// anyFund: before the fund switch
+function preAdRows(f, anyFund){
+  const past = pastY(), Y = past ? YEAR : YEARS.now;
+  const rows = (f.pre_ad || []).filter(x => { const end = x.until ? String(x.until) : null;
+    return +String(x.date).slice(0, 4) <= Y && (!end || (past ? Y <= +end.slice(0, 4) : end > YEARS.today)); });
+  return anyFund ? rows : fundRows(rows); }
+const usdOf = rows => rows.reduce((s, x) => s + (x.usd || 0), 0);
+// ... of the pairs given, while the non-framework layer is on (LY: a layer set other than the one shown)
+const preAdOn = (fs, LY) => (LY || LAYERS).adhoc ? fs.flatMap(f => preAdRows(f)) : [];
+// ... added to pre-arranged money by fund (partsOf)
+const withPreAd = (P, rows) => { rows.forEach(x => { const k = rowFund(x); P[k] = (P[k] || 0) + (x.usd || 0); }); return P; };
+const preAdWhen = x => dayOf(x.date) ? shortDate(x.date) + ' ' + String(x.date).slice(0, 4) : String(x.date);
+// the boxes a pair has money from on layer l: the envelope (the current-frameworks layer), the
+// activations that layer counts (flowActs) in the year shown, and on the non-framework layer the
+// money pre-arranged outside a framework
 function fundsOf(f, l){
   const s = new Set();
   if(l === 'framework'){ const P = preParts(f); FKEYS.forEach(k => { if(P[k] > 0) s.add(k); }); }
+  if(l === 'adhoc') preAdRows(f, true).forEach(x => s.add(rowFund(x)));
   flowActs(f, {[l]: true}, true).forEach(a => (a.funding || []).forEach(x => s.add(rowFund(x))));
   return s; }
 const fundOK = (f, l) => allFunds() || l === 'tech' || [...fundsOf(f, l)].some(k => FUNDS[k]);
@@ -2859,15 +2914,16 @@ function applyYear(){
     const acts = f.activations.filter(a => String(a.date).slice(0, 4) === Y), H = f.hist || {};
     f.n_act = acts.filter(a => a.type === 'framework_aa' && !isOld(a)).length; f.n_act_all = acts.length;
     f.n_adhoc = (H.adhoc || []).filter(y => String(y) === Y).length;
+    const nPa = preAdRows(f, true).length;   // pre-arranged outside a framework, in place in the year (D223)
     let layers;
-    if(!pastY()){ layers = B.layers.filter(l => l !== 'adhoc' || f.n_adhoc); }
+    if(!pastY()){ layers = B.layers.filter(l => l !== 'adhoc' || f.n_adhoc || nPa); }
     else {
       const [st, ver] = statusAt(f, D); layers = [];
       if(['active','updating','development'].includes(st)) layers.push('framework');
       if(st === 'retired') layers.push('retired');
-      if(f.n_adhoc) layers.push('adhoc');
+      if(f.n_adhoc || nPa) layers.push('adhoc');
       if(f.tech && st) layers.push('tech');
-      f.disp = st || (f.n_adhoc ? 'adhoc' : 'pipeline'); f.disp_label = DISPLABEL[f.disp] || f.disp;
+      f.disp = st || (f.n_adhoc || nPa ? 'adhoc' : 'pipeline'); f.disp_label = DISPLABEL[f.disp] || f.disp;
       f.ring = null; f.current = ver; f.prearranged = null; f.pre_parts = null;   // a past year's figure has no split by fund
       const p = (H.pre || {})[Y]; f.pre_now = p ? p[0] : null; f.pre_drv = !!(p && p[1]); f.pre_apy = p && p[2] > 1 ? p[2] : null;
       f.pre_fy = p ? p[3] || {} : null;   // ... by the fund switch's boxes (D201)
@@ -3243,7 +3299,7 @@ const LDEF = {
   updating: () => tr8('A framework that is currently being improved, including based on learning or the need to reconfirm pre-arranged financing.'),
   development: () => tr8('No endorsed version yet: the framework is being built for the first time.'),
   framework: () => tr8('Every framework whose status is active, being updated or in development.'),
-  adhoc: () => tr8('Countries and hazards that received anticipatory-action money without a framework version.'),
+  adhoc: () => tr8('Countries and hazards with anticipatory-action money outside a framework: released, or pre-arranged and not yet released.'),
   retired: () => tr8("Frameworks flagged retired, drawn in grey so past coverage can be compared with today's."),
   tech: () => tr8('Countries where OCHA supported the framework technically, without a funding commitment, whatever its status.'),
   funds: () => tr8('CERF: the Central Emergency Response Fund. CBPF: the country-based pooled funds. RHPF: the regional humanitarian pooled funds, through their country windows. Untick a fund to leave its money out of the figures, the table and the country panels; a pin with no money from a fund still ticked leaves the map (technical support stays). With all three ticked, frameworks with no money recorded yet are shown too, and money not split by fund counts.')};
@@ -3447,7 +3503,12 @@ function updateTiles(){
       {bul: [tr8('{0} active', n('active')), tr8('{0} being updated', n('updating')), tr8('{0} in development', n('development'))],
        drv: past && tr8('Which frameworks existed at 31 December, and their status, are reconstructed from the version dates and status history; a framework whose validity ended during the year still counts as active for that year')});
   const noEnv = []; Object.values(L).forEach(c => c.fws.forEach(f => { if(fw.includes(f) && !preOf(f)) noEnv.push(`${tr8(c.name)} ${tr8(f.hz_label).toLowerCase()}`); }));
-  let pre = fw.reduce((s,f)=>s+(preOf(f)||0),0), preX = 0;
+  // pre-arranged outside a framework, not yet released (D223): counted while the non-framework
+  // layer is on, named under the figure; off, the note says what the layer would add
+  const everyFw = Object.values(L).flatMap(c=>c.fws);
+  const pad = preAdOn(everyFw), preAd = usdOf(pad), padOff = LAYERS.adhoc ? 0 : usdOf(preAdOn(everyFw, {adhoc: true}));
+  const padNote = padOff ? tr8('Not shown: {0}.', tr8('{0} pre-arranged outside a framework, not yet released', money(padOff))) : '';
+  let pre = fw.reduce((s,f)=>s+(preOf(f)||0),0) + preAd, preX = 0;
   if(past){   // pooled-fund rows of no single framework count with the country's frameworks shown
     Object.entries(L).forEach(([iso, c]) => { const x = (c.pre_x || {})[String(YEAR)]; if(x && c.fws.some(f => fw.includes(f))) preX += preXOf(x); }); pre += preX; }
   const ser = (YEARS.series || {})[String(YEAR)];
@@ -3455,10 +3516,11 @@ function updateTiles(){
   // framework without an envelope simply has none yet (owner: no note)
   const apyFw = fw.filter(f => apyIn(f));
   set('t-pre', tileMoney(pre), past ? tr8('pre-arranged in {0}', YEAR) : tr8('pre-arranged now'),
-      {bul: past ? [] : fundBullets(partsOf(fw)),   // a past year: no bullets (its split by fund only filters)
+      {bul: past ? [] : fundBullets(withPreAd(partsOf(fw), pad)),   // a past year: no bullets (its split by fund only filters)
+       sub: preAd ? tr8('{0} of it outside a framework, not yet released', money(preAd)) : '',
        mark: past && noEnv.length > 0,
        drv: past && fw.some(f => f.pre_drv) && tr8("Part of this year's figure is inferred from the envelope of the version valid during the year (no reported figure for that framework-year)"),
-       note: !fw.length ? [] : !past ? [preNote(), switchNote()].concat(apyTileNotes(apyFw)) : [preNote(), switchNote()].concat(apyTileNotes(apyFw), [
+       note: !fw.length ? [padNote] : !past ? [preNote(), switchNote()].concat(apyTileNotes(apyFw), [padNote]) : [preNote(), switchNote()].concat(apyTileNotes(apyFw), [padNote,
          noEnv.length ? '* ' + tr8('No figure for {0}: {1}.', YEAR, noEnv.join(', ')) : '',
          tr8('A stock for {0}: each framework valid at any time in the year, counted once; never summed over years.', YEAR),
          preX ? tr8('Includes {0} of pooled-fund allocations not tied to one hazard.', money(preX)) : '',
@@ -3925,9 +3987,10 @@ function actMonths(acts){
 // panel under the tiles
 function countryTiles(c){
   const fws = vis(c), fw = fws.filter(f=>visLayer(f)==='framework');
-  const pre = fw.reduce((s,f)=>s+(preOf(f)||0),0), cov = fw.reduce((s,f)=>s+(f.covered||0),0), nCov = fw.filter(f=>f.covered).length;
+  const pad = preAdOn(c.fws), preAd = usdOf(pad);   // pre-arranged outside a framework, not yet released (D223)
+  const pre = fw.reduce((s,f)=>s+(preOf(f)||0),0) + preAd, cov = fw.reduce((s,f)=>s+(f.covered||0),0), nCov = fw.filter(f=>f.covered).length;
   // pre-arranged now by fund, as the global tile (a past year has no bullets there either)
-  const preBul = pastY() || !pre ? [] : fundBullets(partsOf(fw));
+  const preBul = pastY() || !pre ? [] : fundBullets(withPreAd(partsOf(fw), pad));
   const F = flowFigures(c.fws);   // the global tiles' rule, this country (a retired pin's releases while that layer is on)
   const kind = F.nAd && F.nAd === F.n ? 'non-framework allocation' : F.nAd ? 'activation' : 'framework activation', one = F.n === 1;
   const ACT = {'non-framework allocation': one ? ['non-framework allocation to date', 'non-framework allocation in {0}'] : ['non-framework allocations to date', 'non-framework allocations in {0}'],
@@ -3950,7 +4013,8 @@ function countryTiles(c){
   return `<div class='ctiles'><div class='ccap'>${esc(tr8('{0} only', tr8(c.name)) + (allFunds() ? '' : ' · ' + tr8('{0} only', fundWords())))}</div>`
     + tile(fw.length, esc(tr8(fw.length === 1 ? 'framework' : 'frameworks')) + (fws.length>fw.length?' · ' + esc(tr8('{0} other', fws.length-fw.length)):''))
     + tile(pre ? money(pre) : '—', esc(pastY() ? tr8('pre-arranged in {0}', YEAR) : tr8('pre-arranged now')),
-           fw.length ? [preNote(), switchNote()].concat(apyTileNotes(apyFw), [noEnv.length ? tr8('No figure for {0}: {1}.', YEAR, noEnv.join(', ')) : '']) : [], preBul)
+           (fw.length ? [preNote(), switchNote()].concat(apyTileNotes(apyFw), [noEnv.length ? tr8('No figure for {0}: {1}.', YEAR, noEnv.join(', ')) : '']) : [])
+             .concat([preAd ? tr8('{0} of it outside a framework, not yet released', money(preAd)) + '.' : '']), preBul)
     + tile(cov?num(cov):'—', esc(tr8(pastY() ? 'people covered' : 'people covered now')), pastY() && !cov ? [] : covNote(nCov, fw.length, false))
     + tile(F.n, esc(actL))
     + tile(F.n?money(F.usd):'—', esc(yr('released to date', 'released in {0}')), actNote(F).concat([switchNote()]))
@@ -3977,7 +4041,7 @@ function renderSide(){
           <div class='fhead'><b>${iconHTML(f)}${esc(tr8(f.hz_label))}</b><span>${f.general ? '' : badge(f.disp)}${actChip(f)}</span>${pastY()?DRV(statusNote(f).slice(3)):''}${f.tech?` <span class='badge b-tech'>${esc(tr8('technical support'))}</span>`:''}</div>
           <table class='mini'>
            <tr><td class='lbl'>${esc(pastY() ? tr8('Version, end of {0}', YEAR) : tr8('Latest version'))}</td><td>${f.current ? `<code>${f.current}</code> <span class='muted'>${esc(tr8('({0} total)', f.versions.length))}</span>` : `<span class="muted">${esc(tr8('no framework version'))}</span>`}</td></tr>
-           <tr><td class='lbl'>${esc(tr8('Pre-arranged'))}</td><td>${money(f.pre_now ?? f.prearranged)}${f.pre_now==null && f.prearranged_year?` <span class='muted'>(${f.prearranged_year})</span>`:''}${apyOf(f) && f.pre_now != null ? apyMark(apyOf(f)) + `<div class='muted'>† ${esc(apyNote(apyOf(f)))}</div>` : ''}</td></tr>
+           <tr><td class='lbl'>${esc(tr8('Pre-arranged'))}</td><td>${f.pre_now == null && preAdOn([f]).length ? money(usdOf(preAdOn([f]))) + ` <span class='muted'>(${esc(tr8('outside a framework, not yet released'))})</span>` : money(f.pre_now ?? f.prearranged)}${f.pre_now==null && f.prearranged_year?` <span class='muted'>(${f.prearranged_year})</span>`:''}${apyOf(f) && f.pre_now != null ? apyMark(apyOf(f)) + `<div class='muted'>† ${esc(apyNote(apyOf(f)))}</div>` : ''}</td></tr>
            <tr><td class='lbl'>${esc(tr8('People covered'))}</td><td>${num(f.covered)}</td></tr>
            <tr><td class='lbl'>${esc(tr8('Activations'))}${YEAR!=null?` ${YEAR}`:''}</td><td>${f.n_act_all||'—'}${f.n_adhoc?` <span class='muted'>${esc(tr8('({0} non-framework)', f.n_adhoc))}</span>`:''}</td></tr>
            <tr><td class='lbl'>${esc(tr8('Monitoring'))}</td><td>${monthStrip(v ? v.months : [])}</td></tr>
@@ -3989,14 +4053,16 @@ function renderSide(){
   if(!f.versions.length){
     const st = f.status_label ? tr8(f.status_label) : '';   // the sheet's status in words, never its code
     const why = f.general ? esc(tr8('OCHA technical support for anticipatory action in general, not for one hazard, and without a funding commitment.'))
+              : f.layer==='adhoc' && !f.activations.some(a => a.type === 'adhoc_aa') ? esc(tr8('Anticipatory-action money pre-arranged for this hazard outside a framework, not yet released.'))
               : f.layer==='adhoc' ? esc(tr8('Non-framework anticipatory-action allocations for this hazard — no framework behind them.'))
               : f.layer==='tech' ? (st ? esc(tr8('OCHA technical support — no framework version in the registry yet (tracking sheets: {0}).', st)) : esc(tr8('OCHA technical support — no framework version in the registry yet.')))
               : st ? esc(tr8('No framework version in the registry yet — status comes from the tracking sheets ({0}).', st)) : esc(tr8('No framework version in the registry yet.'));
-    side.innerHTML = crumb + fwHeader(c, f) + countryTiles(c) + `<p class='muted'>${why}</p>` + adhocBlock(f) +
+    side.innerHTML = crumb + fwHeader(c, f) + countryTiles(c) + `<p class='muted'>${why}</p>` + preAdBlock(f) + adhocBlock(f) +
       learningBlock(f, null) + partnersBlock(c, f, null)
       // no framework: its page lists the non-framework allocations (owner, 2026-10-30: not a
       // framework page); a pair with none (technical support only) has nothing more to show
-      + (f.page && f.activations.some(a => a.type === 'adhoc_aa') ? `<p><a href='${f.page}'>${esc(tr8('every non-framework allocation →'))}</a></p>` : '');
+      + (f.page && f.activations.some(a => a.type === 'adhoc_aa') ? `<p><a href='${f.page}'>${esc(tr8('every non-framework allocation →'))}</a></p>`
+         : f.page && (f.pre_ad || []).length ? `<p><a href='${f.page}'>${esc(tr8('more on this pre-arranged money →'))}</a></p>` : '');
     annotate(side, side);
     return;
   }
@@ -4177,6 +4243,14 @@ function fundTitle(x, c){
     : k === 'country' ? tr8('Country-Based Pooled Fund for {0}', cn)
     : k === 'regional' ? tr8('{0} — {1} window', tr8(REGION_FUND[rg] || 'Regional Humanitarian Pooled Fund'), cn)
     : tr8('a pooled fund (which one is not recorded)'); }
+// the pair's money pre-arranged outside a framework and not yet released (D223), in place in the
+// year shown: the fund, the amount, since when and the people it targets
+function preAdBlock(f){
+  const c = L[state.iso], rows = LAYERS.adhoc ? preAdRows(f, true) : []; if(!rows.length) return '';
+  return `<h4>${esc(tr8('Pre-arranged, not yet released ({0})', rows.length))}</h4>` + rows.map(x => `<div class='trig'><div class='tn'>${esc(fundTitle(x, c))}</div>
+      <div class='tt'><b>${x.usd != null ? money(x.usd) : esc(tr8('amount not recorded'))}</b> · ${esc(tr8('since {0}', preAdWhen(x)))}${x.people ? ' · ' + esc(tr8('{0} people targeted', num(x.people))) : ''}</div></div>`).join('')
+    + `<p class='muted small'>${esc(tr8('Set aside by the fund for anticipatory action outside a framework. It counts as pre-arranged money, and as released money only once the fund releases it.'))}</p>`;
+}
 // the pair's non-framework allocations (in the year shown): for each, the fund it came from, the
 // amount and the year; then, for a CERF one, the CERF allocation behind it — agencies, sectors, people
 function adhocBlock(f){
@@ -4437,12 +4511,17 @@ function fwRows(){
     const stock = lay === 'framework';   // drawn as a framework (LAYERS.framework and on that layer, with a fund ticked: money from it)
     const v = f.versions.find(x => x.v === f.current), acts = flowActs(f), P = stock ? (f.pre_parts || {}) : {};
     const rows = fundRows(acts.flatMap(a => a.funding || []));   // the ticked funds' money (D201)
+    // pre-arranged outside a framework, not yet released (D223): added to the pair's pre-arranged
+    // money and its split by fund while the non-framework layer is on, as the tile adds it
+    const pad = preAdOn([f]), padOf = k => pad.some(x => rowFund(x) === k) ? usdOf(pad.filter(x => rowFund(x) === k)) : null;
+    const plus = (v, x) => x == null ? v : (v || 0) + x;
     const relOf = k => rows.some(x => x.usd != null && rowFund(x) === k) ? rows.reduce((s, x) => s + (rowFund(x) === k ? x.usd || 0 : 0), 0) : null;
     // the status the map shows for the pair: its framework status on the current-frameworks layer,
     // else the layer it is drawn on (retired, non-framework allocation, technical support)
     const st = lay === 'framework' ? f.disp : lay;
     R.push({iso, c, f, v, lay, st, country: tr8(c.name), hazard: tr8(f.hz_label), status: ST_ORDER[st] ?? 9,
-            version: f.current || '', pre: stock ? preOf(f) : null, cerf: P.cerf, cbpf: P.cbpf, rhpf: P.rhpf, all: allFunds() ? P.all : null, pre_v: P.version,
+            version: f.current || '', pre: plus(stock ? preOf(f) : null, pad.length ? usdOf(pad) : null), pad: pad.length ? usdOf(pad) : null,
+            cerf: plus(P.cerf, padOf('cerf')), cbpf: plus(P.cbpf, padOf('cbpf')), rhpf: plus(P.rhpf, padOf('rhpf')), all: allFunds() ? P.all : null, pre_v: P.version,
             covered: stock ? f.covered : null, n: acts.length, apy: stock ? apyIn(f) : null,
             // the overall return period of the version shown (the latest; a past year: the one at its end)
             rp: v && v.rp != null ? v.rp : null,
@@ -4500,7 +4579,8 @@ function buildFwTable(){
       : `<th class='nosort'>${esc(lab)}</th>`).join('') + '</tr></thead>';
   const body = '<tbody>' + R.map(r => { const f = r.f, mk = apyMark(r.apy);
     const notes = [r.pre_v && r.pre_v !== f.current ? tr8('envelope of version {0}', r.pre_v) : null,
-                   r.all ? tr8('not split by fund') : null].filter(Boolean).map(t => `<span class='sm'>${esc(t)}</span>`).join('');
+                   r.all ? tr8('not split by fund') : null,
+                   r.pad ? (r.pad < r.pre ? tr8('{0} of it outside a framework, not yet released', money(r.pad)) : tr8('outside a framework, not yet released')) : null].filter(Boolean).map(t => `<span class='sm'>${esc(t)}</span>`).join('');
     const drvPre = past && f.pre_drv ? DRV(tr8('Inferred from the envelope of the version valid during the year (no reported figure for that framework-year)')) : '';
     const cell = {
       // the country opens the framework on the map above, not its framework page (owner, 2026-10-30)
@@ -4536,7 +4616,7 @@ function buildFwTable(){
   if(cap) cap.textContent = !n ? tr8('Nothing is shown on the map: switch on a layer in the map legend to list what it shows.')
     : (past ? tr8('Everything shown on the map at the end of {0} ({1}); the totals are the figures at the top of the page. Status and figures for past years are reconstructed from the framework records.', YEAR, n)
             : tr8('Everything shown on the map ({0}); the totals are the figures at the top of the page. The table follows the map legend and the year above the map.', n))
-      + (LAYERS.framework ? '' : ' ' + tr8('Pre-arranged money and people covered count the current frameworks only: switch that layer on to see them.'))
+      + (LAYERS.framework ? '' : ' ' + tr8('Pre-arranged money and people covered of the current frameworks are counted only while that layer is on.'))
       + (allFunds() ? '' : ' ' + tr8('Money from {0} only (the fund switch in the map legend).', fundWords()));
 }
 function fwSort(k){ FWT.dir = FWT.k === k ? -FWT.dir : (['country', 'hazard', 'status', 'rp'].includes(k) ? 1 : -1); FWT.k = k; buildFwTable(); }

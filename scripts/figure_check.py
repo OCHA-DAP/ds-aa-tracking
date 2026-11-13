@@ -204,6 +204,10 @@ def check() -> None:
     # ---- the Financing page (D): its layers as the page draws them (g: c current, r retired, a non-framework)
     fw_c = [r for r in F["fw"] if r["g"] == "c"]
     now_c = [r for r in F["now"] if r["g"] == "c"]
+    # money pre-arranged outside a framework and not yet released (D223): the map's non-framework
+    # layer against the Financing page's (each reads dashboards.read_adhoc_prearranged its own way)
+    cmp("pre-arranged outside a framework, not yet released", "Map ↔ Financing", t_ad["pre_ad"],
+        sum(r.get("total_usd") or 0 for r in F["now"] if r["g"] == "a"))
     act = F["act"]
     usd = lambda rows: sum(r.get("amount_usd") or 0 for r in rows)   # noqa: E731
     for lc, k in (("active", "n_active"), ("updating", "n_upd"), ("development", "n_dev")):

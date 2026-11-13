@@ -774,6 +774,67 @@ def envelope_by_fund(rows, reg):
             ["total_usd"].max())
 
 
+PRE_ADHOC_COLS = ["country_iso3", "hazard", "arranged_date", "event_label", "fund_code", "allocation_code",
+                  "amount_usd", "people_targeted", "ended_date", "comments", "country_name", "region"]
+
+
+def read_adhoc_prearranged(e):
+    """Pre-arranged money outside a framework, not yet released (D223; aa.adhoc_prearranged): what
+    a fund has set aside for anticipatory action on a country and hazard with no framework behind
+    it. Never an activation and never released money: the pages add it to pre-arranged money while
+    their non-framework layer is on (adhoc_pre_in_year says for which years). Empty on a database
+    without the table yet (a snapshot taken before the schema run)."""
+    if pd.read_sql("SELECT to_regclass('aa.adhoc_prearranged') AS r", e)["r"].iloc[0] is None:
+        return pd.DataFrame(columns=PRE_ADHOC_COLS)
+    return pd.read_sql(
+        """SELECT p.country_iso3, p.hazard, p.arranged_date, p.event_label, p.fund_code,
+                  p.allocation_code, p.amount_usd, p.people_targeted, p.ended_date, p.comments,
+                  r.country_name, r.region
+           FROM aa.adhoc_prearranged p
+           LEFT JOIN aa.country_hazard r ON r.country_iso3 = p.country_iso3 AND r.hazard = p.hazard
+           ORDER BY p.country_iso3, p.hazard, p.arranged_date, p.event_label, p.fund_code""", e)
+
+
+def adhoc_pre_in_year(arranged, ended, year, today=None):
+    """Whether pre-arranged money outside a framework counts for `year`: a stock, as a framework's
+    envelope is (_backfill_years) — in place at any time during a past year (from the year it was
+    arranged to the year it ended), and for the current year still in place today (not ended).
+    arranged / ended: partial ISO dates (ended empty = still pre-arranged). adhocPreIn() in the
+    map's script is the same rule."""
+    import datetime as dt
+    today = today or dt.date.today()
+    y0 = int(str(arranged)[:4])
+    end = str(ended) if isinstance(ended, str) and ended.strip() else None
+    if year < y0 or year > today.year:
+        return False
+    if end is None:
+        return True
+    if year < today.year:
+        return year <= int(end[:4])
+    return end > today.isoformat()   # a partial date ('2026-11') sorts before any day of its month
+
+
+def adhoc_pre_rows(d, years=None):
+    """d["pre_adhoc"] as rows of the annual pre-arranged series (funding_series' `pre` columns, plus
+    allocation_code), one per record and year it counts for (adhoc_pre_in_year), source
+    'non-framework'. Kept OUT of funding_series: every reader of that series takes its rows for a
+    framework's money. A page with a non-framework layer adds these itself, on that layer."""
+    import datetime as dt
+    today = dt.date.today()
+    pa = d.get("pre_adhoc")
+    cols = ["country_iso3", "hazard", "year", "kind", "fund_code", "financier", "amount_usd", "source",
+            "version", "allocation_code"]
+    rows = []
+    for r in (pa.itertuples() if pa is not None else ()):
+        for y in (years or range(int(str(r.arranged_date)[:4]), today.year + 1)):
+            if adhoc_pre_in_year(r.arranged_date, r.ended_date, y, today):
+                rows.append({"country_iso3": r.country_iso3, "hazard": r.hazard, "year": int(y),
+                             "kind": "prearranged", "fund_code": r.fund_code, "financier": None,
+                             "amount_usd": float(r.amount_usd), "source": "non-framework", "version": None,
+                             "allocation_code": r.allocation_code if isinstance(r.allocation_code, str) else None})
+    return pd.DataFrame(rows, columns=cols)
+
+
 def funding_sql(e):
     """aa.activation_funding as every page reads released money (2026-10-30): amount_usd NET of
     the money the activation refunded (aa.activation_refund, owner: "the money goes out, but the
@@ -998,6 +1059,13 @@ def _fetch(e):
     # behind a framework is PRE-ARRANGED money until an activation draws on it (= a row in
     # activation_funding, entered by hand). Which activations use it (framework / ad hoc or
     # early action) and what was approved decide whether it counts (funding_series).
+    # ... or pre-arranged outside a framework (aa.adhoc_prearranged, D223: Kenya's El Niño flood
+    # allocation of 2026 must not count as pre-arranged money of Kenya's drought framework)
+    has_pa = pd.read_sql("SELECT to_regclass('aa.adhoc_prearranged') AS r", e)["r"].iloc[0] is not None
+    af_src = ("(SELECT allocation_code, event_type FROM aa.activation_funding UNION ALL "
+              "SELECT allocation_code, 'adhoc_prearranged' FROM aa.adhoc_prearranged "
+              "WHERE allocation_code IS NOT NULL) x" if has_pa else "aa.activation_funding")
+    d["pre_adhoc"] = read_adhoc_prearranged(e)
     d["cbpf_aa"] = pd.read_sql(
         """SELECT v.allocation_code, v.fund_type, v.fund_name, v.year, v.amount_usd,
                   fu.country_iso3, fu.fund_code, (af.allocation_code IS NOT NULL) AS linked,
@@ -1011,7 +1079,7 @@ def _fetch(e):
            LEFT JOIN (SELECT allocation_code,
                              bool_or(event_type = 'framework_aa') AS by_framework,
                              bool_or(event_type <> 'framework_aa') AS by_other
-                      FROM aa.activation_funding GROUP BY 1) af
+                      FROM """ + af_src + """ GROUP BY 1) af
              ON af.allocation_code = v.allocation_code
            LEFT JOIN aa.cbpf_allocation ca
              ON 'cbpf-' || ca.pooled_fund_id || '-' || ca.allocation_type_id = v.allocation_code
@@ -1222,7 +1290,11 @@ def _fetch(e):
                                      coalesce(p.org_name, 'organisation not recorded') AS org_name, p.org_type,
                                      sum(p.budget) AS usd
                               FROM (SELECT DISTINCT allocation_code FROM aa.activation_funding
-                                    WHERE fund_code <> 'cerf' AND allocation_code ~ '^cbpf-[0-9]+-[0-9]+$') f
+                                    WHERE fund_code <> 'cerf' AND allocation_code ~ '^cbpf-[0-9]+-[0-9]+$'"""
+         + ("""
+                                    UNION SELECT allocation_code FROM aa.adhoc_prearranged
+                                    WHERE fund_code <> 'cerf' AND allocation_code ~ '^cbpf-[0-9]+-[0-9]+$'"""
+            if has_pa else "") + """) f
                               JOIN aa.cbpf_project p
                                 ON 'cbpf-' || p.pooled_fund_id || '-' || p.allocation_type_id = f.allocation_code
                               WHERE p.budget IS NOT NULL""" + (listed if has_afp else "") + """
@@ -1794,7 +1866,10 @@ def _money_flows(d, pre, act):
 
     # ---------------- pre-arranged, as at the end of each year (never summed over years)
     P = pre[(pre["kind"] == "prearranged") & (pre["fund_code"] != "all") & (pre["year"] <= today.year)]
-    P = P.assign(g=[layer(c, h, v) for c, h, v in zip(P["country_iso3"], P["hazard"], P["version"])],
+    # money pre-arranged outside a framework (source 'non-framework', D223) is the non-framework
+    # layer's, whatever the pair's status
+    P = P.assign(g=["a" if s_ == "non-framework" else layer(c, h, v)
+                    for s_, c, h, v in zip(P["source"], P["country_iso3"], P["hazard"], P["version"])],
                  rg=P["country_iso3"].map(rg_of).fillna("?"))
     for y, py in P.groupby("year"):
         y = int(y)
@@ -1804,6 +1879,18 @@ def _money_flows(d, pre, act):
         for r in py.itertuples():
             fc, amount, g, rg, c = r.fund_code, float(r.amount_usd), r.g, r.rg, r.country_iso3
             if amount <= 0:
+                continue
+            if r.source == "non-framework":
+                # outside a framework: the grantees of the allocation it names, once the fund's
+                # records have its projects; never the fund's other AA projects of the year
+                ac = getattr(r, "allocation_code", None)
+                o = ca_by.get(ac) if isinstance(ac, str) else None
+                if fc != "cerf" and o is not None and float(o.sum()) > 0:
+                    grantees("p", y, fc, amount, g, rg, c, ac)
+                else:
+                    add("p", y, "f", "f:" + fc, "a:nr|" + ("agencies not recorded" if fc == "cerf" else
+                                                            "Country and Regional Fund grantees not recorded"),
+                        amount, g, fc, rg, c)
                 continue
             if fc != "cerf" and r.source == "onegms-mirror":
                 grantees("p", y, fc, amount, g, rg, c)
@@ -2172,7 +2259,7 @@ function mountFlow(cfg){
 
 # ---------------------------------------------------------------- financing
 # the Financing page's method note, one translatable paragraph each (site_i18n TB)
-FUND_NOTE_0 = "<b>Layers</b>, as on the map: <b>current frameworks</b> (active, being updated, in development) and <b>retired</b> frameworks. <b>Money stays counted</b>: what a framework since retired pre-arranged in the years it was in place, and what it released, counts while either framework layer is ticked, whatever its status today, so the past years are complete on the page's opening view (the released tile says how much comes from retired frameworks). The retired layer adds the retired frameworks to the framework count and the by-status chart; on its own it shows their money only. An AA-tagged country or regional fund allocation in a country with no retired framework counts as current. <b>Non-framework allocations</b> add the AA money allocated without a framework: released money only, nothing is pre-arranged for it. The <b>fund</b> switch applies to every figure but co-financing; framework counts, people covered and versions then keep the frameworks with money recorded on that fund. There is no technical-support layer here: technical support carries no money. The tiles and the charts follow the layers, the fund, the framework selection and the hazard and region filters (the GHO filter: the annual series and co-financing); the money-flow chart and the sections further down say what they follow."
+FUND_NOTE_0 = "<b>Layers</b>, as on the map: <b>current frameworks</b> (active, being updated, in development) and <b>retired</b> frameworks. <b>Money stays counted</b>: what a framework since retired pre-arranged in the years it was in place, and what it released, counts while either framework layer is ticked, whatever its status today, so the past years are complete on the page's opening view (the released tile says how much comes from retired frameworks). The retired layer adds the retired frameworks to the framework count and the by-status chart; on its own it shows their money only. An AA-tagged country or regional fund allocation in a country with no retired framework counts as current. <b>Non-framework allocations</b> add the AA money allocated without a framework: money released, and money a fund has pre-arranged but not yet released. The <b>fund</b> switch applies to every figure but co-financing; framework counts, people covered and versions then keep the frameworks with money recorded on that fund. There is no technical-support layer here: technical support carries no money. The tiles and the charts follow the layers, the fund, the framework selection and the hazard and region filters (the GHO filter: the annual series and co-financing); the money-flow chart and the sections further down say what they follow."
 # a replaced framework (dashboards.old_versions) is on the retired layer: said under the layers note
 FUND_NOTE_REPLACED = "A framework that a distinct new one replaced, rather than revised, counts as <b>retired</b>, its activations and money with it, even though the new one has the same country and hazard (Somalia drought: the 2019–2021 food security framework, replaced by the 2026 one)."
 FUND_NOTE_1 = '<b>Frameworks</b> (in the filter bar) lists every current and retired framework with its pre-arranged money now: tick the ones to count — a sub-region, a few countries, any subset — and the tiles and the charts count only those, within the other filters. Money that belongs to no framework (a non-framework allocation, a country-level allocation of a country or regional fund) follows its country: it counts while at least one line of that country is ticked, and the countries whose only AA money is of that kind have a line of their own at the end of the list. A subset changes which frameworks are counted, not how: its pre-arranged money is still a stock, in place today or in a given year, never added over years. The selection is kept in the page address, so a subset can be bookmarked or shared. The money-flow chart and the UN agencies and partners section do not follow it.'
@@ -2237,6 +2324,20 @@ def build_funding(page, d):
         """k: 'ISO3|hazard', the framework a row belongs to — what the framework picker ticks."""
         return df["country_iso3"].astype(str) + "|" + df["hazard"].astype(str)
     pre["k"], act["k"] = pair_key(pre), pair_key(act)
+    # money pre-arranged outside a framework and not yet released (D223): rows of the
+    # non-framework layer ('a'), in the annual series and in pre-arranged now, so they count only
+    # while that box is ticked. Added here and not in funding_series, whose rows every other
+    # reader takes for a framework's money
+    pa = adhoc_pre_rows(d)
+    pre["allocation_code"] = None
+    if len(pa):
+        gho_ = set(map(tuple, d["gho"].loc[d["gho"]["in_gho"], ["country_iso3", "year"]].values))
+        pa = pa.assign(hz=pa["hazard"].map(haz),
+                       region=[region_of.get((c, h)) or "?" for c, h in zip(pa["country_iso3"], pa["hazard"])],
+                       in_gho=[(c, y) in gho_ for c, y in zip(pa["country_iso3"], pa["year"])], g="a")
+        pa["k"] = pair_key(pa)
+        pre = pd.concat([pre, pa[pre.columns]], ignore_index=True)
+    pa_now = pa[pa["year"] == cy] if len(pa) else pa
 
     # pre-arranged NOW under the convention: every non-retired framework keeps its latest
     # version's envelope ('all' totals dropped where the fund split exists)
@@ -2284,7 +2385,7 @@ def build_funding(page, d):
     old = d.get("old") or set()
     pair_funds, old_funds = {}, {}
     cols = ["country_iso3", "hazard", "fund_code", "version"]
-    money_rows = [pre.loc[(pre["kind"] == "prearranged") & (pre["fund_code"] != "all"), cols],
+    money_rows = [pre.loc[(pre["kind"] == "prearranged") & (pre["fund_code"] != "all") & (pre["g"] != "a"), cols],
                   act.loc[act["g"] != "a", cols],
                   vf.loc[vf["fund_code"] != "all", cols]]
     for r in pd.concat(money_rows).itertuples():
@@ -2557,7 +2658,7 @@ def build_funding(page, d):
  <span style='display:inline-flex;gap:10px;align-items:center;padding-right:10px;border-right:1px solid #9db2c9'>
   <label {ATTR("title", "frameworks active, being updated or in development: their money in every year")}><input type='checkbox' id='fCur' checked> {T("Current frameworks")}</label>
   <label {ATTR("title", "frameworks since retired: adds them to the framework count and the by-status chart; their money (pre-arranged in the years they were live, and released) counts with current frameworks too")}><input type='checkbox' id='fRet'> {T("Retired")}</label>
-  <label {ATTR("title", "AA money allocated without a framework: released money only")}><input type='checkbox' id='fAdh'> {T("Non-framework allocations")}</label></span>
+  <label {ATTR("title", "AA money allocated without a framework: released, or pre-arranged and not yet released")}><input type='checkbox' id='fAdh'> {T("Non-framework allocations")}</label></span>
  <details class='fwpick' id='fwPick'><summary id='fwLab' {ATTR("title", "the full list of frameworks: tick the ones to count")}>{T("Frameworks: all ▾")}</summary>
   <div class='fwpanel'>
    <div class='fwhead'><input type='search' id='fwQ' {ATTR("placeholder", "find a country, hazard, region or status…")} {ATTR("aria-label", "find frameworks in the list")}>
@@ -2617,7 +2718,7 @@ def build_funding(page, d):
  <div class='panel'><h3>{T("Frameworks each year, by status")}</h3><canvas id='c0' height='260'></canvas>
    {how("Each framework's status at the end of the year: active while an endorsed version was valid at any time in the year; being updated when none was and its next version is in development or its last one had expired; in development before its first endorsed version; retired from the first full year after its retirement date. The current year is today's status, the Map's figure. Follows the layers, the framework selection and the hazard and region filters; the GHO filter applies year by year; the fund switch does not apply (a count, not money).")}</div>
  <div class='panel'><h3>{T("Pre-arranged funding in place each year, by fund")}</h3><canvas id='c1' height='260'></canvas>
-   {how("A stock: what was committed in each year (a framework counts for a year if it was valid at any time in it), so the bars are not added up (the cumulative switch applies to released money only). CERF: the framework envelopes per year (sheets, framework pages, entries; 'all'-totals excluded where the fund split exists); the current year is pre-arranged now. Country and Regional Funds: AA-tagged allocations in the OneGMS mirror, in the year allocated. Co-financing is shown separately. A framework since retired counts in the years it was in place, whatever its status today.", two=True)}</div>
+   {how("A stock: what was committed in each year (a framework counts for a year if it was valid at any time in it), so the bars are not added up (the cumulative switch applies to released money only). CERF: the framework envelopes per year (sheets, framework pages, entries; 'all'-totals excluded where the fund split exists); the current year is pre-arranged now. Country and Regional Funds: AA-tagged allocations in the OneGMS mirror, in the year allocated. Co-financing is shown separately. A framework since retired counts in the years it was in place, whatever its status today. With the non-framework layer on: also the money a fund has pre-arranged outside a framework and not yet released, from the year it was arranged.", two=True)}</div>
  <div class='panel'><h3>{T("AA released by year, by fund")}</h3><canvas id='c2' height='260'></canvas>
    {how("Allocations drawn by a framework activation, all pooled funds — plus the non-framework AA allocations when that layer is on. A country or regional fund allocation moves here only once an activation is recorded against it.")}</div>
  <div class='panel'><h3>{T("Pre-arranged now, by hazard")}</h3><canvas id='c3' height='260'></canvas>
@@ -2643,6 +2744,11 @@ def build_funding(page, d):
 </div>
 {ins_html}"""
 
+    # pre-arranged now outside a framework: on the non-framework layer, after the framework figures
+    # above were taken (the tiles as the page opens, the envelope notes)
+    if len(pa_now):
+        vf = pd.concat([vf, pa_now.assign(total_usd=pa_now["amount_usd"], ft=pa_now["fund_code"].map(_ft), x=1)
+                        [["k", "country_iso3", "hz", "region", "ft", "total_usd", "g", "x"]]], ignore_index=True)
     data = {
         "pre": json.loads(_records(pre, ["k", "country_iso3", "hz", "region", "year",
                                          "kind", "fund_code", "amount_usd",
@@ -2804,11 +2910,15 @@ function tiles(s, geo, A, N){
   else if(s.ret){ tFw.textContent = n('retired'); tFwl.textContent = tr8('retired frameworks{0}', fundTxt) + selTxt; }
   else { tFw.textContent = '–'; tFwl.textContent = tr8('frameworks: no framework layer selected'); }
   const nc = sumOf(N.filter(r=>r.ft==='cerf'), r=>r.total_usd), np = sumOf(N.filter(r=>r.ft!=='cerf'), r=>r.total_usd);
-  if(!s.cur){ tPre.textContent = '–'; tPrel.textContent = tr8('pre-arranged now: select current frameworks (retired frameworks and non-framework allocations have none)'); }
+  // pre-arranged outside a framework, not yet released (the non-framework layer's rows of D.now)
+  const na = sumOf(N.filter(r=>r.g==='a'), r=>r.total_usd);
+  if(!s.cur && !na){ tPre.textContent = '–'; tPrel.textContent = s.adh ? tr8('pre-arranged now: none outside a framework in this selection — select current frameworks (retired frameworks have none)')
+    : tr8('pre-arranged now: select current frameworks (retired frameworks have none)'); }
   else { tPre.textContent = M0(nc+np);
     const two = [...new Set(N.filter(r=>r.x>1 && r.total_usd>0).map(r=>r.k))];
     tPrel.textContent = tr8('pre-arranged now — {0}', s.fund==='cerf' ? 'CERF' : s.fund==='pooled' ? tr8('Country and Regional Funds') : tr8('CERF {0} · Country and Regional Funds {1}', M0(nc), M0(np)))
-      + (two.length ? tr8(' · counts {0} twice', two.map(k=>twoName(k)+'*').join(', ')) : '') + selTxt; }
+      + (two.length ? tr8(' · counts {0} twice', two.map(k=>twoName(k)+'*').join(', ')) : '')
+      + (na ? (s.cur ? tr8(' · {0} of it outside a framework, not yet released', M2(na)) : tr8(' · outside a framework, not yet released')) : '') + selTxt; }
   twoNote.style.display = s.cur && N.some(r=>r.x>1 && r.total_usd>0) ? '' : 'none';
   const ys = uniqSorted(A, r=>r.year);
   const what = [(s.cur||s.ret) ? tr8('framework activations') : null, s.adh ? tr8('non-framework allocations') : null].filter(Boolean).join(' + ');
@@ -2848,7 +2958,7 @@ function drawHeat(s, S, geo){
   tb.textContent = '';
   box.style.display = rows.length ? '' : 'none'; none.style.display = rows.length ? 'none' : '';
   if(!rows.length){
-    none.textContent = !s.cur ? tr8('pre-arranged now: select current frameworks (retired frameworks and non-framework allocations have none)')
+    none.textContent = !s.cur ? tr8('pre-arranged now: select current frameworks (retired frameworks have none)')
       : tr8('No data in this selection');
     return; }
   const tot = groupSum(SA, r=>r.agency, r=>r.amount_usd);
@@ -4015,23 +4125,32 @@ def _no_framework_body(d, fw, c, h, umap, docs):
     'framework' pages for non-framework allocations are a bit weird … the page shouldn't just be
     the same format as a framework page"). No model, monitoring window, versions, backtest or
     pre-arranged chart: those belong to a framework. kind: 'allocations' (it received money
-    without a framework: the allocations are listed), 'tech' (OCHA technical support only), or
-    'none' (a pair the records hold with neither, Madagascar plague)."""
+    without a framework: the allocations are listed), 'prearranged' (a fund has pre-arranged
+    money for it outside a framework and released none yet, D223), 'tech' (OCHA technical
+    support only), or 'none' (a pair the records hold with none of these, Madagascar plague).
+    Money pre-arranged outside a framework is listed on either of the first two."""
     import html as _h
     esc = lambda x: _h.escape(str(x))   # noqa: E731
     a = d["act_all"][(d["act_all"]["country_iso3"] == c) & (d["act_all"]["hazard"] == h)]
     tech = bool(fw.get("technical_support")) if pd.notna(fw.get("technical_support")) else False
-    kind = "allocations" if len(a) else "tech" if tech else "none"
+    pa = d.get("pre_adhoc")
+    pa = pa[(pa["country_iso3"] == c) & (pa["hazard"] == h)] if pa is not None else []
+    kind = "allocations" if len(a) else "prearranged" if len(pa) else "tech" if tech else "none"
     name = T(i18n.add(f"{fw['country_name']} — {hazard_word(h)}", "{country} — {hazard}",
                       country=i18n.country(c, fw["country_name"]), hazard=hazard_word(h)))
-    badge = {"allocations": "non-framework allocations", "tech": "technical support",
-             "none": "no framework version recorded"}[kind]
+    badge = {"allocations": "non-framework allocations", "prearranged": "pre-arranged outside a framework",
+             "tech": "technical support", "none": "no framework version recorded"}[kind]
     st = _status_words(fw.get("status")) if _has(fw.get("status")) else ""
     lead = {
         "allocations": T("Anticipatory-action money allocated for this hazard without a framework: no pre-agreed "
                          "trigger, plan or pre-arranged envelope stands behind it, so this page has no model, "
                          "monitoring window or versions. These allocations count on the Map and the Financing page "
                          "under the non-framework allocations layer."),
+        "prearranged": T("Anticipatory-action money a fund has pre-arranged for this hazard outside a framework "
+                         "and not yet released. No framework stands behind it, so this page has no model, "
+                         "monitoring window or versions. It counts as pre-arranged money on the Map and the "
+                         "Financing page while their non-framework allocations layer is on, and as released "
+                         "money only once the fund releases it."),
         "tech": T("OCHA supports anticipatory action here technically, in general rather than for one hazard, "
                   "without a funding commitment from CERF or the Country and Regional Funds. No framework and "
                   "no allocation are behind it.") if h == "general" else
@@ -4041,9 +4160,9 @@ def _no_framework_body(d, fw, c, h, umap, docs):
         "none": T("No framework version and no allocation are recorded for this hazard."),
     }[kind]
     extra = []
-    if kind == "allocations" and tech:
+    if kind in ("allocations", "prearranged") and tech:
         extra.append(T("OCHA also supports a framework here technically, without a funding commitment."))
-    if kind != "allocations" and st:
+    if kind not in ("allocations", "prearranged") and st:
         extra.append(TC(lambda w: w("Status in the tracking sheets: {s}.").format(s=w(st))))
     # the allocations, newest first: what, the money by fund, people targeted, links
     rows, total, years = "", 0.0, set()
@@ -4082,12 +4201,30 @@ def _no_framework_body(d, fw, c, h, umap, docs):
                  "<div class='xscroll'><table class='data acts'><thead><tr>"
                  + "".join(f"<th>{T(x)}</th>" for x in ("date", "allocation", "funding", "people targeted", "links"))
                  + f"</tr></thead><tbody>{rows}</tbody></table></div></div>")
+    if len(pa):   # pre-arranged outside a framework, not yet released (D223): since when, the fund, the people
+        import datetime as _dt
+        today = _dt.date.today().isoformat()
+        prows = ""
+        for r in pa.sort_values("arranged_date", ascending=False).itertuples():
+            ended = r.ended_date if isinstance(r.ended_date, str) and r.ended_date.strip() else None
+            state = (T("pre-arranged, not yet released") if not ended or ended > today
+                     else TF("no longer pre-arranged since {d}", d=esc(ended)))
+            lab = r.event_label if isinstance(r.event_label, str) and r.event_label else ""
+            ppl = r.people_targeted
+            prows += (f"<tr><td>{esc(r.arranged_date)}</td><td>{esc(lab) or '—'}</td>"
+                      f"<td>{esc(fund_label(r.fund_code))}: ${float(r.amount_usd):,.0f}</td>"
+                      f"<td class='num'>{f'{int(ppl):,}' if ppl is not None and pd.notna(ppl) else '—'}</td>"
+                      f"<td>{state}</td></tr>")
+        body += (f"<div class='blk'><h2>{T('Pre-arranged, not yet released')}</h2>"
+                 "<div class='xscroll'><table class='data acts'><thead><tr>"
+                 + "".join(f"<th>{T(x)}</th>" for x in ("pre-arranged since", "purpose", "funding", "people targeted", "status"))
+                 + f"</tr></thead><tbody>{prows}</tbody></table></div></div>")
     fd = _fw_docs(docs, c, h)
     if len(fd):
         body += (f"<div class='blk'><h2>{T('Documents')}</h2>"
                  f"<ul class='doclist'>{''.join(_doc_li(x) for x in fd.itertuples())}</ul></div>")
     body += (f"<p class='meta'><a href='index.html#{esc(c)}'>{T('See it on the Map →')}</a>"
-             + (f" · <a href='dash-funding.html'>{T('Financing →')}</a>" if kind == "allocations" else "")
+             + (f" · <a href='dash-funding.html'>{T('Financing →')}</a>" if kind in ("allocations", "prearranged") else "")
              + f"</p><style>{DASH_CSS}</style>")
     return kind, body
 
@@ -4126,7 +4263,9 @@ def build_framework_pages(page, tbl, d, e=None):
         if no_fw:   # no framework: a page of its own kind, not a framework page's empty shell
             kind, body = _no_framework_body(d, fw, c, h, umap, docs)
             tmpl = ("{country} — technical support, {hazard}" if h == "general" and kind == "tech" else   # D202
-                    "{country} {hazard} — " + {"allocations": "non-framework allocations", "tech": "technical support",
+                    "{country} {hazard} — " + {"allocations": "non-framework allocations",
+                                               "prearranged": "pre-arranged outside a framework",
+                                               "tech": "technical support",
                                                "none": "no framework version recorded"}[kind])
             page(f"{slug}.html", i18n.add(tmpl.format(country=fw["country_name"], hazard=hazard_word(h)), tmpl,
                                           country=i18n.country(c, fw["country_name"]), hazard=hazard_word(h)), body)

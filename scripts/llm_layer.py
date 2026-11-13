@@ -105,9 +105,14 @@ Counting rules (an LLM summing these files without them gets wrong totals):
 - Released money is what activations drew: the `funding` rows of aa-activations, net of any
   money refunded after an activation stopped (`refund_usd`). Two kinds: framework activations
   (`event_type` `framework_aa`) and non-framework allocations (`adhoc_aa`: anticipatory money
-  allocated without a framework; they have no version and no window, and nothing is
-  pre-arranged for them). Early action allocations are not anticipatory action and are not in
-  these files.
+  allocated without a framework; they have no version and no window). Early action allocations
+  are not anticipatory action and are not in these files.
+- Money pre-arranged outside a framework: a fund can set money aside for anticipatory action on
+  a country and hazard with no framework and not release it yet. It is pre-arranged money of the
+  non-framework layer (aa-prearranged-funding rows with `source` `non-framework`;
+  `prearranged_outside_framework_usd` in aa-frameworks), never an activation and never released
+  money, and it is not part of a framework's `prearranged_usd`. The map's headline does not count
+  it as it opens; it counts once the non-framework layer is on.
 - Layers, as on the site: every money row carries `layer` = `current` (a framework that is
   active, being updated or in development today), `retired` (a retired framework, in the
   years it was live) or `non_framework`. The map opens with the current-frameworks layer on
@@ -454,6 +459,19 @@ def build(d, e, live, out, snapshot_at):
         df["replaced_framework"] = [(c, h, v) in old for c, h, v in zip(df["country_iso3"], df["hazard"], df["version"])]
     # funding_series has already multiplied these rows (activation_factors): the factor says so
     pre["activations_per_year"] = [fac.get((c, h, v), 1) for c, h, v in zip(pre["country_iso3"], pre["hazard"], pre["version"])]
+    # money a fund has pre-arranged outside a framework and not yet released (D223): rows of the
+    # non-framework layer, source `non-framework`, as on the Financing page — never a framework's
+    pa = dashboards.adhoc_pre_rows(d)
+    if len(pa):
+        reg_ = dict(zip(zip(cur["country_iso3"], cur["hazard"]), cur["region"])) if "region" in cur else {}
+        gho_ = set(map(tuple, d["gho"].loc[d["gho"]["in_gho"], ["country_iso3", "year"]].values))
+        pa = pa.assign(hz=pa["hazard"].map(dashboards.haz),
+                       region=[reg_.get((c, h)) or "?" for c, h in zip(pa["country_iso3"], pa["hazard"])],
+                       in_gho=[(c, y) in gho_ for c, y in zip(pa["country_iso3"], pa["year"])],
+                       layer="non_framework", replaced_framework=False, activations_per_year=1)
+        pre = pd.concat([pre, pa[[c for c in pre.columns if c in pa.columns]]], ignore_index=True)
+    pad_now = (pa[pa["year"] == date.today().year].groupby(["country_iso3", "hazard"])["amount_usd"].sum().to_dict()
+               if len(pa) else {})
     if scope_ctry is not None:
         pre, cof = pre[pre["country_iso3"].isin(scope_ctry)], cof[cof["country_iso3"].isin(scope_ctry)]
     act = act.copy()
@@ -506,6 +524,8 @@ def build(d, e, live, out, snapshot_at):
             "prearranged_year": now_year if pair in now_all else None,
             "prearranged_version": now_ver.get(pair) if pair in now_all else None,
             "activations_per_year": apy,
+            # pre-arranged outside a framework, not yet released (D223): never in prearranged_usd
+            "prearranged_outside_framework_usd": _cell(pad_now.get(pair)),
             "cofinancing_usd": _cell(landing.cof_of(mf) if mf else cof_now.get(pair)),
             # the open map's figure (its copy leaves out one taken from an unpublished document)
             "people_covered": (_cell(mf.get("covered")) if mf
@@ -524,6 +544,7 @@ def build(d, e, live, out, snapshot_at):
             cd = om["countries"][c]
             fw_rows.append({"country_iso3": c, "country_name": cd.get("name"), "region": cd.get("region"),
                             "hazard": h, "people_covered": _cell(f.get("covered")),
+                            "prearranged_outside_framework_usd": _cell(pad_now.get((c, h))),
                             "cofinancing_usd": _cell(landing.cof_of(f)), "map_layers": f.get("layers") or None})
     fw_rows.sort(key=lambda x: (x["country_name"] or "", x["hazard"]))
     write_table("frameworks", fw_rows,
@@ -534,7 +555,10 @@ def build(d, e, live, out, snapshot_at):
                 "shows it, the pre-arranged funding in place now (`prearranged_usd`, all funds; "
                 "`prearranged_cerf_usd` its CERF part; the envelope of `prearranged_version`, counted "
                 "twice where `activations_per_year` is 2; these sum to the current-year rows of "
-                f"aa-prearranged-funding{' and aa-funding-annual' if on('funding-annual') else ''}), this "
+                f"aa-prearranged-funding{' and aa-funding-annual' if on('funding-annual') else ''}), "
+                "`prearranged_outside_framework_usd` (money a fund has pre-arranged for the pair outside "
+                "a framework and not yet released: never part of `prearranged_usd`, counted on the map "
+                "only while its non-framework layer is on), this "
                 "year's co-financing (outside the OCHA-managed funds, never added to pre-arranged), people "
                 "covered (blank where the figure comes from a framework document that is not published, as "
                 "on the open map), the months its latest version is monitored, and `map_layers`: the map's "
@@ -718,7 +742,10 @@ def build(d, e, live, out, snapshot_at):
                 "`?` there means the country has several or no live framework). `activations_per_year` 2: "
                 "the amount is already the envelope counted twice. `source`: framework-record (the current "
                 "envelope), onegms-mirror (pooled-fund allocations), tracking-sheets (the team's "
-                "reported series), version-inferred (carried from the version in force). `in_gho`: "
+                "reported series), version-inferred (carried from the version in force), non-framework "
+                "(money a fund has pre-arranged outside a framework and not yet released: `layer` "
+                "non_framework, no version, counted from the year it was arranged until it is released). "
+                "`in_gho`: "
                 "the country was in that year's Global Humanitarian Overview.")
     c_rows = _records(cof.sort_values(["year", "country_iso3", "hazard"]),
                       ["country_iso3", "hazard", "year", "version", "financier", "amount_usd", "source",
@@ -1045,7 +1072,8 @@ def _vocabulary(on):
         "under it). `technical_support`: OCHA supported the framework "
         "technically, with no funding. `retired`: flagged as retired by hand. `map_layers`: the map's "
         "layers the pair is drawn on (`framework` the current frameworks, `retired`, `adhoc` "
-        "non-framework allocations, `tech` technical support).\n"
+        "non-framework money: allocations released, or money pre-arranged and not yet released; `tech` "
+        "technical support).\n"
         "- `replaced_framework` (aa-versions, aa-activations, aa-prearranged-funding, aa-cofinancing): "
         "the row belongs to an earlier framework on the same (country, hazard) pair that a distinct new "
         "framework replaced rather than revised; it counts as a retired framework's. `layer`: "
@@ -1170,6 +1198,10 @@ def _map_md(om, fw_rows, a_rows, snapshot_at, stamp):
         lines.append(f"- Not counted above (the non-framework layer is off when the map opens): {ad['n_act']} "
                      f"non-framework allocation{'s' if ad['n_act'] != 1 else ''} in {y}, {_m(ad['released'])}"
                      + (f", about {n(a_est)} people reached or targeted" if a_est else "") + ".")
+    if ad.get("pre_ad"):
+        lines.append(f"- Not counted above (the non-framework layer is off when the map opens): "
+                     f"{_m(ad['pre_ad'])} pre-arranged outside a framework and not yet released, in "
+                     f"{ad['n_pre_ad_ctry']} countr{'y' if ad['n_pre_ad_ctry'] == 1 else 'ies'}.")
     out.append("\n".join(lines) + "\n")
 
     cols = ["country_name", "hazard", "lifecycle", "latest_version", "prearranged_usd", "prearranged_cerf_usd",
