@@ -3626,39 +3626,60 @@ function segHitsRect(p, q, x1, y1, x2, y2){
 // the map hard to read: sitting on another callout or on a country's dot, a leader that
 // crosses another leader or runs through a callout (its own words included), covering the
 // shaded countries' shapes, and, a little, leaving the country's usual side (dir). Callouts are placed most-crowded first, shuffled
-// (anneal), then each is re-placed against the others until none moves: the total cost is what
+// (anneal), then each is re-placed against the others until none moves, and last slid to the
+// cheapest spot nearby (nudge), a far one changing places with the one in its way (relieve): the total cost is what
 // is brought down, so one callout may take a dearer place to free a better one for another.
 // Overlap is a price, not a rule: on a map too small for its callouts some still overlap.
 const RING_DIRS = 16, RING_DISTS = [8, 18, 30, 46, 66, 92, 126, 170];
 const COST = { far: 300, overlap: 4000, dot: 1500, through: 500, cross: 300, ownText: 1.5, shaded: 80, dir: 10 };
 const DOT_M = 6;   // clear space kept round a country's dot
+// A place for a callout with its box's corner at (x1, y1), with what it costs on its own; null
+// where the callout may not go (off the map, on its own dot, on the legend).
+function placeAt(Lb, x1, y1, W, H){
+  const x2 = x1+Lb.w, y2 = y1+Lb.h;
+  if(x1 < 3 || y1 < 3 || x2 > W-3 || y2 > H-3) return null;
+  if(Lb.px > x1-DOT_M && Lb.px < x2+DOT_M && Lb.py > y1-DOT_M && Lb.py < y2+DOT_M) return null;   // on its own dot
+  for(const r of KEEPOUT) if(Math.min(x2,r.x2) > Math.max(x1,r.x1) && Math.min(y2,r.y2) > Math.max(y1,r.y1)) return null;
+  const ax = x1+Lb.iox, ay = y1+Lb.ioy, vx = Lb.px-ax, vy = Lb.py-ay, len = Math.hypot(vx, vy);
+  // how far the leader runs under the callout's own words before it reaches the pin
+  const tx = vx > 0 ? (x2-ax)/vx : vx < 0 ? (x1-ax)/vx : Infinity, ty = vy > 0 ? (y2-ay)/vy : vy < 0 ? (y1-ay)/vy : Infinity;
+  const inside = Math.min(1, tx, ty)*len;
+  // which side of the dot the callout is on, against the country's usual side
+  const cx = (x1+x2)/2-Lb.px, cy = (y1+y2)/2-Lb.py, cl = Math.hypot(cx, cy) || 1, dl = Math.hypot(Lb.dir[0], Lb.dir[1]) || 1;
+  const c = len + len*len/COST.far + COST.ownText*Math.max(0, inside-16)
+    + COST.dir*(1-(cx*Lb.dir[0]+cy*Lb.dir[1])/(cl*dl)) + COST.shaded*ROOM*shadedCost(x1, y1, x2, y2);
+  return {x1, y1, x2, y2, ax, ay, c};
+}
 function candidatesOf(Lb, W, H){
   if(!Lb.w || !Lb.h) return [];   // hidden (phones list the countries instead): only its dot is drawn
-  const out = [], dl = Math.hypot(Lb.dir[0], Lb.dir[1]) || 1, dx = Lb.dir[0]/dl, dy = Lb.dir[1]/dl;
-  const add = (slot, x1, y1, ux, uy) => {
-    const x2 = x1+Lb.w, y2 = y1+Lb.h;
-    if(x1 < 3 || y1 < 3 || x2 > W-3 || y2 > H-3) return;
-    if(Lb.px > x1-DOT_M && Lb.px < x2+DOT_M && Lb.py > y1-DOT_M && Lb.py < y2+DOT_M) return;   // on its own dot
-    const ax = x1+Lb.iox, ay = y1+Lb.ioy, vx = Lb.px-ax, vy = Lb.py-ay, len = Math.hypot(vx, vy);
-    // how far the leader runs under the callout's own words before it reaches the pin
-    const tx = vx > 0 ? (x2-ax)/vx : vx < 0 ? (x1-ax)/vx : Infinity, ty = vy > 0 ? (y2-ay)/vy : vy < 0 ? (y1-ay)/vy : Infinity;
-    const inside = Math.min(1, tx, ty)*len;
-    let c = len + len*len/COST.far + COST.ownText*Math.max(0, inside-16) + COST.dir*(1-(ux*dx+uy*dy));
-    for(const r of KEEPOUT) if(Math.min(x2,r.x2) > Math.max(x1,r.x1) && Math.min(y2,r.y2) > Math.max(y1,r.y1)) return;
-    c += COST.shaded*ROOM*shadedCost(x1, y1, x2, y2);
-    out.push({slot, x1, y1, x2, y2, ax, ay, c});
-  };
+  const out = [];
+  const add = (slot, x1, y1) => { const k = placeAt(Lb, x1, y1, W, H); if(k){ k.slot = slot; out.push(k); } };
   for(let k=0; k<RING_DIRS; k++){
     const t = 2*Math.PI*k/RING_DIRS, ux = Math.cos(t), uy = Math.sin(t);
     const edge = Math.min(Math.abs(ux) > 1e-6 ? Lb.w/2/Math.abs(ux) : Infinity, Math.abs(uy) > 1e-6 ? Lb.h/2/Math.abs(uy) : Infinity);
     RING_DISTS.forEach((d, j) => {
       // two places per direction and distance: the callout's box d away from the dot, and
       // the callout's first pin d away from the dot
-      add(2*(j*RING_DIRS+k), Lb.px + ux*(d+edge) - Lb.w/2, Lb.py + uy*(d+edge) - Lb.h/2, ux, uy);
-      add(2*(j*RING_DIRS+k)+1, Lb.px + ux*(d+14) - Lb.iox, Lb.py + uy*(d+14) - Lb.ioy, ux, uy);
+      add(2*(j*RING_DIRS+k), Lb.px + ux*(d+edge) - Lb.w/2, Lb.py + uy*(d+edge) - Lb.h/2);
+      add(2*(j*RING_DIRS+k)+1, Lb.px + ux*(d+14) - Lb.iox, Lb.py + uy*(d+14) - Lb.ioy);
     });
   }
   return out.sort((a, b) => a.c - b.c);
+}
+// The ring's places are some way apart, so a callout can be left a ring further out than it
+// need be. Last of all each callout slides, a few pixels at a time, to wherever next to it is
+// cheaper, until none can: usually closer to its dot, up to the clear space round its neighbours.
+const NUDGES = [[3,0],[-3,0],[0,3],[0,-3],[2,2],[2,-2],[-2,2],[-2,-2]];
+function nudge(W, H){
+  for(let pass = 0; pass < 60; pass++){
+    let moved = false;
+    for(const Lb of labels){ if(!Lb.at) continue;
+      let best = Lb.at, bc = costOf(Lb);
+      for(const [dx, dy] of NUDGES){ const k = placeAt(Lb, Lb.at.x1+dx, Lb.at.y1+dy, W, H); if(!k) continue;
+        const c = k.c + clashCost(Lb, k); if(c < bc - .01){ bc = c; best = k; } }
+      if(best !== Lb.at){ Lb.at = best; moved = true; } }
+    if(!moved) break;
+  }
 }
 // what a place costs against the callouts already placed, and against every country's dot
 function clashCost(Lb, k){
@@ -3678,8 +3699,9 @@ function clashCost(Lb, k){
   }
   return c;
 }
-function bestPlace(Lb){
-  let best = null, bc = Infinity;
+// the cheapest place for a callout against the others; with a bound, only a place cheaper than it
+function bestPlace(Lb, bound = Infinity){
+  let best = null, bc = bound;
   for(const k of Lb.cands){ if(k.c >= bc) break; const c = k.c + clashCost(Lb, k); if(c < bc){ bc = c; best = k; } }   // cheapest first
   return [best, bc];
 }
@@ -3712,6 +3734,40 @@ function anneal(){
   live.forEach((Lb, i) => { Lb.at = keep[i]; });
 }
 function costOf(Lb){ return Lb.at.c + clashCost(Lb, Lb.at); }
+// what a few callouts cost together, each pair between them counted once
+function groupCost(g){
+  const at = g.map(l => l.at); let c = 0;
+  g.forEach((l, i) => { for(let j = i+1; j < g.length; j++) g[j].at = null; c += costOf(l); for(let j = i+1; j < g.length; j++) g[j].at = at[j]; });
+  return c;
+}
+// A callout left far from its dot because one or two other callouts hold the nearer room: it
+// takes a place cheaper on its own (as a rule a nearer one), the others find their best places again, and the exchange is kept if
+// they are better off together. Farthest callouts first.
+function relieve(){
+  const reach = Lb => Math.hypot(Lb.at.ax-Lb.px, Lb.at.ay-Lb.py);
+  const far = labels.filter(Lb => Lb.at && reach(Lb) > 40).sort((a, b) => reach(b) - reach(a) || (a.iso < b.iso ? -1 : 1));
+  let any = false;
+  for(const a of far){
+    const curA = costOf(a); let tries = 0;
+    for(const k of a.cands){
+      if(k.c >= curA - 15 || tries >= 10) break;   // only places clearly better on their own
+      const inWay = labels.filter(o => o !== a && o.at && o.cands.length
+        && Math.min(k.x2,o.at.x2)-Math.max(k.x1,o.at.x1)+PAD > 0 && Math.min(k.y2,o.at.y2)-Math.max(k.y1,o.at.y1)+PAD > 0);
+      if(!inWay.length || inWay.length > 2) continue;
+      tries++;
+      const g = [a, ...inWay], was = g.map(l => l.at), before = groupCost(g);
+      a.at = k; inWay.forEach(o => { o.at = null; });
+      // what the others may still cost for the exchange to pay: each looks no further than that
+      let left = before - .5 - costOf(a), ok = true;
+      inWay.forEach((o, i) => { if(!ok) return;
+        const rest = inWay.slice(i+1).reduce((t, r) => t + r.cands[0].c, 0), [place, c] = bestPlace(o, left - rest);
+        if(place){ o.at = place; left -= c; } else ok = false; });
+      if(ok){ any = true; break; }
+      g.forEach((l, i) => { l.at = was[i]; });
+    }
+  }
+  return any;
+}
 function runLayout(){
   legendHome();
   const r = svg.getBoundingClientRect(), W = r.width, H = r.height;
@@ -3745,13 +3801,17 @@ function placeAll(W, H){
   const order = labels.slice().sort((a, b) => b.crowd - a.crowd || (a.iso < b.iso ? -1 : 1));
   order.forEach(Lb => { Lb.at = bestPlace(Lb)[0]; });
   anneal();
-  for(let sweep = 0; sweep < 20; sweep++){
+  // each callout re-placed on its ring against the others, until none moves
+  const settle = () => { for(let sweep = 0; sweep < 20; sweep++){
     let moved = false;
     for(const Lb of order){ if(!Lb.at) continue;
       const now = costOf(Lb), [k, c] = bestPlace(Lb);
       if(k && k !== Lb.at && c < now - .5){ Lb.at = k; moved = true; } }
-    if(!moved) break;
-  }
+    if(!moved) break; } };
+  settle(); nudge(W, H);
+  // a far callout may change places with those in its way (twice at most); the rest then take
+  // any ring place that freed, and all slide again
+  for(let round = 0; round < 2 && relieve(); round++){ settle(); nudge(W, H); }
 }
 // relayout whenever the map's rendered size changes (window resize, sidebar sliding in or
 // out) — callouts are positioned in CSS px, so a stale width puts them off the countries
