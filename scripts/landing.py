@@ -877,7 +877,7 @@ def status_help_html(open_=False):
    {TB("<b>Map layers.</b>")} <span class='dot' style='background:{STATUS_COLOR["active"]}'></span>{TB("<b>Current frameworks</b> — every framework whose status is active, being updated or in development (the default view; the headline figures follow whatever is shown).")}
    <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span>{TB("<b>Non-framework allocations</b> — countries and hazards with anticipatory-action money outside a framework: released, or pre-arranged and not yet released (light green; a framework that also has non-framework money stays drawn as a framework).")}
    <span class='dot' style='background:{LAYER_COLOR["retired"]}'></span>{TB("<b>Retired</b> — frameworks flagged retired, drawn in grey so past coverage can be compared with today's.")}
-   <span class='dot dot-hollow' style='border-color:{LAYER_COLOR["tech"]}'></span>{TB("<b>Technical support</b> — countries where OCHA supported the framework technically without a funding commitment, whatever their status (including pipeline ones like Palau and Tonga), drawn as a hollow teal pin.")}
+   <span class='dot dot-hollow' style='border-color:{LAYER_COLOR["tech"]}'></span>{TB("<b>Technical support</b> — countries where OCHA supports coordinated anticipatory action but neither leads the effort nor provides pre-arranged financing, whatever the framework's status (including pipeline ones like Palau and Tonga), drawn as a hollow teal pin.")}
   </div>
  </div>
 </details>
@@ -2109,7 +2109,7 @@ def build_landing(page, d, e):
     from dashboards import regional_fund_labels
     cur = d["current"]
     names = dict(zip(cur["country_iso3"], cur["country_name"]))
-    countries = assemble(d, e)
+    countries = d.get("_map") or assemble(d, e)   # assembled once per build (dashboards.build_all)
     import figure_check
     figure_check.KEY["map"] = countries      # the cross-page figure check (build_site)
     svg, bboxes, wdata = world_data(set(countries), names)
@@ -3306,7 +3306,7 @@ const LDEF = {
   framework: () => tr8('Every framework whose status is active, being updated or in development.'),
   adhoc: () => tr8('Countries and hazards with anticipatory-action money outside a framework: released, or pre-arranged and not yet released.'),
   retired: () => tr8("Frameworks flagged retired, drawn in grey so past coverage can be compared with today's."),
-  tech: () => tr8('Countries where OCHA supported the framework technically, without a funding commitment, whatever its status.'),
+  tech: () => tr8('Countries where OCHA supports coordinated anticipatory action but neither leads the effort nor provides pre-arranged financing.'),   // the AA team's wording (review, 2026-11-10)
   funds: () => tr8('CERF: the Central Emergency Response Fund. CBPF: the country-based pooled funds. RHPF: the regional humanitarian pooled funds, through their country windows. Untick a fund to leave its money out of the figures, the table and the country panels; a pin with no money from a fund still ticked leaves the map (technical support stays). With all three ticked, frameworks with no money recorded yet are shown too, and money not split by fund counts.')};
 const defSpan = (k, inner) => `<span class='hasdef' tabindex='0' data-tip='${esc(LDEF[k]())}'>${inner}<span class='sr'>: ${esc(LDEF[k]())}</span></span>`;
 const defInfo = k => `<span class='info' tabindex='0' role='note' aria-label='${esc(LDEF[k]())}' data-tip='${esc(LDEF[k]())}'>i</span>`;
