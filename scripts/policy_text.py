@@ -11,6 +11,14 @@ import html
 GB_AA_URL = ("https://interagencystandingcommittee.org/sites/default/files/2024-12/"
              "GB%20AA%20-%20Final%20Caucus%20Outcome%20Document%20-%20New.pdf")
 
+# OCHA's guidance notes on acting ahead of each hazard (ReliefWeb, as of September 2025): linked
+# from the Activities page's box
+GUIDANCE = {
+    "drought": "https://reliefweb.int/report/world/guideline-acting-ahead-drought-september-2025",
+    "floods": "https://reliefweb.int/report/world/guidance-acting-ahead-floods-september-2025",
+    "tropical cyclones": "https://reliefweb.int/report/world/guidance-acting-ahead-tropical-cyclones-september-2025",
+}
+
 POLICY = {
     # the owner's wording (2026-10-28): the Grand Bargain definition, quoted and linked to its
     # source, then what a framework agrees in advance, each element linked to its page
@@ -50,15 +58,23 @@ POLICY = {
         "show how often a trigger is expected to release money and whether it would have caught "
         "the shocks that mattered. <b>Real activations</b> (when money actually went out) are "
         "marked alongside, so the design can be compared with what happened."),
+    # the AA team's wording (review of the Activities page, 2026-11-10), with the hazard guidance
+    # notes (OCHA, on ReliefWeb: GUIDANCE below)
     "pillar-plan.html": (
-        "What makes good anticipatory activities?",
-        "Good activities are the ones that can be delivered within the lead time the trigger "
-        "gives and that reduce the impacts the forecast warns about: cash before a flood so "
-        "families can move assets, livestock feed before the lean season, water treatment "
-        "before a cholera peak. They are agreed in advance with the <b>partners</b> who will "
-        "deliver them, including government counterparts and national organisations, are "
-        "matched to the <b>timing</b> of each trigger window, and are prepared (targeting, "
-        "contracts, stocks) so that nothing waits for the activation."),
+        "What makes an effective anticipatory activity?",
+        "<p class='policy-p'>Anticipatory activities help protect the lives, livelihoods and assets of "
+        "people most at risk from a predicted hazard. Assistance must reach people within the window of "
+        "opportunity: after the relevant trigger is met and in time to prevent or reduce humanitarian "
+        "impacts before they fully unfold.</p>"
+        "<p class='policy-p' style='margin-top:8px'>Activities should address communities’ risks and "
+        "priorities and match partners’ capacity to deliver assistance at scale within this timeframe. "
+        "They should remain beneficial and avoid harm even if the hazard does not unfold as expected. "
+        "Activities, responsibilities and delivery arrangements should be agreed in advance, with "
+        "readiness steps linked to the relevant triggers.</p>"
+        "<p class='policy-p' style='margin-top:8px'>Guidance on acting ahead of "
+        f"<a href='{GUIDANCE['drought']}' target='_blank' rel='noopener'>drought</a>, "
+        f"<a href='{GUIDANCE['floods']}' target='_blank' rel='noopener'>floods</a> and "
+        f"<a href='{GUIDANCE['tropical cyclones']}' target='_blank' rel='noopener'>tropical cyclones</a>.</p>"),
     "dash-funding.html": (
         "What is pre-arranged financing?",
         "Pre-arranged financing is money committed to a framework before any shock, so it can "

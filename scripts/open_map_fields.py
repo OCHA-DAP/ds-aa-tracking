@@ -46,7 +46,8 @@ MAP_FIELDS = {
         "layers": "the map layers the pair is drawn on: framework (current frameworks), retired, adhoc "
                   "(non-framework allocations), tech (technical support). The headline figures count "
                   "pairs on `framework` (= `map_layers` in aa-frameworks)",
-        "tech": "OCHA supported the framework technically, with no funding",
+        "tech": "technical support: OCHA supports coordinated anticipatory action here but neither leads "
+                "the effort nor provides pre-arranged financing",
         "general": "true for technical support for anticipatory action in general, not for one hazard "
                    "(hazard `general`, shown as 'No specific hazard'): technical support only, never a "
                    "framework version or an allocation",

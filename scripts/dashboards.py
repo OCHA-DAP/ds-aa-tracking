@@ -31,6 +31,15 @@ HEAT_STEPS = [5e5, 1e6, 2e6, 3e6, 5e6]
 HEAT_COLORS = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#1c5cab", "#0d366b"]
 # a fund type in words (chart legends): the type is a code, never shown
 FUND_TYPE_LABEL = {"cerf": "CERF", "cbpf": "Country funds", "regional_fund": "Regional funds"}
+# one colour per kind of organisation on every page (review, 2026-11-10: "make sure entity color
+# coding is consistent throughout the dashboard: UN is UN blue, RCRC is red cross red"): the
+# money-flow chart's recipients, the Financing chart of UN spend and sub-grants, the Activities
+# partner charts. UN blue and Red Cross red are given; the other three were picked so that all
+# five pass the palette checks as a set (every pair: colour-vision-deficiency dE >= 10.8, normal
+# vision >= 18.4, on white); the two greys are the neutral categories (other, not recorded).
+# Keys: the recipient categories of _recipient_cat
+ORG_COLOR = {"un": "#009edb", "ingo": "#65389f", "nngo": "#ceaa3e", "gov": "#0f8a5f", "rc": "#ed1b2e",
+             "oth": "#3a3f47", "nr": "#d6dae0"}
 HAZARDS = ["drought", "flood", "storm", "cholera"]  # fixed order; rest -> Other
 
 # ---------------------------------------------------------------- codes as words
@@ -289,13 +298,17 @@ const stackTotals = { id:'stackTotals', afterDatasetsDraw(chart, args, o){
   if(!o || !o.fmt) return;
   const {ctx, scales:{x, y}} = chart, horiz = o.horiz, n = chart.data.labels.length;
   ctx.save(); ctx.font = '600 10.5px ' + Chart.defaults.font.family; ctx.fillStyle = '#52514e';
-  for(let i=0;i<n;i++){ let tot = 0;
-    chart.data.datasets.forEach((d,di)=>{ if(chart.isDatasetVisible(di)) tot += (+d.data[i]||0); });
-    if(!tot) continue;
-    if(horiz){ ctx.textAlign='left'; ctx.textBaseline='middle';
-      ctx.fillText(o.fmt(tot), x.getPixelForValue(tot)+4, y.getPixelForValue(i)); }
-    else { ctx.textAlign='center'; ctx.textBaseline='bottom';
-      ctx.fillText(o.fmt(tot), x.getPixelForValue(i), y.getPixelForValue(tot)-3); } }
+  // one total per stack (a label can carry two bars side by side: dataset.stack), drawn over the
+  // bar itself; a dataset marked noTotal (a trend line) is not part of any sum
+  for(let i=0;i<n;i++){ const stacks = {};
+    chart.data.datasets.forEach((d,di)=>{ if(!chart.isDatasetVisible(di) || d.noTotal) return;
+      const g = stacks[d.stack ?? ''] ??= {tot:0, el:null}, el = chart.getDatasetMeta(di).data[i];
+      g.tot += (+d.data[i]||0); if(el) g.el = el; });
+    Object.values(stacks).forEach(({tot, el})=>{ if(!tot) return;
+      if(horiz){ ctx.textAlign='left'; ctx.textBaseline='middle';
+        ctx.fillText(o.fmt(tot), x.getPixelForValue(tot)+4, el ? el.y : y.getPixelForValue(i)); }
+      else { ctx.textAlign='center'; ctx.textBaseline='bottom';
+        ctx.fillText(o.fmt(tot), el ? el.x : x.getPixelForValue(i), y.getPixelForValue(tot)-3); } }); }
   ctx.restore(); } };
 // a chart whose selection holds no money (a hazard in a region with nothing recorded) says so,
 // instead of drawing empty axes with $0 / $1 ticks
@@ -309,9 +322,10 @@ function mkChart(id, type, labels, datasets, opts={}){
   // the page filters on are not; pages redraw on the 'aalang' event
   labels = labels.map(x=>typeof x==='string' ? tr8(x) : x);
   datasets.forEach((d,i)=>{ if(typeof d.label==='string') d.label = tr8(d.label); d.backgroundColor ??= PAL[i%%PAL.length];
-    d.borderColor ??= (type==='line'? d.backgroundColor : '#fcfcfb');
-    if(type==='bar'){ d.borderWidth=1; d.borderRadius=3; d.maxBarThickness=34; }
-    if(type==='line'){ d.borderWidth=2; d.pointRadius=2; d.pointHoverRadius=5; d.tension=0.15; }});
+    const t = d.type || type;   // a dataset can be a line over the bars (a trend)
+    d.borderColor ??= (t==='line'? d.backgroundColor : '#fcfcfb');
+    if(t==='bar'){ d.borderWidth=1; d.borderRadius=3; d.maxBarThickness=34; }
+    if(t==='line'){ d.borderWidth ??= 2; d.pointRadius ??= 2; d.pointHoverRadius ??= 5; d.tension ??= 0.15; }});
   const el = document.getElementById(id);
   if(el._chart) el._chart.destroy();
   const horiz = opts.extra && opts.extra.indexAxis === 'y';
@@ -320,8 +334,9 @@ function mkChart(id, type, labels, datasets, opts={}){
   const valAxis = {stacked:!!opts.stacked, ticks:{callback:fmt}, grid:{color:'#f0f0f0'},
     ...(opts.totals ? {grace:'10%%'} : {})};
   const catAxis = {stacked:!!opts.stacked, grid:{display:false}, ticks:{autoSkip:!opts.allLabels}};
-  const cb = {label:c=>{const v=horiz?c.parsed.x:(c.parsed.y??c.parsed);return ` ${c.dataset.label??''}: ${fmt(v)}`;}};
-  if(opts.totals && datasets.length>1) cb.footer = items=>tr8('total: {0}', fmt(items.reduce((s,c)=>s+((horiz?c.parsed.x:c.parsed.y)||0),0)));
+  const cb = {label:c=>{const v=horiz?c.parsed.x:(c.parsed.y??c.parsed);
+    return ` ${c.dataset.label??''}: ${opts.count && c.dataset.noTotal ? Math.round(v*10)/10 : fmt(v)}`;}};
+  if(opts.totals && datasets.length>1) cb.footer = items=>tr8('total: {0}', fmt(items.filter(c=>!c.dataset.noTotal).reduce((s,c)=>s+((horiz?c.parsed.x:c.parsed.y)||0),0)));
   el._chart = new Chart(el, { type, data:{labels, datasets},
     plugins: [...(opts.totals ? [stackTotals] : []), ...(empty ? [emptyNote] : [])],
     options:{
@@ -338,6 +353,27 @@ function groupSum(rows, keyFn, valFn){ const m={};
   rows.forEach(r=>{ const k=keyFn(r); m[k]=(m[k]||0)+(valFn(r)||0); }); return m; }
 function uniqSorted(rows, f){ return [...new Set(rows.map(f).filter(x=>x!=null))].sort(); }
 function cumulate(arr){ let s=0; return arr.map(v=>s+=(v||0)); }
+// a trend over yearly values (review, 2026-11-10: "add polynomial trend line?"): the least-squares
+// polynomial of order 2 through the points (order 1 with three points, none with fewer), never
+// below zero. xs: the positions fitted; returns the fitted value at each of them
+function polyTrend(xs, ys){
+  const n = xs.length; if(n < 3) return null;
+  const deg = n >= 4 ? 2 : 1, m = deg + 1, x0 = xs.reduce((a,b)=>a+b,0)/n, X = xs.map(x=>x-x0);
+  const A = Array.from({length:m}, (_,i)=>Array.from({length:m+1}, (_,j)=>
+    j < m ? X.reduce((s,x)=>s+x**(i+j),0) : X.reduce((s,x,k)=>s+ys[k]*x**i,0)));
+  for(let i=0;i<m;i++){ let p = i; for(let r=i+1;r<m;r++) if(Math.abs(A[r][i]) > Math.abs(A[p][i])) p = r;
+    [A[i], A[p]] = [A[p], A[i]]; if(Math.abs(A[i][i]) < 1e-12) return null;
+    for(let r=0;r<m;r++){ if(r === i) continue; const f = A[r][i]/A[i][i]; for(let c=i;c<=m;c++) A[r][c] -= f*A[i][c]; } }
+  const b = A.map((r,i)=>r[m]/r[i]);
+  return X.map(x=>Math.max(0, b.reduce((s,c,i)=>s+c*x**i,0))); }
+// ... as a dashed line over a bar chart's years: fitted on the complete years (the current year,
+// still running, is left out) and drawn over those years only. vals: the yearly totals
+function trendSet(years, vals, cy){
+  const idx = years.map((y,i)=>i).filter(i=>+String(years[i]).replace('*','') < cy);
+  const fit = polyTrend(idx, idx.map(i=>vals[i]||0)); if(!fit) return null;
+  const data = years.map(()=>null); idx.forEach((i,k)=>{ data[i] = fit[k]; });
+  return {type:'line', label:'trend', data, noTotal:true, borderColor:'#52514e', backgroundColor:'#52514e',
+    borderDash:[5,4], borderWidth:1.5, pointRadius:0, pointHoverRadius:0, tension:0.35, order:-1}; }
 """ % (json.dumps(PAL), json.dumps(FUND_COLORS), json.dumps(FUND_TYPE_LABEL))
 
 
@@ -1395,8 +1431,9 @@ def _resolve_pooled_fund(d):
 
 
 def _dash_page(page, name, title, intro, panels_html, data_json, js_body):
+    # the card under the page's box: left out when a page has nothing to add to the box
     body = f"""
-<div class='card'>{intro}</div>
+{f"<div class='card'>{intro}</div>" if intro else ""}
 {panels_html}
 <script src="chart.umd.js"></script>
 <script>window.D = {data_json}; window.REGIONAL_FUNDS = {json.dumps(sorted(REGIONAL_FUNDS))};</script>
@@ -1831,6 +1868,33 @@ def _money_flows(d, pre, act):
     co = co.groupby(["fund_code", "year", "node"])["usd"].sum()
     ca["node"] = ca["org_name"].map(fold).map(org_node)
     ca_by = {ac: g.groupby("node")["usd"].sum() for ac, g in ca.groupby("allocation_code")}
+    # a framework budget's line -> its node. CERF's lines name UN agencies (CERF's box of the
+    # agency); a Country or Regional Fund's budget also names NGOs and Red Cross societies (Nigeria
+    # floods: HARAF, LESGO, NRCS; Vanuatu storm: VANGO, VRCS): those take the organisation's own box
+    # where the recipients' registry above has it, else the kind its framework's partner list gives
+    # (any framework's, where its own has none), else 'other'. They were all drawn as UN agencies
+    # until 2026-11-13, which the Activities page's partner counts by kind made visible
+    kind_of = {"government": "gov", "gov": "gov", "un": "un", "ingo": "ingo", "nngo": "nngo",
+               "rcrc": "rc", "red cross": "rc"}
+    pk = {}
+    for p_ in d["partners"].itertuples():
+        cat_ = kind_of.get(str(p_.org_type).strip().lower(), "oth")
+        for nm in (p_.acronym, p_.name):
+            if isinstance(nm, str) and len(fold(nm)) >= 2:
+                pk.setdefault((p_.country_iso3, fold(nm)), cat_)
+                pk.setdefault((None, fold(nm)), cat_)
+
+    def budget_node(agency, c):
+        n = str(agency)
+        if placeholder.search(n) or _is_un(n):
+            return _agency_node(n)
+        k = fold(n)
+        if k in org_node:
+            return org_node[k]
+        # ... or a partner of that country whose name begins with it ('WanSmolBag': 'Wan Smolbag (incl. …)')
+        near = next((cat_ for (c_, k_), cat_ in pk.items()
+                     if c_ == c and min(len(k), len(k_)) >= 5 and (k_.startswith(k) or k.startswith(k_))), None)
+        return f"{pk.get((c, k)) or near or pk.get((None, k)) or 'oth'}{sep}{n}"
     split = d["split_all"].copy()
     split["version"] = split["version"].astype(str)
     fvm = d["fv_meta"].copy()
@@ -1944,7 +2008,7 @@ def _money_flows(d, pre, act):
                 continue
             shares = sp.groupby("agency")["amount_usd"].sum()
             for agency, v in shares.items():
-                add("p", y, "f", "f:" + fc, "a:" + _agency_node(agency), v / shares.sum() * amount, g, fc, rg, c)
+                add("p", y, "f", "f:" + fc, "a:" + budget_node(agency, c), v / shares.sum() * amount, g, fc, rg, c)
 
     # ---------------- released, in the year it went out (years add up); one pass per layer
     R = act[act["amount_usd"].fillna(0) > 0]
@@ -2130,9 +2194,10 @@ const CAT_LABEL = {un:'UN agency', ingo:'international NGO', nngo:'national / lo
 // to be named in the view -> OTHER
 const FLOW_NR = 'Not recorded', FLOW_OTHER = 'Other';
 // one colour per category on every level, apart from the fund colours (CERF blue, CBPF orange,
-// RhPF green); the five hues validated as a set (all pairs: CVD dE >= 13.5, normal >= 19.6) and
-// against the fund colours (normal >= 15.6); the two greys are the neutral categories
-const CAT_COLOR = {un:'#65389f', ingo:'#70b6e7', nngo:'#ceaa3e', gov:'#8a4f0e', rc:'#c3518d', oth:'#3a3f47', nr:'#d6dae0'};
+// RhPF green): the site's one set for the kinds of organisation (ORG_COLOR in dashboards.py: UN
+// blue and Red Cross red as asked, the five hues checked as a set). UN blue sits near CERF's blue:
+// the two never share a column, and every box is named
+const CAT_COLOR = """ + json.dumps(ORG_COLOR) + """;
 // the recipient-type column: one node per category, the far-right column
 const CAT_GROUP = {un:'UN agencies', ingo:'International NGOs', nngo:'National / local NGOs', gov:'Government',
   rc:'Red Cross / Red Crescent', oth:FLOW_OTHER, nr:FLOW_NR};
@@ -2531,6 +2596,7 @@ def build_funding(page, d):
     n_un_partners = len({i for v, x in sp if v > 0 for i in x["p"]})
 
     flow_rows, flow_years, flow_default, fund_names = _money_flows(d, pre, act)
+    d["_flows"] = flow_rows   # the Activities page's partner series are these rows, by year (page_plan)
 
     # co-financing PRE-ARRANGED, by year: the yearly totals (window_funding kind='cofinancing'
     # with a year and no agency / sector line, i.e. aa.prearranged_funding — an agency breakdown
@@ -3131,7 +3197,9 @@ function drawUN(s, A){
     add('direct UN spend', v - s_); known += v; sub += s_;
     Object.entries(x.l).forEach(([k, sh])=>{ l[k] += v*sh; });
     if(v > 0) x.p.forEach(i=>pids.add(i)); });
-  const ds = UG.map((g,i)=>({label:g, backgroundColor: g==='split not known' ? '#c8ccd2' : PAL[i],
+  const UGC = {'direct UN spend':CAT_COLOR.un, 'INGO':CAT_COLOR.ingo, 'NNGO / local':CAT_COLOR.nngo,
+    'Red Cross / Red Crescent':CAT_COLOR.rc, 'government':CAT_COLOR.gov, 'other':CAT_COLOR.oth, 'split not known':CAT_COLOR.nr};
+  const ds = UG.map(g=>({label:g, backgroundColor:UGC[g],
     data:uy.map(y=>(by[y]||{})[g]||0)})).filter(d=>d.data.some(v=>v));
   if(s.cum) ds.forEach(d=>{ d.data = cumulate(d.data); });   // as c2
   mkChart('c9','bar',uy.map(yLab),ds,{stacked:true, totals:true});
@@ -5128,6 +5196,9 @@ def build_all(e, page, tbl):
     d["fwy"] = landing.framework_status_by_year(d, e)   # the Financing chart of frameworks by year
     build_funding(page, d)
     build_model(page, d)
+    # the map's data, once: the Activities page shows the map's own figures (people covered,
+    # reached or targeted) and build_landing below draws the map from the same object
+    d["_map"] = landing.assemble(d, e)
     build_plan(page, d)
     build_learning(page, d)
     import page_definitions

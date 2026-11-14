@@ -46,8 +46,8 @@ GLOSSARY = [
          "The current trigger run over past years, to see when it would have activated. Simulated "
          "activations are kept apart from real ones."),
         ("Technical support",
-         "Countries where OCHA supported the framework technically, without a funding commitment, "
-         "whatever its status."),
+         "Countries where OCHA supports coordinated anticipatory action but neither leads the effort "
+         "nor provides pre-arranged financing."),
         ("No specific hazard",   # in DEV_ONLY_TERMS: left off the open site while landing.GENERAL_ON_OPEN is off (D202)
          "Technical support for anticipatory action in general, not for one hazard. No framework and "
          "no allocation stand behind it; the Map draws its pin with an open ring."),

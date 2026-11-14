@@ -271,6 +271,11 @@ def check() -> None:
         sum(e["a"] or 0 for e in ev if e["ah"]))
 
     # ---- Activities (people reached, CERF allocations of framework activations, to date)
+    # the Activities page's people series (page_plan._people_series) reads the map's records year
+    # by year: its current year is the map's estimate for the year, its years together the map's total
+    t_cy = landing.tile_figures(M, {"framework", "retired"}, cy)
+    cmp(f"people reached or targeted, {cy}", "Map ↔ Activities", t_cy["reached"] + t_cy["targeted"] + t_cy["ptargeted"],
+        A["reach_cy"], "n")
     cmp("people reached", "Map ↔ Activities", t_fr["reached"], A["reached"], "n")
     cmp("CERF allocations reporting people reached", "Map ↔ Activities", t_fr["n_rep"], A["n_rep"], "n")
     cmp("CERF allocations of framework activations", "Map ↔ Activities", t_fr["n_cerf"], A["n_cerf"], "n")
