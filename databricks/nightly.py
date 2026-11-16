@@ -79,10 +79,10 @@ for _sub in ("src", "scripts"):
 shutil.copy2(_SRC / "proxy" / "mirror_tables.json", ROOT / "proxy" / "mirror_tables.json")
 
 
-def run(*args, **env):
+def run(*args, timeout=None, **env):
     cmd = [sys.executable, *args]
     print("+", " ".join(str(a) for a in cmd), flush=True)
-    subprocess.run(cmd, cwd=ROOT, check=True, env={**os.environ, **env})
+    subprocess.run(cmd, cwd=ROOT, check=True, env={**os.environ, **env}, timeout=timeout)
 
 
 def main():
@@ -118,9 +118,10 @@ def main():
         run("scripts/resolve_provisional.py")
     except subprocess.CalledProcessError as ex:
         print(f"!! resolve_provisional failed ({ex}); continuing to the snapshot", flush=True)
-    try:   # a document registered today is searchable from tomorrow's snapshot
-        run("scripts/extract_document_text.py")
-    except subprocess.CalledProcessError as ex:
+    try:   # a document registered today is searchable from tomorrow's snapshot. Time-limited:
+        # it parses arbitrary PDFs, and each document commits on its own, so a stop is safe
+        run("scripts/extract_document_text.py", timeout=900)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as ex:
         print(f"!! extract_document_text failed ({ex}); continuing to the snapshot", flush=True)
     run("scripts/export_snapshot.py", *(["--no-prune"] if a.no_prune else []))
 

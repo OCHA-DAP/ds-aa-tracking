@@ -585,7 +585,9 @@ DURABLE_TABLES = {
             title text,
             language text,                 -- en | fr | es — one per file; a translation
                                            -- is another file of the SAME version
-            is_public boolean NOT NULL,    -- false: never on the public site or in the KB
+            is_public boolean NOT NULL,    -- false: never on the public site or in the KB;
+                                           -- its text is still stored (framework_document_page,
+                                           -- D228) for internal readers, who must not link it
             retrieved_from text,           -- where THESE BYTES came from (the URL actually
                                            -- fetched, 'email from …'), not today's link
             retrieved_at timestamptz,      -- NULL when unknown (the KB-cache backfill)
@@ -620,10 +622,11 @@ DURABLE_TABLES = {
     # the text of every registered document, page by page (D228), so a framework document
     # can be searched and quoted with its page number. Derived from the archived bytes: the
     # nightly job runs scripts/extract_document_text.py, which reads each registered PDF
-    # that has no pages from the current extractor yet and writes them here; a file is
-    # read once (its sha256 never changes). A page without a text layer (a scan) is kept
-    # with text ''. Same audience as the file: framework_document.is_public says whether
-    # the document is published.
+    # that has no pages from the current extractor yet and writes them here: a file is read
+    # once per extractor (pypdf is pinned, so in practice once), and its text goes when it
+    # leaves the registry. A page without a text layer (a scan) is kept with text ''. Same
+    # audience as the file: framework_document.is_public says whether it is published. The
+    # admin page shows it read-only.
     "framework_document_page": """
         CREATE TABLE IF NOT EXISTS aa.framework_document_page (
             sha256 text NOT NULL,          -- aa.framework_document

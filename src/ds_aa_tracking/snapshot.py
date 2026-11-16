@@ -176,6 +176,7 @@ def export(engine, out: Path, source: str = "") -> dict:
     meta: dict = {}
     counts: dict[str, int] = {}
     view_counts: dict[str, int] = {}
+    view_errors: dict[str, str] = {}
     # one REPEATABLE READ transaction => every table, view and the catalog agree
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as conn:
         with conn.begin():
@@ -187,11 +188,21 @@ def export(engine, out: Path, source: str = "") -> dict:
                 df.to_parquet(out / SCHEMA / f"{t}.parquet", index=False)
                 counts[t] = int(len(df))
             for v in [r["name"] for r in meta["views"]]:
+                # each view in its own savepoint: a view that fails to read (or to write)
+                # is left out and named in the manifest, never the end of the snapshot
                 types = {c["name"]: c["type"] for c in meta["view_columns"]
                          if c["view_name"] == v}
-                df = _read(conn, v, types)
-                df.to_parquet(out / VIEW_DIR / f"{v}.parquet", index=False)
-                view_counts[v] = int(len(df))
+                sp = conn.begin_nested()
+                try:
+                    df = _read(conn, v, types)
+                    df.to_parquet(out / VIEW_DIR / f"{v}.parquet", index=False)
+                    sp.commit()
+                    view_counts[v] = int(len(df))
+                except Exception as exc:  # noqa: BLE001 — report and continue
+                    sp.rollback()
+                    (out / VIEW_DIR / f"{v}.parquet").unlink(missing_ok=True)
+                    view_errors[v] = str(exc).splitlines()[0][:300]
+                    print(f"  ! view {v} left out of aa_views: {view_errors[v]}")
     manifest = {
         "snapshot_at": started.isoformat(timespec="seconds"),
         "schema": SCHEMA,
@@ -200,7 +211,8 @@ def export(engine, out: Path, source: str = "") -> dict:
         "n_views": len(meta["views"]),
         "rows": counts,
         "total_rows": int(sum(counts.values())),
-        "view_rows": view_counts,
+        "view_rows": view_counts,       # the views in aa_views/ (a reader goes by this list)
+        "view_errors": view_errors,     # views left out of aa_views/, with the error
     }
     (out / "schema.json").write_text(json.dumps(meta, indent=1, default=str))
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1))

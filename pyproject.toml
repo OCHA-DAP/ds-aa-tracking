@@ -17,7 +17,7 @@ dependencies = [
     "markdown>=3.5",
     "topojson>=1.10",
     "pyarrow>=15",
-    "pypdf>=6.19.0",
+    "pypdf==6.19.0",  # pinned: its version labels the extracted document text (D228)
     "pillow>=10",
 ]
 

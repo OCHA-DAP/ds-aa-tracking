@@ -82,6 +82,9 @@ resources:
             - pypi: { package: "pyyaml" }
             - pypi: { package: "pycountry" }
             - pypi: { package: "openpyxl" }
+            # the document text step (D228); PINNED: a new pypdf changes the extractor label and
+            # re-reads every document (scripts/extract_document_text.py)
+            - pypi: { package: "pypdf==6.19.0" }
 
 targets:
   dev:
