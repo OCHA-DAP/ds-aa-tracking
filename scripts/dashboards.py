@@ -2129,7 +2129,7 @@ FLOW_NOTE = " ".join(TB(x) for x in (
     "allocation also paid for other things), or, where no allocation is recorded, to the grantees "
     "of the fund's projects marked AA that year; a grantee implements directly, so its band runs on, same "
     "amount, to the same organisation in the final column.",
-    f"<b>Countries</b> (tick <i>countries</i>): a column between the funds and the agencies — the "
+    f"<b>Framework countries</b> (tick <i>framework countries</i>): a column between the funds and the agencies — the "
     f"country of the framework (pre-arranged) or of the activation (released). The {FLOW_TOP_COUNTRIES} "
     "countries receiving the most in the view are named, the rest grouped as <i>Other</i>; "
     "a regional fund allocation that names no single country is <i>multi-country / regional</i>. "
@@ -2166,7 +2166,7 @@ def _flow_panel(donors_on, donor_toggle=True, extra=""):
    <label style='padding:3px 10px;cursor:pointer;border-left:1px solid #cbd5e1'><input type='radio' name='flM' value='r' checked> {T('released')}</label></span>
   <label><span id='flYl'>{T('Released in')}</span> <select id='flY'></select></label>
   {dctl}
-  <label {ATTR('title', 'a column of the countries between the funds and the agencies: the ones receiving the most named, the rest grouped')}><input type='checkbox' id='flC'> {T('countries')}</label>
+  <label {ATTR('title', 'a column of the countries between the funds and the agencies: the ones receiving the most named, the rest grouped')}><input type='checkbox' id='flC'> {T('framework countries')}</label>
   <label {ATTR('title', 'a last column that groups the recipients by type (UN agencies, NGOs, Red Cross / Red Crescent, government, other)')}><input type='checkbox' id='flK' checked> {T('recipient types')}</label>
   <label id='flPw'><input type='checkbox' id='flP' checked> {T('final recipients')}</label>
   <label>{T('Find')} <input type='search' id='flS' list='flSL' {ATTR('placeholder', 'a donor, country or organisation')} {ATTR('aria-label', 'Find a donor, country or organisation in the flows')} style='width:230px;max-width:100%;font-size:12.5px;padding:3px 6px'></label><datalist id='flSL'></datalist>
@@ -2259,18 +2259,21 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
     if(p==='f') return tr8(names[n]||n);
     if(p==='c') return n==='*' ? tr8('multi-country / regional') : n==='+' ? tr8(FLOW_OTHER) : tr8(names[id]||n);
     const r = flowNode(id); return tr8(r ? r.name : n); };
-  const cols = [];
+  // a heading over each column (owner, 2026-11-16: "little labels above the groups for donors,
+  // funds, etc"), in the words of the tick box that shows the column, where it has one
+  const cols = [], heads = [], cap = s => s.charAt(0).toUpperCase() + s.slice(1);
   const col = pre => { const ids = new Set(); L.forEach(l=>{ [l.s,l.t].forEach(x=>{ if(x.startsWith(pre)) ids.add(x); }); });
     return [...ids].map(id=>({id, label:lab(id)})); };
-  if(showD) cols.push(col('d:'));
-  cols.push(col('f:'));
-  if(showC) cols.push(col('c:'));
-  cols.push(col('a:'));
-  if(showP) cols.push(col('p:'));
-  if(showK) cols.push(col('k:'));
+  const put = (pre, head) => { cols.push(col(pre)); heads.push(head); };
+  if(showD) put('d:', cap(tr8('donors')));
+  put('f:', tr8('Funds'));
+  if(showC) put('c:', cap(tr8('framework countries')));
+  put('a:', tr8('Agencies and grantees'));
+  if(showP) put('p:', cap(tr8('final recipients')));
+  if(showK) put('k:', cap(tr8('recipient types')));
   const seen = new Set(); cols.forEach(c=>c.forEach(n=>{ const r = flowNode(n.id); if(r) seen.add(r.cat); }));
   const total = L.filter(l=>l.lv==='f').reduce((s,l)=>s+l.v,0);
-  return {columns:cols, links:L.map(l=>({s:l.s,t:l.t,v:l.v})), total, cats:CAT_ORDER.filter(c=>seen.has(c))};
+  return {columns:cols, heads, links:L.map(l=>({s:l.s,t:l.t,v:l.v})), total, cats:CAT_ORDER.filter(c=>seen.has(c))};
 }
 // wire the panel _flow_panel() wrote; cfg.keep(row) filters the rows (the page's toggles);
 // cfg.yLab(year) labels a year (Financing: the current year as '2026*', indicative), cfg.cy the
@@ -2426,7 +2429,7 @@ function mountFlow(cfg){
     // five columns (donors … recipient types) leave ~170px between them at 1100: wider, shorter labels;
     // six (with the countries) wider again
     const nc = F.columns.length, wide = nc >= 5;
-    el.innerHTML = sankeySVG({columns:F.columns, links:F.links, width:nc >= 6 ? 1400 : wide ? 1300 : 1100, height:Math.max(260, n*24),
+    el.innerHTML = sankeySVG({columns:F.columns, heads:F.heads, links:F.links, width:nc >= 6 ? 1400 : wide ? 1300 : 1100, height:Math.max(260, n*24),
       fmt:money, labelW:200, labelMax:nc >= 6 ? 22 : wide ? 26 : 34, label:tr8(cfg.label || 'AA money through funds and agencies'),
       nodeColor: nd => { const r = flowNode(nd.id); return r ? CAT_COLOR[r.cat] : null; }});
     el.insertAdjacentHTML('beforeend', "<div class='note'>" + tr8('Hover a band or a box to follow the money; click a box to keep it in focus, click again to clear. Funds in their own colour (CERF blue, pooled funds orange, regional funds green); every agency, grantee and recipient in the colour of its category; a band takes the colour of the box it leaves.') + "</div>");
