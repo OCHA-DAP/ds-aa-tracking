@@ -1,8 +1,11 @@
 /* Minimal dependency-free Sankey + horizontal-bar renderer (inline SVG strings).
    Shared by the landing map sidebar and the dashboard pages; no CDN, no build step.
 
-   sankeySVG({columns, links, width, height, fmt, color, nodePad, labelW, labelMax, nodeColor})
+   sankeySVG({columns, links, width, height, fmt, color, nodePad, labelW, labelMax, nodeColor, heads})
      columns: [[{id, label}], ...]  left -> right; a node's value is max(inflow, outflow)
+     heads:   ['Donors', 'Funds', ...] optional, one per column of `columns`: a small heading
+              above each column, on one row (a column with nothing in it has none); a '\n' in a
+              heading breaks it over two lines, the last on the row of the others
      links:   [{s, t, v}]           s/t are node ids in adjacent (or later) columns
      fmt(v)   value formatter for tooltips; color(node, colIndex) -> fill
    Returns an <svg> string; each band and node carries a <title> tooltip.
@@ -35,7 +38,11 @@
     return null;   // donors, sectors, partner types: neutral
   }
   function sankeySVG(o){
-    const cols = o.columns.filter(c => c && c.length), links = (o.links||[]).filter(l => l.v > 0);
+    // each heading stays with its column: a column with nothing in it is dropped, heading and all
+    const src = o.columns.map((c, i) => ({c, h: o.heads ? o.heads[i] : null})).filter(x => x.c && x.c.length);
+    const cols = src.map(x => x.c), heads = o.heads ? src.map(x => x.h == null ? [] : String(x.h).split('\n')) : null;
+    const top = heads ? 18 + 13 * (Math.max(1, ...heads.map(h => h.length)) - 1) : 0;
+    const links = (o.links||[]).filter(l => l.v > 0);
     const W = o.width || 360, fmt = o.fmt || (v => v), pad = o.nodePad == null ? 6 : o.nodePad;
     const nodeW = 9, labelW = o.labelW == null ? Math.min(120, W * 0.3) : o.labelW;
     const col = {}, byId = {};
@@ -54,14 +61,19 @@
     const xs = kept.map((_, i) => nc === 1 ? x0 : x0 + (x1 - x0) * i / (nc - 1));
     kept.forEach((c, i) => {
       const used = c.reduce((s, n) => s + Math.max(minH, n.v * k), 0) + pad * (c.length - 1);
-      let y = 5 + Math.max(0, (H - 10 - used) / 2);
+      let y = top + 5 + Math.max(0, (H - 10 - used) / 2);
       c.forEach(n => { n.x = xs[i]; n.y = y; n.h = Math.max(minH, n.v * k); const off = (n.h - n.v * k) / 2; n.sy = y + off; n.ty = y + off; y += n.h + pad; });
     });
     // every node: its fund / agency colour, else neutral. A link takes its source's colour,
     // or its target's when the source is neutral (donor -> fund bands in the fund's colour)
     kept.forEach(c => c.forEach(n => { n.fill = n.color || (o.nodeColor && o.nodeColor(n)) || sankeyColor(n.id, n.label); }));
     L.sort((a, b) => (byId[a.s].y - byId[b.s].y) || (byId[a.t].y - byId[b.t].y));
-    let out = `<svg class='sk' viewBox='0 0 ${W} ${H}' width='100%' role='img' aria-label='${esc(o.label || 'flow diagram')}' style='display:block;font:11px system-ui,sans-serif'>`;
+    let out = `<svg class='sk' viewBox='0 0 ${W} ${H + top}' width='100%' role='img' aria-label='${esc(o.label || 'flow diagram')}' style='display:block;font:11px system-ui,sans-serif'>`;
+    // the headings: one row, just above the top of the tallest column (the columns are centred, so
+    // the others start lower), each set as its column's names are (the first column's to the left
+    // of its boxes, the others' to the right); never dimmed by a focus
+    const hy = heads ? Math.min(...kept.filter(c => c.length).map(c => c[0].y)) - 8 : 0;
+    if (heads) kept.forEach((c, i) => { if (c.length) heads[i].forEach((line, j) => { if (line) out += `<text class='sk-h' x='${i === 0 ? xs[i] + nodeW + 2 : xs[i] - 2}' y='${hy - 13 * (heads[i].length - 1 - j)}' text-anchor='${i === 0 ? 'end' : 'start'}' fill='#475569' font-weight='600'>${esc(line)}</text>`; }); });
     L.forEach(l => {
       const s = byId[l.s], t = byId[l.t], h = l.v * k; if (s.h === undefined || t.h === undefined) return;
       const xa = s.x + nodeW, xb = t.x, ya = s.sy + h / 2, yb = t.ty + h / 2; s.sy += h; t.ty += h;
