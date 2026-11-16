@@ -2172,6 +2172,7 @@ def _flow_panel(donors_on, donor_toggle=True, extra=""):
   <label>{T('Find')} <input type='search' id='flS' list='flSL' {ATTR('placeholder', 'a donor, country or organisation')} {ATTR('aria-label', 'Find a donor, country or organisation in the flows')} style='width:230px;max-width:100%;font-size:12.5px;padding:3px 6px'></label><datalist id='flSL'></datalist>
   <span id='flTot' class='muted'></span>
  </div>
+ <div id='flR' role='status' aria-live='polite' hidden style='font-size:13px;line-height:1.45;background:#f3f7fc;border-left:3px solid var(--accent);border-radius:4px;padding:7px 10px;margin:0 0 8px'></div>
  <div id='flow'></div><div id='flLeg' class='note' style='display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center'></div><script src="sankey.js"></script>
  <details class='note'><summary style='cursor:pointer'>{T('How the flows are counted')}</summary>{FLOW_NOTE}{extra}</details>
 </div>"""
@@ -2284,29 +2285,117 @@ function mountFlow(cfg){
   const keep = noY == null ? keep0 : (r => +r.y !== noY && keep0(r));
   const yLab = cfg.yLab || (y=>String(y)), cy = cfg.cy || new Date().getFullYear();
   const modeOf = () => document.querySelector("input[name='flM']:checked").value;
-  // the search box (owner, 2026-10-28): every donor, country and organisation of the view, so a
-  // small one grouped under 'other' can be picked, named and focused like a large one
-  let pick = '', choices = new Map();
+  // the search box (owner, 2026-10-28): every donor, country, agency and organisation of the view,
+  // so a small one grouped under 'other' can be picked, named and focused like a large one.
+  // pick: 'd:…' a donor, 'c:…' a country, 'o:NAME' an organisation or an agency, by its name.
+  // (2026-11-16, a colleague: "it doesn't really resolve well": the box now answers what is typed
+  // — one name, several to choose from, or none — and a line under the controls says in words
+  // what the chart shows as a thin band)
+  let pick = '', pickLabel = '', choices = new Map(), found = null;
+  const flS = document.getElementById('flS'), flR = document.getElementById('flR');
+  const viewRows = mode => D.flow.filter(r=>r.m===mode && (flY.value==='all' || r.y===+flY.value) && keep(r));
   function fillChoices(mode){
     choices = new Map();
-    D.flow.filter(r=>r.m===mode && (flY.value==='all' || r.y===+flY.value) && keep(r)).forEach(r=>{
+    viewRows(mode).forEach(r=>{
       // each name says what it is: a donor and a country can share one ('Zimbabwe')
       if(r.lv==='d' && r.s!=='d:'+FLOW_NR) choices.set(`${tr8(r.s.slice(2))} (${tr8('donor')})`, r.s);
       if(r.lv==='f' && r.c) choices.set(`${tr8(D.fundNames['c:'+r.c] || r.c)} (${tr8('country')})`, 'c:'+r.c);
-      [r.s, r.t].forEach(x=>{ const n = flowNode(x); if(n && n.org) choices.set(`${n.name} (${tr8(CAT_LABEL[n.cat])})`, 'o:'+n.name); });
+      // an organisation (named in the view or grouped under 'other') or an agency (always named)
+      [r.s, r.t].forEach(x=>{ const n = flowNode(x); if(!n || n.p==='k' || n.cat==='nr' || n.name===FLOW_OTHER || n.name===FLOW_NR) return;
+        choices.set(`${n.org ? n.name : tr8(n.name)} (${tr8(CAT_LABEL[n.cat])})`, 'o:'+n.name); });
     });
-    document.getElementById('flSL').innerHTML = [...choices.keys()].sort((a,b)=>a.localeCompare(b)).map(k=>`<option value="${k.replace(/"/g,'&quot;')}">`).join('');
+    document.getElementById('flSL').innerHTML = [...choices.keys()].sort((a,b)=>a.localeCompare(b)).map(k=>`<option value="${k.replace(/&/g,'&amp;').replace(/"/g,'&quot;')}">`).join('');
   }
+  // is this box (a node id of the chart or of a row) the pick's?
+  function isPick(id){
+    if(!pick) return false;
+    if(pick.startsWith('o:')){ const r = flowNode(id); return !!r && r.p!=='k' && r.name===pick.slice(2); }
+    return id===pick; }
+  // the pick in words, from the rows the chart is drawn from: how much, of how much, from whom
+  function pickText(mode){
+    const R = viewRows(mode), total = R.filter(r=>r.lv==='f').reduce((a,r)=>a+r.v, 0);
+    const name = id => { if(id.startsWith('f:')) return tr8(D.fundNames[id.slice(2)] || id.slice(2));
+      const n = flowNode(id); return n ? (n.cat==='nr' ? tr8(FLOW_NR) : tr8(n.name)) : id; };
+    const pct = v => !total ? '' : v/total < 0.001 ? '<0.1%' : (100*v/total).toFixed(v/total < 0.1 ? 1 : 0) + '%';
+    // 'CERF $3.2M, Afghanistan CBPF $256k': the largest four (five if there are just five), the rest counted
+    const parts = (rows, amounts) => { const g = {}; rows.forEach(([k, v])=>{ g[k] = (g[k]||0) + v; });
+      const e = Object.entries(g).sort((a,b)=>b[1]-a[1]), top = e.length > 5 ? e.slice(0, 4) : e, rest = e.slice(top.length);
+      if(e.length===1 && !amounts) return e[0][0];   // one source: its amount is the figure already given
+      return top.map(([k, v])=>k+' '+money(v)).concat(rest.length ? [tr8('{0} others {1}', rest.length, money(rest.reduce((a,x)=>a+x[1], 0)))] : []).join(', '); };
+    let got = [], out = [], s;
+    if(pick.startsWith('d:')){ got = R.filter(r=>r.lv==='d' && r.s===pick); if(!got.length) return null;
+      const v = got.reduce((a,r)=>a+r.v, 0);
+      return tr8('{0}: {1} of the money shown is attributed to its contributions ({2}), through {3}.', pickLabel, money(v), pct(v), parts(got.map(r=>[name(r.t), r.v]))); }
+    if(pick.startsWith('c:')){ got = R.filter(r=>r.lv==='f' && 'c:'+r.c===pick); if(!got.length) return null;
+      const v = got.reduce((a,r)=>a+r.v, 0);
+      s = mode==='p' ? tr8('{0}: {1} pre-arranged, {2} of the money shown, from {3}.', pickLabel, money(v), pct(v), parts(got.map(r=>[name(r.s), r.v])))
+                     : tr8('{0}: {1} released, {2} of the money shown, from {3}.', pickLabel, money(v), pct(v), parts(got.map(r=>[name(r.s), r.v])));
+      return s + ' ' + tr8('To: {0}.', parts(got.map(r=>[name(r.t), r.v]))); }
+    // an organisation or an agency: what reaches it (its own pass-through to the final column
+    // not counted twice), and what it passes on to others
+    got = R.filter(r=>isPick(r.t) && !isPick(r.s)); out = R.filter(r=>isPick(r.s) && !isPick(r.t));
+    if(!got.length && !out.length) return null;
+    const v = got.reduce((a,r)=>a+r.v, 0), src = parts(got.map(r=>[name(r.s), r.v]));
+    s = mode==='p' ? tr8('{0} has {1} pre-arranged, {2} of the money shown, from {3}.', pickLabel, money(v), pct(v), src)
+                   : tr8('{0} received {1}, {2} of the money shown, from {3}.', pickLabel, money(v), pct(v), src);
+    // the countries, where every row says one (a sub-grant's row does not)
+    if(got.length && got.every(r=>r.c)) s += ' ' + tr8('Where: {0}.', parts(got.map(r=>[tr8(D.fundNames['c:'+r.c] || r.c), r.v])));
+    if(out.length) s += ' ' + tr8('Passed on to partners: {0}.', parts(out.map(r=>[name(r.t), r.v]), true));
+    return s; }
+  // the line under the controls: the pick in words, or what the box could not resolve
+  function showLine(text, options, more){
+    flR.textContent = ''; flR.hidden = !text; if(!text) return;
+    flR.appendChild(document.createElement('span')).textContent = text + ' ';
+    (options || []).forEach(k=>{ const b = flR.appendChild(document.createElement('button'));
+      b.type = 'button'; b.textContent = k; b.style.cssText = 'margin:2px 6px 2px 0;font-size:12.5px;padding:2px 8px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;cursor:pointer;max-width:100%;text-align:left';
+      b.addEventListener('click', ()=>setPick(choices.get(k), k, true)); });
+    if(more) flR.appendChild(document.createElement('span')).textContent = more + ' ';
+    if(pick){ const b = flR.appendChild(document.createElement('button'));
+      b.type = 'button'; b.textContent = tr8('clear'); b.style.cssText = 'font-size:12px;padding:1px 8px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;cursor:pointer';
+      b.addEventListener('click', ()=>{ flS.value = ''; setPick('', '', false); }); } }
+  function setPick(id, label, byUser){
+    pick = id || ''; pickLabel = pick ? label : ''; drawFlow();
+    // bring the box into view (the chart is tall, a small organisation sits at its foot): only
+    // when the reader asked for it, never on a redraw the page's filters started
+    if(byUser && found){ const b = found.getBoundingClientRect(), bar = document.querySelector('.fbar');
+      const top = (bar && getComputedStyle(bar).position==='sticky' ? bar.getBoundingClientRect().height : 0) + 12;
+      if(b.top < top || b.bottom > innerHeight - 30){
+        // the controls and this line just under the page's filter bar, if the box then shows too;
+        // else the box in the middle of the window
+        const dy = flS.closest('.panel').getBoundingClientRect().top - top;
+        if(b.bottom - dy <= innerHeight - 30 && b.top - dy >= top) scrollBy({top:dy, behavior:'smooth'});
+        else found.scrollIntoView({block:'center', behavior:'smooth'}); } } }
+  // what is typed -> a pick: the exact name; else the one name that contains it; else a
+  // choice of the names that do, or a line saying none does
+  function resolve(){
+    const v = flS.value.trim(), q = v.toLowerCase();
+    if(!v){ if(pick || !flR.hidden) setPick('', '', false); return; }
+    if(choices.has(v)){ if(choices.get(v)!==pick) setPick(choices.get(v), v, true); return; }
+    const all = [...choices.keys()], same = all.filter(k=>k.toLowerCase()===q || k.toLowerCase().replace(/ \\([^()]*\\)$/, '')===q);
+    const hits = same.length ? same : all.filter(k=>k.toLowerCase().includes(q));
+    if(hits.length===1){ setPick(choices.get(hits[0]), hits[0], true); return; }
+    if(pick) setPick('', '', false);
+    hits.sort((a,b)=>a.localeCompare(b));
+    if(!hits.length) showLine(tr8('Nothing with “{0}” in its name has money in this view. The list under the box gives every donor, country and organisation that does.', v));
+    else showLine(tr8('{0} names contain “{1}”. Choose one:', hits.length, v), hits.slice(0, 10),
+                  hits.length > 10 ? tr8('and {0} more: type more of the name.', hits.length - 10) : ''); }
   function drawFlow(){
     const mode = modeOf();
     fillChoices(mode);
     // the pick is kept by its id, so a language switch (labels re-translated) or a year with
-    // other names keeps it: the box shows its label again, or empties if it is not in this view
-    if(pick){ const hit = [...choices].find(([, v])=>v===pick);
-      document.getElementById('flS').value = hit ? hit[0] : ''; if(!hit) pick = ''; }
+    // other names, or one with nothing in this view (another year, a layer unticked), keeps it:
+    // the box shows its label again, and the line says there is nothing here
+    found = null;
+    const hit = pick && [...choices].find(([, v])=>v===pick);
+    if(hit){ pickLabel = hit[0]; flS.value = hit[0]; }
     if(pick.startsWith('c:') && !flC.checked) flC.checked = true;     // a country needs the country column
     if(pick.startsWith('d:') && !flD.checked) flD.checked = true;     // a donor, the donor column
-    const F = buildFlow(D.flow, mode, flY.value, flD.checked, mode==='r' && flP.checked, D.fundNames, 12, keep, cfg.topOrgs, flK.checked, flC.checked, pick);
+    const build = () => buildFlow(D.flow, mode, flY.value, flD.checked, mode==='r' && flP.checked, D.fundNames, 12, keep, cfg.topOrgs, flK.checked, flC.checked, pick);
+    let F = build();
+    // an organisation that only receives through an agency has its box in the final column
+    if(hit && mode==='r' && !flP.checked && !F.columns.some(c=>c.some(n=>isPick(n.id)))){ flP.checked = true; F = build(); }
+    if(pick) showLine((hit && pickText(mode)) || tr8('{0} has no money in this view.', pickLabel));
+    else if(!flS.value.trim()) showLine('');
     const el = document.getElementById('flow'), leg = document.getElementById('flLeg');
     if(!F.links.length){ el.innerHTML = "<p class='empty'>" + tr8('no AA money in this selection for this year') + "</p>"; flTot.textContent=''; if(leg) leg.innerHTML=''; return; }
     const n = Math.max(...F.columns.map(c=>c.length));
@@ -2318,9 +2407,11 @@ function mountFlow(cfg){
       nodeColor: nd => { const r = flowNode(nd.id); return r ? CAT_COLOR[r.cat] : null; }});
     el.insertAdjacentHTML('beforeend', "<div class='note'>" + tr8('Hover a band or a box to follow the money; click a box to keep it in focus, click again to clear. Funds in their own colour (CERF blue, pooled funds orange, regional funds green); every agency, grantee and recipient in the colour of its category; a band takes the colour of the box it leaves.') + "</div>");
     if(leg) leg.innerHTML = '<b>' + tr8('Recipients') + '</b>' + F.cats.map(c=>`<span style='display:inline-flex;align-items:center;gap:5px'><span style='width:11px;height:11px;border-radius:2px;background:${CAT_COLOR[c]};display:inline-block${c==='nr' ? ';box-shadow:inset 0 0 0 1px #aab2bd' : ''}'></span>${tr8(CAT_LABEL[c])}</span>`).join('');
-    if(pick){ const nd = [...el.querySelectorAll('.sk-n')].find(n=>{ const r = flowNode(n.dataset.id);
-        return pick.startsWith('o:') ? r && r.name===pick.slice(2) : n.dataset.id===pick; });
-      if(nd) nd.dispatchEvent(new MouseEvent('click', {bubbles:true})); }
+    // the pick's boxes: ringed and their names in bold; the first one focused, as a click would
+    if(hit){ const nds = [...el.querySelectorAll('.sk-n')].filter(n=>isPick(n.dataset.id));
+      nds.forEach(n=>{ n.setAttribute('stroke', '#0f2540'); });
+      el.querySelectorAll('.sk-t').forEach(t=>{ if(isPick(t.dataset.id)) t.setAttribute('font-weight', '700'); });
+      if(nds.length){ found = nds[0]; found.dispatchEvent(new MouseEvent('click', {bubbles:true})); } }
     flTot.textContent = mode==='p' ? (+flY.value===cy ? tr8('Pre-arranged, in place in {0}: {1} (today)', yLab(flY.value), money(F.total)) : tr8('Pre-arranged, in place in {0}: {1}', yLab(flY.value), money(F.total)))
                                     : flY.value==='all' ? (noY != null ? tr8('Released in all years to {0}: {1}', noY - 1, money(F.total)) : tr8('Released in all years: {0}', money(F.total)))
                                     : tr8('Released in {0}: {1}', yLab(flY.value), money(F.total));
@@ -2341,7 +2432,12 @@ function mountFlow(cfg){
   document.querySelectorAll("input[name='flM']").forEach(el=>el.addEventListener('change', ()=>{ fillYears(); drawFlow(); }));
   fillYears();
   [flY, flD, flP, flK, flC].forEach(el=>el.addEventListener('change', drawFlow));
-  document.getElementById('flS').addEventListener('change', ev=>{ pick = choices.get(ev.target.value.trim()) || ''; drawFlow(); });
+  // a name chosen from the list arrives as 'input' (in some browsers 'change' waits until the
+  // box is left): an exact name, or the box emptied, acts at once; anything else on Enter or on
+  // leaving the box, so a redraw never rewrites what is being typed
+  flS.addEventListener('input', ()=>{ const v = flS.value.trim(); if(!v || choices.has(v)) resolve(); });
+  flS.addEventListener('keydown', ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); resolve(); } });
+  flS.addEventListener('change', resolve);
   document.addEventListener('aalang', ()=>{ fillYears(); drawFlow(); });
   drawFlow();
   return drawFlow;

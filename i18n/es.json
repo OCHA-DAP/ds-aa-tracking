@@ -1833,5 +1833,19 @@
  "{0} of {1} CERF allocations give the figure": "{0} de {1} asignaciones del CERF dan la cifra",
  "{year}: {n} ({a} of {b} CERF allocations)": "{year}: {n} ({a} de {b} asignaciones del CERF)",
  "until {0}": "hasta {0}",
- "The women and girls tile, the disabilities tile and the chart of people also count {n} people reached or targeted in {year} by frameworks since retired, which the first tile leaves out.": "El recuadro de mujeres y niñas, el de personas con discapacidad y el gráfico de personas cuentan también {n} personas alcanzadas o focalizadas en {year} por marcos retirados desde entonces, que el primer recuadro excluye."
+ "The women and girls tile, the disabilities tile and the chart of people also count {n} people reached or targeted in {year} by frameworks since retired, which the first tile leaves out.": "El recuadro de mujeres y niñas, el de personas con discapacidad y el gráfico de personas cuentan también {n} personas alcanzadas o focalizadas en {year} por marcos retirados desde entonces, que el primer recuadro excluye.",
+ "Nothing with “{0}” in its name has money in this view. The list under the box gives every donor, country and organisation that does.": "Ningún nombre que contenga «{0}» tiene dinero en esta vista. La lista bajo el cuadro da todos los donantes, países y organizaciones que lo tienen.",
+ "Passed on to partners: {0}.": "Transferido a socios: {0}.",
+ "To: {0}.": "Destino: {0}.",
+ "Where: {0}.": "Dónde: {0}.",
+ "and {0} more: type more of the name.": "y {0} más: escriba una parte mayor del nombre.",
+ "clear": "borrar",
+ "{0} has no money in this view.": "{0} no tiene dinero en esta vista.",
+ "{0} has {1} pre-arranged, {2} of the money shown, from {3}.": "{0} tiene {1} preestablecidos, el {2} del dinero mostrado, procedentes de {3}.",
+ "{0} names contain “{1}”. Choose one:": "{0} nombres contienen «{1}». Elija uno:",
+ "{0} others {1}": "otros {0} {1}",
+ "{0} received {1}, {2} of the money shown, from {3}.": "{0} recibió {1}, el {2} del dinero mostrado, procedentes de {3}.",
+ "{0}: {1} of the money shown is attributed to its contributions ({2}), through {3}.": "{0}: {1} del dinero mostrado se atribuyen a sus contribuciones ({2}), a través de {3}.",
+ "{0}: {1} pre-arranged, {2} of the money shown, from {3}.": "{0}: {1} preestablecidos, el {2} del dinero mostrado, procedentes de {3}.",
+ "{0}: {1} released, {2} of the money shown, from {3}.": "{0}: {1} liberados, el {2} del dinero mostrado, procedentes de {3}."
 }
