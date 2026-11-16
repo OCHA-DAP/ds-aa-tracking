@@ -5,37 +5,46 @@ and people were typed in by hand ("$5.2M"): the seed matched each activation to 
 allocation but kept the workbook's figures, and a hand entry since (admin page, entries file)
 does the same. Only a provisional amount was ever replaced by OneGMS's (resolve_provisional.py).
 On 2026-11-16, 27 of the 46 CERF funding rows with an allocation code differed from OneGMS's
-amount (up to $13,802 on one allocation, Niger drought 2022). Owner, the same day: "let's replace the manually entered numbers with what's in the
-CERF mirror automatically. this should apply to people reached too".
+amount (up to $13,802 on one allocation, Niger drought 2022). Owner, the same day: "let's
+replace the manually entered numbers with what's in the CERF mirror automatically. this should
+apply to people reached too".
 
 The nightly job runs this after the entries files and resolve_provisional. Where OneGMS (the
 mirror, aa.cerf_allocation) gives a figure above zero:
 
 1. A CERF funding row (aa.activation_funding) whose allocation is on no other funding row takes
    the allocation's approved amount (amount_usd) and the people it plans to reach
-   (people_targeted <- individuals_planned). OneGMS's approved amount is the allocation's whole
-   envelope from endorsement on (projects still under review can add up to more), and it stays
-   the gross amount after a refund (Mozambique 2026, Nepal 2021): refunds are their own rows.
+   (people_targeted <- individuals_planned). OneGMS's approved amount is the sum of the
+   allocation's projects funded so far: while a project is still under review it can rise
+   (Ethiopia 2020: $13.2M from December, $20.0M from April 2021), and the tracker follows it. It
+   stays the gross amount after a refund (Mozambique 2026, Nepal 2021): refunds are their own
+   rows.
 2. An activation's own people figure (aa.window_activation / aa.adhoc_activation,
    people_targeted) takes the allocation's planned people when that allocation is the
    activation's only funding row.
-3. Left as entered, and listed: an allocation on more than one funding row (one allocation over
-   two activations or two windows: Ethiopia 2020-12 and 2021-02, Chad 2026 windows 1 and 2), with
-   a warning when their amounts do not add up to the approved amount; and the people figure of an
-   activation with more than one funding row (it counts the people the other money reaches too).
+3. Left as entered, with a line in the log:
+   - an allocation on more than one funding row (one allocation over two activations or two
+     windows: Ethiopia 2020-12 and 2021-02, Chad 2026 windows 1 and 2); warned when the rows'
+     amounts do not add up to the approved amount, or their people figures to the planned people;
+   - a CERF funding row whose allocation is of another country than the row (a wrong code): warned;
+   - a coded CERF row while another CERF row of the same country, hazard and year has no code
+     yet (the allocation may be split over both, e.g. two windows): warned until it is coded;
+   - the people figure of an activation with more than one funding row: it was entered for the
+     whole activation, and the tracker cannot tell which money it counts; warned when it is
+     below the CERF row's planned people.
 
 People reached is not stored in the tracker: the pages read it from the mirror at every build
 (landing._cerf_reached), so it follows OneGMS already.
 
-An amount that moves by more than 5% is written and warned: a gap that size is more likely a
-wrong allocation code than a rounded figure. Every change is audited to aa.entry_audit
-(entered_by 'nightly sync_cerf'), in apply_entries' row-key format.
+Every change is audited to aa.entry_audit (entered_by 'nightly sync_cerf'); the row key writes
+'' for a NULL, as the admin page's History panel looks it up.
 
 Usage: uv run python scripts/sync_cerf.py [--dry-run]
     --dry-run makes every change in one transaction, runs the pass a second time (which must
     find nothing to change), and rolls back.
 """
 
+import argparse
 import json
 import os
 import sys
@@ -47,8 +56,7 @@ os.environ.setdefault("PGSSLMODE", "require")
 import ocha_stratus as stratus
 
 BY = "nightly sync_cerf"
-WARN_SHARE = 0.05             # an amount moving more than this: written, and warned
-# aa.activation_funding's unique key (NULLs equal), as apply_entries writes it to the audit
+# aa.activation_funding's unique key (NULLs equal)
 FKEY = ("country_iso3", "hazard", "event_date", "window_name", "event_label", "event_type",
         "fund_code", "allocation_code")
 # the activation's key as aa.activation_funding carries it
@@ -58,13 +66,18 @@ TKEY = {"window_activation": ("country_iso3", "hazard", "version", "window_name"
         "adhoc_activation": ("country_iso3", "hazard", "event_type", "event_date", "event_label")}
 
 FUNDING = """
-    SELECT f.*, c.amount_approved, c.individuals_planned,
+    SELECT f.*, c.amount_approved, c.individuals_planned, c.country_iso3 AS alloc_country,
            (SELECT count(*) FROM aa.activation_funding g
              WHERE g.allocation_code = f.allocation_code) AS n_alloc_rows,
            (SELECT count(*) FROM aa.activation_funding g
              WHERE g.country_iso3 = f.country_iso3 AND g.hazard = f.hazard
                AND g.event_date = f.event_date AND g.window_name IS NOT DISTINCT FROM f.window_name
-               AND g.event_label = f.event_label AND g.event_type = f.event_type) AS n_act_rows
+               AND g.event_label = f.event_label AND g.event_type = f.event_type) AS n_act_rows,
+           (SELECT string_agg(g.event_date || coalesce(' ' || g.window_name, ''), '; ')
+              FROM aa.activation_funding g
+             WHERE g.fund_code = 'cerf' AND g.allocation_code IS NULL
+               AND g.country_iso3 = f.country_iso3 AND g.hazard = f.hazard
+               AND left(g.event_date, 4) = left(f.event_date, 4)) AS uncoded_siblings
     FROM aa.activation_funding f
     JOIN aa.cerf_allocation c ON c.application_code = f.allocation_code
     WHERE f.fund_code = 'cerf'
@@ -100,7 +113,21 @@ def _update(conn, table, keys, row, sets):
     if n != 1:
         raise SystemExit(f"aa.{table} {_lab(row, keys)}: {n} rows matched its key, expected 1")
     for c, v in sets.items():
-        _audit(conn, table, "/".join(str(row[k]) for k in keys), c, row[c], v)
+        _audit(conn, table, _lab(row, keys), c, row[c], v)
+
+
+def _activation(conn, r):
+    """The one activation row (table, row) a funding row belongs to, or (table, None). The
+    funding row names it by AKEY; a window activation's table key adds the version (not on the
+    funding row) and has no event type, an ad hoc one has no window."""
+    if r["event_type"] == "framework_aa":
+        table, cols = "window_activation", ("country_iso3", "hazard", "event_date", "window_name", "event_label")
+    else:
+        table, cols = "adhoc_activation", ("country_iso3", "hazard", "event_type", "event_date", "event_label")
+    where = " AND ".join(f"{k} IS NOT DISTINCT FROM :{k}" for k in cols)
+    acts = conn.execute(sa.text(f"SELECT * FROM aa.{table} WHERE {where}"),
+                        {k: r[k] for k in cols}).mappings().fetchall()
+    return table, (acts[0] if len(acts) == 1 else None), len(acts)
 
 
 def sync(conn, verbose=True):
@@ -108,19 +135,26 @@ def sync(conn, verbose=True):
     say = print if verbose else (lambda *a, **k: None)
     rows = conn.execute(sa.text(FUNDING)).mappings().fetchall()
     changed = 0
-    shared = {}
+    shared, synced = {}, []
     for r in rows:
         lab = _lab(r, FKEY)
+        if r["alloc_country"] != r["country_iso3"]:
+            say(f"::warning::{lab}: allocation {r['allocation_code']} is of {r['alloc_country']}, not "
+                f"{r['country_iso3']}: a wrong allocation code? Left as entered")
+            continue
         if r["n_alloc_rows"] > 1:
             shared.setdefault(r["allocation_code"], []).append(r)
             continue
+        if r["uncoded_siblings"]:
+            say(f"::warning::{lab}: another CERF amount of {r['country_iso3']} {r['hazard']} that year has no "
+                f"allocation code yet ({r['uncoded_siblings']}); if it draws on {r['allocation_code']} too, "
+                "enter the code there. Left as entered until then")
+            continue
+        synced.append(r)
         sets = {}
         appr, amt = _num(r["amount_approved"]), _num(r["amount_usd"])
         if appr and appr > 0 and (amt is None or round(amt, 2) != round(appr, 2)):
             sets["amount_usd"] = r["amount_approved"]
-            if amt and abs(appr - amt) > WARN_SHARE * amt:
-                say(f"::warning::{lab}: amount ${amt:,.0f} -> OneGMS ${appr:,.0f} ({(appr - amt) / amt:+.0%}); "
-                    "a gap this size may mean a wrong allocation code: check it")
         planned = r["individuals_planned"]
         if planned and planned > 0 and r["people_targeted"] != int(planned):
             sets["people_targeted"] = int(planned)
@@ -129,33 +163,37 @@ def sync(conn, verbose=True):
             _update(conn, "activation_funding", FKEY, r, sets)
             changed += len(sets)
     for code, rs in shared.items():
+        where = "; ".join(_lab(x, AKEY) for x in rs)
         total = sum(_num(x["amount_usd"]) or 0 for x in rs)
         appr = _num(rs[0]["amount_approved"]) or 0
-        where = "; ".join(_lab(x, AKEY) for x in rs)
+        ppl = [x["people_targeted"] for x in rs if x["people_targeted"] is not None]
+        planned = rs[0]["individuals_planned"] or 0
+        off = []
         if appr > 0 and abs(total - appr) > 1:
-            say(f"::warning::{code} is on {len(rs)} funding rows ({where}): they add up to ${total:,.0f}, "
-                f"OneGMS approved ${appr:,.0f}; left as entered, split it by hand")
+            off.append(f"amounts add up to ${total:,.0f}, OneGMS approved ${appr:,.0f}")
+        if ppl and planned > 0 and sum(ppl) != planned:
+            off.append(f"people add up to {sum(ppl):,}, OneGMS plans {planned:,}")
+        if off:
+            say(f"::warning::{code} is on {len(rs)} funding rows ({where}): {'; '.join(off)}; "
+                "left as entered, split it by hand")
         else:
-            say(f"  {code}: on {len(rs)} funding rows, left as entered (they add up to the approved amount)")
-    # the activation's own people figure, when one CERF allocation alone pays for it
-    for r in rows:
+            say(f"  {code}: on {len(rs)} funding rows ({where}), left as entered; they add up to OneGMS's")
+    # the activation's own people figure
+    for r in synced:
         planned = r["individuals_planned"]
-        if r["n_act_rows"] != 1 or r["n_alloc_rows"] != 1 or not planned or planned <= 0:
+        if not planned or planned <= 0:
             continue
-        # the funding row names its activation by AKEY; a window activation's table key adds the
-        # version (not on the funding row) and drops the event type, an ad hoc one has no window
-        if r["event_type"] == "framework_aa":
-            table, cols = "window_activation", ("country_iso3", "hazard", "event_date", "window_name", "event_label")
-        else:
-            table, cols = "adhoc_activation", ("country_iso3", "hazard", "event_type", "event_date", "event_label")
-        where = " AND ".join(f"{k} IS NOT DISTINCT FROM :{k}" for k in cols)
-        acts = conn.execute(sa.text(f"SELECT * FROM aa.{table} WHERE {where}"),
-                            {k: r[k] for k in cols}).mappings().fetchall()
-        if len(acts) != 1:
-            say(f"::warning::{_lab(r, AKEY)}: {len(acts)} activations in aa.{table} for this funding row; "
+        table, a, n = _activation(conn, r)
+        if a is None:
+            say(f"::warning::{_lab(r, AKEY)}: {n} activations in aa.{table} for this funding row; "
                 "people figure left as entered")
             continue
-        a = acts[0]
+        if r["n_act_rows"] != 1:            # more than one funding row: the figure is the activation's own
+            if a["people_targeted"] is not None and a["people_targeted"] < planned:
+                say(f"::warning::{_lab(a, TKEY[table])}: the activation's {a['people_targeted']:,} people are "
+                    f"fewer than its CERF allocation alone plans ({int(planned):,}, {r['allocation_code']}); "
+                    "it has other funding too, so it is left as entered")
+            continue
         if a["people_targeted"] != int(planned):
             say(f"  {table} {_lab(a, TKEY[table])}: people_targeted {_fmt(a['people_targeted'])} -> {_fmt(planned)}")
             _update(conn, table, TKEY[table], a, {"people_targeted": int(planned)})
@@ -164,7 +202,10 @@ def sync(conn, verbose=True):
 
 
 def main():
-    dry = "--dry-run" in sys.argv
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--dry-run", action="store_true",
+                    help="make the changes, check that a second pass finds none, roll back")
+    dry = ap.parse_args().dry_run
     engine = stratus.get_engine(stage="dev", write=True)
     with engine.connect() as conn:
         tx = conn.begin()
