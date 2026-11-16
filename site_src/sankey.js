@@ -4,7 +4,8 @@
    sankeySVG({columns, links, width, height, fmt, color, nodePad, labelW, labelMax, nodeColor, heads})
      columns: [[{id, label}], ...]  left -> right; a node's value is max(inflow, outflow)
      heads:   ['Donors', 'Funds', ...] optional, one per column of `columns`: a small heading
-              above each column, on one row (a column with nothing in it has none)
+              above each column, on one row (a column with nothing in it has none); a '\n' in a
+              heading breaks it over two lines, the last on the row of the others
      links:   [{s, t, v}]           s/t are node ids in adjacent (or later) columns
      fmt(v)   value formatter for tooltips; color(node, colIndex) -> fill
    Returns an <svg> string; each band and node carries a <title> tooltip.
@@ -39,7 +40,8 @@
   function sankeySVG(o){
     // each heading stays with its column: a column with nothing in it is dropped, heading and all
     const src = o.columns.map((c, i) => ({c, h: o.heads ? o.heads[i] : null})).filter(x => x.c && x.c.length);
-    const cols = src.map(x => x.c), heads = o.heads ? src.map(x => x.h) : null, top = heads ? 18 : 0;
+    const cols = src.map(x => x.c), heads = o.heads ? src.map(x => x.h == null ? [] : String(x.h).split('\n')) : null;
+    const top = heads ? 18 + 13 * (Math.max(1, ...heads.map(h => h.length)) - 1) : 0;
     const links = (o.links||[]).filter(l => l.v > 0);
     const W = o.width || 360, fmt = o.fmt || (v => v), pad = o.nodePad == null ? 6 : o.nodePad;
     const nodeW = 9, labelW = o.labelW == null ? Math.min(120, W * 0.3) : o.labelW;
@@ -71,7 +73,7 @@
     // the others start lower), each set as its column's names are (the first column's to the left
     // of its boxes, the others' to the right); never dimmed by a focus
     const hy = heads ? Math.min(...kept.filter(c => c.length).map(c => c[0].y)) - 8 : 0;
-    if (heads) kept.forEach((c, i) => { if (c.length && heads[i]) out += `<text class='sk-h' x='${i === 0 ? xs[i] + nodeW + 2 : xs[i] - 2}' y='${hy}' text-anchor='${i === 0 ? 'end' : 'start'}' fill='#475569' font-weight='600'>${esc(heads[i])}</text>`; });
+    if (heads) kept.forEach((c, i) => { if (c.length) heads[i].forEach((line, j) => { if (line) out += `<text class='sk-h' x='${i === 0 ? xs[i] + nodeW + 2 : xs[i] - 2}' y='${hy - 13 * (heads[i].length - 1 - j)}' text-anchor='${i === 0 ? 'end' : 'start'}' fill='#475569' font-weight='600'>${esc(line)}</text>`; }); });
     L.forEach(l => {
       const s = byId[l.s], t = byId[l.t], h = l.v * k; if (s.h === undefined || t.h === undefined) return;
       const xa = s.x + nodeW, xb = t.x, ya = s.sy + h / 2, yb = t.ty + h / 2; s.sy += h; t.ty += h;

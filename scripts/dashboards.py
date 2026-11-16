@@ -2136,17 +2136,17 @@ FLOW_NOTE = " ".join(TB(x) for x in (
     "Financing page's annual series. Never summed over years: a two-year envelope would count twice. "
     "Fund → agency uses the agency split of the version in force at that date, scaled to the "
     "envelope; Country and Regional Fund allocations go to their grantee organisations (AA-keyword "
-    "project budgets). There is no sub-grantees column: who an agency sub-grants to is only known once "
+    "project budgets). There is no <i>sub-grantees / implementing organisations</i> column: who an agency sub-grants to is only known once "
     "money is released.",
     "<b>Released</b>: money that went out on activations in the chosen year (all years add up). "
     "CERF → agency uses the AA projects approved that year in the same country (in the same region "
     "where the country has none that year), scaled to the released total; agency → partner uses the "
     "CERF AA sub-grants in that country, and the rest goes to a box with the agency's own "
-    "name in the sub-grantees column — what it implements itself. Country and Regional Funds go to the grantee organisations "
+    "name in the <i>sub-grantees / implementing organisations</i> column — what it implements itself. Country and Regional Funds go to the grantee organisations "
     "of the allocation the activation drew on (only its anticipatory action projects, where the "
     "allocation also paid for other things), or, where no allocation is recorded, to the grantees "
     "of the fund's projects marked AA that year; a grantee implements directly, so its band runs on, same "
-    "amount, to the same organisation in the sub-grantees column.",
+    "amount, to the same organisation in that column.",
     f"<b>Framework countries</b> (tick <i>framework countries</i>): a column between the funds and the agencies — the "
     "country of the framework (pre-arranged) or of the activation (released). With the non-framework "
     "allocations layer ticked, the countries of those allocations are in the column too. "
@@ -2199,7 +2199,7 @@ def _flow_panel(donors_on, donor_toggle=True, extra=""):
   <label {ATTR('title', 'a column of the countries between the funds and the agencies: the ones receiving the most named, the rest grouped')}><input type='checkbox' id='flC'> {T('framework countries')}</label>
   <label {ATTR('title', 'a column of the frameworks before the agencies: each named by its country and hazard')}><input type='checkbox' id='flW'> {T('frameworks')}</label>
   <label {ATTR('title', 'a last column that groups the recipients by type (UN agencies, NGOs, Red Cross / Red Crescent, government, other)')}><input type='checkbox' id='flK' checked> {T('recipient types')}</label>
-  <label id='flPw'><input type='checkbox' id='flP' checked> {T('sub-grantees')}</label>
+  <label id='flPw'><input type='checkbox' id='flP' checked> {T('sub-grantees / implementing organisations')}</label>
   <label>{T('Find')} <input type='search' id='flS' list='flSL' {ATTR('placeholder', 'a donor, country or organisation')} {ATTR('aria-label', 'Find a donor, country or organisation in the flows')} style='width:230px;max-width:100%;font-size:12.5px;padding:3px 6px'></label><datalist id='flSL'></datalist>
   <span id='flTot' class='muted'></span>
  </div>
@@ -2210,7 +2210,7 @@ def _flow_panel(donors_on, donor_toggle=True, extra=""):
 
 
 FLOW_JS = """
-// ---- where the money flows: [donors ->] funds [-> countries] [-> frameworks] -> agencies / grantees [-> sub-grantees] [-> recipient types].
+// ---- where the money flows: [donors ->] funds [-> countries] [-> frameworks] -> agencies / grantees [-> sub-grantees / implementing organisations] [-> recipient types].
 // Shared by the Financing page and the donor-flows view of the donor-shares page; rows from
 // _money_flows. Recipient node ids carry their category: 'a:un|WFP' (an agency: always named),
 // 'p:ingo~ActionAid' (an organisation: the top ones of the view named, the rest grouped).
@@ -2320,7 +2320,9 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
   if(showC) put('c:', cap(tr8('framework countries')));
   if(showW) put('w:', cap(tr8('frameworks')));
   put('a:', tr8('Agencies and grantees'));
-  if(showP) put('p:', cap(tr8('sub-grantees')));
+  // (owner, 2026-11-16: "sub-grantees / implementing organizations" — the column also holds what
+  // an agency implements itself and the pooled funds' grantees; the heading breaks at the slash)
+  if(showP) put('p:', cap(tr8('sub-grantees / implementing organisations')).replace(' / ', ' /\\n'));
   if(showK) put('k:', cap(tr8('recipient types')));
   const seen = new Set(); cols.forEach(c=>c.forEach(n=>{ const r = flowNode(n.id); if(r) seen.add(r.cat); }));
   const total = L.filter(l=>l.lv==='f').reduce((s,l)=>s+l.v,0);
