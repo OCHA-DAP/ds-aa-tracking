@@ -792,7 +792,10 @@ def build(d, e, live, out, snapshot_at):
                 "The pre-arranged budget of each live framework's latest version split by implementing "
                 "agency and sector (the Activities page), per trigger window where the budget is per window "
                 "(`window_name`; blank: the split is for the whole framework). OCHA-managed money only "
-                "(`fund_code`), never an agency's own co-financing. A framework's rows add up to its "
+                "(`fund_code`), never an agency's own co-financing. CERF rows are ONE activation's budget, "
+                "like the envelope: for a version allowing N activations (`activations_per_year` in "
+                "aa-frameworks) the pages count them N times (DRC cholera 2026: UNICEF and WHO "
+                "US$500,000 each per activation, US$2M each in all). A framework's rows add up to its "
                 "budgeted split, which can differ by rounding from the envelope its document states "
                 "(aa-prearranged-funding).")
 
@@ -1274,7 +1277,7 @@ def _framework_md(d, r, fw, page, v_rows, trig_rows, w_rows, s_rows, a_rows, p_r
                      + "; ".join(f"{x['fund_code']} {_m(x['amount_usd'])}" for x in mine_now)
                      + f"), the envelope of version {fw['prearranged_version']}"
                      + (f", counted {'twice' if apy == 2 else f'{apy} times'}: the version allows {apy} "
-                        f"activations before it must be endorsed again, so the budget per activation is {_m(fw['prearranged_usd'] / apy)}"
+                        f"activations before it must be endorsed again, so CERF's budget per activation is {_m((fw.get('prearranged_cerf_usd') or fw['prearranged_usd']) / apy)}"
                         if apy > 1 else ""))
     if fw.get("cofinancing_usd"):
         facts.append(f"**Co-financing reported for {date.today().year}** (outside the OCHA-managed funds, not "

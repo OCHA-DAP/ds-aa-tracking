@@ -1524,8 +1524,10 @@ def funding_series(d, released="framework"):
     # only, as there. Co-financing is left as recorded.
     # A reported row can already be the total for all N (CERF's sheets list DRC cholera's
     # all-activations total, but the storm frameworks per activation; D231), so the product is
-    # capped at N times the version's per-activation CERF envelope (v_version_funding), where
-    # one is recorded: what the version can pre-arrange at most, never more.
+    # guarded: a row at most the version's per-activation CERF envelope (v_version_funding) is one
+    # activation's and counts N times; a larger row is already (part of) the all-activations total
+    # and is taken as reported, at most N times that envelope. No envelope recorded (or one of 0):
+    # multiplied as before. None of today's past-year rows is of the second kind (2026-11-16).
     fac = d.get("act_factors") or {}
     if fac:
         n = pd.Series([fac.get((c, h, str(v)), 1) if k == "prearranged" and f == "cerf" else 1
@@ -1535,11 +1537,13 @@ def funding_series(d, released="framework"):
         ea = d.get("env_all")
         per_act = ({} if ea is None or not len(ea) else
                    {(r.country_iso3, r.hazard, str(r.version)): float(r.total_usd)
-                    for r in ea[ea["fund_code"] == "cerf"].itertuples() if pd.notna(r.total_usd)})
-        cap = pd.Series([per_act.get((c, h, str(v)), float("inf")) for c, h, v in
-                         zip(pre["country_iso3"], pre["hazard"], pre["version"])], index=pre.index, dtype=float)
+                    for r in ea[ea["fund_code"] == "cerf"].itertuples()
+                    if pd.notna(r.total_usd) and float(r.total_usd) > 0})
+        env1 = pd.Series([per_act.get((c, h, str(v)), float("inf")) for c, h, v in
+                          zip(pre["country_iso3"], pre["hazard"], pre["version"])], index=pre.index, dtype=float)
         amt = pre["amount_usd"].astype(float)
-        pre["amount_usd"] = amt.where(n == 1, (amt * n).clip(upper=cap * n))
+        one = amt <= env1 * 1.01                     # one activation's figure (NaN: False, left as is)
+        pre["amount_usd"] = amt.where(n == 1, amt.where(~one, amt * n).clip(upper=env1 * n))
     # the current year is pre-arranged money NOW (prearranged_now: the framework records), not
     # the sheets or the mirror — one figure on every page. Past years keep the reported series
     # until the official year-end reports are loaded.

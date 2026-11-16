@@ -4143,8 +4143,9 @@ function pillarBody(f, v){
     const ps = preSplit(v);
     rows.push([tr8('Pre-arranged'), `${verPre(v) == null ? '—' : money(verPre(v))}${v.apy > 1 && verPre(v) != null ? apyMark(v.apy) + ` <span class='muted'>· ${esc(apyNote(v.apy))}</span>` : ''}${v.regional?` <span class='muted'>· ${esc(tr8('regional document total (all countries)'))}</span>`:''}${v.all_in===false?` <span class='muted'>· ${esc(tr8('split budget per window'))}</span>`:v.all_in===true?` <span class='muted'>· ${esc(tr8('all-in'))}</span>`:''}${ps.length ? `<div class='small muted'>${esc(ps.join(' · '))}</div>` : ''}`]);
     // the document's own figure, where it differs from the envelope counted (or there is none)
-    // (a version that allows N activations: a document that states the all-activations total, as
-    // DRC cholera's US$4M, matches the figure counted, verPre, so no extra row; D231)
+    // — not when the document's figure IS the figure counted (verPre): a version allowing N
+    // activations whose document states the all-activations total (DRC cholera's US$4M, D231), or
+    // one whose pooled envelope was released (Somalia floods 2026: the CERF part left)
     const near = (a, b) => Math.abs(a - b) <= 0.01*Math.max(a, b);
     if(v.prearranged_doc!=null && (!(v.envelope > 0) || !near(v.envelope, v.prearranged_doc)) && !(verPre(v) != null && near(verPre(v), v.prearranged_doc))) rows.push([tr8('In the framework document'), `${money(v.prearranged_doc)} <span class='muted'>${esc(tr8("the figure the document states; the tiles, the table and the Financing page count the envelope recorded for the version"))}${v.regional?' · '+esc(tr8('regional document total (all countries)')):''}</span>`]);
     // the page's co-financing figure, else the document's co-financing lines (the split's, kept apart)

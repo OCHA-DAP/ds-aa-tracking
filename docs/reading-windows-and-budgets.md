@@ -79,7 +79,7 @@ framework (country_iso3, hazard)
 
   | Version | CERF's id | Tracker's id |
   |---|---|---|
-  | Chad drought 2025 | `tcd_drought_v1` | `tcd_drought_v3` |
+  | Chad drought 2025 | `tcd_drought_v1` | `tcd_drought_v2` |
   | Burkina Faso drought 2026 | `bfa_drought_v2` | `bfa_drought_v4` |
 
   A superseded draft has no number, so its uid uses its date label instead.
