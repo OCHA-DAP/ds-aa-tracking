@@ -1797,7 +1797,12 @@ def _money_flows(d, pre, act):
        funding_series(d, released="all") to have them). fu: fund type, 'c' CERF, 'p' CBPF,
        'r' regional fund. Every split is linear in the amount, so the per-layer rows add up
        to the same totals as one pass over all the money. Rows with the same keys are summed.
-    names: fund code -> fund name, and 'c:<ISO3>' -> the country's English name."""
+    h (the 'f' rows only): the hazard of the framework the money is pre-arranged under or whose
+      activation released it ('' none recorded). With c it names the framework: FLOW_JS's
+      optional frameworks column (2026-11-16) splits each 'f' link at it, after the country.
+      The non-framework layer's rows (g 'a') carry it too, but belong to no framework: one box.
+    names: fund code -> fund name, 'c:<ISO3>' -> the country's English name, and
+      'w:<ISO3>|<hazard>' -> the hazard as a word, for a framework's name (country + hazard)."""
     import datetime as _dt
     import re as _re
     today = _dt.date.today()
@@ -1902,11 +1907,14 @@ def _money_flows(d, pre, act):
     layer = _layer_of(d)
     rows = []
 
-    def add(m, y, lv, s_, t, v, g, fc, rg, c=None):
+    def add(m, y, lv, s_, t, v, g, fc, rg, c=None, h=None):
+        if lv == "f" and h is None:     # every fund link says its framework's hazard ('' = none)
+            raise ValueError("a fund -> agency / grantee row needs its hazard")
         if v and v > 0.5:
             r = {"m": m, "y": int(y), "lv": lv, "s": s_, "t": t, "v": float(v), "g": g, "fu": _fu(fc), "rg": rg}
-            if lv == "f":       # the country column's key ('' = no single country)
-                r["c"] = c if isinstance(c, str) else ""
+            if lv == "f":       # the country column's key ('' = no single country), and the
+                r["c"] = c if isinstance(c, str) else ""    # frameworks column's, with the hazard
+                r["h"] = h if isinstance(h, str) else ""
             rows.append(r)
 
     def donors(m, y, fc, amount, g, rg):
@@ -1918,14 +1926,14 @@ def _money_flows(d, pre, act):
         else:
             add(m, y, "d", "d:Not recorded", "f:" + fc, amount, g, fc, rg)
 
-    def grantees(m, y, fc, amount, g, rg, c, ac=""):
+    def grantees(m, y, fc, amount, g, rg, c, h, ac=""):
         # released money: a CBPF / RhPF grantee implements directly (no sub-grant level), so
         # its band runs on, same amount, to the same organisation in the final column — every
         # band then reaches the last column and each grantee node stays balanced (in = out).
         # The grantees: the projects of the allocation the release drew on (ac, D192), else the
         # fund's AA-keyword projects that year
         def on(node, v, final):
-            add(m, y, "f", "f:" + fc, "a:" + node, v, g, fc, rg, c)
+            add(m, y, "f", "f:" + fc, "a:" + node, v, g, fc, rg, c, h)
             if m == "r":
                 add(m, y, "a", "a:" + node, "p:" + final, v, g, fc, rg)
         o = ca_by.get(ac) if ac else None
@@ -1958,6 +1966,7 @@ def _money_flows(d, pre, act):
             donors("p", y, fc, amount, g, rg)
         for r in py.itertuples():
             fc, amount, g, rg, c = r.fund_code, float(r.amount_usd), r.g, r.rg, r.country_iso3
+            h = r.hazard if isinstance(r.hazard, str) else ""
             if amount <= 0:
                 continue
             if r.source == "non-framework":
@@ -1977,14 +1986,14 @@ def _money_flows(d, pre, act):
                           f"${amount:,.0f} pre-arranged outside a framework: list the record's projects "
                           f"(aa.activation_funding_project) to show its grantees")
                 if fc != "cerf" and o is not None and float(o.sum()) > 0 and not mixed:
-                    grantees("p", y, fc, amount, g, rg, c, ac)
+                    grantees("p", y, fc, amount, g, rg, c, h, ac)
                 else:
                     add("p", y, "f", "f:" + fc, "a:nr|" + ("agencies not recorded" if fc == "cerf" else
                                                             "Country and Regional Fund grantees not recorded"),
-                        amount, g, fc, rg, c)
+                        amount, g, fc, rg, c, h)
                 continue
             if fc != "cerf" and r.source == "onegms-mirror":
-                grantees("p", y, fc, amount, g, rg, c)
+                grantees("p", y, fc, amount, g, rg, c, h)
                 continue
             # the agency split of the version in force at that date (latest one with a split)
             vs = fvm[(fvm["country_iso3"] == r.country_iso3) & (fvm["hazard"] == r.hazard)
@@ -2001,20 +2010,23 @@ def _money_flows(d, pre, act):
                     sp = own if len(own) else None
                     break
             if (sp is None or sp["amount_usd"].sum() <= 0) and fc != "cerf":
-                grantees("p", y, fc, amount, g, rg, c)   # pooled funds: grantee types, as allocated
+                grantees("p", y, fc, amount, g, rg, c, h)   # pooled funds: grantee types, as allocated
                 continue
             if sp is None or sp["amount_usd"].sum() <= 0:
-                add("p", y, "f", "f:" + fc, "a:nr|agencies not recorded", amount, g, fc, rg, c)
+                add("p", y, "f", "f:" + fc, "a:nr|agencies not recorded", amount, g, fc, rg, c, h)
                 continue
             shares = sp.groupby("agency")["amount_usd"].sum()
             for agency, v in shares.items():
-                add("p", y, "f", "f:" + fc, "a:" + budget_node(agency, c), v / shares.sum() * amount, g, fc, rg, c)
+                add("p", y, "f", "f:" + fc, "a:" + budget_node(agency, c), v / shares.sum() * amount, g, fc, rg, c, h)
 
     # ---------------- released, in the year it went out (years add up); one pass per layer
     R = act[act["amount_usd"].fillna(0) > 0]
     R = R.assign(g=["a" if et == "adhoc_aa" else layer(c, h, v)     # v: an old version -> retired
                     for et, c, h, v in zip(R["event_type"], R["country_iso3"], R["hazard"], R["version"])],
                  rg=R["country_iso3"].map(rg_of).fillna("?"), c=R["country_iso3"].fillna(""),
+                 # the framework's hazard, for the frameworks column ('' = none: a groupby
+                 # drops the rows of a missing key)
+                 h=[x if isinstance(x, str) else "" for x in R["hazard"]],
                  # a pooled fund's allocation, for its grantees ('' = none recorded; CERF's
                  # split is by country and year, never by allocation)
                  ac=[a if isinstance(a, str) and f != "cerf" else ""
@@ -2036,23 +2048,23 @@ def _money_flows(d, pre, act):
     ag_r = _by_key(ag, 2)
     sg_c = _by_key(sg.groupby(["year", "country_iso3", "agency", "node"])["subgrant_usd"].sum(), 3)
     sg_r = _by_key(sgm, 3)
-    for (fc, y, g, rg, c, ac), amount in R.groupby(["fund_code", "year", "g", "rg", "c", "ac"])["amount_usd"].sum().items():
+    for (fc, y, g, rg, c, h, ac), amount in R.groupby(["fund_code", "year", "g", "rg", "c", "h", "ac"])["amount_usd"].sum().items():
         y = int(y)
         if fc != "cerf":
-            grantees("r", y, fc, amount, g, rg, c, ac)
+            grantees("r", y, fc, amount, g, rg, c, h, ac)
             continue
         key, a_, subs = (y, c), ag_c.get((y, c)), sg_c
         if a_ is None or float(a_.sum()) <= 0:
             key, a_, subs = (y, rg), ag_r.get((y, rg)), sg_r
         asum = float(a_.sum()) if a_ is not None else 0.0
         if asum <= 0:
-            add("r", y, "f", "f:cerf", "a:nr|agencies not recorded", amount, g, fc, rg, c)
+            add("r", y, "f", "f:cerf", "a:nr|agencies not recorded", amount, g, fc, rg, c, h)
             add("r", y, "a", "a:nr|agencies not recorded", "p:nr|recipient not recorded", amount, g, fc, rg)
             continue
         k = amount / asum
         for agency, v in a_.items():
             node = _agency_node(agency)
-            add("r", y, "f", "f:cerf", "a:" + node, v * k, g, fc, rg, c)
+            add("r", y, "f", "f:cerf", "a:" + node, v * k, g, fc, rg, c, h)
             s_ = subs.get(key + (agency,))
             tot_s = float(s_.sum()) if s_ is not None else 0.0
             parts = min(tot_s, float(v)) * k
@@ -2068,13 +2080,13 @@ def _money_flows(d, pre, act):
     # one row per link and keys (the per-country split writes the same link many times)
     agg = {}
     for r in rows:
-        k_ = (r["m"], r["y"], r["lv"], r["s"], r["t"], r["g"], r["fu"], r["rg"], r.get("c"))
+        k_ = (r["m"], r["y"], r["lv"], r["s"], r["t"], r["g"], r["fu"], r["rg"], r.get("c"), r.get("h"))
         agg[k_] = agg.get(k_, 0.0) + r["v"]
     rows = []
-    for (m, y, lv, s_, t, g, fu, rg, c), v in agg.items():
+    for (m, y, lv, s_, t, g, fu, rg, c, h), v in agg.items():
         r = {"m": m, "y": y, "lv": lv, "s": s_, "t": t, "v": round(v, 2), "g": g, "fu": fu, "rg": rg}
         if c is not None:
-            r["c"] = c
+            r["c"], r["h"] = c, h
         rows.append(r)
 
     # ---------------- fund labels from the registry, one RhPF spelling
@@ -2099,6 +2111,9 @@ def _money_flows(d, pre, act):
     # the countries column's labels (FLOW_JS translates them with tr8, as every country name)
     cname = dict(zip(cur_["country_iso3"], cur_["country_name"])) if "country_name" in cur_ else {}
     names.update({"c:" + c: country_en(c, cname) for c in {r["c"] for r in rows if r.get("c")}})
+    # the frameworks column's labels: the country's name and the hazard as a word
+    names.update({f"w:{c}|{h}": hazard_word(h) for c, h in
+                  {(r["c"], r["h"]) for r in rows if r.get("c") and r.get("h") and r["g"] != "a"}})
     years = {m: sorted({r["y"] for r in rows if r["m"] == m}) for m in ("p", "r")}
     # both views open on the last complete year (2026-10-20 call: 2025, not 2026, whose
     # donor shares raise the question of why the US is so represented)
@@ -2112,23 +2127,24 @@ def _money_flows(d, pre, act):
 # ------------------------------------------------- where the money flows (shared Sankey)
 FLOW_TOP_ORGS = 15   # partner / grantee organisations named in a view; the rest grouped per category
 FLOW_TOP_COUNTRIES = 15   # the countries column: the countries receiving the most in a view; the rest grouped
+FLOW_TOP_FRAMEWORKS = 30  # the frameworks column: enough to name every current framework; the rest grouped
 FLOW_NOTE = " ".join(TB(x) for x in (
     "<b>Pre-arranged</b>: the envelopes in place in the chosen year (a framework counts for a year "
     "if it was valid at any time in it; the current year: today), one per framework and fund — the "
     "Financing page's annual series. Never summed over years: a two-year envelope would count twice. "
     "Fund → agency uses the agency split of the version in force at that date, scaled to the "
     "envelope; Country and Regional Fund allocations go to their grantee organisations (AA-keyword "
-    "project budgets). There is no final column: who an agency sub-grants to is only known once "
+    "project budgets). There is no sub-grantees column: who an agency sub-grants to is only known once "
     "money is released.",
     "<b>Released</b>: money that went out on activations in the chosen year (all years add up). "
     "CERF → agency uses the AA projects approved that year in the same country (in the same region "
     "where the country has none that year), scaled to the released total; agency → partner uses the "
-    "CERF AA sub-grants in that country, and the rest goes to a final node with the agency's own "
-    "name — what it implements itself. Country and Regional Funds go to the grantee organisations "
+    "CERF AA sub-grants in that country, and the rest goes to a box with the agency's own "
+    "name in the sub-grantees column — what it implements itself. Country and Regional Funds go to the grantee organisations "
     "of the allocation the activation drew on (only its anticipatory action projects, where the "
     "allocation also paid for other things), or, where no allocation is recorded, to the grantees "
     "of the fund's projects marked AA that year; a grantee implements directly, so its band runs on, same "
-    "amount, to the same organisation in the final column.",
+    "amount, to the same organisation in the sub-grantees column.",
     f"<b>Framework countries</b> (tick <i>framework countries</i>): a column between the funds and the agencies — the "
     "country of the framework (pre-arranged) or of the activation (released). With the non-framework "
     "allocations layer ticked, the countries of those allocations are in the column too. "
@@ -2138,6 +2154,13 @@ FLOW_NOTE = " ".join(TB(x) for x in (
     "The grantees of a regional fund carry no country: a country's band from a regional fund reaches "
     "that fund's grantees of the year in all its countries. "
     "Country boxes are grey: a band leaving one takes the colour of the box it reaches.",
+    "<b>Frameworks</b> (tick <i>frameworks</i>): a column before the agencies, after the framework "
+    "countries where they are ticked — the framework the money is pre-arranged under, or whose "
+    "activation released it, named by its country and hazard. Money that belongs to no framework is "
+    f"one box, <i>Non-framework allocations</i>. The {FLOW_TOP_FRAMEWORKS} frameworks receiving the "
+    "most in the view are named, the rest grouped as <i>Other</i>. CERF's released money reaches the "
+    "agencies by country and year, so two frameworks of one country that released in the same year "
+    "show the same agency shares.",
     f"<b>Recipients</b>: the {FLOW_TOP_ORGS} partner and grantee organisations receiving the most in "
     "the view are named, the rest grouped in one <i>Other</i> box per column; money whose recipient is "
     "not recorded (no data yet, or a partner still to be determined) is one <i>Not recorded</i> box. Every "
@@ -2169,8 +2192,9 @@ def _flow_panel(donors_on, donor_toggle=True, extra=""):
   <label><span id='flYl'>{T('Released in')}</span> <select id='flY'></select></label>
   {dctl}
   <label {ATTR('title', 'a column of the countries between the funds and the agencies: the ones receiving the most named, the rest grouped')}><input type='checkbox' id='flC'> {T('framework countries')}</label>
+  <label {ATTR('title', 'a column of the frameworks before the agencies: each named by its country and hazard')}><input type='checkbox' id='flW'> {T('frameworks')}</label>
   <label {ATTR('title', 'a last column that groups the recipients by type (UN agencies, NGOs, Red Cross / Red Crescent, government, other)')}><input type='checkbox' id='flK' checked> {T('recipient types')}</label>
-  <label id='flPw'><input type='checkbox' id='flP' checked> {T('final recipients')}</label>
+  <label id='flPw'><input type='checkbox' id='flP' checked> {T('sub-grantees')}</label>
   <label>{T('Find')} <input type='search' id='flS' list='flSL' {ATTR('placeholder', 'a donor, country or organisation')} {ATTR('aria-label', 'Find a donor, country or organisation in the flows')} style='width:230px;max-width:100%;font-size:12.5px;padding:3px 6px'></label><datalist id='flSL'></datalist>
   <span id='flTot' class='muted'></span>
  </div>
@@ -2181,11 +2205,11 @@ def _flow_panel(donors_on, donor_toggle=True, extra=""):
 
 
 FLOW_JS = """
-// ---- where the money flows: [donors ->] funds -> agencies / grantees [-> final recipients] [-> recipient types].
+// ---- where the money flows: [donors ->] funds [-> countries] [-> frameworks] -> agencies / grantees [-> sub-grantees] [-> recipient types].
 // Shared by the Financing page and the donor-flows view of the donor-shares page; rows from
 // _money_flows. Recipient node ids carry their category: 'a:un|WFP' (an agency: always named),
 // 'p:ingo~ActionAid' (an organisation: the top ones of the view named, the rest grouped).
-const FLOW_TOP_ORGS = """ + str(FLOW_TOP_ORGS) + """, FLOW_TOP_COUNTRIES = """ + str(FLOW_TOP_COUNTRIES) + """;
+const FLOW_TOP_ORGS = """ + str(FLOW_TOP_ORGS) + """, FLOW_TOP_COUNTRIES = """ + str(FLOW_TOP_COUNTRIES) + """, FLOW_TOP_FRAMEWORKS = """ + str(FLOW_TOP_FRAMEWORKS) + """;
 const CAT_ORDER = ['un','ingo','nngo','gov','rc','oth','nr'];
 // (labels in English: tr8() translates them where they are shown, so a language switch redraws them)
 const CAT_LABEL = {un:'UN agency', ingo:'international NGO', nngo:'national / local NGO', gov:'government',
@@ -2212,12 +2236,22 @@ function flowRegroup(L, f){ const g = {};
   return Object.values(g); }
 // pick (2026-10-28): a donor ('d:…'), country ('c:…') or organisation name the search box chose,
 // kept out of the 'other' boxes so it has a box of its own to focus
-function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, showK, showC, pick){
+function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, showK, showC, pick, showW){
   let R = rows.filter(r=>r.m===mode && (year==='all' || r.y===+year) && keep(r));
   // countries (2026-10-28): each fund -> agency / grantee link split at the country its row carries
   // (c; '' none recorded: 'c:*', multi-country / regional) — fund -> country ('f', so the total is
   // unchanged) and country -> agency ('c'). Every fund link passes through the column.
-  if(showC) R = R.flatMap(r=>r.lv==='f' ? [{...r, t:'c:'+(r.c||'*')}, {...r, lv:'c', s:'c:'+(r.c||'*')}] : [r]);
+  // frameworks (owner, 2026-11-16: "add frameworks … to the right of framework countries"): the
+  // same, at the framework the row's country and hazard name ('w:ISO3|hazard'); the non-framework
+  // layer's money one box ('w:-'), a row with no country or hazard 'w:?' (not recorded). The first
+  // link out of a fund stays 'f'; the one out of a country is 'c', out of a framework 'w'.
+  if(showC || showW) R = R.flatMap(r=>{ if(r.lv!=='f') return [r];
+    const mid = [];
+    if(showC) mid.push(['c', 'c:'+(r.c||'*')]);
+    if(showW) mid.push(['w', r.g==='a' ? 'w:-' : r.c && r.h ? 'w:'+r.c+'|'+r.h : 'w:?']);
+    const out = []; let s = r.s, lv = 'f';
+    mid.forEach(([l, id])=>{ out.push({...r, lv, s, t:id}); s = id; lv = l; });
+    out.push({...r, lv, s}); return out; });
   let L = flowRegroup(R, x=>x);
   // the countries receiving the most in this view named, the rest one 'Other' box
   // (never a box for a single country)
@@ -2226,6 +2260,12 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
     const topC = new Set(ids.length > FLOW_TOP_COUNTRIES + 1 ? ids.slice(0, FLOW_TOP_COUNTRIES) : ids);
     if(pick && pick.startsWith('c:')) topC.add(pick);
     L = flowRegroup(L, x=>x.startsWith('c:') && x!=='c:*' && !topC.has(x) ? 'c:+' : x); }
+  // the frameworks receiving the most named, the rest one 'Other' box (never a box for a single one)
+  if(showW){ const wt = {}, own = x => x.startsWith('w:') && x!=='w:-' && x!=='w:?';
+    L.forEach(l=>{ if(own(l.t)) wt[l.t] = (wt[l.t]||0) + l.v; });
+    const ids = Object.keys(wt).sort((a,b)=>wt[b]-wt[a]);
+    const topW = new Set(ids.length > FLOW_TOP_FRAMEWORKS + 1 ? ids.slice(0, FLOW_TOP_FRAMEWORKS) : ids);
+    L = flowRegroup(L, x=>own(x) && !topW.has(x) ? 'w:+' : x); }
   // top donors; the rest grouped
   const dt = {}; L.filter(l=>l.lv==='d').forEach(l=>dt[l.s]=(dt[l.s]||0)+l.v);
   const top = new Set(Object.keys(dt).filter(k=>k!=='d:'+FLOW_NR).sort((a,b)=>dt[b]-dt[a]).slice(0,topN||12));
@@ -2247,7 +2287,7 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
   // on to its category: UN agencies, international / national NGOs, Red Cross / Red Crescent,
   // government, other. After the naming above; the 'f' links (the total) are unchanged.
   if(showK){
-    const last = showP ? 'p:' : 'a:', lv = showP ? 'a' : showC ? 'c' : 'f', S = [];
+    const last = showP ? 'p:' : 'a:', lv = showP ? 'a' : showW ? 'w' : showC ? 'c' : 'f', S = [];
     L.forEach(l=>{ S.push(l); const n = l.lv===lv && l.t.startsWith(last) ? flowNode(l.t) : null;
       if(n) S.push({lv:'k', s:l.t, t:`k:${n.cat}|${CAT_GROUP[n.cat]}`, v:l.v}); });
     L = S;
@@ -2260,6 +2300,9 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
   const lab = id => { const [p, ...rest] = id.split(':'); const n = rest.join(':');
     if(p==='f') return tr8(names[n]||n);
     if(p==='c') return n==='*' ? tr8('multi-country / regional') : n==='+' ? tr8(FLOW_OTHER) : tr8(names[id]||n);
+    // a framework: its country and its hazard, as the Frameworks list names it
+    if(p==='w') return n==='-' ? tr8('Non-framework allocations') : n==='+' ? tr8(FLOW_OTHER) : n==='?' ? tr8(FLOW_NR)
+      : tr8(names['c:'+n.split('|')[0]] || n.split('|')[0]) + ' ' + tr8(names[id] || '');
     const r = flowNode(id); return tr8(r ? r.name : n); };
   // a heading over each column (owner, 2026-11-16: "little labels above the groups for donors,
   // funds, etc"), in the words of the tick box that shows the column, where it has one
@@ -2270,8 +2313,9 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
   if(showD) put('d:', cap(tr8('donors')));
   put('f:', tr8('Funds'));
   if(showC) put('c:', cap(tr8('framework countries')));
+  if(showW) put('w:', cap(tr8('frameworks')));
   put('a:', tr8('Agencies and grantees'));
-  if(showP) put('p:', cap(tr8('final recipients')));
+  if(showP) put('p:', cap(tr8('sub-grantees')));
   if(showK) put('k:', cap(tr8('recipient types')));
   const seen = new Set(); cols.forEach(c=>c.forEach(n=>{ const r = flowNode(n.id); if(r) seen.add(r.cat); }));
   const total = L.filter(l=>l.lv==='f').reduce((s,l)=>s+l.v,0);
@@ -2418,7 +2462,7 @@ function mountFlow(cfg){
     // (only while the pick has money here: a column is not held ticked for a pick with none)
     if(hit && pick.startsWith('c:') && !flC.checked) flC.checked = true;     // a country needs the country column
     if(hit && pick.startsWith('d:') && !flD.checked) flD.checked = true;     // a donor, the donor column
-    const build = () => buildFlow(D.flow, mode, flY.value, flD.checked, mode==='r' && flP.checked, D.fundNames, 12, keep, cfg.topOrgs, flK.checked, flC.checked, pick);
+    const build = () => buildFlow(D.flow, mode, flY.value, flD.checked, mode==='r' && flP.checked, D.fundNames, 12, keep, cfg.topOrgs, flK.checked, flC.checked, pick, flW.checked);
     let F = build();
     // an organisation that only receives through an agency has its box in the final column
     if(hit && mode==='r' && !flP.checked && !F.columns.some(c=>c.some(n=>isPick(n.id)))){ flP.checked = true; F = build(); }
@@ -2429,9 +2473,9 @@ function mountFlow(cfg){
     if(!F.links.length){ el.innerHTML = "<p class='empty'>" + tr8('no AA money in this selection for this year') + "</p>"; flTot.textContent=''; if(leg) leg.innerHTML=''; return; }
     const n = Math.max(...F.columns.map(c=>c.length));
     // five columns (donors … recipient types) leave ~170px between them at 1100: wider, shorter labels;
-    // six (with the countries) wider again
+    // six (with the countries or the frameworks) wider again, seven (with both) once more
     const nc = F.columns.length, wide = nc >= 5;
-    el.innerHTML = sankeySVG({columns:F.columns, heads:F.heads, links:F.links, width:nc >= 6 ? 1400 : wide ? 1300 : 1100, height:Math.max(260, n*24),
+    el.innerHTML = sankeySVG({columns:F.columns, heads:F.heads, links:F.links, width:nc >= 7 ? 1500 : nc >= 6 ? 1400 : wide ? 1300 : 1100, height:Math.max(260, n*24),
       fmt:money, labelW:200, labelMax:nc >= 6 ? 22 : wide ? 26 : 34, label:tr8(cfg.label || 'AA money through funds and agencies'),
       nodeColor: nd => { const r = flowNode(nd.id); return r ? CAT_COLOR[r.cat] : null; }});
     el.insertAdjacentHTML('beforeend', "<div class='note'>" + tr8('Hover a band or a box to follow the money; click a box to keep it in focus, click again to clear. Funds in their own colour (CERF blue, pooled funds orange, regional funds green); every agency, grantee and recipient in the colour of its category; a band takes the colour of the box it leaves.') + "</div>");
@@ -2460,7 +2504,7 @@ function mountFlow(cfg){
   }
   document.querySelectorAll("input[name='flM']").forEach(el=>el.addEventListener('change', ()=>{ fillYears(); drawFlow(); }));
   fillYears();
-  [flY, flD, flP, flK, flC].forEach(el=>el.addEventListener('change', drawFlow));
+  [flY, flD, flP, flK, flC, flW].forEach(el=>el.addEventListener('change', drawFlow));
   // a name chosen from the list arrives as 'input' (in some browsers 'change' waits until the
   // box is left): an exact name, or the box emptied, acts at once; anything else on Enter or on
   // leaving the box, so a redraw never rewrites what is being typed
