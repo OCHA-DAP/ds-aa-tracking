@@ -294,10 +294,22 @@ an activation sent back after it was paused or stopped is an `aa.activation_refu
 (the activation's key, the fund, the allocation when known, the amount): every page counts
 released money net of it.
 
+**CERF figures follow OneGMS (D232).** Once a CERF funding row has its allocation code, the
+nightly job (`scripts/sync_cerf.py`, after `resolve_provisional.py`) sets its amount to OneGMS's
+approved amount and its people targeted to the allocation's planned people, and does the same
+for the people figure of an activation that one CERF allocation alone pays for. A CERF amount
+or people figure typed in by hand on such a row lasts until the next night; to change one,
+correct the allocation code (or OneGMS). An allocation split over several rows (Ethiopia
+2020-12 and 2021-02) is left as entered, with a warning in the job's log when the parts do not
+add up to the approved amount; an activation with more than one funding row keeps its own
+people figure. Every change is audited. People reached is never stored: the pages read it from
+the mirror at every build.
+
 ## Running
 
 The dev DB is the single source of truth: data is entered and corrected through the
-admin site (`admin/entry.html`, `admin/admin.html`) — there is no spreadsheet ingest and no sync from elsewhere.
+admin site (`admin/entry.html`, `admin/admin.html`) — there is no spreadsheet ingest and no sync from elsewhere,
+except that CERF amounts and people targeted follow the OneGMS mirror (D232, above).
 DB access via `ocha-stratus` env vars; `PGSSLMODE=require` is set automatically.
 
 ```sh
