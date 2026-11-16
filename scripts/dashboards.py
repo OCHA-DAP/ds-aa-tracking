@@ -1914,7 +1914,9 @@ def _money_flows(d, pre, act):
             r = {"m": m, "y": int(y), "lv": lv, "s": s_, "t": t, "v": float(v), "g": g, "fu": _fu(fc), "rg": rg}
             if lv == "f":       # the country column's key ('' = no single country), and the
                 r["c"] = c if isinstance(c, str) else ""    # frameworks column's, with the hazard
-                r["h"] = h if isinstance(h, str) else ""
+                # ('multi' / '?': a country-level pooled-fund allocation of a country with several
+                # live frameworks, or none — funding_series' markers, no framework's hazard)
+                r["h"] = h if isinstance(h, str) and h not in ("multi", "?") else ""
             rows.append(r)
 
     def donors(m, y, fc, amount, g, rg):
@@ -2026,7 +2028,7 @@ def _money_flows(d, pre, act):
                  rg=R["country_iso3"].map(rg_of).fillna("?"), c=R["country_iso3"].fillna(""),
                  # the framework's hazard, for the frameworks column ('' = none: a groupby
                  # drops the rows of a missing key)
-                 h=[x if isinstance(x, str) else "" for x in R["hazard"]],
+                 h=[x if isinstance(x, str) and x not in ("multi", "?") else "" for x in R["hazard"]],
                  # a pooled fund's allocation, for its grantees ('' = none recorded; CERF's
                  # split is by country and year, never by allocation)
                  ac=[a if isinstance(a, str) and f != "cerf" else ""
@@ -2158,9 +2160,12 @@ FLOW_NOTE = " ".join(TB(x) for x in (
     "countries where they are ticked — the framework the money is pre-arranged under, or whose "
     "activation released it, named by its country and hazard. Money that belongs to no framework is "
     f"one box, <i>Non-framework allocations</i>. The {FLOW_TOP_FRAMEWORKS} frameworks receiving the "
-    "most in the view are named, the rest grouped as <i>Other</i>. CERF's released money reaches the "
-    "agencies by country and year, so two frameworks of one country that released in the same year "
-    "show the same agency shares.",
+    "most in the view are named, the rest grouped as <i>Other</i>. An allocation of a country or "
+    "regional fund that names no single framework is <i>No single framework</i>. A framework is one "
+    "box, whatever its version. CERF's released money is split among the agencies by country and "
+    "year (the region's, where the country has no project that year), not by allocation: a "
+    "framework's agency shares are those of every CERF AA project in its country that year, another "
+    "framework's or a non-framework allocation's included.",
     f"<b>Recipients</b>: the {FLOW_TOP_ORGS} partner and grantee organisations receiving the most in "
     "the view are named, the rest grouped in one <i>Other</i> box per column; money whose recipient is "
     "not recorded (no data yet, or a partner still to be determined) is one <i>Not recorded</i> box. Every "
@@ -2243,7 +2248,7 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
   // unchanged) and country -> agency ('c'). Every fund link passes through the column.
   // frameworks (owner, 2026-11-16: "add frameworks … to the right of framework countries"): the
   // same, at the framework the row's country and hazard name ('w:ISO3|hazard'); the non-framework
-  // layer's money one box ('w:-'), a row with no country or hazard 'w:?' (not recorded). The first
+  // layer's money one box ('w:-'), a row with no country or no one hazard 'w:?' (no single framework). The first
   // link out of a fund stays 'f'; the one out of a country is 'c', out of a framework 'w'.
   if(showC || showW) R = R.flatMap(r=>{ if(r.lv!=='f') return [r];
     const mid = [];
@@ -2301,7 +2306,7 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
     if(p==='f') return tr8(names[n]||n);
     if(p==='c') return n==='*' ? tr8('multi-country / regional') : n==='+' ? tr8(FLOW_OTHER) : tr8(names[id]||n);
     // a framework: its country and its hazard, as the Frameworks list names it
-    if(p==='w') return n==='-' ? tr8('Non-framework allocations') : n==='+' ? tr8(FLOW_OTHER) : n==='?' ? tr8(FLOW_NR)
+    if(p==='w') return n==='-' ? tr8('Non-framework allocations') : n==='+' ? tr8(FLOW_OTHER) : n==='?' ? tr8('No single framework')
       : tr8(names['c:'+n.split('|')[0]] || n.split('|')[0]) + ' ' + tr8(names[id] || '');
     const r = flowNode(id); return tr8(r ? r.name : n); };
   // a heading over each column (owner, 2026-11-16: "little labels above the groups for donors,
