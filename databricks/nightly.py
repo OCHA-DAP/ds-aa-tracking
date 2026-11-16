@@ -25,9 +25,11 @@ Steps
      today's date (in-development frameworks count toward pre-arranged money from then on)
   2c. scripts/resolve_provisional.py: a CERF amount entered as provisional (before OneGMS
      recorded the allocation) takes OneGMS's code and amount once the mirror has it
+  2d. scripts/extract_document_text.py: the text of each newly registered framework
+     document, page by page, into aa.framework_document_page (D228)
   3. scripts/export_snapshot.py: consistent snapshot of schema aa -> dev blob
      projects/ds-aa-tracking/snapshot/{latest,YYYY-MM-DD}/ (dated copies kept 30 days,
-     31-December copies forever)
+     31-December copies forever), with each view's rows beside the tables (D228)
 
 KB flip (2026-09-28): this system is authoritative; the knowledge base is not a source.
 Frameworks and versions are entered here (entry/admin pages).
@@ -116,6 +118,10 @@ def main():
         run("scripts/resolve_provisional.py")
     except subprocess.CalledProcessError as ex:
         print(f"!! resolve_provisional failed ({ex}); continuing to the snapshot", flush=True)
+    try:   # a document registered today is searchable from tomorrow's snapshot
+        run("scripts/extract_document_text.py")
+    except subprocess.CalledProcessError as ex:
+        print(f"!! extract_document_text failed ({ex}); continuing to the snapshot", flush=True)
     run("scripts/export_snapshot.py", *(["--no-prune"] if a.no_prune else []))
 
 

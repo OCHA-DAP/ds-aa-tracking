@@ -617,6 +617,22 @@ DURABLE_TABLES = {
             registered_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (country_iso3, hazard, version, sha256)
         )""",
+    # the text of every registered document, page by page (D228), so a framework document
+    # can be searched and quoted with its page number. Derived from the archived bytes: the
+    # nightly job runs scripts/extract_document_text.py, which reads each registered PDF
+    # that has no pages from the current extractor yet and writes them here; a file is
+    # read once (its sha256 never changes). A page without a text layer (a scan) is kept
+    # with text ''. Same audience as the file: framework_document.is_public says whether
+    # the document is published.
+    "framework_document_page": """
+        CREATE TABLE IF NOT EXISTS aa.framework_document_page (
+            sha256 text NOT NULL,          -- aa.framework_document
+            page integer NOT NULL,         -- 1-based, as a PDF viewer numbers it (#page=N)
+            text text NOT NULL,            -- '' when the page has no text layer
+            extractor text NOT NULL,       -- e.g. pypdf-6.19.0: a new extractor re-reads
+            extracted_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (sha256, page)
+        )""",
     # CERF projects coded against climate-adaptation indicators, one row per project x
     # indicator x coder (scripts/import_climate_coding.py turns a coding workbook into an
     # entries file). Project facts come from aa.cerf_project; the indicator list and its
