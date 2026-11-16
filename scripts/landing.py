@@ -2169,12 +2169,14 @@ def build_landing(page, d, e):
         for n, v in sorted(by.items()):
             if len(v) == 1:
                 out.append(f"For the {v[0][0]} {v[0][2].lower()} framework, the total allows for "
-                           f"{'two' if n == 2 else n} activations per year, each with its own CERF envelope.")
+                           f"{'two' if n == 2 else n} activations before the framework must be endorsed again, "
+                           "each with its own CERF envelope.")
                 continue
             storm = all(hz == "storm" for _, hz, _ in v)
             who = ", ".join(name if storm else f"{name} {hz_label.lower()}" for name, _, hz_label in v)
             out.append(f"For some {'tropical cyclone ' if storm else ''}frameworks ({who}), the total allows for "
-                       f"{'two' if n == 2 else n} activations per year, each with its own CERF envelope.")
+                       f"{'two' if n == 2 else n} activations before the framework must be endorsed again, "
+                       "each with its own CERF envelope.")
         return out
 
     def act_sentence(usd, n):   # actSentence() in LANDING_JS
@@ -3418,8 +3420,8 @@ const switchNote = () => allFunds() ? '' : tr8('Counts the money of {0} only (th
 const apyOf = f => pastY() ? (f.pre_apy || null) : f.apy > 1 ? f.apy : null;
 // ... in a figure the fund switch filters: the doubled envelope is CERF's, so only while CERF is ticked (D201)
 const apyIn = f => FUNDS.cerf ? apyOf(f) : null;
-const apyNote = n => n === 2 ? tr8('allows two activations a year; its CERF envelope is counted twice (the CERF budget per activation is half).')
-  : tr8('allows {0} activations a year; its CERF envelope is counted {0} times (the CERF budget per activation is that divided by {0}).', n);
+const apyNote = n => n === 2 ? tr8('can activate up to twice before it must be endorsed again; its CERF envelope is counted twice (the CERF budget per activation is half).')
+  : tr8('can activate up to {0} times before it must be endorsed again; its CERF envelope is counted {0} times (the CERF budget per activation is that divided by {0}).', n);
 const apyMark = n => n ? `<span class='tmark' title='${esc(apyNote(n))}'>†</span>` : '';
 // the pre-arranged notes' line on the frameworks counting N activations a year, one per N, in the
 // owner's words (2026-11-02) — apy_notes() in Python. Only the CERF part of the envelope is per
@@ -3430,12 +3432,12 @@ function apyTileNotes(fs){
   return Object.keys(by).sort((a, b) => a - b).map(n => { const xs = by[n], storm = xs.every(([, f]) => f.hazard === 'storm');
     const who = xs.map(([c, f]) => storm ? tr8(c.name) : `${tr8(c.name)} ${tr8(f.hz_label).toLowerCase()}`).join(', ');
     if(xs.length === 1){ const [c, f] = xs[0], one = `${tr8(c.name)} ${tr8(f.hz_label).toLowerCase()}`;
-      return (+n === 2 ? tr8('For the {0} framework, the total allows for two activations per year, each with its own CERF envelope.', one)
-                             : tr8('For the {0} framework, the total allows for {1} activations per year, each with its own CERF envelope.', one, n)); }
-    return (storm ? (+n === 2 ? tr8('For some tropical cyclone frameworks ({0}), the total allows for two activations per year, each with its own CERF envelope.', who)
-                                     : tr8('For some tropical cyclone frameworks ({0}), the total allows for {1} activations per year, each with its own CERF envelope.', who, n))
-                         : (+n === 2 ? tr8('For some frameworks ({0}), the total allows for two activations per year, each with its own CERF envelope.', who)
-                                     : tr8('For some frameworks ({0}), the total allows for {1} activations per year, each with its own CERF envelope.', who, n))); });
+      return (+n === 2 ? tr8('For the {0} framework, the total allows for two activations before the framework must be endorsed again, each with its own CERF envelope.', one)
+                             : tr8('For the {0} framework, the total allows for {1} activations before the framework must be endorsed again, each with its own CERF envelope.', one, n)); }
+    return (storm ? (+n === 2 ? tr8('For some tropical cyclone frameworks ({0}), the total allows for two activations before the framework must be endorsed again, each with its own CERF envelope.', who)
+                                     : tr8('For some tropical cyclone frameworks ({0}), the total allows for {1} activations before the framework must be endorsed again, each with its own CERF envelope.', who, n))
+                         : (+n === 2 ? tr8('For some frameworks ({0}), the total allows for two activations before the framework must be endorsed again, each with its own CERF envelope.', who)
+                                     : tr8('For some frameworks ({0}), the total allows for {1} activations before the framework must be endorsed again, each with its own CERF envelope.', who, n))); });
 }
 // the tiles' notes in the owner's words (2026-11-02: "hover text simplifications"), for the global
 // tiles and a country's own (countryTiles) — PRE_NOTE, COV_NOTE… in Python
@@ -4141,7 +4143,10 @@ function pillarBody(f, v){
     const ps = preSplit(v);
     rows.push([tr8('Pre-arranged'), `${verPre(v) == null ? '—' : money(verPre(v))}${v.apy > 1 && verPre(v) != null ? apyMark(v.apy) + ` <span class='muted'>· ${esc(apyNote(v.apy))}</span>` : ''}${v.regional?` <span class='muted'>· ${esc(tr8('regional document total (all countries)'))}</span>`:''}${v.all_in===false?` <span class='muted'>· ${esc(tr8('split budget per window'))}</span>`:v.all_in===true?` <span class='muted'>· ${esc(tr8('all-in'))}</span>`:''}${ps.length ? `<div class='small muted'>${esc(ps.join(' · '))}</div>` : ''}`]);
     // the document's own figure, where it differs from the envelope counted (or there is none)
-    if(v.prearranged_doc!=null && (!(v.envelope > 0) || Math.abs(v.envelope - v.prearranged_doc) > 0.01*Math.max(v.envelope, v.prearranged_doc))) rows.push([tr8('In the framework document'), `${money(v.prearranged_doc)} <span class='muted'>${esc(tr8("the figure the document states; the tiles, the table and the Financing page count the envelope recorded for the version"))}${v.regional?' · '+esc(tr8('regional document total (all countries)')):''}</span>`]);
+    // (a version that allows N activations: a document that states the all-activations total, as
+    // DRC cholera's US$4M, matches the figure counted, verPre, so no extra row; D231)
+    const near = (a, b) => Math.abs(a - b) <= 0.01*Math.max(a, b);
+    if(v.prearranged_doc!=null && (!(v.envelope > 0) || !near(v.envelope, v.prearranged_doc)) && !(verPre(v) != null && near(verPre(v), v.prearranged_doc))) rows.push([tr8('In the framework document'), `${money(v.prearranged_doc)} <span class='muted'>${esc(tr8("the figure the document states; the tiles, the table and the Financing page count the envelope recorded for the version"))}${v.regional?' · '+esc(tr8('regional document total (all countries)')):''}</span>`]);
     // the page's co-financing figure, else the document's co-financing lines (the split's, kept apart)
     const coL = (v.funding && v.funding.cofin) || [], coT = v.cofin || coL.reduce((t, x) => t + x.usd, 0) || null;
     const coS = v.cofin_sources.length ? v.cofin_sources : v.cofin ? [] : coL.map(x => fundName(x.from));
