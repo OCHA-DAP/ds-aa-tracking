@@ -1939,5 +1939,19 @@
  "{0} of {1} CERF allocations give the figure": "{0} des {1} allocations du CERF donnent le chiffre",
  "{year}: {n} ({a} of {b} CERF allocations)": "{year} : {n} ({a} des {b} allocations du CERF)",
  "until {0}": "jusqu’à {0}",
- "The women and girls tile, the disabilities tile and the chart of people also count {n} people reached or targeted in {year} by frameworks since retired, which the first tile leaves out.": "La tuile des femmes et des filles, celle des personnes handicapées et le graphique des personnes comptent aussi {n} personnes atteintes ou ciblées en {year} par des cadres retirés depuis, que la première tuile exclut."
+ "The women and girls tile, the disabilities tile and the chart of people also count {n} people reached or targeted in {year} by frameworks since retired, which the first tile leaves out.": "La tuile des femmes et des filles, celle des personnes handicapées et le graphique des personnes comptent aussi {n} personnes atteintes ou ciblées en {year} par des cadres retirés depuis, que la première tuile exclut.",
+ "Nothing with “{0}” in its name has money in this view. The list under the box gives every donor, country and organisation that does.": "Aucun nom contenant « {0} » n’a d’argent dans cette vue. La liste sous le champ donne tous les bailleurs, pays et organisations qui en ont.",
+ "Passed on to partners: {0}.": "Transmis à des partenaires : {0}.",
+ "To: {0}.": "Vers : {0}.",
+ "Where: {0}.": "Où : {0}.",
+ "and {0} more: type more of the name.": "et {0} autres : saisissez une plus grande partie du nom.",
+ "clear": "effacer",
+ "{0} has no money in this view.": "{0} n’a pas d’argent dans cette vue.",
+ "{0} has {1} pre-arranged, {2} of the money shown, from {3}.": "{0} dispose de {1} pré-arrangés, soit {2} de l’argent affiché ; provenance : {3}.",
+ "{0} names contain “{1}”. Choose one:": "{0} noms contiennent « {1} ». Choisissez-en un :",
+ "{0} others {1}": "{0} autres {1}",
+ "{0} received {1}, {2} of the money shown, from {3}.": "{0} a reçu {1}, soit {2} de l’argent affiché ; provenance : {3}.",
+ "{0}: {1} of the money shown is attributed to its contributions ({2}), through {3}.": "{0} : {1} de l’argent affiché sont attribués à ses contributions ({2}) ; fonds : {3}.",
+ "{0}: {1} pre-arranged, {2} of the money shown, from {3}.": "{0} : {1} pré-arrangés, soit {2} de l’argent affiché ; provenance : {3}.",
+ "{0}: {1} released, {2} of the money shown, from {3}.": "{0} : {1} débloqués, soit {2} de l’argent affiché ; provenance : {3}."
 }
