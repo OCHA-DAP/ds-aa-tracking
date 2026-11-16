@@ -11,7 +11,8 @@ therefore build from a blob snapshot instead of the live DB:
     GitHub Actions / laptop ── restore ──▶ throwaway local Postgres ── build_site.py
 
 A snapshot is one consistent REPEATABLE READ transaction: every base table as parquet
-(``aa/<table>.parquet``), plus ``schema.json`` (columns with exact Postgres types,
+(``aa/<table>.parquet``), each view's rows (``aa_views/<view>.parquet``, for readers
+without Postgres; D228), plus ``schema.json`` (columns with exact Postgres types,
 defaults, sequences, constraints, indexes, view definitions, comments) and
 ``manifest.json`` (timestamp, row counts). ``restore`` recreates the schema verbatim so
 the ~60 ad-hoc queries in the build, and the schema/ERD page, work unchanged against
@@ -33,6 +34,7 @@ import pandas as pd
 import sqlalchemy as sa
 
 SCHEMA = "aa"
+VIEW_DIR = "aa_views"  # each view's rows (D228); a restore ignores this folder
 CONTAINER = "projects"
 PREFIX = "ds-aa-tracking/snapshot"
 KEEP_DAYS = 30
@@ -89,6 +91,14 @@ _CATALOG = {
         SELECT c.relname AS name, c.relkind AS kind, pg_get_viewdef(c.oid, true) AS definition
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = :s AND c.relkind IN ('v', 'm') ORDER BY 1""",
+    # the views' columns, for their rows in VIEW_DIR (a restore ignores both)
+    "view_columns": """
+        SELECT c.relname AS view_name, a.attnum, a.attname AS name,
+               format_type(a.atttypid, a.atttypmod) AS type
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+        WHERE n.nspname = :s AND c.relkind IN ('v', 'm') ORDER BY 1, 2""",
     "comments": """
         SELECT c.relname AS table_name, a.attname AS column_name, d.description
         FROM pg_description d
@@ -138,35 +148,61 @@ def _textify(df: pd.DataFrame, types: dict[str, str]) -> pd.DataFrame:
     return df
 
 
+def _read(conn, rel: str, types: dict[str, str]) -> pd.DataFrame:
+    """All rows of ``aa.<rel>``, ready for parquet (arrays / JSON as Postgres text)."""
+    if any(_is_composite(x) for x in types.values()):
+        # arrays / JSON: read as objects (lists, dicts), serialise to Postgres
+        # text, then apply the nullable dtypes to the rest
+        df = pd.read_sql(sa.text(f"SELECT * FROM {q(SCHEMA)}.{q(rel)}"), conn)
+        df = _textify(df, types)
+        keep = [c for c, x in types.items() if _is_composite(x) and c in df.columns]
+        rest = df.drop(columns=keep).convert_dtypes(dtype_backend="numpy_nullable")
+        return pd.concat([rest, df[keep]], axis=1)[list(df.columns)]
+    return pd.read_sql(sa.text(f"SELECT * FROM {q(SCHEMA)}.{q(rel)}"), conn,
+                       dtype_backend="numpy_nullable")
+
+
 def export(engine, out: Path, source: str = "") -> dict:
-    """Write a snapshot of schema ``aa`` into ``out/`` (parquet + schema.json + manifest)."""
+    """Write a snapshot of schema ``aa`` into ``out/`` (parquet + schema.json + manifest).
+
+    Each view's rows go to ``VIEW_DIR/<view>.parquet`` too (D228), computed by Postgres in
+    the same transaction, so a reader without Postgres (the AA chatbot's DuckDB copy) gets
+    exactly what the views return instead of re-running their SQL in another dialect.
+    A restore ignores them: it recreates the views from their definitions."""
     out.mkdir(parents=True, exist_ok=True)
     (out / SCHEMA).mkdir(exist_ok=True)
+    (out / VIEW_DIR).mkdir(exist_ok=True)
     started = dt.datetime.now(dt.timezone.utc)
     meta: dict = {}
     counts: dict[str, int] = {}
-    # one REPEATABLE READ transaction => every table and the catalog agree
+    view_counts: dict[str, int] = {}
+    view_errors: dict[str, str] = {}
+    # one REPEATABLE READ transaction => every table, view and the catalog agree
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as conn:
         with conn.begin():
             for key, sql in _CATALOG.items():
                 meta[key] = _records(pd.read_sql(sa.text(sql), conn, params={"s": SCHEMA}))
             for t in [r["name"] for r in meta["tables"]]:
                 types = {c["name"]: c["type"] for c in meta["columns"] if c["table_name"] == t}
-                if any(_is_composite(x) for x in types.values()):
-                    # arrays / JSON: read as objects (lists, dicts), serialise to Postgres
-                    # text, then apply the nullable dtypes to the rest
-                    df = pd.read_sql(sa.text(f"SELECT * FROM {q(SCHEMA)}.{q(t)}"), conn)
-                    df = _textify(df, types)
-                    keep = [c for c, x in types.items() if _is_composite(x) and c in df.columns]
-                    rest = df.drop(columns=keep).convert_dtypes(dtype_backend="numpy_nullable")
-                    df = pd.concat([rest, df[keep]], axis=1)[list(df.columns)]
-                else:
-                    df = pd.read_sql(
-                        sa.text(f"SELECT * FROM {q(SCHEMA)}.{q(t)}"), conn,
-                        dtype_backend="numpy_nullable",
-                    )
+                df = _read(conn, t, types)
                 df.to_parquet(out / SCHEMA / f"{t}.parquet", index=False)
                 counts[t] = int(len(df))
+            for v in [r["name"] for r in meta["views"]]:
+                # each view in its own savepoint: a view that fails to read (or to write)
+                # is left out and named in the manifest, never the end of the snapshot
+                types = {c["name"]: c["type"] for c in meta["view_columns"]
+                         if c["view_name"] == v}
+                sp = conn.begin_nested()
+                try:
+                    df = _read(conn, v, types)
+                    df.to_parquet(out / VIEW_DIR / f"{v}.parquet", index=False)
+                    sp.commit()
+                    view_counts[v] = int(len(df))
+                except Exception as exc:  # noqa: BLE001 — report and continue
+                    sp.rollback()
+                    (out / VIEW_DIR / f"{v}.parquet").unlink(missing_ok=True)
+                    view_errors[v] = str(exc).splitlines()[0][:300]
+                    print(f"  ! view {v} left out of aa_views: {view_errors[v]}")
     manifest = {
         "snapshot_at": started.isoformat(timespec="seconds"),
         "schema": SCHEMA,
@@ -175,6 +211,8 @@ def export(engine, out: Path, source: str = "") -> dict:
         "n_views": len(meta["views"]),
         "rows": counts,
         "total_rows": int(sum(counts.values())),
+        "view_rows": view_counts,       # the views in aa_views/ (a reader goes by this list)
+        "view_errors": view_errors,     # views left out of aa_views/, with the error
     }
     (out / "schema.json").write_text(json.dumps(meta, indent=1, default=str))
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1))

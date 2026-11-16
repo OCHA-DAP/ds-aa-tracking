@@ -189,11 +189,15 @@ are kept forever (the year-end official state, for the map's time view).
   it. `databricks.yml` defines one job, **AA Tracking Nightly** (03:30 UTC, Job Compute):
   `databricks/nightly.py` runs `scripts/export_snapshot.py`, which writes every `aa` table (parquet) plus the DDL metadata
   (`schema.json`: exact column types, defaults, sequences, constraints, indexes, view
-  definitions) and a `manifest.json` to the dev blob `projects/ds-aa-tracking/snapshot/`
+  definitions), each view's rows (`aa_views/`, for readers without Postgres such as the AA
+  chatbot; D228) and a `manifest.json` to the dev blob `projects/ds-aa-tracking/snapshot/`
   — `latest/` and a dated copy kept 30 days. `scripts/restore_snapshot.py` rebuilds the
   schema verbatim in a local Postgres (`src/ds_aa_tracking/snapshot.py` holds both halves),
   so nothing in the build is ported to another SQL dialect and the schema page stays
   faithful. Pages carry a "data snapshot <time> UTC" stamp.
+- document text (D228): `scripts/extract_document_text.py` (a nightly step, before the
+  export) writes each registered framework document's text, page by page, to
+  `aa.framework_document_page`; a file is read once, a new extractor version re-reads.
 - statuses: version = endorsed | development | pre-development (superseded is inferred);
   retired = a flag on country_hazard; per-window triggered flags in window_status
 - `src/ds_aa_tracking/migrations.py` — the status collapse and window_status seeding (run by ensure_schema)
