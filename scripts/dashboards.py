@@ -1781,7 +1781,7 @@ def _money_flows(d, pre, act):
       last column. Years add up.
     lv: 'd' donor -> fund (donor share of the fund's paid income that year × the amount),
         'f' fund -> agency / grantee, 'a' agency / grantee -> final recipient.
-    c (the 'f' rows only): the country the money went to — the framework's country (pre-arranged),
+    c (the 'f' and 'a' rows): the country the money went to — the framework's country (pre-arranged),
       the activation's (released); '' where no single country is recorded (a regional fund's
       allocation with no country): FLOW_JS's optional countries column (2026-10-28) splits each
       'f' link at it, fund -> country -> agency. CERF's released money reaches the agencies by the
@@ -1797,7 +1797,7 @@ def _money_flows(d, pre, act):
        funding_series(d, released="all") to have them). fu: fund type, 'c' CERF, 'p' CBPF,
        'r' regional fund. Every split is linear in the amount, so the per-layer rows add up
        to the same totals as one pass over all the money. Rows with the same keys are summed.
-    h (the 'f' rows only): the hazard of the framework the money is pre-arranged under or whose
+    h (the 'f' and 'a' rows): the hazard of the framework the money is pre-arranged under or whose
       activation released it ('' none recorded). With c it names the framework: FLOW_JS's
       optional frameworks column (2026-11-16) splits each 'f' link at it, after the country.
       The non-framework layer's rows (g 'a') carry it too, but belong to no framework: one box.
@@ -1908,11 +1908,14 @@ def _money_flows(d, pre, act):
     rows = []
 
     def add(m, y, lv, s_, t, v, g, fc, rg, c=None, h=None):
-        if lv == "f" and h is None:     # every fund link says its framework's hazard ('' = none)
-            raise ValueError("a fund -> agency / grantee row needs its hazard")
+        # every fund link says its country and its framework's hazard ('' = none), and so does
+        # what its agency or grantee passes on: with the agencies column unticked, a framework's
+        # money joins its own partners, not every partner of the agency (2026-11-16)
+        if lv in ("f", "a") and h is None:
+            raise ValueError("a fund -> agency / grantee -> final row needs its hazard")
         if v and v > 0.5:
             r = {"m": m, "y": int(y), "lv": lv, "s": s_, "t": t, "v": float(v), "g": g, "fu": _fu(fc), "rg": rg}
-            if lv == "f":       # the country column's key ('' = no single country), and the
+            if lv in ("f", "a"):  # the country column's key ('' = no single country), and the
                 r["c"] = c if isinstance(c, str) else ""    # frameworks column's, with the hazard
                 # ('multi' / '?': a country-level pooled-fund allocation of a country with several
                 # live frameworks, or none — funding_series' markers, no framework's hazard)
@@ -1937,7 +1940,7 @@ def _money_flows(d, pre, act):
         def on(node, v, final):
             add(m, y, "f", "f:" + fc, "a:" + node, v, g, fc, rg, c, h)
             if m == "r":
-                add(m, y, "a", "a:" + node, "p:" + final, v, g, fc, rg)
+                add(m, y, "a", "a:" + node, "p:" + final, v, g, fc, rg, c, h)
         o = ca_by.get(ac) if ac else None
         if o is None or float(o.sum()) <= 0:
             o = (co[(co.index.get_level_values(0) == fc) & (co.index.get_level_values(1) == y)].droplevel([0, 1])
@@ -2061,7 +2064,7 @@ def _money_flows(d, pre, act):
         asum = float(a_.sum()) if a_ is not None else 0.0
         if asum <= 0:
             add("r", y, "f", "f:cerf", "a:nr|agencies not recorded", amount, g, fc, rg, c, h)
-            add("r", y, "a", "a:nr|agencies not recorded", "p:nr|recipient not recorded", amount, g, fc, rg)
+            add("r", y, "a", "a:nr|agencies not recorded", "p:nr|recipient not recorded", amount, g, fc, rg, c, h)
             continue
         k = amount / asum
         for agency, v in a_.items():
@@ -2074,10 +2077,10 @@ def _money_flows(d, pre, act):
             for pnode, sv in (s_.items() if tot_s else ()):
                 pv = round(sv / tot_s * parts, 2)
                 if pv > 0.5:
-                    add("r", y, "a", "a:" + node, "p:" + pnode, pv, g, fc, rg)
+                    add("r", y, "a", "a:" + node, "p:" + pnode, pv, g, fc, rg, c, h)
                     kept += pv
             # what the agency implements itself: a final node with its own name
-            add("r", y, "a", "a:" + node, "p:" + node, v * k - kept, g, fc, rg)
+            add("r", y, "a", "a:" + node, "p:" + node, v * k - kept, g, fc, rg, c, h)
 
     # one row per link and keys (the per-country split writes the same link many times)
     agg = {}
@@ -2173,6 +2176,11 @@ FLOW_NOTE = " ".join(TB(x) for x in (
     "NGO, government, Red Cross / Red Crescent, other, not recorded — from the sub-grant partner "
     "type or the organisation type recorded by the Country and Regional Funds; a band takes the "
     "colour of the node it leaves.",
+    "<b>Columns</b>: every column has a tick box, in the order of the chart; untick one and the "
+    "bands join the columns either side of it. A donor's band past the funds is an attribution, "
+    "not a recorded payment: its share of each fund's income that year, applied to where that "
+    "fund's money went. With <i>agencies and grantees</i> unticked, a framework's band reaches the "
+    "organisations its own agencies and grantees passed the money to.",
     "<b>Recipient types</b>: the far-right column groups every band by the category of the "
     "organisation it reaches — UN agencies, international NGOs, national / local NGOs, Red Cross / "
     "Red Crescent, government, other (untick <i>recipient types</i> to hide it).",
@@ -2183,8 +2191,8 @@ FLOW_NOTE = " ".join(TB(x) for x in (
 
 
 def _flow_panel(donors_on, donor_toggle=True, extra=""):
-    """The 'Where the money flows' panel: pre-arranged / released switch, year, levels
-    (FLOW_JS mounts it). Used by the Financing page (donors off) and the donor-shares page
+    """The 'Where the money flows' panel: pre-arranged / released switch, year, and a tick box for
+    every column in the chart's order, left to right (FLOW_JS mounts it). Used by the Financing page (donors off) and the donor-shares page
     (donors on, no toggle: the donor-flows view). extra: HTML appended to the method note."""
     chk = " checked" if donors_on else ""
     dctl = (f"<label><input type='checkbox' id='flD'{chk}> {T('donors')}</label>" if donor_toggle
@@ -2195,11 +2203,15 @@ def _flow_panel(donors_on, donor_toggle=True, extra=""):
    <label style='padding:3px 10px;cursor:pointer'><input type='radio' name='flM' value='p'> {T('pre-arranged')}</label>
    <label style='padding:3px 10px;cursor:pointer;border-left:1px solid #cbd5e1'><input type='radio' name='flM' value='r' checked> {T('released')}</label></span>
   <label><span id='flYl'>{T('Released in')}</span> <select id='flY'></select></label>
+  <span role='group' {ATTR('aria-label', 'columns of the chart, from left to right')} style='display:contents'>
   {dctl}
+  <label><input type='checkbox' id='flF' checked> {T('funds')}</label>
   <label {ATTR('title', 'a column of the countries between the funds and the agencies: the ones receiving the most named, the rest grouped')}><input type='checkbox' id='flC'> {T('framework countries')}</label>
   <label {ATTR('title', 'a column of the frameworks before the agencies: each named by its country and hazard')}><input type='checkbox' id='flW'> {T('frameworks')}</label>
-  <label {ATTR('title', 'a last column that groups the recipients by type (UN agencies, NGOs, Red Cross / Red Crescent, government, other)')}><input type='checkbox' id='flK' checked> {T('recipient types')}</label>
+  <label><input type='checkbox' id='flA' checked> {T('agencies and grantees')}</label>
   <label id='flPw'><input type='checkbox' id='flP' checked> {T('sub-grantees / implementing organisations')}</label>
+  <label {ATTR('title', 'a last column that groups the recipients by type (UN agencies, NGOs, Red Cross / Red Crescent, government, other)')}><input type='checkbox' id='flK' checked> {T('recipient types')}</label>
+  </span>
   <label>{T('Find')} <input type='search' id='flS' list='flSL' {ATTR('placeholder', 'a donor, country or organisation')} {ATTR('aria-label', 'Find a donor, country or organisation in the flows')} style='width:230px;max-width:100%;font-size:12.5px;padding:3px 6px'></label><datalist id='flSL'></datalist>
   <span id='flTot' class='muted'></span>
  </div>
@@ -2210,7 +2222,7 @@ def _flow_panel(donors_on, donor_toggle=True, extra=""):
 
 
 FLOW_JS = """
-// ---- where the money flows: [donors ->] funds [-> countries] [-> frameworks] -> agencies / grantees [-> sub-grantees / implementing organisations] [-> recipient types].
+// ---- where the money flows: donors -> funds -> countries -> frameworks -> agencies / grantees -> sub-grantees / implementing organisations -> recipient types, each column with its tick box.
 // Shared by the Financing page and the donor-flows view of the donor-shares page; rows from
 // _money_flows. Recipient node ids carry their category: 'a:un|WFP' (an agency: always named),
 // 'p:ingo~ActionAid' (an organisation: the top ones of the view named, the rest grouped).
@@ -2235,73 +2247,90 @@ const CAT_GROUP = {un:'UN agencies', ingo:'International NGOs', nngo:'National /
   rc:'Red Cross / Red Crescent', oth:FLOW_OTHER, nr:FLOW_NR};
 function flowNode(id){ const m = /^([apk]):([a-z]+)([|~])(.*)$/.exec(id);
   return m ? {p:m[1], cat:m[2], org:m[3]==='~', name:m[4]} : null; }
-function flowRegroup(L, f){ const g = {};
-  L.forEach(l=>{ const s = f(l.s, l), t = f(l.t, l), k = l.lv+'\\u0001'+s+'\\u0001'+t;
-    if(g[k]) g[k].v += l.v; else g[k] = {lv:l.lv, s, t, v:l.v}; });
-  return Object.values(g); }
 // pick (2026-10-28): a donor ('d:…'), country ('c:…') or organisation name the search box chose,
 // kept out of the 'other' boxes so it has a box of its own to focus
-function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, showK, showC, pick, showW){
-  let R = rows.filter(r=>r.m===mode && (year==='all' || r.y===+year) && keep(r));
-  // countries (2026-10-28): each fund -> agency / grantee link split at the country its row carries
-  // (c; '' none recorded: 'c:*', multi-country / regional) — fund -> country ('f', so the total is
-  // unchanged) and country -> agency ('c'). Every fund link passes through the column.
-  // frameworks (owner, 2026-11-16: "add frameworks … to the right of framework countries"): the
-  // same, at the framework the row's country and hazard name ('w:ISO3|hazard'); the non-framework
-  // layer's money one box ('w:-'), a row with no country or no one hazard 'w:?' (no single framework). The first
-  // link out of a fund stays 'f'; the one out of a country is 'c', out of a framework 'w'.
-  if(showC || showW) R = R.flatMap(r=>{ if(r.lv!=='f') return [r];
-    const mid = [];
-    if(showC) mid.push(['c', 'c:'+(r.c||'*')]);
-    if(showW) mid.push(['w', r.g==='a' ? 'w:-' : r.c && r.h ? 'w:'+r.c+'|'+r.h : 'w:?']);
-    const out = []; let s = r.s, lv = 'f';
-    mid.forEach(([l, id])=>{ out.push({...r, lv, s, t:id}); s = id; lv = l; });
-    out.push({...r, lv, s}); return out; });
-  let L = flowRegroup(R, x=>x);
-  // the countries receiving the most in this view named, the rest one 'Other' box
-  // (never a box for a single country)
-  if(showC){ const ct = {}; L.forEach(l=>{ if(l.lv==='f' && l.t!=='c:*') ct[l.t] = (ct[l.t]||0) + l.v; });
-    const ids = Object.keys(ct).sort((a,b)=>ct[b]-ct[a]);
-    const topC = new Set(ids.length > FLOW_TOP_COUNTRIES + 1 ? ids.slice(0, FLOW_TOP_COUNTRIES) : ids);
-    if(pick && pick.startsWith('c:')) topC.add(pick);
-    L = flowRegroup(L, x=>x.startsWith('c:') && x!=='c:*' && !topC.has(x) ? 'c:+' : x); }
-  // the frameworks receiving the most named, the rest one 'Other' box (never a box for a single one)
-  if(showW){ const wt = {}, own = x => x.startsWith('w:') && x!=='w:-' && x!=='w:?';
-    L.forEach(l=>{ if(own(l.t)) wt[l.t] = (wt[l.t]||0) + l.v; });
-    const ids = Object.keys(wt).sort((a,b)=>wt[b]-wt[a]);
-    const topW = new Set(ids.length > FLOW_TOP_FRAMEWORKS + 1 ? ids.slice(0, FLOW_TOP_FRAMEWORKS) : ids);
-    L = flowRegroup(L, x=>own(x) && !topW.has(x) ? 'w:+' : x); }
+// show (owner, 2026-11-16: "make tick boxes for all the types"): the columns to draw, any of
+// d donors, f funds, c framework countries, w frameworks, a agencies and grantees, p sub-grantees /
+// implementing organisations (released money only), k recipient types — always in that order.
+// The rows are three tables that meet at the fund and at the agency: donor -> fund ('d'), fund ->
+// agency / grantee with its country and framework ('f'), agency / grantee -> final ('a', with the
+// same country and framework). Two columns next to each other in one table are drawn from its rows
+// as they are. Across an unticked column the tables are joined: a donor's share of a fund's money
+// (its fund, year, layer and region) applied to where that money went; what an agency passes on,
+// for its own country and framework. Every column carries the whole total.
+function buildFlow(rows, mode, year, show, names, topN, keep, topOrgs, pick){
+  const R = rows.filter(r=>r.m===mode && (year==='all' || r.y===+year) && keep(r));
+  const RD = R.filter(r=>r.lv==='d'), RF = R.filter(r=>r.lv==='f'), RA = R.filter(r=>r.lv==='a');
+  const total = RF.reduce((s,r)=>s+r.v, 0);
+  const desc = t => Object.keys(t).sort((a,b)=>t[b]-t[a]);
+  // ---- which boxes are named, from the rows (never from the columns ticked)
   // top donors; the rest grouped
-  const dt = {}; L.filter(l=>l.lv==='d').forEach(l=>dt[l.s]=(dt[l.s]||0)+l.v);
-  const top = new Set(Object.keys(dt).filter(k=>k!=='d:'+FLOW_NR).sort((a,b)=>dt[b]-dt[a]).slice(0,topN||12));
+  const dt = {}; RD.forEach(r=>dt[r.s]=(dt[r.s]||0)+r.v);
+  const top = new Set(desc(dt).filter(k=>k!=='d:'+FLOW_NR).slice(0,topN||12));
   top.add('d:'+FLOW_NR);
   if(pick && pick.startsWith('d:')) top.add(pick);
-  L = flowRegroup(L, (x, l)=>l.lv==='d' && x===l.s && !top.has(x) ? 'd:'+FLOW_OTHER : x);
+  const dId = x => top.has(x) ? x : 'd:'+FLOW_OTHER;
+  // countries (2026-10-28): the country a fund row carries (c; '' none recorded: 'c:*',
+  // multi-country / regional); the ones receiving the most in this view named, the rest one
+  // 'Other' box (never a box for a single country)
+  const ct = {}; RF.forEach(r=>{ if(r.c) ct['c:'+r.c] = (ct['c:'+r.c]||0) + r.v; });
+  const cAll = desc(ct), topC = new Set(cAll.length > FLOW_TOP_COUNTRIES + 1 ? cAll.slice(0, FLOW_TOP_COUNTRIES) : cAll);
+  if(pick && pick.startsWith('c:')) topC.add(pick);
+  const cId = r => !r.c ? 'c:*' : topC.has('c:'+r.c) ? 'c:'+r.c : 'c:+';
+  // frameworks (owner, 2026-11-16: "add frameworks … to the right of framework countries"): the
+  // framework the row's country and hazard name ('w:ISO3|hazard'); the non-framework layer's money
+  // one box ('w:-'), a row with no country or no one hazard 'w:?' (no single framework); the
+  // frameworks receiving the most named, the rest one 'Other' box (never a box for a single one)
+  const wRaw = r => r.g==='a' ? 'w:-' : r.c && r.h ? 'w:'+r.c+'|'+r.h : 'w:?';
+  const wOwn = x => x!=='w:-' && x!=='w:?';
+  const wt = {}; RF.forEach(r=>{ const x = wRaw(r); if(wOwn(x)) wt[x] = (wt[x]||0) + r.v; });
+  const wAll = desc(wt), topW = new Set(wAll.length > FLOW_TOP_FRAMEWORKS + 1 ? wAll.slice(0, FLOW_TOP_FRAMEWORKS) : wAll);
+  const wId = r => { const x = wRaw(r); return wOwn(x) && !topW.has(x) ? 'w:+' : x; };
   // organisations: the top ones of THIS view named, by what they receive (sub-grants and CBPF
   // grants; a grantee's own pass-through to the final column not counted twice); the rest are
-  // grouped below, once the recipient-type column has taken each one's own category
+  // grouped, in the agency / grantee column and the final one: every placeholder one 'Not
+  // recorded' box, every organisation not named one 'Other' box (drawn in the 'other' category's
+  // grey; the recipient-type column keeps each one's own category)
   const recv = {};
-  L.forEach(l=>{ const t = flowNode(l.t), s = flowNode(l.s); if(!t || !t.org || t.cat==='nr' || (s && s.org && s.name===t.name)) return;
-    recv[t.name] = (recv[t.name]||0) + l.v; });
-  const named = new Set(Object.keys(recv).sort((a,b)=>recv[b]-recv[a]).slice(0, topOrgs||FLOW_TOP_ORGS));
+  R.forEach(r=>{ if(r.lv==='d') return; const t = flowNode(r.t), s = flowNode(r.s);
+    if(!t || !t.org || t.cat==='nr' || (s && s.org && s.name===t.name)) return;
+    recv[t.name] = (recv[t.name]||0) + r.v; });
+  const named = new Set(desc(recv).slice(0, topOrgs||FLOW_TOP_ORGS));
   if(pick && pick.startsWith('o:')) named.add(pick.slice(2));
-  if(!showD) L = L.filter(l=>l.lv!=='d');
-  if(!showP) L = L.filter(l=>l.lv!=='a');
+  const oId = x => { const n = flowNode(x); if(!n || n.p==='k') return x;
+    return n.cat==='nr' && !n.org ? `${n.p}:nr|${FLOW_NR}` : n.org && !named.has(n.name) ? `${n.p}:oth|${FLOW_OTHER}` : x; };
   // recipient types (2026-10-02 meeting): the far-right column (2026-10-19: the final bucket,
-  // not a stage before the named organisations) — every band reaching the named column runs
-  // on to its category: UN agencies, international / national NGOs, Red Cross / Red Crescent,
-  // government, other. After the naming above; the 'f' links (the total) are unchanged.
-  if(showK){
-    const last = showP ? 'p:' : 'a:', lv = showP ? 'a' : showW ? 'w' : showC ? 'c' : 'f', S = [];
-    L.forEach(l=>{ S.push(l); const n = l.lv===lv && l.t.startsWith(last) ? flowNode(l.t) : null;
-      if(n) S.push({lv:'k', s:l.t, t:`k:${n.cat}|${CAT_GROUP[n.cat]}`, v:l.v}); });
-    L = S;
+  // not a stage before the named organisations) — the category of the organisation the money
+  // reaches: the final one where that column is ticked, else the agency or grantee
+  const kOf = x => { const n = flowNode(x); return n ? `k:${n.cat}|${CAT_GROUP[n.cat]}` : 'k:nr|'+CAT_GROUP.nr; };
+  // ---- the joins
+  // what an agency or grantee passes on, for its country and framework: [final box, share]
+  const aKey = (r, node) => r.y+'|'+r.g+'|'+r.fu+'|'+r.rg+'|'+(r.c||'')+'|'+(r.h||'')+'|'+node;
+  const outs = {};
+  if(show.p && !show.a) RA.forEach(r=>{ const o = outs[aKey(r, r.s)] || (outs[aKey(r, r.s)] = {sum:0, to:{}});
+    o.sum += r.v; o.to[r.t] = (o.to[r.t]||0) + r.v; });
+  const passed = r => { const o = outs[aKey(r, r.t)];
+    return o && o.sum > 0 ? Object.entries(o.to).map(([t, v])=>[t, r.v*v/o.sum]) : [['p:'+r.t.slice(2), r.v]]; };
+  // a fund row at a column: its box there (and the money, split where the column is the final one)
+  const at = (r, c) => c==='f' ? [[r.s, r.v]] : c==='c' ? [[cId(r), r.v]] : c==='w' ? [[wId(r), r.v]]
+    : c==='a' ? [[oId(r.t), r.v]] : c==='k' ? [[kOf(r.t), r.v]] : passed(r).map(([t, v])=>[oId(t), v]);
+  const G = new Map();
+  const link = (s, t, v) => { if(!(v > 0)) return; const k = s+'\\u0001'+t, l = G.get(k); if(l) l.v += v; else G.set(k, {s, t, v}); };
+  const S = ['d','f','c','w','a','p','k'].filter(c=>show[c]);
+  for(let i = 0; i + 1 < S.length; i++){ const X = S[i], Y = S[i+1];
+    if(X==='d' && Y==='f') RD.forEach(r=>link(dId(r.s), r.t, r.v));
+    else if(X==='a' && Y==='p') RA.forEach(r=>link(oId(r.s), oId(r.t), r.v));
+    else if(X==='p') RA.forEach(r=>link(oId(r.t), kOf(r.t), r.v));
+    else if(X==='d'){
+      // the donors of each fund's money (fund, year, layer, region), and where that money went
+      const fKey = (r, f) => r.y+'|'+f+'|'+r.g+'|'+r.rg, dons = {}, went = {};
+      RD.forEach(r=>{ const o = dons[fKey(r, r.t)] || (dons[fKey(r, r.t)] = {sum:0, by:{}}); o.sum += r.v; o.by[r.s] = (o.by[r.s]||0) + r.v; });
+      RF.forEach(r=>{ const o = went[fKey(r, r.s)] || (went[fKey(r, r.s)] = {}); at(r, Y).forEach(([id, v])=>{ o[id] = (o[id]||0) + v; }); });
+      Object.entries(went).forEach(([k, to])=>{ const o = dons[k], by = o && o.sum > 0 ? Object.entries(o.by).map(([d, v])=>[d, v/o.sum]) : [['d:'+FLOW_NR, 1]];
+        Object.entries(to).forEach(([id, v])=>by.forEach(([d, sh])=>link(dId(d), id, v*sh))); }); }
+    else RF.forEach(r=>at(r, X).forEach(([x])=>at(r, Y).forEach(([y, v])=>link(x, y, v))));
   }
-  // the catch-alls, in the agency / grantee column and the final one: every placeholder one
-  // 'Not recorded' box, every organisation not named one 'Other' box (drawn in the 'other'
-  // category's grey; the recipient-type column above keeps each one's own category)
-  L = flowRegroup(L, x=>{ const n = flowNode(x); if(!n || n.p==='k') return x;
-    return n.cat==='nr' && !n.org ? `${n.p}:nr|${FLOW_NR}` : n.org && !named.has(n.name) ? `${n.p}:oth|${FLOW_OTHER}` : x; });
+  const L = [...G.values()];
   const lab = id => { const [p, ...rest] = id.split(':'); const n = rest.join(':');
     if(p==='f') return tr8(names[n]||n);
     if(p==='c') return n==='*' ? tr8('multi-country / regional') : n==='+' ? tr8(FLOW_OTHER) : tr8(names[id]||n);
@@ -2310,23 +2339,17 @@ function buildFlow(rows, mode, year, showD, showP, names, topN, keep, topOrgs, s
       : tr8(names['c:'+n.split('|')[0]] || n.split('|')[0]) + ' ' + tr8(names[id] || '');
     const r = flowNode(id); return tr8(r ? r.name : n); };
   // a heading over each column (owner, 2026-11-16: "little labels above the groups for donors,
-  // funds, etc"), in the words of the tick box that shows the column, where it has one
-  const cols = [], heads = [], cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+  // funds, etc"), in the words of the tick box that shows the column
+  // ("sub-grantees / implementing organizations": the column also holds what an agency implements
+  // itself and the pooled funds' grantees; the heading breaks at the slash)
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+  const HEAD = {d:tr8('donors'), f:tr8('funds'), c:tr8('framework countries'), w:tr8('frameworks'), a:tr8('agencies and grantees'),
+    p:tr8('sub-grantees / implementing organisations').replace(' / ', ' /\\n'), k:tr8('recipient types')};
   const col = pre => { const ids = new Set(); L.forEach(l=>{ [l.s,l.t].forEach(x=>{ if(x.startsWith(pre)) ids.add(x); }); });
     return [...ids].map(id=>({id, label:lab(id)})); };
-  const put = (pre, head) => { cols.push(col(pre)); heads.push(head); };
-  if(showD) put('d:', cap(tr8('donors')));
-  put('f:', tr8('Funds'));
-  if(showC) put('c:', cap(tr8('framework countries')));
-  if(showW) put('w:', cap(tr8('frameworks')));
-  put('a:', tr8('Agencies and grantees'));
-  // (owner, 2026-11-16: "sub-grantees / implementing organizations" — the column also holds what
-  // an agency implements itself and the pooled funds' grantees; the heading breaks at the slash)
-  if(showP) put('p:', cap(tr8('sub-grantees / implementing organisations')).replace(' / ', ' /\\n'));
-  if(showK) put('k:', cap(tr8('recipient types')));
+  const cols = S.map(c=>col(c+':')), heads = S.map(c=>cap(HEAD[c]));
   const seen = new Set(); cols.forEach(c=>c.forEach(n=>{ const r = flowNode(n.id); if(r) seen.add(r.cat); }));
-  const total = L.filter(l=>l.lv==='f').reduce((s,l)=>s+l.v,0);
-  return {columns:cols, heads, links:L.map(l=>({s:l.s,t:l.t,v:l.v})), total, cats:CAT_ORDER.filter(c=>seen.has(c))};
+  return {columns:cols, heads, links:L, total, cats:CAT_ORDER.filter(c=>seen.has(c)), few:S.length < 2};
 }
 // wire the panel _flow_panel() wrote; cfg.keep(row) filters the rows (the page's toggles);
 // cfg.yLab(year) labels a year (Financing: the current year as '2026*', indicative), cfg.cy the
@@ -2469,14 +2492,21 @@ function mountFlow(cfg){
     // (only while the pick has money here: a column is not held ticked for a pick with none)
     if(hit && pick.startsWith('c:') && !flC.checked) flC.checked = true;     // a country needs the country column
     if(hit && pick.startsWith('d:') && !flD.checked) flD.checked = true;     // a donor, the donor column
-    const build = () => buildFlow(D.flow, mode, flY.value, flD.checked, mode==='r' && flP.checked, D.fundNames, 12, keep, cfg.topOrgs, flK.checked, flC.checked, pick, flW.checked);
+    // the columns ticked (the final one exists for released money only)
+    const build = () => buildFlow(D.flow, mode, flY.value, {d:flD.checked, f:flF.checked, c:flC.checked, w:flW.checked, a:flA.checked,
+      p:mode==='r' && flP.checked, k:flK.checked}, D.fundNames, 12, keep, cfg.topOrgs, pick);
     let F = build();
-    // an organisation that only receives through an agency has its box in the final column
-    if(hit && mode==='r' && !flP.checked && !F.columns.some(c=>c.some(n=>isPick(n.id)))){ flP.checked = true; F = build(); }
+    const boxed = () => F.columns.some(c=>c.some(n=>isPick(n.id)));
+    // an organisation or an agency needs the agencies column; one that only receives through an
+    // agency has its box in the final column
+    if(hit && pick.startsWith('o:') && !flA.checked && !boxed()){ flA.checked = true; F = build(); }
+    if(hit && mode==='r' && !flP.checked && !boxed()){ flP.checked = true; F = build(); }
     if(pick) showLine((hit && pickText(mode)) || tr8('{0} has no money in this view.', pickLabel));
     else if(ask) showAsk(hits);
     else showLine('');
     const el = document.getElementById('flow'), leg = document.getElementById('flLeg');
+    // one column, or none, is no flow (a switch to pre-arranged, which has no final column, can leave one)
+    if(F.few && F.total > 0){ el.innerHTML = "<p class='empty'>" + tr8('Tick at least two columns to draw the flows.') + "</p>"; flTot.textContent=''; if(leg) leg.innerHTML=''; return; }
     if(!F.links.length){ el.innerHTML = "<p class='empty'>" + tr8('no AA money in this selection for this year') + "</p>"; flTot.textContent=''; if(leg) leg.innerHTML=''; return; }
     const n = Math.max(...F.columns.map(c=>c.length));
     // five columns (donors … recipient types) leave ~170px between them at 1100: wider, shorter labels;
@@ -2486,7 +2516,7 @@ function mountFlow(cfg){
       fmt:money, labelW:200, labelMax:nc >= 6 ? 22 : wide ? 26 : 34, label:tr8(cfg.label || 'AA money through funds and agencies'),
       nodeColor: nd => { const r = flowNode(nd.id); return r ? CAT_COLOR[r.cat] : null; }});
     el.insertAdjacentHTML('beforeend', "<div class='note'>" + tr8('Hover a band or a box to follow the money; click a box to keep it in focus, click again to clear. Funds in their own colour (CERF blue, pooled funds orange, regional funds green); every agency, grantee and recipient in the colour of its category; a band takes the colour of the box it leaves.') + "</div>");
-    if(leg) leg.innerHTML = '<b>' + tr8('Recipients') + '</b>' + F.cats.map(c=>`<span style='display:inline-flex;align-items:center;gap:5px'><span style='width:11px;height:11px;border-radius:2px;background:${CAT_COLOR[c]};display:inline-block${c==='nr' ? ';box-shadow:inset 0 0 0 1px #aab2bd' : ''}'></span>${tr8(CAT_LABEL[c])}</span>`).join('');
+    if(leg) leg.innerHTML = !F.cats.length ? '' : '<b>' + tr8('Recipients') + '</b>' + F.cats.map(c=>`<span style='display:inline-flex;align-items:center;gap:5px'><span style='width:11px;height:11px;border-radius:2px;background:${CAT_COLOR[c]};display:inline-block${c==='nr' ? ';box-shadow:inset 0 0 0 1px #aab2bd' : ''}'></span>${tr8(CAT_LABEL[c])}</span>`).join('');
     // the pick's boxes: ringed and their names in bold; the first one focused, as a click would
     if(hit){ const nds = [...el.querySelectorAll('.sk-n')].filter(n=>isPick(n.dataset.id));
       nds.forEach(n=>{ n.setAttribute('stroke', '#0f2540'); });
@@ -2511,7 +2541,7 @@ function mountFlow(cfg){
   }
   document.querySelectorAll("input[name='flM']").forEach(el=>el.addEventListener('change', ()=>{ fillYears(); drawFlow(); }));
   fillYears();
-  [flY, flD, flP, flK, flC, flW].forEach(el=>el.addEventListener('change', drawFlow));
+  [flY, flD, flF, flC, flW, flA, flP, flK].forEach(el=>el.addEventListener('change', drawFlow));
   // a name chosen from the list arrives as 'input' (in some browsers 'change' waits until the
   // box is left): an exact name, or the box emptied, acts at once; anything else on Enter or on
   // leaving the box, so a redraw never rewrites what is being typed
