@@ -2130,7 +2130,9 @@ FLOW_NOTE = " ".join(TB(x) for x in (
     "of the fund's projects marked AA that year; a grantee implements directly, so its band runs on, same "
     "amount, to the same organisation in the final column.",
     f"<b>Framework countries</b> (tick <i>framework countries</i>): a column between the funds and the agencies — the "
-    f"country of the framework (pre-arranged) or of the activation (released). The {FLOW_TOP_COUNTRIES} "
+    "country of the framework (pre-arranged) or of the activation (released). With the non-framework "
+    "allocations layer ticked, the countries of those allocations are in the column too. "
+    f"The {FLOW_TOP_COUNTRIES} "
     "countries receiving the most in the view are named, the rest grouped as <i>Other</i>; "
     "a regional fund allocation that names no single country is <i>multi-country / regional</i>. "
     "The grantees of a regional fund carry no country: a country's band from a regional fund reaches "
