@@ -1137,7 +1137,7 @@ def _fetch(e):
            WHERE v.is_aa AND v.fund_type <> 'cerf'""", e)
     d["vfund"] = prearranged_now(e)
     d["pool_spent"] = pooled_spent(e)   # pooled envelopes released by an activation (prearranged_now leaves them out)
-    # versions that allow two activations a year: their envelope is reported doubled
+    # versions that allow N activations before re-endorsement: their envelope is reported N times
     # (prearranged_now above, funding_series and the Financing page's split by agency / sector)
     d["act_factors"] = activation_factors(e)
     d["windows"] = pd.read_sql(
@@ -2595,7 +2595,7 @@ FUND_NOTE_1 = '<b>Frameworks</b> (in the filter bar) lists every current and ret
 FUND_NOTE_PRE_A = '<b>Pre-arranged now</b> comes from the framework records: for every active, being-updated or in-development framework, the envelope of its most recent version that has one. The same figure is the current year in the annual chart and on the map.'
 FUND_NOTE_PRE_B = "CERF money stays pre-arranged until a framework is <b>retired</b>: a framework being updated after an activation keeps its most recent version's CERF envelope. Country and Regional Fund money does not: an envelope or AA-tagged allocation counts as pre-arranged until an activation draws on it, and from then on it is released money, no longer committed. Pre-arranged money is a stock (in place on a date) and released money a flow (per year): the two are never added together."
 FUND_NOTE_3 = '<b>People covered now</b> is the latest figure recorded for each current framework — the people its pre-arranged plan covers, not the people reached once it activated (those come from the final reports, on the Activities page). Retired frameworks cover no one now and are left out, as on the map. A framework still in development usually has no figure until its projects are planned; an early estimate can be recorded until then.'
-# two activations a year (aa.framework_version.activations_per_year; activation_factors): the
+# N activations allowed per version (aa.framework_version.activations_per_year; activation_factors): the
 # owner's footnote (2026-10-28) under the tiles, and the sentence the charts' notes add. Both are
 # written on every build and shown by the page's script only when a framework is counted so.
 TWO_ACT_NOTE = "* can activate more than once before it must be endorsed again: its CERF envelope is counted once for each activation it allows, and the CERF budget per activation is that figure divided by the number of activations."
@@ -2683,7 +2683,7 @@ def build_funding(page, d):
     vf["hz"] = vf["hazard"].map(haz)
     vf["g"] = [layer(c, h, v) for c, h, v in zip(vf["country_iso3"], vf["hazard"], vf["version"])]
     vf["k"] = pair_key(vf)
-    # x: activations a year counted (prearranged_now has multiplied total_usd already)
+    # x: activations allowed, counted (prearranged_now has multiplied total_usd already)
     vf["x"] = vf["activations_per_year"].fillna(1).astype(int) if "activations_per_year" in vf else 1
     now_cerf = vf.loc[vf["ft"] == "cerf", "total_usd"].sum()
     now_cbpf = vf.loc[vf["ft"] != "cerf", "total_usd"].sum()
@@ -2787,7 +2787,7 @@ def build_funding(page, d):
     not_un = sorted(set(pr.loc[pr["agency"].notna() & ~pr["un"], "agency"].astype(str)))
     if not_un:   # a UN agency missing from UN_SHORT would drop out of the table: the list shows it
         print(f"  framework × agency table: not UN agencies, left out ({len(not_un)}): {', '.join(not_un)}")
-    # a version that allows two activations a year: its CERF budget lines count twice, as its
+    # a version that allows N activations: its CERF budget lines count N times, as its
     # CERF envelope (prearranged_now)
     fac = d.get("act_factors") or {}
     if fac and len(pr):
@@ -4587,7 +4587,7 @@ def _no_framework_body(d, fw, c, h, umap, docs):
 def build_framework_pages(page, tbl, d, e=None):
     cur, ver, act = d["current"], d["versions"], d["activation"]
     # the pre-arranged series of the Financing page (funding_series): the current year is
-    # pre-arranged now (prearranged_now, two activations a year counted twice), past years as
+    # pre-arranged now (prearranged_now, N activations allowed counted N times), past years as
     # reported — the sheets' June figure showed Cuba's 2026 as $4M against the map's $9M (2026-10-28).
     # A country with two live frameworks gets its Country and Regional Fund mirror allocations on a
     # 'multi' row, which no framework page shows (none today; the Financing page counts them by country)
@@ -4683,7 +4683,7 @@ def build_framework_pages(page, tbl, d, e=None):
         released_pool = (float(ebf.loc[ebf["fund_code"].astype(str).str.startswith(("cbpf", "rhpf")), "total_usd"].sum())
                          if (c, h, str(split_version)) in (d.get("pool_spent") or set()) else 0.0)
         n_apy = (d.get("act_factors") or {}).get((c, h, str(split_version)), 1)
-        # the split is an earlier version's while the current one allows N activations a year: the
+        # the split is an earlier version's while the current one allows N activations: the
         # chart's current-year bar counts the current envelope N times (review of PR #58: Cuba)
         cur_apy = (d.get("act_factors") or {}).get((c, h, str(version)), 1)
         if split_note and cur_apy > 1:
@@ -4708,7 +4708,7 @@ def build_framework_pages(page, tbl, d, e=None):
             f"<tr><th colspan=4>{T('version envelope (pre-arranged)')}</th><th class='num'>"
             f"{f'${envelope:,.0f}' if envelope else '—'}"
             f"{'<span class=' + chr(39) + 'warn-tag' + chr(39) + '>' + TF('split exceeds envelope by {p}%', p=f'{(split_total/envelope - 1)*100:.0f}') + '</span>' if over else ''}"
-            # a version that allows two activations a year: the map and the Financing page count it twice
+            # a version that allows N activations: the map and the Financing page count it N times
             f"{' <span class=' + chr(39) + 'muted' + chr(39) + ' style=' + chr(39) + 'font-weight:400;font-size:11px' + chr(39) + '>' + TF('the CERF budget of one activation: this version can activate up to {n} times before it must be endorsed again, so the map and the Financing page count its CERF envelope {n} times', n=n_apy) + '</span>' if envelope and n_apy > 1 else ''}"
             # a Country or Regional Fund envelope an activation released: in the envelope, no longer committed
             f"{' <span class=' + chr(39) + 'muted' + chr(39) + ' style=' + chr(39) + 'font-weight:400;font-size:11px' + chr(39) + '>' + TF('of which {x} from a Country or Regional Fund, released by an activation: no longer counted as pre-arranged now', x=f'${released_pool:,.0f}') + '</span>' if released_pool else ''}</th></tr>")

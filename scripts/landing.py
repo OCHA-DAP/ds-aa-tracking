@@ -1197,7 +1197,7 @@ def _year_history(d, e, excl, _try):
             k = ("all" if not isinstance(fc, str) or fc in ("", "all") else
                  "cerf" if fc == "cerf" else _switch_fund(fc, None, reg, c))
             fy[k] = fy.get(k, 0.0) + float(u)
-        # the activations a year funding_series counted the rows with (dashboards.activation_factors)
+        # the activations allowed funding_series counted the rows with (dashboards.activation_factors)
         ap = max([fac.get((c, h, str(v)), 1) for v in g["version"]] or [1])
         series[y] = series.get(y, 0.0) + usd
         # rows of no single framework (a pooled-fund allocation of a country with several
@@ -1205,7 +1205,7 @@ def _year_history(d, e, excl, _try):
         tgt = slot(c, h).setdefault("pre", {}) if (c, h) in pairs else country.setdefault(c, {})
         old = tgt.get(y, [0.0, 0, 1, {}])
         fy = {k: old[3].get(k, 0.0) + fy.get(k, 0.0) for k in {*old[3], *fy}}
-        # [usd, inferred?, activations a year, {fund: usd} for the fund switch]
+        # [usd, inferred?, activations allowed, {fund: usd} for the fund switch]
         tgt[y] = [old[0] + usd, old[1] or drv, max(old[2], ap), fy]
     ret = pd.read_sql(
         """SELECT r.country_iso3, r.hazard,
@@ -1387,7 +1387,7 @@ def assemble(d, e):
     from dashboards import envelope_by_fund
     ebf_ = envelope_by_fund(vfa, d["fund_names"])
     envelope = _envelopes(ebf_)   # the one envelope rule
-    # the CERF part of each version's envelope: the part a version allowing N activations a year
+    # the CERF part of each version's envelope: the part a version allowing N activations
     # counts N times (prearranged_now; owner, 2026-10-28: a pooled-fund envelope counts once)
     env_cerf = {(r.country_iso3, r.hazard, r.version): float(r.total_usd)
                 for r in ebf_[ebf_["fund_code"] == "cerf"].itertuples()}
@@ -1404,7 +1404,7 @@ def assemble(d, e):
             p["version"] = None
         for k_, usd in parts.items():
             p[k_] = p.get(k_, 0.0) + usd
-    # a version that allows N activations a year: d["vfund"] already counts its envelope N times
+    # a version that allows N activations (per version): d["vfund"] already counts its envelope N times
     # (owner, 2026-10-28); mark the pair ('apy': the page adds '†' and says the budget per
     # activation) — tile_figures / updateTiles, the table, the panel and the CSV read the mark
     for k_, p in pre_parts.items():
@@ -1737,7 +1737,7 @@ def assemble(d, e):
             "prearranged_year": _num(r.get("prearranged_year")),
             "pre_now": pre_now.get((c, h)),           # the landing tile's pre-arranged 'now'
             "pre_parts": pre_parts.get((c, h)),       # ... by fund, for the frameworks table
-            "apy": (pre_parts.get((c, h)) or {}).get("apy"),   # activations a year counted in pre_now (>1 only)
+            "apy": (pre_parts.get((c, h)) or {}).get("apy"),   # activations allowed counted in pre_now (>1 only)
             "cofin_y": hist["cof"].get((c, h)) or {},  # co-financing pre-arranged, per year (the Financing page's)
             "covered": _num(r.get("people_covered")),
             "current": latest, "versions": versions, "activations": activations,
@@ -2004,7 +2004,7 @@ def tile_figures(countries, layers, year=None):
             "pre_cbpf": part("cbpf"), "pre_rhpf": part("rhpf"),   # pre_pooled split (D201)
             # co-financing pre-arranged for the year (the current year: now), the table's column
             "cofin": sum(cof_of(f, year) or 0 for f in fw), "n_cofin": sum(1 for f in fw if cof_of(f, year) is not None),
-            # frameworks whose pre-arranged money counts N activations a year (apy: assemble)
+            # frameworks whose pre-arranged money counts N activations (apy: assemble)
             "apy": [(f["apy"], cd["name"], f["hazard"], f["hz_label"]) for cd in countries.values()
                     for f in cd["fws"] if id(f) in {id(g) for g in fw} and (f.get("apy") or 0) > 1]}
 
@@ -2161,7 +2161,7 @@ def build_landing(page, d, e):
         return [x for x in (cerf >= 5e4 and f"CERF {_money(cerf)}", cbpf >= 5e4 and f"CBPF {_money(cbpf)}",
                             rhpf >= 5e4 and f"RHPF {_money(rhpf)}",
                             other >= 5e4 and f"not split by fund {_money(other)}") if x]
-    def apy_notes(xs):   # apyTileNotes() in LANDING_JS: one line per number of activations a year
+    def apy_notes(xs):   # apyTileNotes() in LANDING_JS: one line per number of activations allowed
         by = {}
         for n, name, hz, hz_label in xs:
             by.setdefault(n, []).append((name, hz, hz_label))
@@ -3411,7 +3411,7 @@ function fundBullets(P){
 const partsOf = fs => Object.fromEntries(FKEYS.concat(['all']).map(k => [k, fs.reduce((s, f) => s + ((f.pre_parts || {})[k] || 0), 0)]));
 // the fund switch in the tiles' notes: what is counted, and how to see everything
 const switchNote = () => allFunds() ? '' : tr8('Counts the money of {0} only (the fund switch in the map legend); money not split by fund is left out.', fundWords());
-// a framework version that allows N activations a year (tropical cyclones: two storms in a season,
+// a framework version that allows N activations (per version) (tropical cyclones: two storms in a season,
 // aa.framework_version activations_per_year): its envelope is per activation, so the money
 // pre-arranged for the year is N times it — counted so centrally (dashboards: pre_now / pre_parts
 // today, the year series for a past year), never multiplied here. Marked '†' wherever shown, with
@@ -3423,7 +3423,7 @@ const apyIn = f => FUNDS.cerf ? apyOf(f) : null;
 const apyNote = n => n === 2 ? tr8('can activate up to twice before it must be endorsed again; its CERF envelope is counted twice (the CERF budget per activation is half).')
   : tr8('can activate up to {0} times before it must be endorsed again; its CERF envelope is counted {0} times (the CERF budget per activation is that divided by {0}).', n);
 const apyMark = n => n ? `<span class='tmark' title='${esc(apyNote(n))}'>†</span>` : '';
-// the pre-arranged notes' line on the frameworks counting N activations a year, one per N, in the
+// the pre-arranged notes' line on the frameworks counting N activations, one per N, in the
 // owner's words (2026-11-02) — apy_notes() in Python. Only the CERF part of the envelope is per
 // activation (a pooled-fund envelope counts once), hence 'its own CERF envelope'. No '†' on the
 // tiles: their 'i' opens this note (owner, 2026-11-02: "the cross is redundant now that we have the i")
@@ -4086,7 +4086,7 @@ function renderSide(){
 // a version's pre-arranged money: its envelope (dashboards.envelope_by_fund, the one rule), the
 // figure the tiles, the table and the Financing page count — not the document's figure first
 // (2026-10-28: Fiji read $3.94M here against the table's $2.75M); the document's own figure, where
-// it differs, is a row of its own (pillarBody). A version that allows N activations a year shows N
+// it differs, is a row of its own (pillarBody). A version that allows N activations (per version) shows N
 // times its envelope, as the tiles count it. The budget check (fundingBlock) keeps the envelope.
 // committed now: only CERF counts N times, and a Country or Regional Fund envelope an activation
 // released (pool_spent) no longer counts — prearranged_now's rules; null when nothing is committed
@@ -4094,7 +4094,7 @@ const verPre = v => { if(!(v.envelope > 0)) return null;
   const c = v.env_cerf || 0, x = (v.pool_spent ? 0 : v.envelope - c) + c * (v.apy > 1 ? v.apy : 1);
   return x > 0.5 ? x : null; };
 // verPre's figure by fund (owner, 2026-11-03: "put the CERF / country/regional breakdown in the
-// per-framework panel"): CERF (counted N times when N activations a year are allowed, as verPre),
+// per-framework panel"): CERF (counted N times when N activations are allowed, as verPre),
 // the Country and Regional Funds with the funds named, a total not split by fund. Its parts add up
 // to verPre: a Country or Regional Fund envelope an activation released is no longer counted
 function preSplit(v){
@@ -4621,7 +4621,7 @@ function buildFwTable(){
   const foot = n ? `<tfoot>${xrow}<tr><td colspan='${lead}'>${esc(tr8(n === 1 ? 'Total, {0} shown on the map' : 'Total, {0} shown on the map', n))}</td>`
       + cols.slice(lead).map(([k]) => `<td class='num'>${k === 'rp' ? '' : tot[k]}</td>`).join('') + `</tr></tfoot>` : '';
   tab.innerHTML = head + body + foot;
-  // the footnote: the dagger's, one line per number of activations a year among the rows, and the red dots'
+  // the footnote: the dagger's, one line per number of activations allowed among the rows, and the red dots'
   if(foot0){ const ns = [...new Set(R.map(r => r.apy).filter(Boolean))].sort((a, b) => a - b), dots = R.some(r => Object.keys(r.am).length);
     const xs = ns.map(k => '† ' + apyNote(k)).concat(dots ? [YEAR != null ? tr8('A red dot on a month: the framework activated that month in {0}.', YEAR) : tr8('A red dot on a month: the framework activated that month (any year).')] : []);
     foot0.hidden = !xs.length; foot0.textContent = xs.join(' '); }
