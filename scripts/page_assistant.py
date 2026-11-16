@@ -21,6 +21,7 @@ same code):
 """
 
 import os
+import re
 from urllib.parse import urlsplit
 
 from site_i18n import ATTR, T
@@ -30,6 +31,9 @@ PAGE, TITLE = "assistant.html", "AA assistant"
 ASSISTANT_URL = os.environ.get("AA_ASSISTANT_URL", "https://chd-ds-kb-chat.azurewebsites.net/aa/embed")
 MARK = "aa-assistant-panel"     # in the panel's code alone: the open site must never carry it
 EMBED_PATH = "/aa/embed"        # in the assistant's address alone: likewise
+# the panel's block on a page, between these: the unocha.org mock-up (mock_unocha.py) takes it out
+BEGIN, END = f"<!--{MARK}-->", f"<!--/{MARK}-->"
+PANEL_BLOCK = re.compile(re.escape(BEGIN) + r".*?" + re.escape(END), re.S)
 
 
 def origin():
@@ -137,7 +141,7 @@ if (get('sessionStorage', 'aa-asst-open') === '1') open();
 def widget():
     """The corner button and its panel, for every page of the development site but the tab."""
     import json
-    return (f"<style>{PANEL_CSS}</style>"
+    return (f"{BEGIN}<style>{PANEL_CSS}</style>"
             f"<div id='aa-asst'>"
             f"<button type='button' class='aa-asst-launch' aria-expanded='false' aria-controls='aa-asst-panel'>"
             f"{ICON_CHAT}<span class='lbl'>{T('Ask a question')}</span></button>"
@@ -151,7 +155,7 @@ def widget():
             f"<a href='{PAGE}' {ATTR('title', 'Open as a full page')} {ATTR('aria-label', 'Open as a full page')}>{ICON_FULL}</a>"
             f"<button type='button' class='to-close' {ATTR('title', 'Close')} {ATTR('aria-label', 'Close')}>{ICON_CLOSE}</button>"
             f"</div><div class='aa-asst-frame'></div></section></div>"
-            f"<script>{PANEL_JS % json.dumps(ASSISTANT_URL)}</script>")
+            f"<script>{PANEL_JS % json.dumps(ASSISTANT_URL)}</script>{END}")
 
 
 def check_open_site(root):
