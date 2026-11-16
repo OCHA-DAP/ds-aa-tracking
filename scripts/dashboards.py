@@ -569,8 +569,7 @@ def _backfill_years(pre, e, first_year=2020):
     dev = "development_since" if has_dev else "NULL::date"
     ver = pd.read_sql(
         f"""SELECT country_iso3, hazard, version, kb_framework, kb_status,
-                   least(valid_from, {dev}) AS valid_from, valid_until, prearranged_usd_doc,
-                   valid_from AS endorsed_from
+                   least(valid_from, {dev}) AS valid_from, valid_until, prearranged_usd_doc
             FROM aa.framework_version
             WHERE (kb_status = 'endorsed' AND valid_from IS NOT NULL)
                OR (kb_status IN ('development', 'pre-development') AND {dev} IS NOT NULL)""", e)
@@ -619,9 +618,9 @@ def _backfill_years(pre, e, first_year=2020):
     have = set(zip(pre["country_iso3"], pre["hazard"], pre["year"].astype(int)))
     today = dt.date.today()
     rows = []
-    # a PAST year whose latest endorsed version allows N > 1 activations (activation_factors)
-    # counts that version's envelope (× N in funding_series) when the year's reported pre-arranged
-    # rows all sit on an earlier version (owner, 2026-11-16: the total pre-arranged is the
+    # a PAST year whose latest version allows N > 1 activations (activation_factors) counts that
+    # version's CERF envelope (× N in funding_series) when the year's reported CERF rows all sit on
+    # earlier versions (owner, 2026-11-16: the total pre-arranged is the
     # per-activation budget times the activations allowed; D231). CERF's June 2026 sheet filed
     # Cuba's, Haiti's, the Philippines' and DRC cholera's 2026 money against the versions then in
     # force, which allowed one activation (DRC's: its all-activations total); without this the
@@ -647,24 +646,27 @@ def _backfill_years(pre, e, first_year=2020):
             since = at if y == today.year else pd.Timestamp(dt.date(y, 1, 1))
             inforce = vs[(vs["valid_from"] <= at)
                          & (vs["valid_until"].isna() | (vs["valid_until"] >= since))]
-            if (c, h, y) in have:
-                end = inforce[(inforce["kb_status"] == "endorsed")
-                              & (pd.to_datetime(inforce["endorsed_from"]) <= at)]
-                if end.empty or y >= today.year:
-                    continue
-                last = end.sort_values("endorsed_from").iloc[-1]
-                if fac.get((c, h, str(last["version"])), 1) <= 1:
-                    continue
-                mine = pre[is_pre & (pre["country_iso3"] == c) & (pre["hazard"] == h)
-                           & (pre["year"].astype(int) == y)]
-                vers = {str(x) for x in mine["version"]}
-                if not len(mine) or str(last["version"]) in vers or not vers <= set(vf_of):
-                    continue
-                stale_idx.extend(mine.index)
-                inforce = inforce[inforce["version"].astype(str) == str(last["version"])]
             if inforce.empty:
                 continue
-            v = inforce.sort_values("valid_from").iloc[-1]
+            # the year's latest version: the same pick as a year with no row (start date, then label)
+            v = inforce.sort_values(["valid_from", "version"]).iloc[-1]
+            drop, keep_funds = [], set()
+            if (c, h, y) in have:
+                # a past year with reported rows: they stand, unless the latest version allows N > 1
+                # activations and the year's reported CERF rows all sit on earlier versions — then
+                # the CERF part comes from the latest version (× N in funding_series). Rows of other
+                # funds stay; the latest version adds only the funds the year has no row for.
+                if y >= today.year or fac.get((c, h, str(v["version"])), 1) <= 1:
+                    continue
+                yr = pre[is_pre & (pre["country_iso3"] == c) & (pre["hazard"] == h)
+                         & (pre["year"].astype(int) == y)]
+                mine = yr[yr["fund_code"] == "cerf"]
+                vers = {str(x) for x in mine["version"]}
+                if not len(mine) or not all(x in vf_of and pd.notna(vf_of[x]) and vf_of[x] < v["valid_from"]
+                                            for x in vers):
+                    continue
+                drop = list(mine.index)
+                keep_funds = set(yr.loc[~yr.index.isin(drop), "fund_code"].astype(str))
             if (fw_slug.get((c, h)), str(v["version"])) in shared:
                 continue
             e_v = env[(env["country_iso3"] == c) & (env["hazard"] == h)
@@ -683,6 +685,12 @@ def _backfill_years(pre, e, first_year=2020):
                 amounts = [("cerf", float(v["prearranged_usd_doc"]))]
             elif pre_doc is not None and pd.notna(pre_doc):
                 amounts = [("cerf", float(pre_doc))]
+            if drop:
+                # replace only when the latest version has a CERF figure to put in their place
+                if not any(fc == "cerf" for fc, _ in amounts):
+                    continue
+                stale_idx.extend(drop)
+                amounts = [(fc, usd) for fc, usd in amounts if fc not in keep_funds]
             for fc, usd in amounts:
                 rows.append({"country_iso3": c, "hazard": h, "year": y, "kind": "prearranged",
                              "fund_code": fc, "financier": None, "amount_usd": usd,
