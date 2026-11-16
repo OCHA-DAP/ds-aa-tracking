@@ -296,16 +296,15 @@ released money net of it.
 
 **CERF figures follow OneGMS (D232).** Once a CERF funding row has its allocation code, the
 nightly job (`scripts/sync_cerf.py`, after `resolve_provisional.py`) sets its amount to OneGMS's
-approved amount and its people targeted to the allocation's planned people, and does the same
-for the people figure of an activation that one CERF allocation alone pays for. A CERF amount
+approved amount and its people targeted to the allocation's planned people, and gives the
+activation it pays for the same people figure, whatever else pays for it too. A CERF amount
 or people figure typed in by hand on such a row lasts until the next night; to change one,
 correct the allocation code (or OneGMS). OneGMS's approved amount is the sum of the projects
 funded so far, so it can rise while one is under review; the tracker follows it. Left as
-entered, with a warning in the job's log: an allocation split over several rows (Ethiopia
-2020-12 and 2021-02) whose parts do not add up to OneGMS's figures, a code of another country,
-and a coded row while another CERF amount of that country, hazard and year has no code yet. An
-activation with more than one funding row keeps its own people figure. Every change is
-audited. People reached is never stored: the pages read it from the mirror at every build.
+entered, with a warning in the job's log: the amounts of an allocation split over several rows
+(Ethiopia 2020-12 and 2021-02; its people go to the first row), warned when the parts do not
+add up to OneGMS's figures; a code of another country; and a coded row while another CERF
+amount of that country, hazard and year has no code yet. Every change is audited. People reached is never stored: the pages read it from the mirror at every build.
 
 ## Running
 

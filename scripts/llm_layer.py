@@ -1099,7 +1099,7 @@ def _vocabulary(on):
         "reported by the team (blank where the figure comes from a framework document that is not "
         "published); `target_people` (aa-versions) the people the version's document targets; "
         "`people_targeted` (aa-activations) the people one activation targeted (CERF's planned figure "
-        "where one CERF allocation alone pays for the activation); in the funding rows of "
+        "where a CERF allocation pays for the activation); in the funding rows of "
         "aa-activations, `people_reached` the people a CERF allocation reached, from CERF's report "
         "(`people_reached_interim` true: summed from its projects' reports while there is no final one), "
         "and `people_planned` the people counted where there is no report (a CERF allocation's planned "

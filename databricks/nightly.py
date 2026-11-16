@@ -26,9 +26,9 @@ Steps
   2c. scripts/resolve_provisional.py: a CERF amount entered as provisional (before OneGMS
      recorded the allocation) takes OneGMS's code and amount once the mirror has it
   2c'. scripts/sync_cerf.py: every CERF funding row with an allocation code takes OneGMS's
-     approved amount and planned people, as does the people figure of an activation that one
-     CERF allocation alone pays for (D232); an allocation split over several rows is left as
-     entered and warned about when the parts don't add up to OneGMS's figures
+     approved amount and planned people, as does the people figure of the activation it pays
+     for (D232); the amounts of an allocation split over several rows are left as entered and
+     warned about when the parts don't add up to OneGMS's figures
   2d. scripts/extract_document_text.py: the text of each newly registered framework
      document, page by page, into aa.framework_document_page (D228)
   3. scripts/export_snapshot.py: consistent snapshot of schema aa -> dev blob
