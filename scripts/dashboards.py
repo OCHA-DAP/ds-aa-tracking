@@ -2049,6 +2049,7 @@ def _money_flows(d, pre, act):
     # CERF -> agency -> partner, per country (the countries column shows the country's own
     # agencies): the AA projects approved that year in the country and the agencies' sub-grants
     # there; the region's (its countries together) where the country has no project that year
+    fell_back = []      # CERF releases split by the region's projects: listed in the build log
     ag_c = _by_key(AG.groupby(["year", "country_iso3", "agency"])["amount_approved"].sum(), 2)
     ag_r = _by_key(ag, 2)
     sg_c = _by_key(sg.groupby(["year", "country_iso3", "agency", "node"])["subgrant_usd"].sum(), 3)
@@ -2058,9 +2059,15 @@ def _money_flows(d, pre, act):
         if fc != "cerf":
             grantees("r", y, fc, amount, g, rg, c, h, ac)
             continue
-        key, a_, subs = (y, c), ag_c.get((y, c)), sg_c
+        key, a_, subs, borrowed = (y, c), ag_c.get((y, c)), sg_c, False
         if a_ is None or float(a_.sum()) <= 0:
-            key, a_, subs = (y, rg), ag_r.get((y, rg)), sg_r
+            # no AA project of the country that year: the region's agency split, and the share
+            # its agencies pass on. To whom is then not recorded: the region's partners are other
+            # countries' (until 2026-11-16 they were drawn as this country's money to them — Somali
+            # partners under Ethiopia's 2020 release)
+            key, a_, subs, borrowed = (y, rg), ag_r.get((y, rg)), sg_r, True
+            if a_ is not None and float(a_.sum()) > 0:
+                fell_back.append((y, c, h, g, float(amount)))
         asum = float(a_.sum()) if a_ is not None else 0.0
         if asum <= 0:
             add("r", y, "f", "f:cerf", "a:nr|agencies not recorded", amount, g, fc, rg, c, h)
@@ -2077,11 +2084,17 @@ def _money_flows(d, pre, act):
             for pnode, sv in (s_.items() if tot_s else ()):
                 pv = round(sv / tot_s * parts, 2)
                 if pv > 0.5:
-                    add("r", y, "a", "a:" + node, "p:" + pnode, pv, g, fc, rg, c, h)
+                    add("r", y, "a", "a:" + node, "p:" + ("nr|partner not recorded" if borrowed else pnode),
+                        pv, g, fc, rg, c, h)
                     kept += pv
             # what the agency implements itself: a final node with its own name
             add("r", y, "a", "a:" + node, "p:" + node, v * k - kept, g, fc, rg, c, h)
 
+    if fell_back:
+        print("  money flows: CERF releases with no AA project of the country that year (the region's "
+              "agency split; partners not recorded): "
+              + "; ".join(f"{y} {c} {hazard_word(h) if h else ''} ({'non-framework' if g == 'a' else 'framework'}) ${v:,.0f}"
+                          for y, c, h, g, v in sorted(fell_back)))
     # one row per link and keys (the per-country split writes the same link many times)
     agg = {}
     for r in rows:
@@ -2144,7 +2157,8 @@ FLOW_NOTE = " ".join(TB(x) for x in (
     "<b>Released</b>: money that went out on activations in the chosen year (all years add up). "
     "CERF → agency uses the AA projects approved that year in the same country (in the same region "
     "where the country has none that year), scaled to the released total; agency → partner uses the "
-    "CERF AA sub-grants in that country, and the rest goes to a box with the agency's own "
+    "CERF AA sub-grants in that country (where the region stood in for the country, the share passed "
+    "on is the region's and the partners are <i>Not recorded</i>), and the rest goes to a box with the agency's own "
     "name in the <i>sub-grantees / implementing organisations</i> column — what it implements itself. Country and Regional Funds go to the grantee organisations "
     "of the allocation the activation drew on (only its anticipatory action projects, where the "
     "allocation also paid for other things), or, where no allocation is recorded, to the grantees "
@@ -2179,11 +2193,14 @@ FLOW_NOTE = " ".join(TB(x) for x in (
     "<b>Columns</b>: every column has a tick box, in the order of the chart; untick one and the "
     "bands join the columns either side of it. A donor's band past the funds is an attribution, "
     "not a recorded payment: its share of each fund's income that year, applied to where that "
-    "fund's money went. With <i>agencies and grantees</i> unticked, a framework's band reaches the "
-    "organisations its own agencies and grantees passed the money to.",
+    "fund's money went. With <i>agencies and grantees</i> unticked, a country's or a framework's band "
+    "reaches the organisations the agencies and grantees passed that country's money to that year; "
+    "two frameworks of one country share them in proportion.",
     "<b>Recipient types</b>: the far-right column groups every band by the category of the "
     "organisation it reaches — UN agencies, international NGOs, national / local NGOs, Red Cross / "
-    "Red Crescent, government, other (untick <i>recipient types</i> to hide it).",
+    "Red Crescent, government, other (untick <i>recipient types</i> to hide it). "
+    "With <i>sub-grantees / implementing organisations</i> ticked, the organisation is the one that "
+    "implements; unticked, it is the agency or grantee the fund paid.",
     "<b>Donors → fund</b>: each donor's paid contributions to the fund that year ÷ the fund's total "
     "paid income that year, × the amount — attributed pro rata, since contributions fund the whole "
     "pool. Top 12 donors, the rest grouped as <i>Other</i>; a fund with no donor data for the year, "
@@ -2492,14 +2509,14 @@ function mountFlow(cfg){
     // (only while the pick has money here: a column is not held ticked for a pick with none)
     if(hit && pick.startsWith('c:') && !flC.checked) flC.checked = true;     // a country needs the country column
     if(hit && pick.startsWith('d:') && !flD.checked) flD.checked = true;     // a donor, the donor column
+    // an agency or a grantee (a fund pays it), the agencies column; an organisation that only
+    // receives through an agency has its box in the final column (below)
+    if(hit && pick.startsWith('o:') && !flA.checked && viewRows(mode).some(r=>r.lv==='f' && isPick(r.t))) flA.checked = true;
     // the columns ticked (the final one exists for released money only)
     const build = () => buildFlow(D.flow, mode, flY.value, {d:flD.checked, f:flF.checked, c:flC.checked, w:flW.checked, a:flA.checked,
       p:mode==='r' && flP.checked, k:flK.checked}, D.fundNames, 12, keep, cfg.topOrgs, pick);
     let F = build();
     const boxed = () => F.columns.some(c=>c.some(n=>isPick(n.id)));
-    // an organisation or an agency needs the agencies column; one that only receives through an
-    // agency has its box in the final column
-    if(hit && pick.startsWith('o:') && !flA.checked && !boxed()){ flA.checked = true; F = build(); }
     if(hit && mode==='r' && !flP.checked && !boxed()){ flP.checked = true; F = build(); }
     if(pick) showLine((hit && pickText(mode)) || tr8('{0} has no money in this view.', pickLabel));
     else if(ask) showAsk(hits);
@@ -2515,6 +2532,7 @@ function mountFlow(cfg){
     el.innerHTML = sankeySVG({columns:F.columns, heads:F.heads, links:F.links, width:nc >= 7 ? 1500 : nc >= 6 ? 1400 : wide ? 1300 : 1100, height:Math.max(260, n*24),
       fmt:money, labelW:200, labelMax:nc >= 6 ? 22 : wide ? 26 : 34, label:tr8(cfg.label || 'AA money through funds and agencies'),
       nodeColor: nd => { const r = flowNode(nd.id); return r ? CAT_COLOR[r.cat] : null; }});
+    if(flD.checked && !flF.checked) el.insertAdjacentHTML('beforeend', "<div class='note'><b>" + tr8('A donor’s band here is an attribution, not a recorded payment: its share of each fund’s income that year, applied to where that fund’s money went.') + "</b></div>");
     el.insertAdjacentHTML('beforeend', "<div class='note'>" + tr8('Hover a band or a box to follow the money; click a box to keep it in focus, click again to clear. Funds in their own colour (CERF blue, pooled funds orange, regional funds green); every agency, grantee and recipient in the colour of its category; a band takes the colour of the box it leaves.') + "</div>");
     if(leg) leg.innerHTML = !F.cats.length ? '' : '<b>' + tr8('Recipients') + '</b>' + F.cats.map(c=>`<span style='display:inline-flex;align-items:center;gap:5px'><span style='width:11px;height:11px;border-radius:2px;background:${CAT_COLOR[c]};display:inline-block${c==='nr' ? ';box-shadow:inset 0 0 0 1px #aab2bd' : ''}'></span>${tr8(CAT_LABEL[c])}</span>`).join('');
     // the pick's boxes: ringed and their names in bold; the first one focused, as a click would
