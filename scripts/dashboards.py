@@ -2291,18 +2291,21 @@ function mountFlow(cfg){
   // (2026-11-16, a colleague: "it doesn't really resolve well": the box now answers what is typed
   // — one name, several to choose from, or none — and a line under the controls says in words
   // what the chart shows as a thin band)
-  let pick = '', pickLabel = '', choices = new Map(), found = null;
+  // pickFn writes the pick's label in the page's language (kept for a view where the pick has no
+  // money); ask: text the box could not resolve to one name, answered in the line
+  let pick = '', pickLabel = '', pickFn = null, ask = '', choices = new Map(), labelOf = new Map(), found = null;
   const flS = document.getElementById('flS'), flR = document.getElementById('flR');
   const viewRows = mode => D.flow.filter(r=>r.m===mode && (flY.value==='all' || r.y===+flY.value) && keep(r));
   function fillChoices(mode){
-    choices = new Map();
+    choices = new Map(); labelOf = new Map();
+    const add = (id, f) => { choices.set(f(), id); labelOf.set(id, f); };
     viewRows(mode).forEach(r=>{
       // each name says what it is: a donor and a country can share one ('Zimbabwe')
-      if(r.lv==='d' && r.s!=='d:'+FLOW_NR) choices.set(`${tr8(r.s.slice(2))} (${tr8('donor')})`, r.s);
-      if(r.lv==='f' && r.c) choices.set(`${tr8(D.fundNames['c:'+r.c] || r.c)} (${tr8('country')})`, 'c:'+r.c);
+      if(r.lv==='d' && r.s!=='d:'+FLOW_NR) add(r.s, ()=>`${tr8(r.s.slice(2))} (${tr8('donor')})`);
+      if(r.lv==='f' && r.c) add('c:'+r.c, ()=>`${tr8(D.fundNames['c:'+r.c] || r.c)} (${tr8('country')})`);
       // an organisation (named in the view or grouped under 'other') or an agency (always named)
       [r.s, r.t].forEach(x=>{ const n = flowNode(x); if(!n || n.p==='k' || n.cat==='nr' || n.name===FLOW_OTHER || n.name===FLOW_NR) return;
-        choices.set(`${n.org ? n.name : tr8(n.name)} (${tr8(CAT_LABEL[n.cat])})`, 'o:'+n.name); });
+        add('o:'+n.name, ()=>`${n.org ? n.name : tr8(n.name)} (${tr8(CAT_LABEL[n.cat])})`); });
     });
     document.getElementById('flSL').innerHTML = [...choices.keys()].sort((a,b)=>a.localeCompare(b)).map(k=>`<option value="${k.replace(/&/g,'&amp;').replace(/"/g,'&quot;')}">`).join('');
   }
@@ -2313,7 +2316,9 @@ function mountFlow(cfg){
     return id===pick; }
   // the pick in words, from the rows the chart is drawn from: how much, of how much, from whom
   function pickText(mode){
-    const R = viewRows(mode), total = R.filter(r=>r.lv==='f').reduce((a,r)=>a+r.v, 0);
+    // the rows the chart draws: with the final column off, what an agency passes on is not shown
+    const showP = mode==='r' && flP.checked, R = viewRows(mode).filter(r=>r.lv!=='a' || showP);
+    const total = R.filter(r=>r.lv==='f').reduce((a,r)=>a+r.v, 0);
     const name = id => { if(id.startsWith('f:')) return tr8(D.fundNames[id.slice(2)] || id.slice(2));
       const n = flowNode(id); return n ? (n.cat==='nr' ? tr8(FLOW_NR) : tr8(n.name)) : id; };
     const pct = v => !total ? '' : v/total < 0.001 ? '<0.1%' : (100*v/total).toFixed(v/total < 0.1 ? 1 : 0) + '%';
@@ -2348,13 +2353,16 @@ function mountFlow(cfg){
     flR.appendChild(document.createElement('span')).textContent = text + ' ';
     (options || []).forEach(k=>{ const b = flR.appendChild(document.createElement('button'));
       b.type = 'button'; b.textContent = k; b.style.cssText = 'margin:2px 6px 2px 0;font-size:12.5px;padding:2px 8px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;cursor:pointer;max-width:100%;text-align:left';
-      b.addEventListener('click', ()=>setPick(choices.get(k), k, true)); });
+      // the box keeps the focus on a press: leaving it would send 'change' and redraw this line
+      // under the pointer, and the click would be lost
+      b.addEventListener('mousedown', ev=>ev.preventDefault());
+      b.addEventListener('click', ()=>{ const id = choices.get(k); if(id) setPick(id, k, true); }); });
     if(more) flR.appendChild(document.createElement('span')).textContent = more + ' ';
     if(pick){ const b = flR.appendChild(document.createElement('button'));
       b.type = 'button'; b.textContent = tr8('clear'); b.style.cssText = 'font-size:12px;padding:1px 8px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;cursor:pointer';
       b.addEventListener('click', ()=>{ flS.value = ''; setPick('', '', false); }); } }
   function setPick(id, label, byUser){
-    pick = id || ''; pickLabel = pick ? label : ''; drawFlow();
+    pick = id || ''; pickFn = pick ? labelOf.get(pick) : null; pickLabel = pick ? label : ''; ask = ''; drawFlow();
     // bring the box into view (the chart is tall, a small organisation sits at its foot): only
     // when the reader asked for it, never on a redraw the page's filters started
     if(byUser && found){ const b = found.getBoundingClientRect(), bar = document.querySelector('.fbar');
@@ -2366,19 +2374,26 @@ function mountFlow(cfg){
         if(b.bottom - dy <= innerHeight - 30 && b.top - dy >= top) scrollBy({top:dy, behavior:'smooth'});
         else found.scrollIntoView({block:'center', behavior:'smooth'}); } } }
   // what is typed -> a pick: the exact name; else the one name that contains it; else a
-  // choice of the names that do, or a line saying none does
+  // choice of the names that do, or a line saying none does. Names are matched without the
+  // kind in brackets ('donor' finds no donor), unless the whole label is typed
+  const bare = k => k.replace(/ \\([^()]*\\)$/, '');
+  function matches(v){ const q = v.toLowerCase(), all = [...choices.keys()];
+    const same = all.filter(k=>k.toLowerCase()===q || bare(k).toLowerCase()===q);
+    return (same.length ? same : all.filter(k=>bare(k).toLowerCase().includes(q))).sort((a,b)=>a.localeCompare(b)); }
+  function showAsk(hits){
+    if(!hits.length){ showLine(tr8('Nothing with “{0}” in its name has money in this view. The list under the box gives every donor, country and organisation that does.', ask)); return; }
+    const n = hits.length > 11 ? 10 : hits.length;        // never 'and 1 more'
+    showLine(tr8('{0} names contain “{1}”. Choose one:', hits.length, ask), hits.slice(0, n),
+             hits.length > n ? tr8('and {0} more: type more of the name.', hits.length - n) : ''); }
   function resolve(){
-    const v = flS.value.trim(), q = v.toLowerCase();
-    if(!v){ if(pick || !flR.hidden) setPick('', '', false); return; }
+    const v = flS.value.trim();
+    if(!v){ if(pick || ask) setPick('', '', false); return; }
+    if(pick && v===pickLabel) return;       // the pick's own name, also where it has no money in this view
     if(choices.has(v)){ if(choices.get(v)!==pick) setPick(choices.get(v), v, true); return; }
-    const all = [...choices.keys()], same = all.filter(k=>k.toLowerCase()===q || k.toLowerCase().replace(/ \\([^()]*\\)$/, '')===q);
-    const hits = same.length ? same : all.filter(k=>k.toLowerCase().includes(q));
+    if(!pick && v===ask) return;            // answered already: its buttons stay where they are
+    const hits = matches(v);
     if(hits.length===1){ setPick(choices.get(hits[0]), hits[0], true); return; }
-    if(pick) setPick('', '', false);
-    hits.sort((a,b)=>a.localeCompare(b));
-    if(!hits.length) showLine(tr8('Nothing with “{0}” in its name has money in this view. The list under the box gives every donor, country and organisation that does.', v));
-    else showLine(tr8('{0} names contain “{1}”. Choose one:', hits.length, v), hits.slice(0, 10),
-                  hits.length > 10 ? tr8('and {0} more: type more of the name.', hits.length - 10) : ''); }
+    pick = ''; pickFn = null; pickLabel = ''; ask = v; drawFlow(); }
   function drawFlow(){
     const mode = modeOf();
     fillChoices(mode);
@@ -2386,16 +2401,25 @@ function mountFlow(cfg){
     // other names, or one with nothing in this view (another year, a layer unticked), keeps it:
     // the box shows its label again, and the line says there is nothing here
     found = null;
-    const hit = pick && [...choices].find(([, v])=>v===pick);
-    if(hit){ pickLabel = hit[0]; flS.value = hit[0]; }
-    if(pick.startsWith('c:') && !flC.checked) flC.checked = true;     // a country needs the country column
-    if(pick.startsWith('d:') && !flD.checked) flD.checked = true;     // a donor, the donor column
+    // text the box could not resolve: asked again of this view (another year, another language),
+    // so the line never offers names that are not in it; one name left is picked
+    if(ask && flS.value.trim()!==ask) ask = '';
+    let hits = null;
+    if(!pick && ask){ hits = matches(ask);
+      if(hits.length===1){ pick = choices.get(hits[0]); ask = ''; } }
+    const hit = !!pick && labelOf.has(pick);
+    if(pick){ if(hit) pickFn = labelOf.get(pick);
+      if(pickFn) pickLabel = pickFn(); flS.value = pickLabel; }
+    // (only while the pick has money here: a column is not held ticked for a pick with none)
+    if(hit && pick.startsWith('c:') && !flC.checked) flC.checked = true;     // a country needs the country column
+    if(hit && pick.startsWith('d:') && !flD.checked) flD.checked = true;     // a donor, the donor column
     const build = () => buildFlow(D.flow, mode, flY.value, flD.checked, mode==='r' && flP.checked, D.fundNames, 12, keep, cfg.topOrgs, flK.checked, flC.checked, pick);
     let F = build();
     // an organisation that only receives through an agency has its box in the final column
     if(hit && mode==='r' && !flP.checked && !F.columns.some(c=>c.some(n=>isPick(n.id)))){ flP.checked = true; F = build(); }
     if(pick) showLine((hit && pickText(mode)) || tr8('{0} has no money in this view.', pickLabel));
-    else if(!flS.value.trim()) showLine('');
+    else if(ask) showAsk(hits);
+    else showLine('');
     const el = document.getElementById('flow'), leg = document.getElementById('flLeg');
     if(!F.links.length){ el.innerHTML = "<p class='empty'>" + tr8('no AA money in this selection for this year') + "</p>"; flTot.textContent=''; if(leg) leg.innerHTML=''; return; }
     const n = Math.max(...F.columns.map(c=>c.length));
