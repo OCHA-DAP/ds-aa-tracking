@@ -541,7 +541,7 @@ requires-dist = [
     { name = "psycopg2-binary", specifier = ">=2.9" },
     { name = "pyarrow", specifier = ">=15" },
     { name = "pycountry", specifier = ">=23.12" },
-    { name = "pypdf", specifier = ">=6.19.0" },
+    { name = "pypdf", specifier = "==6.19.0" },
     { name = "pyxlsb", specifier = ">=1.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "sqlalchemy", specifier = ">=2.0" },

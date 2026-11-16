@@ -82,6 +82,8 @@ const READONLY_TABLES = new Set([
   "entry_audit",
   // document registry: content-addressed, written only by scripts/register_documents.py
   "framework_document", "version_document",
+  // each document's text, page by page: derived from the file by the nightly job (D228)
+  "framework_document_page",
   // the KB-era record, frozen 2026-10-05 (superseded by window_funding / window_activation /
   // activation_funding); the backtest tables the KB used to load are editable here
   "funding_breakdown", "actual_activation", "activation_allocation",
