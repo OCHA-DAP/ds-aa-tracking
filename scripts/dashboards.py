@@ -569,7 +569,8 @@ def _backfill_years(pre, e, first_year=2020):
     dev = "development_since" if has_dev else "NULL::date"
     ver = pd.read_sql(
         f"""SELECT country_iso3, hazard, version, kb_framework, kb_status,
-                   least(valid_from, {dev}) AS valid_from, valid_until, prearranged_usd_doc
+                   least(valid_from, {dev}) AS valid_from, valid_until, prearranged_usd_doc,
+                   valid_from AS endorsed_from
             FROM aa.framework_version
             WHERE (kb_status = 'endorsed' AND valid_from IS NOT NULL)
                OR (kb_status IN ('development', 'pre-development') AND {dev} IS NOT NULL)""", e)
@@ -618,6 +619,17 @@ def _backfill_years(pre, e, first_year=2020):
     have = set(zip(pre["country_iso3"], pre["hazard"], pre["year"].astype(int)))
     today = dt.date.today()
     rows = []
+    # a PAST year whose latest endorsed version allows N > 1 activations (activation_factors)
+    # counts that version's envelope (× N in funding_series) when the year's reported pre-arranged
+    # rows all sit on an earlier version (owner, 2026-11-16: the total pre-arranged is the
+    # per-activation budget times the activations allowed; D231). CERF's June 2026 sheet filed
+    # Cuba's, Haiti's, the Philippines' and DRC cholera's 2026 money against the versions then in
+    # force, which allowed one activation (DRC's: its all-activations total); without this the
+    # 2026 bar would fall by the extra activations once 2026 closed. Only those: every other
+    # past year keeps its reported rows, and a reported row on the latest version still wins.
+    is_pre = pre["kind"] == "prearranged"
+    stale_idx = []
+    fac = activation_factors(e)
     for (c, h), vs in ver.groupby(["country_iso3", "hazard"]):
         vs = vs.assign(valid_from=pd.to_datetime(vs["valid_from"]),
                        valid_until=pd.to_datetime(vs["valid_until"]))
@@ -628,14 +640,28 @@ def _backfill_years(pre, e, first_year=2020):
             ends = [int(x) for x in (cap, vs["valid_until"].max().year if vs["valid_until"].notna().any() else None)
                     if x is not None and not pd.isna(x)]
             last_year = max(ends) if ends else int(vs["valid_from"].min().year)
+        vf_of = dict(zip(vs["version"].astype(str), vs["valid_from"]))
         for y in range(first_year, int(last_year) + 1):
-            if (c, h, y) in have:
-                continue
             at = pd.Timestamp(min(dt.date(y, 12, 31), today))
             # valid at any time in the year; the current year: still valid today
             since = at if y == today.year else pd.Timestamp(dt.date(y, 1, 1))
             inforce = vs[(vs["valid_from"] <= at)
                          & (vs["valid_until"].isna() | (vs["valid_until"] >= since))]
+            if (c, h, y) in have:
+                end = inforce[(inforce["kb_status"] == "endorsed")
+                              & (pd.to_datetime(inforce["endorsed_from"]) <= at)]
+                if end.empty or y >= today.year:
+                    continue
+                last = end.sort_values("endorsed_from").iloc[-1]
+                if fac.get((c, h, str(last["version"])), 1) <= 1:
+                    continue
+                mine = pre[is_pre & (pre["country_iso3"] == c) & (pre["hazard"] == h)
+                           & (pre["year"].astype(int) == y)]
+                vers = {str(x) for x in mine["version"]}
+                if not len(mine) or str(last["version"]) in vers or not vers <= set(vf_of):
+                    continue
+                stale_idx.extend(mine.index)
+                inforce = inforce[inforce["version"].astype(str) == str(last["version"])]
             if inforce.empty:
                 continue
             v = inforce.sort_values("valid_from").iloc[-1]
@@ -661,6 +687,12 @@ def _backfill_years(pre, e, first_year=2020):
                 rows.append({"country_iso3": c, "hazard": h, "year": y, "kind": "prearranged",
                              "fund_code": fc, "financier": None, "amount_usd": usd,
                              "source": "version-inferred", "version": str(v["version"])})
+    if stale_idx:
+        st = pre.loc[stale_idx]
+        print(f"  pre-arranged by year: {len(st)} reported row(s) on a version replaced within the year give way "
+              f"to the year's latest version: " + ", ".join(sorted({f'{a} {b} {int(y)}' for a, b, y in
+                                                                     zip(st['country_iso3'], st['hazard'], st['year'])})))
+        pre = pre.drop(index=stale_idx)
     if not rows:
         return pre
     return pd.concat([pre, pd.DataFrame(rows)[pre.columns]], ignore_index=True)
