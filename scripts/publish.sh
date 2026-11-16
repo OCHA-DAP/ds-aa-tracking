@@ -79,13 +79,17 @@ check_stage() (
         fi
         if [[ "$OPEN_PAGES" != *" $f "* ]] && { ! grep -q "class='soon'" "$f" || [ "$(wc -c < "$f")" -gt 250000 ]; }; then
           echo "FATAL: $f is served without a password but is not a 'Coming soon' page — aborting" >&2; exit 1
+        fi
+        # the AA assistant is on the development site only (scripts/page_assistant.py)
+        if grep -q -e "aa-assistant-panel" -e "/aa/embed" "$f"; then
+          echo "FATAL: $f is served without a password but carries the assistant — aborting" >&2; exit 1
         fi ;;
     esac
   done
   [ -f "$ADMIN/index.html" ] || { echo "FATAL: the admin site has no index.html — aborting" >&2; exit 1; }
   # the open files are plain data: never a token, never a page
   for f in $(open_files .); do
-    if grep -q "x-site-token\|staticrypt" "$f"; then
+    if grep -q "x-site-token\|staticrypt\|aa-assistant-panel\|/aa/embed" "$f"; then
       echo "FATAL: open file $f carries a token or a page — aborting" >&2; exit 1
     fi
   done

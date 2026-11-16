@@ -1858,5 +1858,13 @@
  "columns of the chart, from left to right": "columnas del gráfico, de izquierda a derecha",
  "Tick at least two columns to draw the flows.": "Marque al menos dos columnas para dibujar los flujos.",
  "<b>Columns</b>: every column has a tick box, in the order of the chart; untick one and the bands join the columns either side of it. A donor's band past the funds is an attribution, not a recorded payment: its share of each fund's income that year, applied to where that fund's money went. With <i>agencies and grantees</i> unticked, a country's or a framework's band reaches the organisations the agencies and grantees passed that country's money to that year; two frameworks of one country share them in proportion.": "<b>Columnas</b>: cada columna tiene su casilla, en el orden del gráfico; desmarque una y las bandas unen las columnas a ambos lados. La banda de un donante más allá de los fondos es una atribución, no un pago registrado: su parte de los ingresos de cada fondo ese año, aplicada al destino del dinero de ese fondo. Con <i>agencias y receptores</i> desmarcado, la banda de un país o de un marco llega a las organizaciones a las que las agencias y receptores transfirieron el dinero de ese país ese año; dos marcos de un mismo país las comparten en proporción.",
- "A donor’s band here is an attribution, not a recorded payment: its share of each fund’s income that year, applied to where that fund’s money went.": "La banda de un donante es aquí una atribución, no un pago registrado: su parte de los ingresos de cada fondo ese año, aplicada al destino del dinero de ese fondo."
+ "A donor’s band here is an attribution, not a recorded payment: its share of each fund’s income that year, applied to where that fund’s money went.": "La banda de un donante es aquí una atribución, no un pago registrado: su parte de los ingresos de cada fondo ese año, aplicada al destino del dinero de ese fondo.",
+ "Assistant": "Asistente",
+ "AA assistant": "Asistente AA",
+ "Ask a question": "Hacer una pregunta",
+ "trial": "prueba",
+ "Dock to the side of the page": "Fijar al lado de la página",
+ "Show in a window over the page": "Mostrar en una ventana sobre la página",
+ "Open as a full page": "Abrir en página completa",
+ "Ask about the frameworks, the money, the activations and the framework documents on this site. The answers come from the site’s data and documents and say where each figure comes from. Check a figure before you use it. The assistant asks for its own password the first time.": "Pregunte sobre los marcos, el dinero, las activaciones y los documentos de marco de este sitio. Las respuestas se basan en los datos y documentos del sitio e indican de dónde sale cada cifra. Verifique una cifra antes de usarla. El asistente pide su propia contraseña la primera vez."
 }
