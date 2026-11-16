@@ -204,6 +204,10 @@ def check() -> None:
     # ---- the Financing page (D): its layers as the page draws them (g: c current, r retired, a non-framework)
     fw_c = [r for r in F["fw"] if r["g"] == "c"]
     now_c = [r for r in F["now"] if r["g"] == "c"]
+    # money pre-arranged outside a framework and not yet released (D223): the map's non-framework
+    # layer against the Financing page's (each reads dashboards.read_adhoc_prearranged its own way)
+    cmp("pre-arranged outside a framework, not yet released", "Map ↔ Financing", t_ad["pre_ad"],
+        sum(r.get("total_usd") or 0 for r in F["now"] if r["g"] == "a"))
     act = F["act"]
     usd = lambda rows: sum(r.get("amount_usd") or 0 for r in rows)   # noqa: E731
     for lc, k in (("active", "n_active"), ("updating", "n_upd"), ("development", "n_dev")):
@@ -267,6 +271,11 @@ def check() -> None:
         sum(e["a"] or 0 for e in ev if e["ah"]))
 
     # ---- Activities (people reached, CERF allocations of framework activations, to date)
+    # the Activities page's people series (page_plan._people_series) reads the map's records year
+    # by year: its current year is the map's estimate for the year, its years together the map's total
+    t_cy = landing.tile_figures(M, {"framework", "retired"}, cy)
+    cmp(f"people reached or targeted, {cy}", "Map ↔ Activities", t_cy["reached"] + t_cy["targeted"] + t_cy["ptargeted"],
+        A["reach_cy"], "n")
     cmp("people reached", "Map ↔ Activities", t_fr["reached"], A["reached"], "n")
     cmp("CERF allocations reporting people reached", "Map ↔ Activities", t_fr["n_rep"], A["n_rep"], "n")
     cmp("CERF allocations of framework activations", "Map ↔ Activities", t_fr["n_cerf"], A["n_cerf"], "n")

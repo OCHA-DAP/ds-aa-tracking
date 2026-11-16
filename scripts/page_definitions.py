@@ -46,8 +46,8 @@ GLOSSARY = [
          "The current trigger run over past years, to see when it would have activated. Simulated "
          "activations are kept apart from real ones."),
         ("Technical support",
-         "Countries where OCHA supported the framework technically, without a funding commitment, "
-         "whatever its status."),
+         "Countries where OCHA supports coordinated anticipatory action but neither leads the effort "
+         "nor provides pre-arranged financing."),
         ("No specific hazard",   # in DEV_ONLY_TERMS: left off the open site while landing.GENERAL_ON_OPEN is off (D202)
          "Technical support for anticipatory action in general, not for one hazard. No framework and "
          "no allocation stand behind it; the Map draws its pin with an open ring."),
@@ -75,8 +75,8 @@ GLOSSARY = [
         ("Activation (framework activation)",
          "A trigger of a framework version was met and its pre-arranged money was released."),
         ("Non-framework allocation",
-         "Countries and hazards that received anticipatory-action money without a framework version. "
-         "Released money only: nothing is pre-arranged for it."),
+         "Countries and hazards with anticipatory-action money outside a framework: money released "
+         "without a framework version, or money a fund has pre-arranged and not yet released."),
         ("Two activations a year",
          "Frameworks marked * allow two activations a year: their CERF envelope is counted twice, and "
          "the CERF budget per activation is half of it. Country and Regional Fund envelopes count once."),
@@ -85,7 +85,8 @@ GLOSSARY = [
         ("Pre-arranged",
          "The envelope committed to a framework, in place on a date: for every active, being-updated "
          "or in-development framework, the envelope of its most recent version that has one. A stock, "
-         "never added over years."),
+         "never added over years. With the non-framework allocations layer on, also the money a fund "
+         "has pre-arranged outside a framework and not yet released."),
         ("Released",
          "What went out in a year: the allocations drawn by framework activations, plus the "
          "non-framework allocations when that layer is on. A flow, per year. Pre-arranged and released "

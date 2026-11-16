@@ -701,6 +701,34 @@ DURABLE_TABLES = {
                 (country_iso3, hazard, event_date, window_name, event_label, event_type,
                  fund_code, allocation_code)
         )""",
+    # anticipatory-action money a fund has set aside outside any framework and not yet released
+    # (D223, owner, 2026-11-13: "allow for pre-arranged on non-frameworks"): Kenya's and Uganda's
+    # El Niño flood money of September 2026, which waits on the partners' own triggers. A table
+    # of its own, off the (country, hazard) pair like aa.adhoc_activation, and deliberately NOT
+    # an event type of it: nothing that reads activations or released money (aa.activation,
+    # aa.activation_funding, the views over them, programs outside this repo) can take a row
+    # here for released money. The pages add it to pre-arranged money while the non-framework
+    # layer is on. It counts from the year of arranged_date until ended_date (released,
+    # withdrawn or lapsed: when it is released, a row in aa.adhoc_activation with its
+    # aa.activation_funding takes over); no ended_date = still pre-arranged.
+    "adhoc_prearranged": """
+        CREATE TABLE IF NOT EXISTS aa.adhoc_prearranged (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            arranged_date text NOT NULL,   -- partial ISO: when the money was set aside
+            event_label text NOT NULL DEFAULT '',   -- what it is for ('El Nino floods')
+            fund_code text NOT NULL,       -- aa.fund
+            allocation_code text,          -- the fund's allocation, once OneGMS has one
+            amount_usd numeric NOT NULL CHECK (amount_usd > 0),
+            people_targeted bigint,
+            ended_date text,               -- partial ISO: released, withdrawn or lapsed
+            comments text,
+            source text NOT NULL,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            CHECK (arranged_date ~ '^[0-9]{4}(-[0-9]{2}(-[0-9]{2})?)?$'),
+            CHECK (ended_date IS NULL OR ended_date ~ '^[0-9]{4}(-[0-9]{2}(-[0-9]{2})?)?$'),
+            PRIMARY KEY (country_iso3, hazard, arranged_date, event_label, fund_code)
+        )""",
     # the projects of a Country or Regional Fund allocation that an activation's money went to,
     # where the allocation paid for other things too (D192): Ethiopia's 2026 Third Reserve
     # Allocation put $1M into anticipatory action beside a refugee response and Ebola

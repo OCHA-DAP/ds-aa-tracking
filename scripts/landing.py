@@ -875,9 +875,9 @@ def status_help_html(open_=False):
   </svg>
   <div class='sh-layers'>
    {TB("<b>Map layers.</b>")} <span class='dot' style='background:{STATUS_COLOR["active"]}'></span>{TB("<b>Current frameworks</b> — every framework whose status is active, being updated or in development (the default view; the headline figures follow whatever is shown).")}
-   <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span>{TB("<b>Non-framework allocations</b> — countries and hazards that received anticipatory-action money without a framework version (light green; a framework that also received non-framework money stays drawn as a framework).")}
+   <span class='dot' style='background:{LAYER_COLOR["adhoc"]}'></span>{TB("<b>Non-framework allocations</b> — countries and hazards with anticipatory-action money outside a framework: released, or pre-arranged and not yet released (light green; a framework that also has non-framework money stays drawn as a framework).")}
    <span class='dot' style='background:{LAYER_COLOR["retired"]}'></span>{TB("<b>Retired</b> — frameworks flagged retired, drawn in grey so past coverage can be compared with today's.")}
-   <span class='dot dot-hollow' style='border-color:{LAYER_COLOR["tech"]}'></span>{TB("<b>Technical support</b> — countries where OCHA supported the framework technically without a funding commitment, whatever their status (including pipeline ones like Palau and Tonga), drawn as a hollow teal pin.")}
+   <span class='dot dot-hollow' style='border-color:{LAYER_COLOR["tech"]}'></span>{TB("<b>Technical support</b> — countries where OCHA supports coordinated anticipatory action but neither leads the effort nor provides pre-arranged financing, whatever the framework's status (including pipeline ones like Palau and Tonga), drawn as a hollow teal pin.")}
   </div>
  </div>
 </details>
@@ -1104,13 +1104,16 @@ def framework_status_by_year(d, e):
     ad = _try_sql(e, f"SELECT country_iso3, hazard, count(*) AS n FROM aa.adhoc_activation "
                      f"WHERE event_type NOT IN ({excl}) GROUP BY 1, 2", ["country_iso3", "hazard", "n"])
     n_adhoc = {(a.country_iso3, a.hazard): int(a.n) for a in ad.itertuples()}
+    pa_ = d.get("pre_adhoc")
+    pre_ad_pairs = set(zip(pa_["country_iso3"], pa_["hazard"])) if pa_ is not None else set()   # D223
     old_pairs = {(c, h) for c, h, _ in (d.get("old") or set())}
     gho = {(c, int(y)): bool(g) for c, y, g in zip(d["gho"]["country_iso3"], d["gho"]["year"], d["gho"]["in_gho"])}
     rows = []
     for r in d["current"].itertuples():
         c, h, lc = r.country_iso3, r.hazard, _s(r.lifecycle)
         is_fw = lc in ("active", "updating", "development", "retired")
-        if not (is_fw or (c, h) in old_pairs or n_adhoc.get((c, h)) or bool(_f(r.technical_support) or False)):
+        if not (is_fw or (c, h) in old_pairs or n_adhoc.get((c, h)) or (c, h) in pre_ad_pairs
+                or bool(_f(r.technical_support) or False)):
             continue
         by = {}
         for y in range(YEAR_FIRST, cy):
@@ -1321,6 +1324,16 @@ def assemble(d, e):
     reach_row = {code: g.sort_values(["event_date", "window_name"]).index[0]
                  for code, g in cerf_f.groupby("allocation_code")}
     n_adhoc = {(a.country_iso3, a.hazard): int(a.n) for a in adhoc.itertuples()}
+    # money a fund has pre-arranged outside a framework and not yet released (D223;
+    # dashboards.read_adhoc_prearranged): on the pair, drawn on the non-framework layer and added
+    # to pre-arranged money while that layer is on — never an activation, never released money
+    pre_ad = {}
+    for x in (d["pre_adhoc"].itertuples() if d.get("pre_adhoc") is not None else ()):
+        code = _s(x.allocation_code)
+        pre_ad.setdefault((x.country_iso3, x.hazard), []).append({
+            "date": str(x.arranged_date), "label": _s(x.event_label), "fund": x.fund_code, "code": code,
+            "usd": _num(x.amount_usd), "people": _num(x.people_targeted), "until": _s(x.ended_date),
+            "fk": _fund_kind(x.fund_code, code, freg), "fs": _switch_fund(x.fund_code, code, freg, x.country_iso3)})
     hist = d.get("_hist") or _year_history(d, e, excl, _try)   # the year selector's dated records, per pair (read once per build)
     from dashboards import NOT_SOCIAL_SQL
     learn = _try(
@@ -1409,7 +1422,7 @@ def assemble(d, e):
     extra = [{"country_iso3": c_, "hazard": h_, "country_name": iso_name.get(c_),
               "region": iso_region.get(c_), "lifecycle": None, "technical_support": False,
               "retired": False, "synthetic": True}
-             for (c_, h_) in sorted(n_adhoc) if (c_, h_) not in have]
+             for (c_, h_) in sorted(set(n_adhoc) | set(pre_ad)) if (c_, h_) not in have]
     if extra:
         cur = pd.concat([cur, pd.DataFrame(extra)], ignore_index=True)
 
@@ -1687,8 +1700,11 @@ def assemble(d, e):
             layers.append("framework")                # active · updating · development
         if disp == "retired" or any(k[:2] == (c, h) for k in old_v):
             layers.append("retired")                  # retired, or hosts a replaced framework
-        if n_adhoc.get((c, h)):
-            layers.append("adhoc")                    # non-framework AA allocations on the pair
+        if n_adhoc.get((c, h)) or pre_ad.get((c, h)):
+            # non-framework AA money on the pair: released, or pre-arranged (D223). A record that has
+            # ended keeps the pair on the map for the years it counted: the page takes the layer off
+            # in a year with neither (applyYear)
+            layers.append("adhoc")
         if tech:
             layers.append("tech")                     # OCHA technical support, whatever the lifecycle
         if not layers:
@@ -1709,6 +1725,7 @@ def assemble(d, e):
             "disp": disp, "disp_label": DISP_LABEL.get(disp, disp), "ring": ring, "n_act": n_fw_act,
             "n_act_all": len(activations), "n_adhoc": n_adhoc.get((c, h), 0),
             "adhoc_cerf": adhoc_cerf.get((c, h), []),
+            "pre_ad": pre_ad.get((c, h), []),         # pre-arranged outside a framework, not yet released (D223)
             "layers": layers, "layer": next(l for l in LAYER_ORDER if l in layers),
             "tech": tech,
             "general": general,                      # technical support for no specific hazard (D202)
@@ -1915,6 +1932,17 @@ def cof_of(f, year=None):
     return (f.get("cofin_y") or {}).get(str(year or TODAY.year))
 
 
+def pre_ad_rows(countries, layers, year=None):
+    """[(iso3, record)]: the money pre-arranged outside a framework and not yet released (D223;
+    a pair's `pre_ad`) that counts for `year` (None: today) while the non-framework layer is on —
+    preAdRows() in LANDING_JS; the year rule is dashboards.adhoc_pre_in_year."""
+    from dashboards import adhoc_pre_in_year
+    if "adhoc" not in layers:
+        return []
+    return [(iso, x) for iso, cd in countries.items() for f in cd["fws"] for x in (f.get("pre_ad") or [])
+            if adhoc_pre_in_year(x["date"], x.get("until"), year or TODAY.year, TODAY)]
+
+
 def tile_figures(countries, layers, year=None):
     """Headline figures for a set of enabled layers — mirrors updateTiles() in LANDING_JS.
     A pair is shown when any of its layers is enabled; the stock figures (count, pre-arranged
@@ -1938,14 +1966,22 @@ def tile_figures(countries, layers, year=None):
         if x["fund"] != "cerf" and not (x["code"] and x["code"] in seen):
             seen.add(x["code"]); pool.append(x)
     ptgt = [x for x in pool if x.get("planned")]
-    part = lambda k: sum(((f["pre_parts"] or {}).get(k) or 0) for f in fw)
+    # pre-arranged outside a framework, not yet released (D223): counted with pre-arranged money
+    # while the non-framework layer is on (preAdRows() in LANDING_JS); a stock, as at `year`
+    pad = pre_ad_rows(countries, layers, year)
+    part = lambda k: (sum(((f["pre_parts"] or {}).get(k) or 0) for f in fw)
+                      + sum(x["usd"] or 0 for _, x in pad
+                            if (x.get("fs") in ("cbpf", "rhpf") if k == "pooled" else x.get("fs") == k)))
     return {"n_fw": len(fw),
             # the countries those frameworks are in (owner, 2026-11-02: "29 frameworks in XX countries")
             "n_ctry": sum(1 for cd in countries.values() if any(id(f) in {id(g) for g in fw} for f in cd["fws"])),
             "n_active": sum(1 for f in fw if f["disp"] == "active"),
             "n_upd": sum(1 for f in fw if f["disp"] == "updating"),
             "n_dev": sum(1 for f in fw if f["disp"] == "development"),
-            "pre": sum(f["pre_now"] or 0 for f in fw),
+            "pre": sum(f["pre_now"] or 0 for f in fw) + sum(x["usd"] or 0 for _, x in pad),
+            # ... the part of it outside a framework (D223), and the countries it is in
+            "pre_ad": sum(x["usd"] or 0 for _, x in pad), "n_pre_ad": len(pad),
+            "n_pre_ad_ctry": len({iso for iso, _ in pad}),
             "covered": sum(f["covered"] or 0 for f in fw),
             "n_cov": sum(1 for f in fw if f["covered"]),
             "n_act": len(acts),
@@ -2073,14 +2109,14 @@ def build_landing(page, d, e):
     from dashboards import regional_fund_labels
     cur = d["current"]
     names = dict(zip(cur["country_iso3"], cur["country_name"]))
-    countries = assemble(d, e)
+    countries = d.get("_map") or assemble(d, e)   # assembled once per build (dashboards.build_all)
     import figure_check
     figure_check.KEY["map"] = countries      # the cross-page figure check (build_site)
     svg, bboxes, wdata = world_data(set(countries), names)
     for iso, cd in countries.items():
         if not cd.get("name"):                        # non-framework-only country: Natural Earth name
             cd["name"] = (wdata.get(iso) or {}).get("n") or iso
-        cd["lbbox"] = bboxes.get(iso)                 # layout box (world file, largest polygon)
+        cd["lbbox"] = bboxes.get(iso)                 # the country's box (world file, largest polygon): its dot and the phone overview
         cd["centroid"] = CENTROID.get(iso) or (
             [(cd["lbbox"][1] + cd["lbbox"][3]) / 2, (cd["lbbox"][0] + cd["lbbox"][2]) / 2]
             if cd["lbbox"] else None)
@@ -2117,6 +2153,9 @@ def build_landing(page, d, e):
                        rt["n_act"] and f"{rt['n_act']} on retired frameworks{usd(rt)}")
     ns_reach = not_shown((ad["n_rep"] or ad["n_tgt"] or ad["n_ptgt"]) and f"non-framework allocations {est(ad)}",
                          (rt["n_rep"] or rt["n_tgt"] or rt["n_ptgt"]) and f"retired frameworks {est(rt)}")
+
+    # pre-arranged outside a framework, not yet released (D223): the non-framework layer adds it
+    ns_pre = not_shown(ad["pre_ad"] and f"{_money(ad['pre_ad'])} pre-arranged outside a framework, not yet released")
 
     def funds(cerf, cbpf, rhpf, other=0):   # fundBullets() in LANDING_JS (every fund ticked)
         return [x for x in (cerf >= 5e4 and f"CERF {_money(cerf)}", cbpf >= 5e4 and f"CBPF {_money(cbpf)}",
@@ -2178,7 +2217,7 @@ def build_landing(page, d, e):
              [f"{t['n_active']} active", f"{t['n_upd']} being updated", f"{t['n_dev']} in development"]),
         tile("t-pre", "money", "Pre-arranged", _tile_money(t["pre"]), "pre-arranged now",
              funds(t["pre_cerf"], t["pre_cbpf"], t["pre_rhpf"], t["pre_all"]),
-             " ".join([PRE_NOTE] + apy_notes(t["apy"])) if t["n_fw"] else ""),
+             " ".join([PRE_NOTE] + apy_notes(t["apy"]) + ([ns_pre] if ns_pre else [])) if t["n_fw"] else ns_pre),
         # co-financing beside pre-arranged (owner, 2026-10-30)
         tile("t-cof", "cofin", "Co-financing", _tile_money(t["cofin"]) if t["n_cofin"] else "—",
              "co-financing pre-arranged now",
@@ -2251,7 +2290,7 @@ def build_landing(page, d, e):
  <p class='fwt-cap' id='fwtcap'></p>
  <div class='fwt-scroll'><table class='fwtab' id='fwtab'></table></div>
  <p class='fwt-note' id='fwtfoot' hidden></p>
- <p class='fwt-note'>{TB("<b>Return period</b>: how often the framework's latest version would activate (any of its trigger windows, in a year), as the framework states it where it does, otherwise from its historical simulation. <b>Pre-arranged (OCHA-managed funds)</b>: for each framework, the envelope of its most recent version that has one, from CERF and the Country and Regional Funds; a framework being updated keeps its last envelope, and one in development shows the envelope recorded for it so far. <b>Co-financing</b>: money from outside the OCHA-managed funds pre-arranged for the framework, as reported for the year (the Financing page's figure). <b>Activations</b> and <b>released from OCHA</b> count the activations of the rows listed. Non-framework allocations and retired frameworks are listed while their layer is on in the map legend; <b>All years, to today</b> switches retired frameworks on. Released money is split by fund as pre-arranged money is, and is net of money refunded after an activation was stopped; a CERF amount that OneGMS has not recorded yet is provisional. Click a country to open it on the map; click a column heading to sort.")}</p>
+ <p class='fwt-note'>{TB("<b>Return period</b>: how often the framework's latest version would activate (any of its trigger windows, in a year), as the framework states it where it does, otherwise from its historical simulation. <b>Pre-arranged (OCHA-managed funds)</b>: for each framework, the envelope of its most recent version that has one, from CERF and the Country and Regional Funds; a framework being updated keeps its last envelope, and one in development shows the envelope recorded for it so far. <b>Co-financing</b>: money from outside the OCHA-managed funds pre-arranged for the framework, as reported for the year (the Financing page's figure). <b>Activations</b> and <b>released from OCHA</b> count the activations of the rows listed. Non-framework allocations and retired frameworks are listed while their layer is on in the map legend; with the non-framework layer on, pre-arranged money also counts what a fund has pre-arranged outside a framework and not yet released; <b>All years, to today</b> switches retired frameworks on. Released money is split by fund as pre-arranged money is, and is net of money refunded after an activation was stopped; a CERF amount that OneGMS has not recorded yet is provisional. Click a country to open it on the map; click a column heading to sort.")}</p>
 </section>
 <!-- 2026-10-02 meeting: the internal links that sat here (dashboards, explorer, data entry,
      data & schema review) were easy to miss below the map; they all live in the Internal menu -->
@@ -2371,7 +2410,8 @@ LANDING_CSS = r"""
 .leadersvg { position:absolute; inset:0; width:100%; height:100%; overflow:visible; }
 .leader { stroke:#94a3b8; stroke-width:1; stroke-linecap:round; }
 .cdot { fill:#334155; stroke:#fff; stroke-width:1.6; }
-.callout { position:absolute; display:flex; flex-direction:column; align-items:flex-start; pointer-events:auto; visibility:hidden; }
+.callout { position:absolute; display:flex; flex-direction:column; align-items:flex-start; visibility:hidden; }   /* only its name and pins take the pointer: the country under the rest stays clickable (D220) */
+.callout .cname, .callout .iconbox { pointer-events:auto; }
 .cname { font-weight:650; font-size:11px; color:#0f2540; white-space:nowrap; line-height:1.15; margin-bottom:1px; cursor:pointer; letter-spacing:.1px; text-shadow:0 0 3px #fff,0 0 3px #fff; }
 .cname:hover { text-decoration:underline; }
 .hrow { display:flex; align-items:center; gap:4px; margin:1px 0; }
@@ -2704,11 +2744,29 @@ function preOf(f){ if(allFunds()) return f.pre_now;
 // a country's pooled-fund rows of no single framework in a past year ([usd, inferred?, activations a
 // year, {fund: usd}]), under the switch
 const preXOf = x => allFunds() ? x[0] : FKEYS.reduce((s, k) => s + (FUNDS[k] ? (x[3] || {})[k] || 0 : 0), 0);
-// the boxes a pair has money from on layer l: the envelope (the current-frameworks layer) and the
-// activations that layer counts (flowActs) in the year shown
+// money a fund has pre-arranged outside a framework and not yet released (D223; f.pre_ad): a stock,
+// counted with pre-arranged money while the non-framework layer is on. The records in place in the
+// year shown: a past year, from the year it was arranged to the year it ended; this year (and all
+// years), not ended by today — dashboards.adhoc_pre_in_year and landing.pre_ad_rows in Python.
+// anyFund: before the fund switch
+function preAdRows(f, anyFund){
+  const past = pastY(), Y = past ? YEAR : YEARS.now;
+  const rows = (f.pre_ad || []).filter(x => { const end = x.until ? String(x.until) : null;
+    return +String(x.date).slice(0, 4) <= Y && (!end || (past ? Y <= +end.slice(0, 4) : end > YEARS.today)); });
+  return anyFund ? rows : fundRows(rows); }
+const usdOf = rows => rows.reduce((s, x) => s + (x.usd || 0), 0);
+// ... of the pairs given, while the non-framework layer is on (LY: a layer set other than the one shown)
+const preAdOn = (fs, LY) => (LY || LAYERS).adhoc ? fs.flatMap(f => preAdRows(f)) : [];
+// ... added to pre-arranged money by fund (partsOf)
+const withPreAd = (P, rows) => { rows.forEach(x => { const k = rowFund(x); P[k] = (P[k] || 0) + (x.usd || 0); }); return P; };
+const preAdWhen = x => dayOf(x.date) ? shortDate(x.date) + ' ' + String(x.date).slice(0, 4) : String(x.date);
+// the boxes a pair has money from on layer l: the envelope (the current-frameworks layer), the
+// activations that layer counts (flowActs) in the year shown, and on the non-framework layer the
+// money pre-arranged outside a framework
 function fundsOf(f, l){
   const s = new Set();
   if(l === 'framework'){ const P = preParts(f); FKEYS.forEach(k => { if(P[k] > 0) s.add(k); }); }
+  if(l === 'adhoc') preAdRows(f, true).forEach(x => s.add(rowFund(x)));
   flowActs(f, {[l]: true}, true).forEach(a => (a.funding || []).forEach(x => s.add(rowFund(x))));
   return s; }
 const fundOK = (f, l) => allFunds() || l === 'tech' || [...fundsOf(f, l)].some(k => FUNDS[k]);
@@ -2854,19 +2912,23 @@ function applyYear(){
   const Y = String(YEAR), D = dateY();
   Object.values(L).forEach(c => c.fws.forEach(f => {
     const B = LIVE.get(f); Object.assign(f, B); f.pre_drv = false; f.pre_apy = null; f.pre_fy = null;
-    if(YEAR == null) return;
+    if(YEAR == null){   // all years, to today: a pair whose only non-framework money was pre-arranged and has ended has none today
+      if(B.layers.includes('adhoc') && !B.n_adhoc && !preAdRows(f, true).length){
+        f.layers = B.layers.filter(l => l !== 'adhoc'); f.layer = LAYER_ORDER.find(l => f.layers.includes(l)) || null; }
+      return; }
     const acts = f.activations.filter(a => String(a.date).slice(0, 4) === Y), H = f.hist || {};
     f.n_act = acts.filter(a => a.type === 'framework_aa' && !isOld(a)).length; f.n_act_all = acts.length;
     f.n_adhoc = (H.adhoc || []).filter(y => String(y) === Y).length;
+    const nPa = preAdRows(f, true).length;   // pre-arranged outside a framework, in place in the year (D223)
     let layers;
-    if(!pastY()){ layers = B.layers.filter(l => l !== 'adhoc' || f.n_adhoc); }
+    if(!pastY()){ layers = B.layers.filter(l => l !== 'adhoc' || f.n_adhoc || nPa); }
     else {
       const [st, ver] = statusAt(f, D); layers = [];
       if(['active','updating','development'].includes(st)) layers.push('framework');
       if(st === 'retired') layers.push('retired');
-      if(f.n_adhoc) layers.push('adhoc');
+      if(f.n_adhoc || nPa) layers.push('adhoc');
       if(f.tech && st) layers.push('tech');
-      f.disp = st || (f.n_adhoc ? 'adhoc' : 'pipeline'); f.disp_label = DISPLABEL[f.disp] || f.disp;
+      f.disp = st || (f.n_adhoc || nPa ? 'adhoc' : 'pipeline'); f.disp_label = DISPLABEL[f.disp] || f.disp;
       f.ring = null; f.current = ver; f.prearranged = null; f.pre_parts = null;   // a past year's figure has no split by fund
       const p = (H.pre || {})[Y]; f.pre_now = p ? p[0] : null; f.pre_drv = !!(p && p[1]); f.pre_apy = p && p[2] > 1 ? p[2] : null;
       f.pre_fy = p ? p[3] || {} : null;   // ... by the fund switch's boxes (D201)
@@ -3242,9 +3304,9 @@ const LDEF = {
   updating: () => tr8('A framework that is currently being improved, including based on learning or the need to reconfirm pre-arranged financing.'),
   development: () => tr8('No endorsed version yet: the framework is being built for the first time.'),
   framework: () => tr8('Every framework whose status is active, being updated or in development.'),
-  adhoc: () => tr8('Countries and hazards that received anticipatory-action money without a framework version.'),
+  adhoc: () => tr8('Countries and hazards with anticipatory-action money outside a framework: released, or pre-arranged and not yet released.'),
   retired: () => tr8("Frameworks flagged retired, drawn in grey so past coverage can be compared with today's."),
-  tech: () => tr8('Countries where OCHA supported the framework technically, without a funding commitment, whatever its status.'),
+  tech: () => tr8('Countries where OCHA supports coordinated anticipatory action but neither leads the effort nor provides pre-arranged financing.'),   // the AA team's wording (review, 2026-11-10)
   funds: () => tr8('CERF: the Central Emergency Response Fund. CBPF: the country-based pooled funds. RHPF: the regional humanitarian pooled funds, through their country windows. Untick a fund to leave its money out of the figures, the table and the country panels; a pin with no money from a fund still ticked leaves the map (technical support stays). With all three ticked, frameworks with no money recorded yet are shown too, and money not split by fund counts.')};
 const defSpan = (k, inner) => `<span class='hasdef' tabindex='0' data-tip='${esc(LDEF[k]())}'>${inner}<span class='sr'>: ${esc(LDEF[k]())}</span></span>`;
 const defInfo = k => `<span class='info' tabindex='0' role='note' aria-label='${esc(LDEF[k]())}' data-tip='${esc(LDEF[k]())}'>i</span>`;
@@ -3446,7 +3508,12 @@ function updateTiles(){
       {bul: [tr8('{0} active', n('active')), tr8('{0} being updated', n('updating')), tr8('{0} in development', n('development'))],
        drv: past && tr8('Which frameworks existed at 31 December, and their status, are reconstructed from the version dates and status history; a framework whose validity ended during the year still counts as active for that year')});
   const noEnv = []; Object.values(L).forEach(c => c.fws.forEach(f => { if(fw.includes(f) && !preOf(f)) noEnv.push(`${tr8(c.name)} ${tr8(f.hz_label).toLowerCase()}`); }));
-  let pre = fw.reduce((s,f)=>s+(preOf(f)||0),0), preX = 0;
+  // pre-arranged outside a framework, not yet released (D223): counted while the non-framework
+  // layer is on, named under the figure; off, the note says what the layer would add
+  const everyFw = Object.values(L).flatMap(c=>c.fws);
+  const pad = preAdOn(everyFw), preAd = usdOf(pad), padOff = LAYERS.adhoc ? 0 : usdOf(preAdOn(everyFw, {adhoc: true}));
+  const padNote = padOff ? tr8('Not shown: {0}.', tr8('{0} pre-arranged outside a framework, not yet released', money(padOff))) : '';
+  let pre = fw.reduce((s,f)=>s+(preOf(f)||0),0) + preAd, preX = 0;
   if(past){   // pooled-fund rows of no single framework count with the country's frameworks shown
     Object.entries(L).forEach(([iso, c]) => { const x = (c.pre_x || {})[String(YEAR)]; if(x && c.fws.some(f => fw.includes(f))) preX += preXOf(x); }); pre += preX; }
   const ser = (YEARS.series || {})[String(YEAR)];
@@ -3454,10 +3521,11 @@ function updateTiles(){
   // framework without an envelope simply has none yet (owner: no note)
   const apyFw = fw.filter(f => apyIn(f));
   set('t-pre', tileMoney(pre), past ? tr8('pre-arranged in {0}', YEAR) : tr8('pre-arranged now'),
-      {bul: past ? [] : fundBullets(partsOf(fw)),   // a past year: no bullets (its split by fund only filters)
+      {bul: past ? [] : fundBullets(withPreAd(partsOf(fw), pad)),   // a past year: no bullets (its split by fund only filters)
+       sub: preAd ? tr8('{0} of it outside a framework, not yet released', money(preAd)) : '',
        mark: past && noEnv.length > 0,
        drv: past && fw.some(f => f.pre_drv) && tr8("Part of this year's figure is inferred from the envelope of the version valid during the year (no reported figure for that framework-year)"),
-       note: !fw.length ? [] : !past ? [preNote(), switchNote()].concat(apyTileNotes(apyFw)) : [preNote(), switchNote()].concat(apyTileNotes(apyFw), [
+       note: !fw.length ? [padNote] : !past ? [preNote(), switchNote()].concat(apyTileNotes(apyFw), [padNote]) : [preNote(), switchNote()].concat(apyTileNotes(apyFw), [padNote,
          noEnv.length ? '* ' + tr8('No figure for {0}: {1}.', YEAR, noEnv.join(', ')) : '',
          tr8('A stock for {0}: each framework valid at any time in the year, counted once; never summed over years.', YEAR),
          preX ? tr8('Includes {0} of pooled-fund allocations not tied to one hazard.', money(preX)) : '',
@@ -3530,7 +3598,7 @@ function updateTiles(){
     + (past ? ' · ' + tr8('as at 31 December {0}', YEAR) : YEAR != null ? ' · ' + tr8('{0}, as of today', YEAR) : '');
 }
 
-// ---------- callouts: one per country, laid out clear of every framework country
+// ---------- callouts: one per country, each as near its country's dot as the others allow
 const NS = 'http://www.w3.org/2000/svg';
 let labels = [];
 // one callout per country with something on the enabled layers; rebuilt on every layer change
@@ -3557,124 +3625,260 @@ function buildCallouts(){
     lpane.appendChild(el);
     const ln = document.createElementNS(NS, 'line'); ln.setAttribute('class','leader'); leaders.appendChild(ln);
     const dot = document.createElementNS(NS, 'circle'); dot.setAttribute('class','cdot'); dot.setAttribute('r','3.5'); leaders.appendChild(dot);
-    labels.push({iso, lat:c.centroid[0], lon:c.centroid[1], dir:c.dir, el, ln, dot, bbox:c.lbbox});
+    labels.push({iso, lat:c.centroid[0], lon:c.centroid[1], dir:c.dir, el, ln, dot});
   });
 }
-let PAD = 8, GAP = 4; let ALLRECTS = [];
-function rectOf(bbox){ if(!bbox || bbox[2]-bbox[0] > 170) return null;
-  const [x1,y1] = toPx(bbox[0], bbox[3]), [x2,y2] = toPx(bbox[2], bbox[1]);
-  return {x1:Math.min(x1,x2), y1:Math.min(y1,y2), x2:Math.max(x1,x2), y2:Math.max(y1,y2)}; }
-function clampAll(W, H){ labels.forEach(Lb => {
-  if(Lb.cx - Lb.w/2 < 3) Lb.cx = 3 + Lb.w/2; if(Lb.cx + Lb.w/2 > W-3) Lb.cx = W-3-Lb.w/2;
-  if(Lb.cy - Lb.h/2 < 3) Lb.cy = 3 + Lb.h/2; if(Lb.cy + Lb.h/2 > H-3) Lb.cy = H-3-Lb.h/2; }); }
-function ejectCountries(Lb){
-  const bx1 = Lb.cx-Lb.w/2-GAP, by1 = Lb.cy-Lb.h/2-GAP, bx2 = Lb.cx+Lb.w/2+GAP, by2 = Lb.cy+Lb.h/2+GAP;
-  let best = null, bestA = 0;
-  for(const r of ALLRECTS){ const ox = Math.min(bx2,r.x2)-Math.max(bx1,r.x1), oy = Math.min(by2,r.y2)-Math.max(by1,r.y1);
-    if(ox>0 && oy>0){ const a = Math.min(ox,oy); if(a>bestA){ bestA=a; best=r; } } }
-  if(!best) return false;
-  const pushL = best.x1-bx2, pushR = best.x2-bx1, pushU = best.y1-by2, pushD = best.y2-by1;
-  const cands = [[Math.abs(pushL),pushL,0],[Math.abs(pushR),pushR,0],[Math.abs(pushU),0,pushU],[Math.abs(pushD),0,pushD]].sort((a,b)=>a[0]-b[0]);
-  const bias = cands.filter(c => (c[1]*Lb.dir[0] + c[2]*Lb.dir[1]) >= 0);
-  const pick = (bias[0] && bias[0][0] <= cands[0][0]*1.6) ? bias[0] : cands[0];
-  Lb.cx += pick[1]; Lb.cy += pick[2]; return true;
+const PAD = 8;   // clear space kept between two callouts
+let KEEPOUT = [];   // rectangles no callout may touch: the legend
+// The shaded countries' shapes, each as a coarse grid over its own box (one cell per four
+// pixels each way), summed so that how much of a country lies under any box is four look-ups.
+// Drawn from the map's own paths.
+let SHADE = [];
+let ROOM = 1;   // a small map has little free room, so covering a country is charged less there (D220)
+function shadeGrids(W, H){
+  const S = 4, gw = Math.ceil(W/S), gh = Math.ceil(H/S), k = kpx()/S, out = [];
+  const cv = document.createElement('canvas'); cv.width = gw; cv.height = gh;
+  const ctx = cv.getContext('2d', {willReadFrequently: true});
+  if(!ctx || !gw || !gh) return out;
+  svg.querySelectorAll('.cty.on').forEach(el => {
+    let bb; try { bb = el.getBBox(); } catch(e){ return; }
+    const x0 = Math.max(0, Math.floor(bb.x*k)), y0 = Math.max(0, Math.floor(bb.y*k));
+    const w = Math.min(gw, Math.ceil((bb.x+bb.width)*k)) - x0, h = Math.min(gh, Math.ceil((bb.y+bb.height)*k)) - y0;
+    if(w <= 0 || h <= 0) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, gw, gh); ctx.setTransform(k, 0, 0, k, 0, 0);
+    ctx.fill(new Path2D(el.getAttribute('d')));
+    const px = ctx.getImageData(x0, y0, w, h).data, sat = new Float64Array((w+1)*(h+1));
+    for(let y = 0; y < h; y++){ let row = 0;
+      for(let x = 0; x < w; x++){ row += px[4*(y*w+x)+3]/255; sat[(y+1)*(w+1)+x+1] = sat[y*(w+1)+x+1] + row; } }
+    const total = sat[(w+1)*(h+1)-1];
+    if(total >= 1) out.push({S, x0, y0, w, h, sat, total});   // a speck of an island has its dot's clear space
+  });
+  return out;
 }
-function separate(iters, W, H){
-  for(let s=0; s<iters; s++){
-    let clean = true;
-    for(let i=0;i<labels.length;i++) for(let j=i+1;j<labels.length;j++){
-      const a = labels[i], b = labels[j];
-      const ax = a.cx-a.w/2, ay = a.cy-a.h/2, bx = b.cx-b.w/2, by = b.cy-b.h/2;
-      if(ax < bx+b.w+PAD && ax+a.w+PAD > bx && ay < by+b.h+PAD && ay+a.h+PAD > by){
-        clean = false;
-        const ox = Math.min(ax+a.w, bx+b.w)-Math.max(ax,bx)+PAD, oy = Math.min(ay+a.h, by+b.h)-Math.max(ay,by)+PAD;
-        if(ox <= oy){ const hx = ox/2+.5; if(a.cx < b.cx){ a.cx-=hx; b.cx+=hx; } else { a.cx+=hx; b.cx-=hx; } }
-        else { const hy = oy/2+.5; if(a.cy < b.cy){ a.cy-=hy; b.cy+=hy; } else { a.cy+=hy; b.cy-=hy; } }
-      }
-    }
-    labels.forEach(Lb => { if(ejectCountries(Lb)) clean = false; });
-    clampAll(W, H);
-    if(clean) return true;
+// The summed grid read at a fractional cell position (between the four corners), so that a box
+// is measured on its own area and not on the cells it touches.
+function satAt(g, x, y){
+  x = Math.max(0, Math.min(g.w, x)); y = Math.max(0, Math.min(g.h, y));
+  const xa = Math.floor(x), ya = Math.floor(y), xb = Math.min(g.w, xa+1), yb = Math.min(g.h, ya+1), fx = x-xa, fy = y-ya, w = g.w+1;
+  return (g.sat[ya*w+xa]*(1-fx) + g.sat[ya*w+xb]*fx)*(1-fy) + (g.sat[yb*w+xa]*(1-fx) + g.sat[yb*w+xb]*fx)*fy;
+}
+// What a box costs for the shaded countries under it, from 0 to 1: the larger of the share of
+// the box that is over shaded countries and the largest share of any one country that is under
+// the box (a callout on a small country hides it, however little of the callout that takes),
+// square-rooted, so that a corner of a country under the callout already counts for a good deal.
+function shadedCost(x1, y1, x2, y2){
+  let over = 0, hidden = 0;
+  for(const g of SHADE){
+    const a = x1/g.S-g.x0, b = x2/g.S-g.x0, t = y1/g.S-g.y0, d = y2/g.S-g.y0;
+    if(b <= 0 || a >= g.w || d <= 0 || t >= g.h) continue;
+    const under = satAt(g, b, d) - satAt(g, b, t) - satAt(g, a, d) + satAt(g, a, t);
+    if(under <= 0) continue;
+    over += under; hidden = Math.max(hidden, under/g.total);
   }
-  return false;
+  const box = (x2-x1)*(y2-y1)/16;   // in cells (S = 4)
+  return Math.sqrt(Math.min(1, Math.max(over/box, hidden)));
 }
-// leader-line tidy-up: a leader should not cross another leader nor run through another
-// label. Swap the positions of two labels whenever that lowers the total count, then let
-// the overlap pass settle; stop when a full sweep changes nothing.
-function anchorOf(Lb){ return [Lb.cx-Lb.w/2+Lb.iox, Lb.cy-Lb.h/2+Lb.ioy]; }
 function segCross(p1, p2, p3, p4){
   const d = (a,b,c) => (c[0]-a[0])*(b[1]-a[1]) - (b[0]-a[0])*(c[1]-a[1]);
   const d1 = d(p3,p4,p1), d2 = d(p3,p4,p2), d3 = d(p1,p2,p3), d4 = d(p1,p2,p4);
   return ((d1>0&&d2<0)||(d1<0&&d2>0)) && ((d3>0&&d4<0)||(d3<0&&d4>0)); }
-function segHitsBox(p, q, Lb){
-  const x1 = Lb.cx-Lb.w/2, y1 = Lb.cy-Lb.h/2, x2 = x1+Lb.w, y2 = y1+Lb.h;
+function segHitsRect(p, q, x1, y1, x2, y2){
   if(Math.max(p[0],q[0]) < x1 || Math.min(p[0],q[0]) > x2 || Math.max(p[1],q[1]) < y1 || Math.min(p[1],q[1]) > y2) return false;
   const c = [[x1,y1],[x2,y1],[x2,y2],[x1,y2]];
   for(let i=0;i<4;i++) if(segCross(p, q, c[i], c[(i+1)%4])) return true;
   return false; }
-function badness(){
-  let n = 0; const A = labels.map(anchorOf);
-  for(let i=0;i<labels.length;i++){ const pi = [labels[i].px, labels[i].py];
-    for(let j=0;j<labels.length;j++){ if(i===j) continue;
-      if(j>i && segCross(pi, A[i], [labels[j].px, labels[j].py], A[j])) n += 2;
-      if(segHitsBox(pi, A[i], labels[j])) n += 1; } }
-  return n; }
-function overlaps(){ let n = 0;
-  for(let i=0;i<labels.length;i++) for(let j=i+1;j<labels.length;j++){ const a = labels[i], b = labels[j];
-    if(Math.abs(a.cx-b.cx)*2 < a.w+b.w+PAD && Math.abs(a.cy-b.cy)*2 < a.h+b.h+PAD) n++; }
-  return n; }
-function layoutScore(){ return badness() + 10*overlaps(); }
-function uncross(W, H){
-  for(let pass=0; pass<6; pass++){
-    let changed = false;
-    // candidate pairs: leaders that cross, or a leader running through the other label
-    const A = labels.map(anchorOf), cands = [];
-    for(let i=0;i<labels.length;i++) for(let j=i+1;j<labels.length;j++){
-      const a = labels[i], b = labels[j], pa = [a.px,a.py], pb = [b.px,b.py];
-      if(segCross(pa, A[i], pb, A[j]) || segHitsBox(pa, A[i], b) || segHitsBox(pb, A[j], a)) cands.push([a, b]); }
-    for(const [a, b] of cands){
-      const snap = labels.map(l => [l.cx, l.cy]), cur = layoutScore();
-      const sa = [a.cx, a.cy]; a.cx = b.cx; a.cy = b.cy; b.cx = sa[0]; b.cy = sa[1];
-      separate(300, W, H);
-      if(layoutScore() < cur) changed = true;
-      else labels.forEach((l, k) => { l.cx = snap[k][0]; l.cy = snap[k][1]; });   // keep only improvements
-    }
-    if(!changed) break;
+// Placement (D220). Each callout has a ring of candidate places around its country's dot: sixteen
+// directions, eight distances, and at each either the callout's box or its first pin that far
+// from the dot. A place's cost is the leader's length, plus a price for each thing that makes
+// the map hard to read: sitting on another callout or on a country's dot, a leader that
+// crosses another leader or runs through a callout (its own words included), covering the
+// shaded countries' shapes, and, a little, leaving the country's usual side (dir). Callouts are placed most-crowded first, shuffled
+// (anneal), then each is re-placed against the others until none moves, and last slid to the
+// cheapest spot nearby (nudge), a far one changing places with the one in its way (relieve): the total cost is what
+// is brought down, so one callout may take a dearer place to free a better one for another.
+// Overlap is a price, not a rule: on a map too small for its callouts some still overlap.
+const RING_DIRS = 16, RING_DISTS = [8, 18, 30, 46, 66, 92, 126, 170];
+const COST = { far: 300, overlap: 4000, dot: 1500, through: 500, cross: 300, ownText: 1.5, shaded: 80, dir: 10 };
+const DOT_M = 6;   // clear space kept round a country's dot
+// A place for a callout with its box's corner at (x1, y1), with what it costs on its own; null
+// where the callout may not go (off the map, on its own dot, on the legend).
+function placeAt(Lb, x1, y1, W, H){
+  const x2 = x1+Lb.w, y2 = y1+Lb.h;
+  if(x1 < 3 || y1 < 3 || x2 > W-3 || y2 > H-3) return null;
+  if(Lb.px > x1-DOT_M && Lb.px < x2+DOT_M && Lb.py > y1-DOT_M && Lb.py < y2+DOT_M) return null;   // on its own dot
+  for(const r of KEEPOUT) if(Math.min(x2,r.x2) > Math.max(x1,r.x1) && Math.min(y2,r.y2) > Math.max(y1,r.y1)) return null;
+  const ax = x1+Lb.iox, ay = y1+Lb.ioy, vx = Lb.px-ax, vy = Lb.py-ay, len = Math.hypot(vx, vy);
+  // how far the leader runs under the callout's own words before it reaches the pin
+  const tx = vx > 0 ? (x2-ax)/vx : vx < 0 ? (x1-ax)/vx : Infinity, ty = vy > 0 ? (y2-ay)/vy : vy < 0 ? (y1-ay)/vy : Infinity;
+  const inside = Math.min(1, tx, ty)*len;
+  // which side of the dot the callout is on, against the country's usual side
+  const cx = (x1+x2)/2-Lb.px, cy = (y1+y2)/2-Lb.py, cl = Math.hypot(cx, cy) || 1, dl = Math.hypot(Lb.dir[0], Lb.dir[1]) || 1;
+  const c = len + len*len/COST.far + COST.ownText*Math.max(0, inside-16)
+    + COST.dir*(1-(cx*Lb.dir[0]+cy*Lb.dir[1])/(cl*dl)) + COST.shaded*ROOM*shadedCost(x1, y1, x2, y2);
+  return {x1, y1, x2, y2, ax, ay, c};
+}
+function candidatesOf(Lb, W, H){
+  if(!Lb.w || !Lb.h) return [];   // hidden (phones list the countries instead): only its dot is drawn
+  const out = [];
+  const add = (slot, x1, y1) => { const k = placeAt(Lb, x1, y1, W, H); if(k){ k.slot = slot; out.push(k); } };
+  for(let k=0; k<RING_DIRS; k++){
+    const t = 2*Math.PI*k/RING_DIRS, ux = Math.cos(t), uy = Math.sin(t);
+    const edge = Math.min(Math.abs(ux) > 1e-6 ? Lb.w/2/Math.abs(ux) : Infinity, Math.abs(uy) > 1e-6 ? Lb.h/2/Math.abs(uy) : Infinity);
+    RING_DISTS.forEach((d, j) => {
+      // two places per direction and distance: the callout's box d away from the dot, and
+      // the callout's first pin d away from the dot
+      add(2*(j*RING_DIRS+k), Lb.px + ux*(d+edge) - Lb.w/2, Lb.py + uy*(d+edge) - Lb.h/2);
+      add(2*(j*RING_DIRS+k)+1, Lb.px + ux*(d+14) - Lb.iox, Lb.py + uy*(d+14) - Lb.ioy);
+    });
   }
+  return out.sort((a, b) => a.c - b.c);
+}
+// The ring's places are some way apart, so a callout can be left a ring further out than it
+// need be. Last of all each callout slides, a few pixels at a time, to wherever next to it is
+// cheaper, until none can: usually closer to its dot, up to the clear space round its neighbours.
+const NUDGES = [[3,0],[-3,0],[0,3],[0,-3],[2,2],[2,-2],[-2,2],[-2,-2]];
+function nudge(W, H){
+  for(let pass = 0; pass < 60; pass++){
+    let moved = false;
+    for(const Lb of labels){ if(!Lb.at) continue;
+      let best = Lb.at, bc = costOf(Lb);
+      for(const [dx, dy] of NUDGES){ const k = placeAt(Lb, Lb.at.x1+dx, Lb.at.y1+dy, W, H); if(!k) continue;
+        const c = k.c + clashCost(Lb, k); if(c < bc - .01){ bc = c; best = k; } }
+      if(best !== Lb.at){ Lb.at = best; moved = true; } }
+    if(!moved) break;
+  }
+}
+// what a place costs against the callouts already placed, and against every country's dot
+function clashCost(Lb, k){
+  let c = 0; const p = [Lb.px, Lb.py], a = [k.ax, k.ay];
+  const lx1 = Math.min(Lb.px, k.x1), lx2 = Math.max(Lb.px, k.x2), ly1 = Math.min(Lb.py, k.y1), ly2 = Math.max(Lb.py, k.y2);   // the callout and its leader
+  for(const o of labels){ if(o === Lb) continue;
+    if(o.px > k.x1-DOT_M && o.px < k.x2+DOT_M && o.py > k.y1-DOT_M && o.py < k.y2+DOT_M) c += COST.dot;
+    if(!o.at) continue;
+    const q = o.at, ox = Math.min(k.x2, q.x2)-Math.max(k.x1, q.x1)+PAD, oy = Math.min(k.y2, q.y2)-Math.max(k.y1, q.y1)+PAD;
+    if(ox > 0 && oy > 0) c += COST.overlap + ox*oy;
+    // the two leaders' boxes apart: neither leader can meet the other or its callout
+    if(Math.max(o.px, q.x2) < lx1 || Math.min(o.px, q.x1) > lx2 || Math.max(o.py, q.y2) < ly1 || Math.min(o.py, q.y1) > ly2) continue;
+    const op = [o.px, o.py], oa = [q.ax, q.ay];
+    if(segCross(p, a, op, oa)) c += COST.cross;
+    if(segHitsRect(p, a, q.x1, q.y1, q.x2, q.y2)) c += COST.through;
+    if(segHitsRect(op, oa, k.x1, k.y1, k.x2, k.y2)) c += COST.through;
+  }
+  return c;
+}
+// the cheapest place for a callout against the others; with a bound, only a place cheaper than it
+function bestPlace(Lb, bound = Infinity){
+  let best = null, bc = bound;
+  for(const k of Lb.cands){ if(k.c >= bc) break; const c = k.c + clashCost(Lb, k); if(c < bc){ bc = c; best = k; } }   // cheapest first
+  return [best, bc];
+}
+// Annealing: each callout in turn tries a place at random and keeps it if the map is better
+// for it, or, early on, now and then if it is worse, so that a crowd can shuffle out of a bad
+// arrangement; the best arrangement seen is the one kept. Each callout draws from its own
+// stream of numbers, seeded by its country's code, and picks a place by its slot on the ring
+// (not by its rank among the places that fit), so the same map always gives the same layout
+// and a map one pixel wider disturbs it little.
+function anneal(){
+  const live = labels.filter(Lb => Lb.at && Lb.cands.length > 1).sort((a, b) => a.iso < b.iso ? -1 : 1);
+  if(live.length < 2) return;
+  live.forEach(Lb => { let h = 2166136261; for(const ch of Lb.iso) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+    Lb.seed = h; Lb.slots = []; Lb.cands.forEach(k => { Lb.slots[k.slot] = k; }); });
+  const rnd = Lb => { Lb.seed = Lb.seed + 0x6D2B79F5 | 0; let t = Math.imul(Lb.seed ^ Lb.seed >>> 15, 1 | Lb.seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const steps = Math.min(2500*live.length, 120000), T0 = 200, T1 = 1, ND = RING_DISTS.length;
+  let cur = 0, best = 0, moves = 0; let keep = live.map(Lb => Lb.at);
+  live.forEach(Lb => { Lb.costAt = -1; });
+  for(let i = 0; i < steps; i++){
+    const T = T0*Math.pow(T1/T0, i/steps), Lb = live[i % live.length];
+    const r = rnd(Lb), dir = Math.floor(rnd(Lb)*RING_DIRS), fam = rnd(Lb) < .5 ? 0 : 1, u = rnd(Lb);
+    const k = Lb.slots[2*(Math.floor(r*r*ND)*RING_DIRS + dir) + fam];   // near places more often
+    if(!k || k === Lb.at) continue;
+    if(Lb.costAt !== moves){ Lb.cost = costOf(Lb); Lb.costAt = moves; }   // its cost where it is holds until a callout moves
+    const d = k.c + clashCost(Lb, k) - Lb.cost;
+    if(d < 0 || u < Math.exp(-d/T)){ Lb.at = k; cur += d; moves++;
+      if(cur < best - 1e-6){ best = cur; keep = live.map(l => l.at); } }
+  }
+  live.forEach((Lb, i) => { Lb.at = keep[i]; });
+}
+function costOf(Lb){ return Lb.at.c + clashCost(Lb, Lb.at); }
+// what a few callouts cost together, each pair between them counted once
+function groupCost(g){
+  const at = g.map(l => l.at); let c = 0;
+  g.forEach((l, i) => { for(let j = i+1; j < g.length; j++) g[j].at = null; c += costOf(l); for(let j = i+1; j < g.length; j++) g[j].at = at[j]; });
+  return c;
+}
+// A callout left far from its dot because one or two other callouts hold the nearer room: it
+// takes a place cheaper on its own (as a rule a nearer one), the others find their best places again, and the exchange is kept if
+// they are better off together. Farthest callouts first.
+function relieve(){
+  const reach = Lb => Math.hypot(Lb.at.ax-Lb.px, Lb.at.ay-Lb.py);
+  const far = labels.filter(Lb => Lb.at && reach(Lb) > 40).sort((a, b) => reach(b) - reach(a) || (a.iso < b.iso ? -1 : 1));
+  let any = false;
+  for(const a of far){
+    const curA = costOf(a); let tries = 0;
+    for(const k of a.cands){
+      if(k.c >= curA - 15 || tries >= 10) break;   // only places clearly better on their own
+      const inWay = labels.filter(o => o !== a && o.at && o.cands.length
+        && Math.min(k.x2,o.at.x2)-Math.max(k.x1,o.at.x1)+PAD > 0 && Math.min(k.y2,o.at.y2)-Math.max(k.y1,o.at.y1)+PAD > 0);
+      if(!inWay.length || inWay.length > 2) continue;
+      tries++;
+      const g = [a, ...inWay], was = g.map(l => l.at), before = groupCost(g);
+      a.at = k; inWay.forEach(o => { o.at = null; });
+      // what the others may still cost for the exchange to pay: each looks no further than that
+      let left = before - .5 - costOf(a), ok = true;
+      inWay.forEach((o, i) => { if(!ok) return;
+        const rest = inWay.slice(i+1).reduce((t, r) => t + r.cands[0].c, 0), [place, c] = bestPlace(o, left - rest);
+        if(place){ o.at = place; left -= c; } else ok = false; });
+      if(ok){ any = true; break; }
+      g.forEach((l, i) => { l.at = was[i]; });
+    }
+  }
+  return any;
 }
 function runLayout(){
   legendHome();
   const r = svg.getBoundingClientRect(), W = r.width, H = r.height;
   if(!W) return;
   const mobile = window.matchMedia('(max-width: 760px)').matches;
-  mapbox.classList.toggle('compact', mobile); PAD = mobile ? 3 : 8; GAP = mobile ? 2 : 4;
-  ALLRECTS = labels.map(Lb => rectOf(Lb.bbox)).filter(Boolean);
+  mapbox.classList.toggle('compact', mobile);
   const lr = legend.getBoundingClientRect(), mr = mapbox.getBoundingClientRect();
-  if(lr.width && !legend.classList.contains('below')) ALLRECTS.push({x1:lr.left-mr.left-6, y1:lr.top-mr.top-6, x2:lr.right-mr.left+6, y2:lr.bottom-mr.top+6});
+  KEEPOUT = lr.width && !legend.classList.contains('below') ? [{x1:lr.left-mr.left-6, y1:lr.top-mr.top-6, x2:lr.right-mr.left+6, y2:lr.bottom-mr.top+6}] : [];
+  SHADE = mobile ? [] : shadeGrids(W, H); ROOM = Math.max(.25, Math.min(1, (W-600)/700));
   labels.forEach(Lb => {
     const p = toPx(Lb.lon, Lb.lat); Lb.px = p[0]; Lb.py = p[1];
     Lb.w = Lb.el.offsetWidth; Lb.h = Lb.el.offsetHeight;
     const ib = Lb.el.querySelector('.iconbox');
     Lb.iox = ib ? ib.offsetLeft + ib.offsetWidth/2 : 12; Lb.ioy = ib ? ib.offsetTop + ib.offsetHeight/2 : Lb.h/2;
-    const rc = rectOf(Lb.bbox);
-    const dl = Math.hypot(Lb.dir[0], Lb.dir[1]) || 1, ux = Lb.dir[0]/dl, uy = Lb.dir[1]/dl;
-    const cx0 = rc ? (rc.x1+rc.x2)/2 : Lb.px, cy0 = rc ? (rc.y1+rc.y2)/2 : Lb.py;
-    const hx = rc ? (rc.x2-rc.x1)/2 : 0, hy = rc ? (rc.y2-rc.y1)/2 : 0;
-    const reach = Math.abs(ux)*hx + Math.abs(uy)*hy + GAP + Math.abs(ux)*Lb.w/2 + Math.abs(uy)*Lb.h/2 + 2;
-    Lb.cx = cx0 + ux*reach; Lb.cy = cy0 + uy*reach;
   });
-  for(let step=0; step<55; step++){
-    labels.forEach(Lb => { Lb.cx += (Lb.px-Lb.cx)*.06; Lb.cy += (Lb.py-Lb.cy)*.06; ejectCountries(Lb); });
-    separate(10, W, H);
-  }
-  separate(700, W, H);
-  uncross(W, H);
+  placeAll(W, H);
   labels.forEach(Lb => {
-    Lb.el.style.visibility = 'visible'; Lb.el.style.left = (Lb.cx-Lb.w/2)+'px'; Lb.el.style.top = (Lb.cy-Lb.h/2)+'px';
+    // no place on the map at all (a dot off the edge): beside the dot, as near as the map allows
+    const k = Lb.at || {x1: Math.max(3, Math.min(W-3-Lb.w, Lb.px+10)), y1: Math.max(3, Math.min(H-3-Lb.h, Lb.py-Lb.h/2))};
+    Lb.el.style.visibility = 'visible'; Lb.el.style.left = k.x1+'px'; Lb.el.style.top = k.y1+'px';
     Lb.ln.setAttribute('x1', Lb.px); Lb.ln.setAttribute('y1', Lb.py);
-    Lb.ln.setAttribute('x2', Lb.cx-Lb.w/2+Lb.iox); Lb.ln.setAttribute('y2', Lb.cy-Lb.h/2+Lb.ioy);
+    Lb.ln.setAttribute('x2', k.x1+Lb.iox); Lb.ln.setAttribute('y2', k.y1+Lb.ioy);
     Lb.dot.setAttribute('cx', Lb.px); Lb.dot.setAttribute('cy', Lb.py);
   });
+}
+// every callout's place (Lb.at), from the dots, the callouts' sizes and the shaded countries
+function placeAll(W, H){
+  labels.forEach(Lb => { Lb.at = null; });
+  labels.forEach(Lb => { Lb.cands = candidatesOf(Lb, W, H);
+    Lb.crowd = labels.reduce((n, o) => n + (o !== Lb && Math.hypot(o.px-Lb.px, o.py-Lb.py) < 140 ? 1 : 0), 0); });
+  const order = labels.slice().sort((a, b) => b.crowd - a.crowd || (a.iso < b.iso ? -1 : 1));
+  order.forEach(Lb => { Lb.at = bestPlace(Lb)[0]; });
+  anneal();
+  // each callout re-placed on its ring against the others, until none moves
+  const settle = () => { for(let sweep = 0; sweep < 20; sweep++){
+    let moved = false;
+    for(const Lb of order){ if(!Lb.at) continue;
+      const now = costOf(Lb), [k, c] = bestPlace(Lb);
+      if(k && k !== Lb.at && c < now - .5){ Lb.at = k; moved = true; } }
+    if(!moved) break; } };
+  settle(); nudge(W, H);
+  // a far callout may change places with those in its way (twice at most); the rest then take
+  // any ring place that freed, and all slide again
+  for(let round = 0; round < 2 && relieve(); round++){ settle(); nudge(W, H); }
 }
 // relayout whenever the map's rendered size changes (window resize, sidebar sliding in or
 // out) — callouts are positioned in CSS px, so a stale width puts them off the countries
@@ -3788,9 +3992,10 @@ function actMonths(acts){
 // panel under the tiles
 function countryTiles(c){
   const fws = vis(c), fw = fws.filter(f=>visLayer(f)==='framework');
-  const pre = fw.reduce((s,f)=>s+(preOf(f)||0),0), cov = fw.reduce((s,f)=>s+(f.covered||0),0), nCov = fw.filter(f=>f.covered).length;
+  const pad = preAdOn(c.fws), preAd = usdOf(pad);   // pre-arranged outside a framework, not yet released (D223)
+  const pre = fw.reduce((s,f)=>s+(preOf(f)||0),0) + preAd, cov = fw.reduce((s,f)=>s+(f.covered||0),0), nCov = fw.filter(f=>f.covered).length;
   // pre-arranged now by fund, as the global tile (a past year has no bullets there either)
-  const preBul = pastY() || !pre ? [] : fundBullets(partsOf(fw));
+  const preBul = pastY() || !pre ? [] : fundBullets(withPreAd(partsOf(fw), pad));
   const F = flowFigures(c.fws);   // the global tiles' rule, this country (a retired pin's releases while that layer is on)
   const kind = F.nAd && F.nAd === F.n ? 'non-framework allocation' : F.nAd ? 'activation' : 'framework activation', one = F.n === 1;
   const ACT = {'non-framework allocation': one ? ['non-framework allocation to date', 'non-framework allocation in {0}'] : ['non-framework allocations to date', 'non-framework allocations in {0}'],
@@ -3813,7 +4018,8 @@ function countryTiles(c){
   return `<div class='ctiles'><div class='ccap'>${esc(tr8('{0} only', tr8(c.name)) + (allFunds() ? '' : ' · ' + tr8('{0} only', fundWords())))}</div>`
     + tile(fw.length, esc(tr8(fw.length === 1 ? 'framework' : 'frameworks')) + (fws.length>fw.length?' · ' + esc(tr8('{0} other', fws.length-fw.length)):''))
     + tile(pre ? money(pre) : '—', esc(pastY() ? tr8('pre-arranged in {0}', YEAR) : tr8('pre-arranged now')),
-           fw.length ? [preNote(), switchNote()].concat(apyTileNotes(apyFw), [noEnv.length ? tr8('No figure for {0}: {1}.', YEAR, noEnv.join(', ')) : '']) : [], preBul)
+           (fw.length ? [preNote(), switchNote()].concat(apyTileNotes(apyFw), [noEnv.length ? tr8('No figure for {0}: {1}.', YEAR, noEnv.join(', ')) : '']) : [])
+             .concat([preAd ? tr8('{0} of it outside a framework, not yet released', money(preAd)) + '.' : '']), preBul)
     + tile(cov?num(cov):'—', esc(tr8(pastY() ? 'people covered' : 'people covered now')), pastY() && !cov ? [] : covNote(nCov, fw.length, false))
     + tile(F.n, esc(actL))
     + tile(F.n?money(F.usd):'—', esc(yr('released to date', 'released in {0}')), actNote(F).concat([switchNote()]))
@@ -3840,7 +4046,7 @@ function renderSide(){
           <div class='fhead'><b>${iconHTML(f)}${esc(tr8(f.hz_label))}</b><span>${f.general ? '' : badge(f.disp)}${actChip(f)}</span>${pastY()?DRV(statusNote(f).slice(3)):''}${f.tech?` <span class='badge b-tech'>${esc(tr8('technical support'))}</span>`:''}</div>
           <table class='mini'>
            <tr><td class='lbl'>${esc(pastY() ? tr8('Version, end of {0}', YEAR) : tr8('Latest version'))}</td><td>${f.current ? `<code>${f.current}</code> <span class='muted'>${esc(tr8('({0} total)', f.versions.length))}</span>` : `<span class="muted">${esc(tr8('no framework version'))}</span>`}</td></tr>
-           <tr><td class='lbl'>${esc(tr8('Pre-arranged'))}</td><td>${money(f.pre_now ?? f.prearranged)}${f.pre_now==null && f.prearranged_year?` <span class='muted'>(${f.prearranged_year})</span>`:''}${apyOf(f) && f.pre_now != null ? apyMark(apyOf(f)) + `<div class='muted'>† ${esc(apyNote(apyOf(f)))}</div>` : ''}</td></tr>
+           <tr><td class='lbl'>${esc(tr8('Pre-arranged'))}</td><td>${f.pre_now == null && preAdOn([f]).length ? money(usdOf(preAdOn([f]))) + ` <span class='muted'>(${esc(tr8('outside a framework, not yet released'))})</span>` : money(f.pre_now ?? f.prearranged)}${f.pre_now==null && f.prearranged_year?` <span class='muted'>(${f.prearranged_year})</span>`:''}${apyOf(f) && f.pre_now != null ? apyMark(apyOf(f)) + `<div class='muted'>† ${esc(apyNote(apyOf(f)))}</div>` : ''}</td></tr>
            <tr><td class='lbl'>${esc(tr8('People covered'))}</td><td>${num(f.covered)}</td></tr>
            <tr><td class='lbl'>${esc(tr8('Activations'))}${YEAR!=null?` ${YEAR}`:''}</td><td>${f.n_act_all||'—'}${f.n_adhoc?` <span class='muted'>${esc(tr8('({0} non-framework)', f.n_adhoc))}</span>`:''}</td></tr>
            <tr><td class='lbl'>${esc(tr8('Monitoring'))}</td><td>${monthStrip(v ? v.months : [])}</td></tr>
@@ -3852,14 +4058,16 @@ function renderSide(){
   if(!f.versions.length){
     const st = f.status_label ? tr8(f.status_label) : '';   // the sheet's status in words, never its code
     const why = f.general ? esc(tr8('OCHA technical support for anticipatory action in general, not for one hazard, and without a funding commitment.'))
+              : f.layer==='adhoc' && !f.activations.some(a => a.type === 'adhoc_aa') ? esc(tr8('Anticipatory-action money pre-arranged for this hazard outside a framework, not yet released.'))
               : f.layer==='adhoc' ? esc(tr8('Non-framework anticipatory-action allocations for this hazard — no framework behind them.'))
               : f.layer==='tech' ? (st ? esc(tr8('OCHA technical support — no framework version in the registry yet (tracking sheets: {0}).', st)) : esc(tr8('OCHA technical support — no framework version in the registry yet.')))
               : st ? esc(tr8('No framework version in the registry yet — status comes from the tracking sheets ({0}).', st)) : esc(tr8('No framework version in the registry yet.'));
-    side.innerHTML = crumb + fwHeader(c, f) + countryTiles(c) + `<p class='muted'>${why}</p>` + adhocBlock(f) +
+    side.innerHTML = crumb + fwHeader(c, f) + countryTiles(c) + `<p class='muted'>${why}</p>` + preAdBlock(f) + adhocBlock(f) +
       learningBlock(f, null) + partnersBlock(c, f, null)
       // no framework: its page lists the non-framework allocations (owner, 2026-10-30: not a
       // framework page); a pair with none (technical support only) has nothing more to show
-      + (f.page && f.activations.some(a => a.type === 'adhoc_aa') ? `<p><a href='${f.page}'>${esc(tr8('every non-framework allocation →'))}</a></p>` : '');
+      + (f.page && f.activations.some(a => a.type === 'adhoc_aa') ? `<p><a href='${f.page}'>${esc(tr8('every non-framework allocation →'))}</a></p>`
+         : f.page && (f.pre_ad || []).length ? `<p><a href='${f.page}'>${esc(tr8('more on this pre-arranged money →'))}</a></p>` : '');
     annotate(side, side);
     return;
   }
@@ -4040,6 +4248,16 @@ function fundTitle(x, c){
     : k === 'country' ? tr8('Country-Based Pooled Fund for {0}', cn)
     : k === 'regional' ? tr8('{0} — {1} window', tr8(REGION_FUND[rg] || 'Regional Humanitarian Pooled Fund'), cn)
     : tr8('a pooled fund (which one is not recorded)'); }
+// the pair's money pre-arranged outside a framework and not yet released (D223), in place in the
+// year shown: the fund, the amount, since when and the people it targets
+function preAdBlock(f){
+  const c = L[state.iso], rows = LAYERS.adhoc ? preAdRows(f, true) : []; if(!rows.length) return '';
+  // a record that has ended (a past year's view): until when
+  const ended = x => x.until ? ' · ' + esc(tr8('until {0}', dayOf(x.until) ? shortDate(x.until) + ' ' + String(x.until).slice(0, 4) : String(x.until))) : '';
+  return `<h4>${esc(tr8('Pre-arranged, not yet released ({0})', rows.length))}</h4>` + rows.map(x => `<div class='trig'><div class='tn'>${esc(fundTitle(x, c))}</div>
+      <div class='tt'><b>${x.usd != null ? money(x.usd) : esc(tr8('amount not recorded'))}</b> · ${esc(tr8('since {0}', preAdWhen(x)))}${ended(x)}${x.people ? ' · ' + esc(tr8('{0} people targeted', num(x.people))) : ''}</div></div>`).join('')
+    + `<p class='muted small'>${esc(tr8('Set aside by the fund for anticipatory action outside a framework. It counts as pre-arranged money, and as released money only once the fund releases it.'))}</p>`;
+}
 // the pair's non-framework allocations (in the year shown): for each, the fund it came from, the
 // amount and the year; then, for a CERF one, the CERF allocation behind it — agencies, sectors, people
 function adhocBlock(f){
@@ -4300,12 +4518,17 @@ function fwRows(){
     const stock = lay === 'framework';   // drawn as a framework (LAYERS.framework and on that layer, with a fund ticked: money from it)
     const v = f.versions.find(x => x.v === f.current), acts = flowActs(f), P = stock ? (f.pre_parts || {}) : {};
     const rows = fundRows(acts.flatMap(a => a.funding || []));   // the ticked funds' money (D201)
+    // pre-arranged outside a framework, not yet released (D223): added to the pair's pre-arranged
+    // money and its split by fund while the non-framework layer is on, as the tile adds it
+    const pad = preAdOn([f]), padOf = k => pad.some(x => rowFund(x) === k) ? usdOf(pad.filter(x => rowFund(x) === k)) : null;
+    const plus = (v, x) => x == null ? v : (v || 0) + x;
     const relOf = k => rows.some(x => x.usd != null && rowFund(x) === k) ? rows.reduce((s, x) => s + (rowFund(x) === k ? x.usd || 0 : 0), 0) : null;
     // the status the map shows for the pair: its framework status on the current-frameworks layer,
     // else the layer it is drawn on (retired, non-framework allocation, technical support)
     const st = lay === 'framework' ? f.disp : lay;
     R.push({iso, c, f, v, lay, st, country: tr8(c.name), hazard: tr8(f.hz_label), status: ST_ORDER[st] ?? 9,
-            version: f.current || '', pre: stock ? preOf(f) : null, cerf: P.cerf, cbpf: P.cbpf, rhpf: P.rhpf, all: allFunds() ? P.all : null, pre_v: P.version,
+            version: f.current || '', pre: plus(stock ? preOf(f) : null, pad.length ? usdOf(pad) : null), pad: pad.length ? usdOf(pad) : null,
+            cerf: plus(P.cerf, padOf('cerf')), cbpf: plus(P.cbpf, padOf('cbpf')), rhpf: plus(P.rhpf, padOf('rhpf')), all: allFunds() ? P.all : null, pre_v: P.version,
             covered: stock ? f.covered : null, n: acts.length, apy: stock ? apyIn(f) : null,
             // the overall return period of the version shown (the latest; a past year: the one at its end)
             rp: v && v.rp != null ? v.rp : null,
@@ -4363,7 +4586,8 @@ function buildFwTable(){
       : `<th class='nosort'>${esc(lab)}</th>`).join('') + '</tr></thead>';
   const body = '<tbody>' + R.map(r => { const f = r.f, mk = apyMark(r.apy);
     const notes = [r.pre_v && r.pre_v !== f.current ? tr8('envelope of version {0}', r.pre_v) : null,
-                   r.all ? tr8('not split by fund') : null].filter(Boolean).map(t => `<span class='sm'>${esc(t)}</span>`).join('');
+                   r.all ? tr8('not split by fund') : null,
+                   r.pad ? (r.pad < r.pre ? tr8('{0} of it outside a framework, not yet released', money(r.pad)) : tr8('outside a framework, not yet released')) : null].filter(Boolean).map(t => `<span class='sm'>${esc(t)}</span>`).join('');
     const drvPre = past && f.pre_drv ? DRV(tr8('Inferred from the envelope of the version valid during the year (no reported figure for that framework-year)')) : '';
     const cell = {
       // the country opens the framework on the map above, not its framework page (owner, 2026-10-30)
@@ -4399,7 +4623,7 @@ function buildFwTable(){
   if(cap) cap.textContent = !n ? tr8('Nothing is shown on the map: switch on a layer in the map legend to list what it shows.')
     : (past ? tr8('Everything shown on the map at the end of {0} ({1}); the totals are the figures at the top of the page. Status and figures for past years are reconstructed from the framework records.', YEAR, n)
             : tr8('Everything shown on the map ({0}); the totals are the figures at the top of the page. The table follows the map legend and the year above the map.', n))
-      + (LAYERS.framework ? '' : ' ' + tr8('Pre-arranged money and people covered count the current frameworks only: switch that layer on to see them.'))
+      + (LAYERS.framework ? '' : ' ' + tr8('Pre-arranged money and people covered of the current frameworks are counted only while that layer is on.'))
       + (allFunds() ? '' : ' ' + tr8('Money from {0} only (the fund switch in the map legend).', fundWords()));
 }
 function fwSort(k){ FWT.dir = FWT.k === k ? -FWT.dir : (['country', 'hazard', 'status', 'rp'].includes(k) ? 1 : -1); FWT.k = k; buildFwTable(); }

@@ -39,7 +39,7 @@ GROUPS = [
         "country_hazard", "framework_version", "framework_status", "framework_focal_point",
         "framework_calendar", "fund", "build_contribution", "window_status", "window_funding",
         "window_activation",
-        "adhoc_activation",
+        "adhoc_activation", "adhoc_prearranged",
         "activation_funding", "activation_refund", "activation_funding_project", "people_covered", "plan_inclusion", "report_channel_inclusion",
         "start_network", "cirv", "emergency_type_override",
         "cerf_allocation_extra", "cerf_application_people", "cerf_application_report",
