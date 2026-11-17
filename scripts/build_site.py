@@ -168,7 +168,7 @@ function dlcsv(id, name) {
 PUBLIC_TABS = ("index.html", "pillar-model.html", "pillar-history.html", "pillar-plan.html",
                "dash-funding.html", "pillar-learning.html", "media.html", "definitions.html",
                "climate-adaptation.html", "climate-coding-accuracy.html", "accessibility.html",
-               "privacy.html")
+               "privacy.html", "assistant.html")
               # definitions, accessibility and privacy: public and linked (the legend, the foot), not tabs
 # public, so behind the same password as the tabs, but deliberately NOT in NAV nor linked
 # from any listed page: reached only by their links (they may link to each other), until
@@ -255,6 +255,7 @@ NAV = f"""
    <a href="dash-funding.html">{T("Financing")}</a>
    <a href="pillar-learning.html">{T("Learning")}</a>
    <a href="media.html">{T("Media")}</a>
+   <a href="assistant.html">{T("Assistant")}</a>
   </nav>
   {i18n.TOGGLE_HTML}
 </header>
@@ -733,9 +734,14 @@ def write_site():
 
     import landing
     left_out = landing.OPEN_LEFT_OUT    # development site only, no "Coming soon" at the root (D202)
+    import page_assistant   # the assistant: the development site only (scripts/page_assistant.py)
+    panel = page_assistant.widget()
     for name, (title, body) in _PAGES.items():
         if name in public:
-            (dev_dir / name).write_text(public_doc(name, title, body, DEV_BANNER))
+            doc = public_doc(name, title, body, DEV_BANNER)
+            if name != page_assistant.PAGE:     # its corner button, on every page but its own tab
+                doc = doc.replace("</body>", panel + "</body>", 1)
+            (dev_dir / name).write_text(doc)
             if name in left_out["pages"]:
                 continue
             # the open site: OPEN_PAGES, and "Coming soon" for the rest (its cleaning is the
@@ -811,6 +817,7 @@ def write_site():
     for name, gone in sorted(cut.items()):
         # visible in the publish run's summary, not only in its log
         print(f"::warning::public page {name}: link(s) to admin-only page(s) removed: {', '.join(sorted(gone))}")
+    page_assistant.check_open_site(OUT)     # not on the open site: a promote must not take it live
     import no_kb
     no_kb.check(OUT)    # no reference to the knowledge base on any page or open file (D199)
     n_dev_only = len(left_out["pages"] & public)
@@ -912,6 +919,8 @@ def main():
     page_accessibility.build(page)
     import page_privacy
     page_privacy.build(page)
+    import page_assistant
+    page_assistant.build(page)
 
     write_site()
     import figure_check

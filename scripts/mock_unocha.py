@@ -23,6 +23,8 @@ import shutil
 import sys
 from pathlib import Path
 
+import page_assistant   # the panel's block, taken out of each page (scripts/ is the script's dir)
+
 REPO = Path(__file__).parents[1]
 SHELL = REPO / "site_src" / "unocha-shell.html"
 ROOT = ".aa-embed"
@@ -204,6 +206,8 @@ def _tab_row(top, name):
 
 
 def mock_page(name, doc, shell, links):
+    # the assistant's corner button (page_assistant.py) is the development site's, not OCHA's page's
+    doc = page_assistant.PANEL_BLOCK.sub("", doc)
     m = DOC.fullmatch(doc)
     if not m:
         raise SystemExit(f"FATAL: {name} is not shaped as build_site._render writes a page")

@@ -1964,5 +1964,13 @@
  "columns of the chart, from left to right": "colonnes du graphique, de gauche à droite",
  "Tick at least two columns to draw the flows.": "Cochez au moins deux colonnes pour tracer les flux.",
  "<b>Columns</b>: every column has a tick box, in the order of the chart; untick one and the bands join the columns either side of it. A donor's band past the funds is an attribution, not a recorded payment: its share of each fund's income that year, applied to where that fund's money went. With <i>agencies and grantees</i> unticked, a country's or a framework's band reaches the organisations the agencies and grantees passed that country's money to that year; two frameworks of one country share them in proportion.": "<b>Colonnes</b> : chaque colonne a sa case à cocher, dans l’ordre du graphique ; décochez-en une et les bandes relient les colonnes de part et d’autre. La bande d’un donateur au-delà des fonds est une attribution, et non un paiement enregistré : sa part des recettes de chaque fonds cette année-là, appliquée à la destination de l’argent de ce fonds. Lorsque <i>agences et bénéficiaires</i> est décoché, la bande d’un pays ou d’un cadre atteint les organisations auxquelles les agences et bénéficiaires ont transmis l’argent de ce pays cette année-là ; deux cadres d’un même pays se les partagent au prorata.",
- "A donor’s band here is an attribution, not a recorded payment: its share of each fund’s income that year, applied to where that fund’s money went.": "La bande d’un donateur est ici une attribution, et non un paiement enregistré : sa part des recettes de chaque fonds cette année-là, appliquée à la destination de l’argent de ce fonds."
+ "A donor’s band here is an attribution, not a recorded payment: its share of each fund’s income that year, applied to where that fund’s money went.": "La bande d’un donateur est ici une attribution, et non un paiement enregistré : sa part des recettes de chaque fonds cette année-là, appliquée à la destination de l’argent de ce fonds.",
+ "Assistant": "Assistant",
+ "AA assistant": "Assistant AA",
+ "Ask a question": "Poser une question",
+ "trial": "essai",
+ "Dock to the side of the page": "Fixer sur le côté de la page",
+ "Show in a window over the page": "Afficher dans une fenêtre au-dessus de la page",
+ "Open as a full page": "Ouvrir en pleine page",
+ "Ask about the frameworks, the money, the activations and the framework documents on this site. The answers come from the site’s data and documents and say where each figure comes from. Check a figure before you use it.": "Posez vos questions sur les cadres, les financements, les activations et les documents de cadre présentés sur ce site. Les réponses s’appuient sur les données et les documents du site et indiquent d’où vient chaque chiffre. Vérifiez un chiffre avant de l’utiliser."
 }
