@@ -77,9 +77,10 @@ GLOSSARY = [
         ("Non-framework allocation",
          "Countries and hazards with anticipatory-action money outside a framework: money released "
          "without a framework version, or money a fund has pre-arranged and not yet released."),
-        ("Two activations a year",
-         "Frameworks marked * allow two activations a year: their CERF envelope is counted twice, and "
-         "the CERF budget per activation is half of it. Country and Regional Fund envelopes count once."),
+        ("Several activations per version",
+         "Frameworks marked * can activate more than once before they must be endorsed again: their CERF "
+         "envelope is counted once for each activation they allow, and the CERF budget per activation is that "
+         "figure divided by the number of activations. Country and Regional Fund envelopes count once."),
     ]),
     ("Money", [
         ("Pre-arranged",

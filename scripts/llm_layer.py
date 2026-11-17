@@ -100,10 +100,12 @@ Counting rules (an LLM summing these files without them gets wrong totals):
   live framework, the envelope of its most recent version that has one, all funds.
   `prearranged_usd` in aa-frameworks is that same figure per framework{"; " + "; ".join(sums) if sums else ""}.
   Past years keep the reported series. It is not reduced by what activations released during the year.
-- Two activations a year: a framework version whose document allows the trigger to activate
-  twice in one season (`activations_per_year` = 2, some tropical-cyclone frameworks) has its
-  CERF envelope COUNTED TWICE in every pre-arranged figure here, as on the pages. The amounts
-  are already multiplied: never multiply again.
+- Several activations per version: a framework version whose document allows N activations
+  before it must be endorsed again (`activations_per_year` = N despite its name: 2 for some
+  tropical-cyclone frameworks, two storms in a season; 4 for DRC cholera, four outbreaks within
+  its two-year validity) has its CERF envelope COUNTED N TIMES in every pre-arranged figure here,
+  as on the pages: the total pre-arranged is the per-activation budget times the activations
+  allowed. The amounts are already multiplied: never multiply again.
 - Released money is what activations drew: the `funding` rows of aa-activations, net of any
   money refunded after an activation stopped (`refund_usd`). Two kinds: framework activations
   (`event_type` `framework_aa`) and non-framework allocations (`adhoc_aa`: anticipatory money
@@ -432,7 +434,7 @@ def build(d, e, live, out, snapshot_at):
     vpage = d["vpage"]
     layer_of = dashboards._layer_of(d)          # the map's layers: c current, r retired
     old = d.get("old") or set()                 # versions of a framework a new one replaced
-    fac = d.get("act_factors") or {}            # versions allowing two activations a year
+    fac = d.get("act_factors") or {}            # versions allowing N activations before re-endorsement
     rp = _return_periods(e)                     # (c, h, version) -> the map table's figures
     name_of = dict(zip(cur["country_iso3"], cur["country_name"]))
 
@@ -556,7 +558,7 @@ def build(d, e, live, out, snapshot_at):
                 "with its lifecycle, latest version, the return period of that version as the map's table "
                 "shows it, the pre-arranged funding in place now (`prearranged_usd`, all funds; "
                 "`prearranged_cerf_usd` its CERF part; the envelope of `prearranged_version`, counted "
-                "twice where `activations_per_year` is 2; these sum to the current-year rows of "
+                "N times where `activations_per_year` is N > 1; these sum to the current-year rows of "
                 f"aa-prearranged-funding{' and aa-funding-annual' if on('funding-annual') else ''} "
                 "on the current-frameworks layer, `source` framework-record), "
                 "`prearranged_outside_framework_usd` (money a fund has pre-arranged for the pair outside "
@@ -605,7 +607,7 @@ def build(d, e, live, out, snapshot_at):
     write_table("versions", v_rows,
                 "Every registered version of the frameworks on the map (`status`: an endorsed document, one "
                 "still in development, or a retired one; `replaced_framework`: a version of an earlier "
-                "framework that a distinct new one replaced): validity, the activations a year it allows, its "
+                "framework that a distinct new one replaced): validity, the activations it allows before it must be endorsed again, its "
                 "overall return period, the document ("
                 + ("its official page, its structured read `document_read`, its full text `document_text`"
                    if on("documents") else "`document_title`, `document_url` its official page")
@@ -742,8 +744,8 @@ def build(d, e, live, out, snapshot_at):
                 "Pre-arranged funding in place per framework, year and fund: a STOCK (the envelope "
                 "standing that year), never summed across years. `version`: the version the envelope "
                 "belongs to (blank for a pooled-fund allocation made at country level; hazard `multi` or "
-                "`?` there means the country has several or no live framework). `activations_per_year` 2: "
-                "the amount is already the envelope counted twice. `source`: framework-record (the current "
+                "`?` there means the country has several or no live framework). `activations_per_year` N > 1: "
+                "the amount is already the per-activation envelope counted N times. `source`: framework-record (the current "
                 "envelope), onegms-mirror (pooled-fund allocations), tracking-sheets (the team's "
                 "reported series), version-inferred (carried from the version in force), non-framework "
                 "(money a fund has pre-arranged outside a framework and not yet released: `layer` "
@@ -790,7 +792,10 @@ def build(d, e, live, out, snapshot_at):
                 "The pre-arranged budget of each live framework's latest version split by implementing "
                 "agency and sector (the Activities page), per trigger window where the budget is per window "
                 "(`window_name`; blank: the split is for the whole framework). OCHA-managed money only "
-                "(`fund_code`), never an agency's own co-financing. A framework's rows add up to its "
+                "(`fund_code`), never an agency's own co-financing. CERF rows are ONE activation's budget, "
+                "like the envelope: for a version allowing N activations (`activations_per_year` in "
+                "aa-frameworks) the pages count them N times (DRC cholera 2026: UNICEF and WHO "
+                "US$500,000 each per activation, US$2M each in all). A framework's rows add up to its "
                 "budgeted split, which can differ by rounding from the envelope its document states "
                 "(aa-prearranged-funding).")
 
@@ -1082,8 +1087,9 @@ def _vocabulary(on):
         "framework replaced rather than revised; it counts as a retired framework's. `layer`: "
         "`current`, `retired` or `non_framework`, the site's layer toggles (see the counting rules).\n"
         "- `activations_per_year` (aa-frameworks, aa-versions, aa-prearranged-funding): how many "
-        "activations a year the version's document allows (1 for most). Where it is 2 the "
-        "pre-arranged amounts already count the CERF envelope twice.\n"
+        "activations the version's document allows before it must be endorsed again (1 for most; "
+        "despite the name, not always per year: DRC cholera allows 4 within its two-year validity). "
+        "Where it is N > 1 the pre-arranged amounts already count the CERF envelope N times.\n"
         "- Return periods: `return_period_years` the version's overall return period in years (any of "
         "its windows activating in a year), `return_period_basis` where that figure comes from (`stated "
         "in the framework` or `historical simulation`), with both figures in "
@@ -1098,7 +1104,8 @@ def _vocabulary(on):
         "- People: `people_covered` (aa-frameworks) the people the framework covers, as last "
         "reported by the team (blank where the figure comes from a framework document that is not "
         "published); `target_people` (aa-versions) the people the version's document targets; "
-        "`people_targeted` (aa-activations) the people one activation targeted; in the funding rows of "
+        "`people_targeted` (aa-activations) the people one activation targeted (CERF's planned figure "
+        "where a CERF allocation pays for the activation; for one allocation over several activations, the first only); in the funding rows of "
         "aa-activations, `people_reached` the people a CERF allocation reached, from CERF's report "
         "(`people_reached_interim` true: summed from its projects' reports while there is no final one), "
         "and `people_planned` the people counted where there is no report (a CERF allocation's planned "
@@ -1217,8 +1224,8 @@ def _map_md(om, fw_rows, a_rows, snapshot_at, stamp):
     on_fw = [x for x in fw_rows if "framework" in (x["map_layers"] or [])]
     other = [x for x in fw_rows if "framework" not in (x["map_layers"] or [])]
     out.append(f"## Frameworks on the current-frameworks layer ({len(on_fw)})\n\nThe frameworks the headline figures "
-               "count. `prearranged_usd`: pre-arranged now, all funds (`activations_per_year` 2: the CERF envelope "
-               "counted twice); `people_covered` blank: no figure, or one from a framework document that is not "
+               "count. `prearranged_usd`: pre-arranged now, all funds (`activations_per_year` N > 1: the CERF envelope "
+               "counted N times); `people_covered` blank: no figure, or one from a framework document that is not "
                "published.\n")
     out.append(_md_table(on_fw, cols, fmt))
     if other:
@@ -1271,7 +1278,7 @@ def _framework_md(d, r, fw, page, v_rows, trig_rows, w_rows, s_rows, a_rows, p_r
                      + "; ".join(f"{x['fund_code']} {_m(x['amount_usd'])}" for x in mine_now)
                      + f"), the envelope of version {fw['prearranged_version']}"
                      + (f", counted {'twice' if apy == 2 else f'{apy} times'}: the version allows {apy} "
-                        f"activations a year, so the budget per activation is {_m(fw['prearranged_usd'] / apy)}"
+                        f"activations before it must be endorsed again, so CERF's budget per activation is {_m((fw.get('prearranged_cerf_usd') or fw['prearranged_usd']) / apy)}"
                         if apy > 1 else ""))
     if fw.get("cofinancing_usd"):
         facts.append(f"**Co-financing reported for {date.today().year}** (outside the OCHA-managed funds, not "
@@ -1573,9 +1580,11 @@ def _portfolio_md(fw_rows, y_rows, md_pages, snapshot_at, stamp, gaps=(), unspli
                    f"standing for the year (for each live framework, that of its most recent version that "
                    f"has one), not what remains after this year's activations"
                    + (f", and it includes {_m(dev)} for frameworks still in development" if dev else "") + "."
-                   + (" It counts twice the envelopes of " + ", ".join(
-                       f"{r['country_name']} {r['hazard'].replace('_', ' ')}" for r in env if (r.get("activations_per_year") or 1) > 1)
-                      + ", whose versions allow two activations a year (the budget per activation is half)."
+                   + (" It counts the CERF envelope once per activation allowed for " + ", ".join(
+                       f"{r['country_name']} {r['hazard'].replace('_', ' ')} (×{r['activations_per_year']})"
+                       for r in env if (r.get("activations_per_year") or 1) > 1)
+                      + ": their versions allow that many activations before they must be endorsed again, so the "
+                        "budget per activation is the figure divided by that number."
                       if any((r.get("activations_per_year") or 1) > 1 for r in env) else "")
                    + (f" Live frameworks with no recorded envelope: {', '.join(gaps)}." if gaps else "") + "\n")
     out.append(rules)
