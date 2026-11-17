@@ -79,7 +79,7 @@ framework (country_iso3, hazard)
 
   | Version | CERF's id | Tracker's id |
   |---|---|---|
-  | Chad drought 2025 | `tcd_drought_v1` | `tcd_drought_v3` |
+  | Chad drought 2025 | `tcd_drought_v1` | `tcd_drought_v2` |
   | Burkina Faso drought 2026 | `bfa_drought_v2` | `bfa_drought_v4` |
 
   A superseded draft has no number, so its uid uses its date label instead.
@@ -111,9 +111,13 @@ framework (country_iso3, hazard)
 - **For a version's most CERF can release in one activation, read `v_version_funding`.** Take `total_usd`
   where `kind = 'prearranged'` and `fund_code = 'cerf'`. It applies all of the rules above (D215). Don't
   sum `amt` yourself.
-- **Several activations a year:** `framework_version.activations_per_year` says how many times the
-  envelope can be used in a year. The Cuba, Haiti and Philippines storm frameworks allow 2, and DRC
-  cholera allows 4. A year's maximum is the per-activation total times that number.
+- **Several activations per version:** `framework_version.activations_per_year` says how many times
+  the envelope can be used before the version must be endorsed again (the name says "per year", but
+  it is per version). The Cuba, Haiti and Philippines storm frameworks allow 2 (two storms in a
+  season); DRC cholera allows 4 within its two-year validity. The total pre-arranged is the
+  per-activation total times that number (D231). Budget lines by agency or sector are recorded per
+  activation, like the envelope: a document that states them for all activations together (DRC
+  cholera's UNICEF US$2M + WHO US$2M) is divided by the number before entry.
 - **Readiness windows** release a small share first, within the same activation. Some have no amount
   (Nepal floods: the share is set in CERF's project budgets).
 
@@ -222,13 +226,13 @@ WHERE country_iso3 = 'NGA' AND hazard = 'flood' AND version = '2026-07-27' AND k
 ORDER BY window_code, fund_code;
 ```
 
-**6. Each current version's most CERF can release, per activation and per year**
+**6. Each current version's most CERF can release, per activation and in all the activations it allows**
 
 ```sql
 SELECT DISTINCT f.country_iso3, f.hazard, f.version,
        f.total_usd AS cerf_per_activation,
        coalesce(v.activations_per_year, 1) AS activations_per_year,
-       f.total_usd * coalesce(v.activations_per_year, 1) AS cerf_per_year
+       f.total_usd * coalesce(v.activations_per_year, 1) AS cerf_all_activations
 FROM aa.v_version_funding f
 JOIN aa.framework_version v USING (country_iso3, hazard, version)
 JOIN aa.v_cerf_window c USING (country_iso3, hazard, version)
