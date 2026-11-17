@@ -2089,12 +2089,14 @@ def _money_flows(d, pre, act):
     def undecided(c, h, y):
         """An envelope with no split by agency: is the split still to be decided (owner, 2026-11-17:
         "they basically haven't decided what the envelope distribution is going to be but they do
-        know the total amount")? Yes where the framework was in development or being updated at the
-        end of that year (today, for the current year): one rule for a year while it runs and once
-        it has closed. Otherwise the split exists and is simply not on record."""
+        know the total amount")? Yes where the framework was in development at the end of that year
+        (today, for the current year): one rule for a year while it runs and once it has closed.
+        Only in development (owner, 2026-11-17: "this only applies to amounts in framework versions
+        that are in development"): a framework being updated holds an endorsed version's envelope,
+        whose split exists and is simply not on record."""
         st = st_y.get((f"{c}|{h}", y)) or (life_now.get((c, h)) if y == today.year else None)
-        return st in ("development", "updating")
-    TBD = "tbd|Envelope distribution to be determined"
+        return st == "development"
+    TBD = "tbd|Envelope distribution TBD"
     # ---------------- pre-arranged, as at the end of each year (never summed over years)
     if "allocation_code" not in pre:
         pre = pre.assign(allocation_code=None)
@@ -2163,7 +2165,7 @@ def _money_flows(d, pre, act):
             if sp is None or sp["amount_usd"].sum() <= 0:
                 # no split by agency in the budget. The part of the envelope that allocations
                 # released that year cover goes to the agencies of their projects (Nigeria floods
-                # 2025: the whole $5M); the rest is to be determined (a framework in development or
+                # 2025: the whole $5M); the rest is to be determined (a framework in development) or
                 # being updated) or not on record. An allocation worth the envelope to within 2%
                 # covers it all
                 left = amount
@@ -2335,8 +2337,8 @@ FLOW_NOTE = " ".join(TB(x) for x in (
     "Fund → agency uses the agency split of the version in force at that date, scaled to the "
     "envelope; Country and Regional Fund allocations go to their grantee organisations (AA-keyword "
     "project budgets). Where the budget gives no split by agency, the envelope is one box, "
-    "<i>Envelope distribution to be determined</i>, while the framework is in development or being "
-    "updated; in a year in which an activation released the envelope, the part released goes to the "
+    "<i>Envelope distribution TBD</i> (to be determined), while the framework is in development; "
+    "in a year in which an activation released the envelope, the part released goes to the "
     "agencies of the projects it paid. "
     "There is no <i>sub-grantees / implementing organisations</i> column: who an agency sub-grants to is only known once "
     "money is released.",
@@ -2372,7 +2374,7 @@ FLOW_NOTE = " ".join(TB(x) for x in (
     "the view are named, the rest grouped in one <i>Other</i> box per column; money whose recipient is "
     "not recorded (no data yet, or a partner still to be determined) is one <i>Not recorded</i> box. Every "
     "recipient node carries its category colour — UN agency, international NGO, national / local "
-    "NGO, government, Red Cross / Red Crescent, other, envelope distribution to be determined, not recorded — from the sub-grant partner "
+    "NGO, government, Red Cross / Red Crescent, other, envelope distribution TBD, not recorded — from the sub-grant partner "
     "type or the organisation type recorded by the Country and Regional Funds; a band takes the "
     "colour of the node it leaves.",
     "<b>Columns</b>: every column has a tick box, in the order of the chart; untick one and the "
@@ -2431,7 +2433,7 @@ const FLOW_TOP_ORGS = """ + str(FLOW_TOP_ORGS) + """, FLOW_TOP_COUNTRIES = """ +
 const CAT_ORDER = ['un','ingo','nngo','gov','rc','oth','tbd','nr'];
 // (labels in English: tr8() translates them where they are shown, so a language switch redraws them)
 const CAT_LABEL = {un:'UN agency', ingo:'international NGO', nngo:'national / local NGO', gov:'government',
-  rc:'Red Cross / Red Crescent', oth:'other', tbd:'envelope distribution to be determined', nr:'not recorded'};
+  rc:'Red Cross / Red Crescent', oth:'other', tbd:'envelope distribution TBD', nr:'not recorded'};
 // the two catch-alls, one box each per column and spelled the same everywhere (owner, 2026-11-02:
 // "consolidate the 'not recorded' entities … and same for other … just group them all … make sure
 // the spelling is consistent"): who received the money is not recorded (a placeholder, 'to be
@@ -2445,7 +2447,7 @@ const FLOW_NR = 'Not recorded', FLOW_OTHER = 'Other';
 const CAT_COLOR = """ + json.dumps(ORG_COLOR) + """;
 // the recipient-type column: one node per category, the far-right column
 const CAT_GROUP = {un:'UN agencies', ingo:'International NGOs', nngo:'National / local NGOs', gov:'Government',
-  rc:'Red Cross / Red Crescent', oth:FLOW_OTHER, tbd:'Envelope distribution to be determined', nr:FLOW_NR};
+  rc:'Red Cross / Red Crescent', oth:FLOW_OTHER, tbd:'Envelope distribution TBD', nr:FLOW_NR};
 function flowNode(id){ const m = /^([apk]):([a-z]+)([|~])(.*)$/.exec(id);
   return m ? {p:m[1], cat:m[2], org:m[3]==='~', name:m[4]} : null; }
 // pick (2026-10-28): a donor ('d:…'), country ('c:…') or organisation name the search box chose,

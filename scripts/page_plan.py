@@ -133,7 +133,7 @@ SEX_AGE_COLOR = {"men": "#1c5cab", "boys": "#5b9be8", "girls": "#45c486", "women
 # the recipient groups of the partner charts, in the review's order; keys as dashboards.ORG_COLOR
 PARTNER_GROUPS = [("un", "UN"), ("nngo", "National / local NGOs"), ("ingo", "International NGOs"),
                   ("rc", "Red Cross / Red Crescent"), ("gov", "Government"), ("oth", "Other"),
-                  ("tbd", "Envelope distribution to be determined"), ("nr", "Not recorded yet")]
+                  ("tbd", "Envelope distribution TBD"), ("nr", "Not recorded yet")]
 
 
 def _cols(label):
@@ -954,7 +954,7 @@ function drawPartners(){
   const fu = {c:document.getElementById('pfC').checked, p:document.getElementById('pfP').checked, r:document.getElementById('pfR').checked};
   const G = [['un', tr8('UN')], ['nngo', tr8('National / local NGOs')], ['ingo', tr8('International NGOs')],
              ['rc', tr8('Red Cross / Red Crescent')], ['gov', tr8('Government')], ['oth', tr8('Other')],
-             ['tbd', tr8('Envelope distribution to be determined')], ['nr', tr8('Not recorded yet')]];
+             ['tbd', tr8('Envelope distribution TBD')], ['nr', tr8('Not recorded yet')]];
   const draw = (id, m, count) => {
     const rows = D.fl.filter(r => r[0] === m && (adh || r[2] !== 'a') && fu[r[3]] && !(count && (r[4] === 'nr' || r[5] == null)));
     const at = (y, k) => rows.filter(r => r[1] === y && r[4] === k);
