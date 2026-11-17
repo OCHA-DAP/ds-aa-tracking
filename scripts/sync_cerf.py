@@ -24,14 +24,16 @@ mirror, aa.cerf_allocation) gives a figure above zero:
    else pays for it too (owner, 2026-11-16: "if it's the activation, use the CERF number").
 3. An allocation on more than one funding row (one allocation over two activations or two
    windows: Ethiopia 2020-12 and 2021-02, Chad 2026 windows 1 and 2): the amounts stay as
-   entered (how it splits is a person's call); its planned people go to the first row by date,
-   then window, and that row's activation, as the pages give the allocation's reach to that row.
-   Warned when the rows' amounts do not add up to the approved amount, or their people to the
-   planned people.
+   entered (how it splits is a person's call), warned when they do not add up to the approved
+   amount. Its planned people go to the first row (outside early action, by date, then window,
+   a NULL window last: the row the pages give the allocation's reach to, landing's reach_row)
+   and that row's activation. A later row's people figure is cleared, and so is its
+   activation's when it repeats the allocation's planned people; a figure of its own stays.
 4. Left as entered, with a warning in the log:
    - a CERF funding row whose allocation is of another country than the row (a wrong code);
    - a coded CERF row while another CERF row of the same country, hazard and year has no code
      yet (the allocation may be split over both, e.g. two windows), until it is coded;
+   - every row of an allocation with one row left as entered for either reason;
    - the people figure of an activation with more than one CERF funding row.
 
 People reached is not stored in the tracker: the pages read it from the mirror at every build
@@ -68,12 +70,13 @@ TKEY = {"window_activation": ("country_iso3", "hazard", "version", "window_name"
 
 FUNDING = """
     SELECT f.*, c.amount_approved, c.individuals_planned, c.country_iso3 AS alloc_country,
-           (SELECT count(*) FROM aa.activation_funding g
-             WHERE g.allocation_code = f.allocation_code) AS n_alloc_rows,
+           -- the activation's CERF rows, keyed as _activation() finds the activation (an ad hoc
+           -- activation has no window, so its rows count together whatever window they carry)
            (SELECT count(*) FROM aa.activation_funding g
              WHERE g.fund_code = 'cerf'
                AND g.country_iso3 = f.country_iso3 AND g.hazard = f.hazard
-               AND g.event_date = f.event_date AND g.window_name IS NOT DISTINCT FROM f.window_name
+               AND g.event_date = f.event_date
+               AND (f.event_type <> 'framework_aa' OR g.window_name IS NOT DISTINCT FROM f.window_name)
                AND g.event_label = f.event_label AND g.event_type = f.event_type) AS n_cerf_act_rows,
            (SELECT string_agg(g.event_date || coalesce(' ' || g.window_name, ''), '; ')
               FROM aa.activation_funding g
@@ -132,67 +135,87 @@ def _activation(conn, r):
     return table, (acts[0] if len(acts) == 1 else None), len(acts)
 
 
+def _blocked(r, say):
+    """Warn and return True when a funding row must be left as entered."""
+    lab = _lab(r, FKEY)
+    if r["alloc_country"] != r["country_iso3"]:
+        say(f"::warning::{lab}: allocation {r['allocation_code']} is of {r['alloc_country']}, not "
+            f"{r['country_iso3']}: a wrong allocation code? Left as entered")
+        return True
+    if r["uncoded_siblings"]:
+        say(f"::warning::{lab}: another CERF amount of {r['country_iso3']} {r['hazard']} that year has no "
+            f"allocation code yet ({r['uncoded_siblings']}); if it draws on {r['allocation_code']} too, "
+            "enter the code there. Left as entered until then")
+        return True
+    return False
+
+
+def _first(x):
+    """Sort key putting first the row the pages give an allocation's reach to (landing's
+    reach_row: CERF rows outside early action, by event date, then window, a NULL window last
+    as pandas sorts it); the label only breaks exact ties."""
+    w = x["window_name"]
+    return (x["event_type"] == "early_action", x["event_date"], w is None, w or "", x["event_label"] or "")
+
+
 def sync(conn, verbose=True):
     """One pass. Returns the number of fields changed."""
     say = print if verbose else (lambda *a, **k: None)
     rows = conn.execute(sa.text(FUNDING)).mappings().fetchall()
-    changed = 0
-    shared, synced = {}, []
+    groups = {}
     for r in rows:
-        lab = _lab(r, FKEY)
-        if r["alloc_country"] != r["country_iso3"]:
-            say(f"::warning::{lab}: allocation {r['allocation_code']} is of {r['alloc_country']}, not "
-                f"{r['country_iso3']}: a wrong allocation code? Left as entered")
+        groups.setdefault(r["allocation_code"], []).append(r)
+    changed = 0
+    payers = []                     # each allocation's row whose activation takes its planned people
+    for code, rs in groups.items():
+        blocked = [r for r in rs if _blocked(r, say)]       # warns about each, in order
+        if blocked:
+            if len(rs) > 1:
+                say(f"::warning::{code}: {len(blocked)} of its {len(rs)} funding rows are left as entered "
+                    "(above), so all of them are")
             continue
-        if r["uncoded_siblings"]:
-            say(f"::warning::{lab}: another CERF amount of {r['country_iso3']} {r['hazard']} that year has no "
-                f"allocation code yet ({r['uncoded_siblings']}); if it draws on {r['allocation_code']} too, "
-                "enter the code there. Left as entered until then")
-            continue
-        if r["n_alloc_rows"] > 1:
-            shared.setdefault(r["allocation_code"], []).append(r)
-            continue
-        synced.append(r)
+        rs = sorted(rs, key=_first)
+        first = rs[0]
+        planned = int(first["individuals_planned"] or 0)
         sets = {}
-        appr, amt = _num(r["amount_approved"]), _num(r["amount_usd"])
-        if appr and appr > 0 and (amt is None or round(amt, 2) != round(appr, 2)):
-            sets["amount_usd"] = r["amount_approved"]
-        planned = r["individuals_planned"]
-        if planned and planned > 0 and r["people_targeted"] != int(planned):
-            sets["people_targeted"] = int(planned)
+        appr, amt = _num(first["amount_approved"]), _num(first["amount_usd"])
+        if len(rs) == 1 and appr and appr > 0 and (amt is None or round(amt, 2) != round(appr, 2)):
+            sets["amount_usd"] = first["amount_approved"]   # a split's amounts are a person's call
+        if planned > 0 and first["people_targeted"] != planned:
+            sets["people_targeted"] = planned
         if sets:
-            say(f"  {lab}: " + "; ".join(f"{c} {_fmt(r[c])} -> {_fmt(v)}" for c, v in sets.items()))
-            _update(conn, "activation_funding", FKEY, r, sets)
+            say(f"  {_lab(first, FKEY)}: " + "; ".join(f"{c} {_fmt(first[c])} -> {_fmt(v)}" for c, v in sets.items())
+                + (f" (first of {len(rs)} rows of {code})" if len(rs) > 1 else ""))
+            _update(conn, "activation_funding", FKEY, first, sets)
             changed += len(sets)
-    firsts = []
-    for code, rs in shared.items():
-        # the split amounts stay as entered; the allocation's people go to its first row (by date,
-        # then window: the row the pages give the allocation's reach to, landing's reach_row)
-        rs = sorted(rs, key=lambda x: (x["event_date"], x["window_name"] or ""))
-        first, planned = rs[0], rs[0]["individuals_planned"] or 0
-        firsts.append(first)
-        if planned > 0 and first["people_targeted"] != int(planned):
-            say(f"  {_lab(first, FKEY)}: people_targeted {_fmt(first['people_targeted'])} -> {_fmt(planned)} "
-                f"(first of {len(rs)} rows of {code})")
-            _update(conn, "activation_funding", FKEY, first, {"people_targeted": int(planned)})
-            changed += 1
+        payers.append(first)
+        if len(rs) == 1:
+            continue
+        # a split: the allocation's people are the first row's, so a later row carries none, and a
+        # later row's activation does not repeat them (a figure of its own, entered by hand, stays)
+        if planned > 0:
+            for x in rs[1:]:
+                if x["people_targeted"] is not None:
+                    say(f"  {_lab(x, FKEY)}: people_targeted {_fmt(x['people_targeted'])} -> — "
+                        f"(the people of {code} are on its first row)")
+                    _update(conn, "activation_funding", FKEY, x, {"people_targeted": None})
+                    changed += 1
+                table, a, _n = _activation(conn, x)
+                if a is not None and x["n_cerf_act_rows"] == 1 and a["people_targeted"] == planned:
+                    say(f"  {table} {_lab(a, TKEY[table])}: people_targeted {_fmt(planned)} -> — "
+                        f"(the people of {code} are on its first row's activation)")
+                    _update(conn, table, TKEY[table], a, {"people_targeted": None})
+                    changed += 1
         where = "; ".join(_lab(x, AKEY) for x in rs)
         total = sum(_num(x["amount_usd"]) or 0 for x in rs)
-        appr = _num(first["amount_approved"]) or 0
-        ppl = sum(x["people_targeted"] or 0 for x in rs[1:]) + (int(planned) if planned > 0 else 0)
-        off = []
-        if appr > 0 and abs(total - appr) > 1:
-            off.append(f"amounts add up to ${total:,.0f}, OneGMS approved ${appr:,.0f}")
-        if planned > 0 and ppl != planned:
-            off.append(f"people add up to {ppl:,}, OneGMS plans {planned:,}")
-        if off:
-            say(f"::warning::{code} is on {len(rs)} funding rows ({where}): {'; '.join(off)}; "
-                "split it by hand")
+        if appr and appr > 0 and abs(total - appr) > 1:
+            say(f"::warning::{code} is on {len(rs)} funding rows ({where}): their amounts add up to "
+                f"${total:,.0f}, OneGMS approved ${appr:,.0f}; split the amounts by hand")
         else:
-            say(f"  {code}: on {len(rs)} funding rows ({where}); they add up to OneGMS's")
+            say(f"  {code}: on {len(rs)} funding rows ({where}); amounts add up to OneGMS's, people on the first")
     # the activation's own people figure: its CERF allocation's planned people, whatever else pays
     # for it too (owner, 2026-11-16: "if it's the activation, use the CERF number")
-    for r in synced + firsts:
+    for r in payers:
         planned = r["individuals_planned"]
         if not planned or planned <= 0:
             continue

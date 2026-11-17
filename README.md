@@ -300,11 +300,15 @@ approved amount and its people targeted to the allocation's planned people, and 
 activation it pays for the same people figure, whatever else pays for it too. A CERF amount
 or people figure typed in by hand on such a row lasts until the next night; to change one,
 correct the allocation code (or OneGMS). OneGMS's approved amount is the sum of the projects
-funded so far, so it can rise while one is under review; the tracker follows it. Left as
-entered, with a warning in the job's log: the amounts of an allocation split over several rows
-(Ethiopia 2020-12 and 2021-02; its people go to the first row), warned when the parts do not
-add up to OneGMS's figures; a code of another country; and a coded row while another CERF
-amount of that country, hazard and year has no code yet. Every change is audited. People reached is never stored: the pages read it from the mirror at every build.
+funded so far, so it can rise while one is under review; the tracker follows it. An allocation
+split over several rows (Ethiopia 2020-12 and 2021-02, Chad 2026 windows 1 and 2) keeps its
+amounts as entered, warned when they do not add up to OneGMS's; its planned people go to the
+first row (by date, then window: the row the pages give its reach to) and that row's
+activation, and the later rows carry none. Left as entered, with a warning in the job's log:
+a code of another country; a coded row while another CERF amount of that country, hazard and
+year has no code yet (with every other row of its allocation); and the people figure of an
+activation with more than one CERF funding row. Every change is audited. People reached is
+never stored: the pages read it from the mirror at every build.
 
 ## Running
 
