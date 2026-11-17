@@ -80,8 +80,9 @@ check_stage() (
         if [[ "$OPEN_PAGES" != *" $f "* ]] && { ! grep -q "class='soon'" "$f" || [ "$(wc -c < "$f")" -gt 250000 ]; }; then
           echo "FATAL: $f is served without a password but is not a 'Coming soon' page — aborting" >&2; exit 1
         fi
-        # the AA assistant is on the development site only (scripts/page_assistant.py)
-        if grep -q -e "aa-assistant-panel" -e "/aa/embed" "$f"; then
+        # the AA assistant is on the development site only (scripts/page_assistant.py), and so is
+        # the password its panel hands over (D233)
+        if grep -q -e "aa-assistant-panel" -e "/aa/embed" "$f" || { [ -n "$PW" ] && grep -qF -- "$PW" "$f"; }; then
           echo "FATAL: $f is served without a password but carries the assistant — aborting" >&2; exit 1
         fi ;;
     esac
@@ -89,7 +90,7 @@ check_stage() (
   [ -f "$ADMIN/index.html" ] || { echo "FATAL: the admin site has no index.html — aborting" >&2; exit 1; }
   # the open files are plain data: never a token, never a page
   for f in $(open_files .); do
-    if grep -q "x-site-token\|staticrypt\|aa-assistant-panel\|/aa/embed" "$f"; then
+    if grep -q "x-site-token\|staticrypt\|aa-assistant-panel\|/aa/embed" "$f" || { [ -n "$PW" ] && grep -qF -- "$PW" "$f"; }; then
       echo "FATAL: open file $f carries a token or a page — aborting" >&2; exit 1
     fi
   done
@@ -108,7 +109,8 @@ fi
 [ "$ADMIN_PW" != "$PW" ] || { echo "FATAL: the admin password must differ from the public one" >&2; exit 1; }
 
 if [ -z "${SKIP_BUILD:-}" ]; then
-  uv run python scripts/build_site.py
+  # the AA assistant's password is the dev site's (D233): the dev pages carry it, encrypted with it
+  AA_ASSISTANT_KEY="$PW" uv run python scripts/build_site.py
   # the mock-up never stops the site: if it fails, none of its pages goes out (a half-written
   # set would link to twins that are not there)
   uv run python scripts/mock_unocha.py site_build/$DEV \

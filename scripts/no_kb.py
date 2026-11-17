@@ -13,7 +13,8 @@ conocimiento, ds-knowledge-base) and KB as a word (not a file size: "874 KB"). O
 development sites also a lowercase kb ("the kb page", "kb-era") and a data field named after it
 (`"kb…":` in a page's data or a JSON file, a kb… column in a CSV). Not checked: the framework
 documents' own texts (pdf-*.txt) and the admin site's database names (the columns kb_framework,
-kb_status, kb_event_date and the stored provenance code 'kb'), which are the database's.
+kb_status, kb_event_date and the stored provenance code 'kb'), which are the database's; and
+the AA assistant's address in the development site's code (D233).
 
 A hit is a ::warning:: per file in the publish run, so the code or the data gets fixed at the
 source; AA_SITE_GUARD=strict (as for the identifier guard) stops the build instead.
@@ -38,8 +39,22 @@ KEYS = re.compile(r'\\?"kb(?:_[a-z_]+)?\\?"\s*:|"src"\s*:\s*"kb"')
 CSV_HEAD = re.compile(r"(?:^|,)\"?kb(?:_\w+)?\"?(?:,|$)")
 
 
+def _exempt():
+    """D233: the AA assistant's own address on the development site (its app's name has a "kb" in
+    it). An address in a page's code, never a reference a reader sees: taken out before the check,
+    that host name and nothing else."""
+    from urllib.parse import urlsplit
+    from page_assistant import ASSISTANT_URL
+    return urlsplit(ASSISTANT_URL).netloc
+
+
+EXEMPT = _exempt()
+
+
 def _hits(rel, s, suffix):
     public = not rel.startswith(ADMIN_DIR + "/")
+    if EXEMPT:
+        s = s.replace(EXEMPT, "")
     text = html.unescape(s) if suffix == ".html" else s
     found = [re.sub(r"\s+", " ", text[max(0, m.start() - 50):m.end() + 50])
              for m in (WORDS_PUBLIC if public else WORDS).finditer(text)]

@@ -15,6 +15,13 @@ same code):
   * dev/*.html          a "Ask a question" button in the corner opening a panel, as a window over
                         the page or docked to its side (the reader's choice, kept in the browser);
                         the frame is made on the first open, never on a page view.
+  * one password        the assistant's password is the development site's (owner, 2026-11-17: "it's
+                        already the same password, so … people shouldn't have to type twice"):
+                        publish.sh hands it to the build (AA_ASSISTANT_KEY), the dev pages carry it,
+                        encrypted with that same password, so it is readable only by whoever could
+                        already open them, and give it to the assistant's frame (postMessage, to the
+                        assistant's origin only), which logs in with it. Without it (a local build),
+                        or if the passwords ever differ, the frame asks for its own.
   * the open site       assistant.html is a "Coming soon" page like the other tabs not public yet;
                         no page or file at the root carries the panel or the assistant's address
                         (build_site.write_site stops the build otherwise; publish.sh checks again).
@@ -29,6 +36,8 @@ from site_i18n import ATTR, T
 PAGE, TITLE = "assistant.html", "AA assistant"
 # the assistant's embeddable page; a local build points it at a local copy of the app
 ASSISTANT_URL = os.environ.get("AA_ASSISTANT_URL", "https://chd-ds-kb-chat.azurewebsites.net/aa/embed")
+# the development site's password (publish.sh): written into the dev pages only, which it encrypts
+KEY = os.environ.get("AA_ASSISTANT_KEY", "")
 MARK = "aa-assistant-panel"     # in the panel's code alone: the open site must never carry it
 EMBED_PATH = "/aa/embed"        # in the assistant's address alone: likewise
 # the panel's block on a page, between these: the unocha.org mock-up (mock_unocha.py) takes it out
@@ -46,6 +55,20 @@ def _frame(cls):
             "allow='clipboard-write'></iframe>")
 
 
+def _js(v):
+    """A value for a script: JSON, and no '</' that could end the script."""
+    import json
+    return json.dumps(v).replace("<", "\\u003c")
+
+
+def _key_js():
+    """aaKey(frame): each time the frame loads, offer it the password, to the assistant's origin
+    only; its login page takes it (and nothing else does)."""
+    return ("function aaKey(f){ var K = " + _js(KEY) + ", O = " + _js(origin()) + "; if (!K || !f) return;"
+            " function give(){ try { f.contentWindow.postMessage({type: 'aa-key', key: K}, O); } catch(e){} }"
+            " f.addEventListener('load', give); give(); }")
+
+
 PAGE_CSS = """
 .asst-intro { max-width:820px; margin:0 0 10px; font-size:14px; color:#334155; line-height:1.5; }
 .asst-full { height:calc(100vh - 150px); min-height:520px; border:1px solid #d6dde8; border-radius:10px;
@@ -57,7 +80,8 @@ PAGE_CSS = """
 def build(page):
     body = (f"<style>{PAGE_CSS}</style>"
             f"<p class='asst-intro'>{T('Ask about the frameworks, the money, the activations and the framework documents on this site. The answers come from the site’s data and documents and say where each figure comes from. Check a figure before you use it. The assistant asks for its own password the first time.')}</p>"
-            f"<div class='asst-full'>{_frame('asst')}</div>")
+            f"<div class='asst-full'>{_frame('asst')}</div>"
+            f"<script>{_key_js()} aaKey(document.querySelector('iframe.asst'));</script>")
     page(PAGE, TITLE, body)
 
 
@@ -123,7 +147,7 @@ function mode(m){ root.classList.toggle('aa-asst-side', m === 'side'); root.clas
   put('localStorage', 'aa-asst-mode', m); relayout(); }
 function open(){
   if (!holder.firstChild) { var f = document.createElement('iframe'); f.src = SRC; f.title = 'AA assistant';
-    f.referrerPolicy = 'origin'; f.setAttribute('allow', 'clipboard-write'); holder.appendChild(f); }
+    f.referrerPolicy = 'origin'; f.setAttribute('allow', 'clipboard-write'); aaKey(f); holder.appendChild(f); }
   panel.hidden = false; root.classList.add('aa-asst-open'); launch.setAttribute('aria-expanded', 'true');
   put('sessionStorage', 'aa-asst-open', '1'); relayout(); }
 function close(){ panel.hidden = true; root.classList.remove('aa-asst-open'); launch.setAttribute('aria-expanded', 'false');
@@ -140,7 +164,6 @@ if (get('sessionStorage', 'aa-asst-open') === '1') open();
 
 def widget():
     """The corner button and its panel, for every page of the development site but the tab."""
-    import json
     return (f"{BEGIN}<style>{PANEL_CSS}</style>"
             f"<div id='aa-asst'>"
             f"<button type='button' class='aa-asst-launch' aria-expanded='false' aria-controls='aa-asst-panel'>"
@@ -155,7 +178,7 @@ def widget():
             f"<a href='{PAGE}' {ATTR('title', 'Open as a full page')} {ATTR('aria-label', 'Open as a full page')}>{ICON_FULL}</a>"
             f"<button type='button' class='to-close' {ATTR('title', 'Close')} {ATTR('aria-label', 'Close')}>{ICON_CLOSE}</button>"
             f"</div><div class='aa-asst-frame'></div></section></div>"
-            f"<script>{PANEL_JS % json.dumps(ASSISTANT_URL)}</script>{END}")
+            f"<script>{_key_js()}\n{PANEL_JS % _js(ASSISTANT_URL)}</script>{END}")
 
 
 def check_open_site(root):
@@ -165,7 +188,7 @@ def check_open_site(root):
     for f in sorted(root.iterdir()):
         if f.is_file() and f.suffix in (".html", ".md", ".txt", ".json", ".csv", ".xml"):
             text = f.read_text(errors="replace")
-            if MARK in text or EMBED_PATH in text or origin() in text:
+            if MARK in text or EMBED_PATH in text or origin() in text or (KEY and KEY in text):
                 hits.append(f.name)
     if hits:
         raise SystemExit("FATAL: the open site carries the assistant (development site only): " + ", ".join(hits[:10]))
