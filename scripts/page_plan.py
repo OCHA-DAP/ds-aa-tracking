@@ -133,7 +133,7 @@ SEX_AGE_COLOR = {"men": "#1c5cab", "boys": "#5b9be8", "girls": "#45c486", "women
 # the recipient groups of the partner charts, in the review's order; keys as dashboards.ORG_COLOR
 PARTNER_GROUPS = [("un", "UN"), ("nngo", "National / local NGOs"), ("ingo", "International NGOs"),
                   ("rc", "Red Cross / Red Crescent"), ("gov", "Government"), ("oth", "Other"),
-                  ("nr", "Not recorded yet")]
+                  ("tbd", "Envelope distribution TBD"), ("nr", "Not recorded yet")]
 
 
 def _cols(label):
@@ -771,7 +771,7 @@ def build_plan(page, d):
         "shares of its projects' figures are applied to the allocation's figure. Women and men are adults, "
         "girls and boys children. People with disabilities is a separate count that overlaps the others: "
         "CERF allocations only, the people reached where CERF's report gives the figure and the people "
-        "targeted otherwise; the applications of the current year are not all in. The trend line is a second-order polynomial fitted to the complete years.")
+        "targeted otherwise; the applications of the current year are not all in.")
     par_how = TB(
         "The <a href='dash-funding.html'>Financing</a> page's money flows without the step in between, year "
         "by year. Pre-arranged money is recorded down to the UN agency of the framework budget or the "
@@ -781,7 +781,7 @@ def build_plan(page, d):
         "Funds. Pre-arranged money is a stock for each year, never added over years. An organisation "
         "counts once a year, whatever the number of frameworks; recipients not recorded yet are in the "
         "money charts and cannot be counted. Frameworks since retired count in the years they were in "
-        "place. The trend lines are second-order polynomials fitted to the complete years.")
+        "place.")
     gho_how = TBC(lambda w: w(
         "2025: the review of the 2025 HNRPs; exposure is recorded as 'yes' or 'limited' only. 2026: only "
         "whether a framework exists was recorded; 'not assessed' = no field in the source.") + " " + html.escape(
@@ -927,8 +927,6 @@ function drawPeople(){
   const bars = [['p', tr8('planned'), 0.5], ['r', tr8('reached or targeted'), 1]];
   const ds = bars.flatMap(([k, bar, a]) => SA.map((g, i) => ({label:SAL[i], bar, stack:k, data:P.map(r => r[k][i]),
     backgroundColor: a < 1 ? tint(D.sa[g], a) : D.sa[g]})).filter(d => d.data.some(v => v)));
-  const tr = trendSet(YS, P.map(r => sum(r.r)), CY);
-  if(tr){ tr.label = tr8('trend, people reached or targeted'); ds.push(tr); }
   const ch = pplChart('pp1', YS.map(yLab), ds, {stacked:true, totals:true, extra:{interaction:{mode:'nearest', intersect:true}}});
   pairLegend(ch);
   const cb = ch.options.plugins.tooltip.callbacks;
@@ -955,14 +953,13 @@ function drawPartners(){
   const adh = document.getElementById('pfAdh').checked;
   const fu = {c:document.getElementById('pfC').checked, p:document.getElementById('pfP').checked, r:document.getElementById('pfR').checked};
   const G = [['un', tr8('UN')], ['nngo', tr8('National / local NGOs')], ['ingo', tr8('International NGOs')],
-             ['rc', tr8('Red Cross / Red Crescent')], ['gov', tr8('Government')], ['oth', tr8('Other')], ['nr', tr8('Not recorded yet')]];
+             ['rc', tr8('Red Cross / Red Crescent')], ['gov', tr8('Government')], ['oth', tr8('Other')],
+             ['tbd', tr8('Envelope distribution TBD')], ['nr', tr8('Not recorded yet')]];
   const draw = (id, m, count) => {
     const rows = D.fl.filter(r => r[0] === m && (adh || r[2] !== 'a') && fu[r[3]] && !(count && (r[4] === 'nr' || r[5] == null)));
     const at = (y, k) => rows.filter(r => r[1] === y && r[4] === k);
     const ds = G.map(([k, lab]) => ({label:lab, backgroundColor:D.org[k],
       data:YS.map(y => count ? new Set(at(y, k).map(r => r[5])).size : sum(at(y, k).map(r => r[6])))})).filter(d => d.data.some(v => v));
-    const tr = trendSet(YS, YS.map((y, i) => sum(ds.map(d => d.data[i]))), CY);
-    if(tr){ tr.label = tr8('trend'); ds.push(tr); }
     mkChart(id, 'bar', YS.map(yLab), ds, {stacked:true, totals:true, count, allLabels:true}); };
   draw('pn1', 'p', true); draw('pn2', 'r', true); draw('pf1', 'p', false); draw('pf2', 'r', false);
 }

@@ -39,7 +39,9 @@ FUND_TYPE_LABEL = {"cerf": "CERF", "cbpf": "Country funds", "regional_fund": "Re
 # vision >= 18.4, on white); the two greys are the neutral categories (other, not recorded).
 # Keys: the recipient categories of _recipient_cat
 ORG_COLOR = {"un": "#009edb", "ingo": "#65389f", "nngo": "#ceaa3e", "gov": "#0f8a5f", "rc": "#ed1b2e",
-             "oth": "#3a3f47", "nr": "#d6dae0"}
+             "oth": "#3a3f47", "nr": "#d6dae0",
+             # pre-arranged money whose split among agencies is not decided yet (owner, 2026-11-17)
+             "tbd": "#a9b6c8"}
 HAZARDS = ["drought", "flood", "storm", "cholera"]  # fixed order; rest -> Other
 
 # ---------------------------------------------------------------- codes as words
@@ -289,6 +291,12 @@ Chart.defaults.color = '#52514e';
 Chart.defaults.borderColor = '#ececec';
 Chart.defaults.plugins.legend.labels.boxWidth = 12;
 if(matchMedia('(prefers-reduced-motion: reduce)').matches) Chart.defaults.animation = false;   // charts draw at once for readers who asked for less motion
+// a series switched off by a click on its legend entry is shown faded, not struck through (owner,
+// 2026-11-17): an empty swatch with a grey outline and a grey name (an empty box, so it is not
+// taken for the light grey of "not recorded"); a second click brings it back
+(function(){ const gen = Chart.defaults.plugins.legend.labels.generateLabels;
+  Chart.defaults.plugins.legend.labels.generateLabels = chart => gen(chart).map(it => !it.hidden ? it
+    : {...it, hidden:false, fontColor:'#8f959c', fillStyle:'#ffffff', strokeStyle:'#a8adb4', lineWidth:1}); })();
 function money(v){ if(v==null) return '';
   return v>=1e9 ? '$'+(v/1e9).toFixed(1)+'B' : v>=1e6 ? '$'+(v/1e6).toFixed(1)+'M'
        : v>=1e3 ? '$'+(v/1e3).toFixed(0)+'k' : '$'+Math.round(v); }
@@ -299,7 +307,7 @@ const stackTotals = { id:'stackTotals', afterDatasetsDraw(chart, args, o){
   const {ctx, scales:{x, y}} = chart, horiz = o.horiz, n = chart.data.labels.length;
   ctx.save(); ctx.font = '600 10.5px ' + Chart.defaults.font.family; ctx.fillStyle = '#52514e';
   // one total per stack (a label can carry two bars side by side: dataset.stack), drawn over the
-  // bar itself; a dataset marked noTotal (a trend line) is not part of any sum
+  // bar itself; a dataset marked noTotal (a line over the bars) is not part of any sum
   for(let i=0;i<n;i++){ const stacks = {};
     chart.data.datasets.forEach((d,di)=>{ if(!chart.isDatasetVisible(di) || d.noTotal) return;
       const g = stacks[d.stack ?? ''] ??= {tot:0, el:null}, el = chart.getDatasetMeta(di).data[i];
@@ -322,7 +330,7 @@ function mkChart(id, type, labels, datasets, opts={}){
   // the page filters on are not; pages redraw on the 'aalang' event
   labels = labels.map(x=>typeof x==='string' ? tr8(x) : x);
   datasets.forEach((d,i)=>{ if(typeof d.label==='string') d.label = tr8(d.label); d.backgroundColor ??= PAL[i%%PAL.length];
-    const t = d.type || type;   // a dataset can be a line over the bars (a trend)
+    const t = d.type || type;   // a dataset can be a line over the bars
     d.borderColor ??= (t==='line'? d.backgroundColor : '#fcfcfb');
     if(t==='bar'){ d.borderWidth=1; d.borderRadius=3; d.maxBarThickness=34; }
     if(t==='line'){ d.borderWidth ??= 2; d.pointRadius ??= 2; d.pointHoverRadius ??= 5; d.tension ??= 0.15; }});
@@ -353,27 +361,6 @@ function groupSum(rows, keyFn, valFn){ const m={};
   rows.forEach(r=>{ const k=keyFn(r); m[k]=(m[k]||0)+(valFn(r)||0); }); return m; }
 function uniqSorted(rows, f){ return [...new Set(rows.map(f).filter(x=>x!=null))].sort(); }
 function cumulate(arr){ let s=0; return arr.map(v=>s+=(v||0)); }
-// a trend over yearly values (review, 2026-11-10: "add polynomial trend line?"): the least-squares
-// polynomial of order 2 through the points (order 1 with three points, none with fewer), never
-// below zero. xs: the positions fitted; returns the fitted value at each of them
-function polyTrend(xs, ys){
-  const n = xs.length; if(n < 3) return null;
-  const deg = n >= 4 ? 2 : 1, m = deg + 1, x0 = xs.reduce((a,b)=>a+b,0)/n, X = xs.map(x=>x-x0);
-  const A = Array.from({length:m}, (_,i)=>Array.from({length:m+1}, (_,j)=>
-    j < m ? X.reduce((s,x)=>s+x**(i+j),0) : X.reduce((s,x,k)=>s+ys[k]*x**i,0)));
-  for(let i=0;i<m;i++){ let p = i; for(let r=i+1;r<m;r++) if(Math.abs(A[r][i]) > Math.abs(A[p][i])) p = r;
-    [A[i], A[p]] = [A[p], A[i]]; if(Math.abs(A[i][i]) < 1e-12) return null;
-    for(let r=0;r<m;r++){ if(r === i) continue; const f = A[r][i]/A[i][i]; for(let c=i;c<=m;c++) A[r][c] -= f*A[i][c]; } }
-  const b = A.map((r,i)=>r[m]/r[i]);
-  return X.map(x=>Math.max(0, b.reduce((s,c,i)=>s+c*x**i,0))); }
-// ... as a dashed line over a bar chart's years: fitted on the complete years (the current year,
-// still running, is left out) and drawn over those years only. vals: the yearly totals
-function trendSet(years, vals, cy){
-  const idx = years.map((y,i)=>i).filter(i=>+String(years[i]).replace('*','') < cy);
-  const fit = polyTrend(idx, idx.map(i=>vals[i]||0)); if(!fit) return null;
-  const data = years.map(()=>null); idx.forEach((i,k)=>{ data[i] = fit[k]; });
-  return {type:'line', label:'trend', data, noTotal:true, borderColor:'#52514e', backgroundColor:'#52514e',
-    borderDash:[5,4], borderWidth:1.5, pointRadius:0, pointHoverRadius:0, tension:0.35, order:-1}; }
 """ % (json.dumps(PAL), json.dumps(FUND_COLORS), json.dumps(FUND_TYPE_LABEL))
 
 
@@ -569,7 +556,8 @@ def _backfill_years(pre, e, first_year=2020):
     dev = "development_since" if has_dev else "NULL::date"
     ver = pd.read_sql(
         f"""SELECT country_iso3, hazard, version, kb_framework, kb_status,
-                   least(valid_from, {dev}) AS valid_from, valid_until, prearranged_usd_doc
+                   least(valid_from, {dev}) AS valid_from, valid_until, prearranged_usd_doc,
+                   valid_from AS endorsed_from
             FROM aa.framework_version
             WHERE (kb_status = 'endorsed' AND valid_from IS NOT NULL)
                OR (kb_status IN ('development', 'pre-development') AND {dev} IS NOT NULL)""", e)
@@ -620,6 +608,32 @@ def _backfill_years(pre, e, first_year=2020):
     # $1M regional-fund envelope out of 2025 until 2026-11-17 (D234)
     dated = pre[pre["kind"] == "prearranged"]
     have = set(zip(dated["country_iso3"], dated["hazard"], dated["year"].astype(int)))
+    # D134 holds for a past year too (owner, 2026-11-17: "If it's being released, it's being
+    # released, and it shouldn't show up again unless I confirm or unless someone confirms that it
+    # has been reallocated"): a Country or Regional Fund envelope counts up to the year a framework
+    # activation released it, and not in the years after. A version that started after the release
+    # holds a new envelope (Nigeria floods 2026); a figure entered for a year is the confirmation
+    # and wins, as every dated row does. CERF's envelope stays until the framework is retired (D163)
+    # Which envelope a release spent: its activation's own version, or any version already
+    # endorsed when the release went out (a release dated by its month or year alone is taken at
+    # the start of that month or year, so a version endorsed later in the month is a new one; a
+    # version's time in development does not count: its envelope is new when it is endorsed).
+    # As D134 today, a release spends the version's whole pooled envelope, whatever the fund
+    rel = pd.read_sql(
+        """SELECT DISTINCT f.country_iso3, f.hazard, f.event_date, a.version
+           FROM """ + funding_sql(e) + """ f
+           JOIN aa.activation a ON a.country_iso3 = f.country_iso3 AND a.hazard = f.hazard
+            AND a.event_date = f.event_date AND a.event_type = f.event_type
+            AND a.window_name IS NOT DISTINCT FROM f.window_name
+            AND coalesce(a.event_label, '') = coalesce(f.event_label, '')
+           WHERE f.event_type = 'framework_aa' AND f.amount_usd > 0
+             AND left(f.fund_code, 4) IN ('cbpf', 'rhpf')""", e)
+    released = {}
+    for r_ in rel.itertuples():
+        d_ = str(r_.event_date)
+        start = (pd.Timestamp(d_) if len(d_) >= 10 else pd.Period(d_, freq="M" if len(d_) == 7 else "Y").start_time)
+        released.setdefault((r_.country_iso3, r_.hazard), []).append(
+            (int(d_[:4]), start, str(r_.version) if pd.notna(r_.version) else None))
     today = dt.date.today()
     rows = []
     # a PAST year whose latest version allows N > 1 activations (activation_factors) counts that
@@ -635,7 +649,8 @@ def _backfill_years(pre, e, first_year=2020):
     fac = activation_factors(e)
     for (c, h), vs in ver.groupby(["country_iso3", "hazard"]):
         vs = vs.assign(valid_from=pd.to_datetime(vs["valid_from"]),
-                       valid_until=pd.to_datetime(vs["valid_until"]))
+                       valid_until=pd.to_datetime(vs["valid_until"]),
+                       endorsed_from=pd.to_datetime(vs["endorsed_from"]))
         cap = last_live.get((c, h), None)
         if (c, h) not in last_live:
             last_year = today.year
@@ -695,9 +710,14 @@ def _backfill_years(pre, e, first_year=2020):
                     continue
                 stale_idx.extend(drop)
                 amounts = [(fc, usd) for fc, usd in amounts if fc not in keep_funds]
+            spent = any(ry < y and (rv == str(v["version"])
+                                    or (pd.notna(v["endorsed_from"]) and start >= v["endorsed_from"]))
+                        for ry, start, rv in released.get((c, h), ()))
             for fc, usd in amounts:
                 if not usd > 0:     # a fund the version records at nothing (Burkina Faso floods: CERF $0)
                     continue        # holds no money: not a row, or the framework would count as that fund's
+                if spent and str(fc).startswith(("cbpf", "rhpf")):
+                    continue        # released in an earlier year: released money since (D134)
                 rows.append({"country_iso3": c, "hazard": h, "year": y, "kind": "prearranged",
                              "fund_code": fc, "financier": None, "amount_usd": usd,
                              "source": "version-inferred", "version": str(v["version"])})
@@ -707,6 +727,9 @@ def _backfill_years(pre, e, first_year=2020):
               f"to the year's latest version: " + ", ".join(sorted({f'{a} {b} {int(y)}' for a, b, y in
                                                                      zip(st['country_iso3'], st['hazard'], st['year'])})))
         pre = pre.drop(index=stale_idx)
+    # a dated figure of $0 says there was no such money that year: it stops the year being filled
+    # in (above) and is not itself a row, or the framework would be listed under that fund
+    pre = pre[~((pre["kind"] == "prearranged") & ~(pre["amount_usd"].astype(float) > 0))]
     if not rows:
         return pre
     return pd.concat([pre, pd.DataFrame(rows)[pre.columns]], ignore_index=True)
@@ -1091,7 +1114,8 @@ def _fetch(e):
              AND s.sector_amount IS NOT NULL""", e)
     d["agency"] = pd.read_sql(
         """SELECT c.year, c.country_iso3, p.agency_short_name AS agency,
-                  p.amount_approved, p.application_code
+                  p.amount_approved, p.application_code, p.project_code,
+                  p.year AS project_year, p.project_status
            FROM aa.cerf_project p
            JOIN aa.cerf_allocation c ON c.application_code = p.application_code
            WHERE c.application_code IN (""" + _CERF_AA_CODES_SQL + ")", e)
@@ -1834,9 +1858,9 @@ def _money_flows(d, pre, act):
       split of the version in force that year (v_window_funding_split, scaled to the
       envelope); CBPF / RhPF allocations by grantee organisation. No final column: who a UN
       agency sub-grants to is only known once money is released. Years are never added up.
-    m 'r' released in year y: activation funding; CERF -> agency from the AA projects
-      approved that year (scaled to the released total); agency -> the named partners of the
-      CERF AA sub-grants, and the rest -> a final node with the agency's own name (what it
+    m 'r' released in year y: activation funding; CERF -> agency from the funded projects of
+      the allocation the release drew on (scaled to the released total); agency -> the named
+      partners of those projects' sub-grants, and the rest -> a final node with the agency's own name (what it
       implements itself); CBPF / RhPF -> grantee organisation: the projects of the allocation
       the activation drew on (only those aa.activation_funding_project lists, when it does;
       D192), else the fund's AA-keyword project budgets that year; each running on to the same
@@ -1848,8 +1872,9 @@ def _money_flows(d, pre, act):
       the activation's (released); '' where no single country is recorded (a regional fund's
       allocation with no country): FLOW_JS's optional countries column (2026-10-28) splits each
       'f' link at it, fund -> country -> agency. CERF's released money reaches the agencies by the
-      country's own AA projects approved that year and the agencies' sub-grants in that country
-      (the region's, where the country has none that year).
+      funded projects of the allocation the release drew on, and their sub-grants (D237); the
+      country's AA projects of the year, then the region's, only where no allocation or none of
+      its projects is on record.
     Recipient node ids carry their category (_recipient_cat): 'a:<cat>|<agency>' and
     'p:<cat>|<agency>' (always named), 'a:<cat>~<organisation>' and 'p:<cat>~<organisation>'
     (a partner / grantee: FLOW_JS names the top ones of the view and groups the rest per
@@ -1879,11 +1904,18 @@ def _money_flows(d, pre, act):
     cur_ = d["current"]
     rg_of = dict(zip(cur_["country_iso3"], cur_["region"].fillna("?")))
     AG = d["agency"].assign(rg=d["agency"]["country_iso3"].map(rg_of).fillna("?"))
+    # a project still under review has received nothing (a "(TBD)" placeholder beside the funded
+    # projects of a 2026 allocation): it takes no share of what was released
+    if "project_status" in AG:
+        AG = AG[AG["project_status"].fillna("").str.casefold() != "under review"]
     ag = AG.groupby(["year", "rg", "agency"])["amount_approved"].sum()
     # recipient organisations: CERF AA sub-grant partners and CBPF AA grantees, one node per
     # organisation (case / spacing folded), named as most of its money spells it and in the
     # category most of its money carries
     sg = d["subgrant_aa"].copy()
+    # the agency under the name its projects carry (WHO's sub-grants were looked up under "WHO"
+    # beside projects relabelled "WHO (incl. PAHO)" and found nothing, until 2026-11-17)
+    sg["agency"] = sg["agency"].map(lambda a: AGENCY_ALIAS.get(a, a) if isinstance(a, str) else a)
     sg["cat"] = sg["partner_type"].map(_recipient_cat)
     con = d.get("cbpf_org_name")
     named = con is not None and len(con) > 0
@@ -1994,7 +2026,7 @@ def _money_flows(d, pre, act):
         else:
             add(m, y, "d", "d:Not recorded", "f:" + fc, amount, g, fc, rg)
 
-    def grantees(m, y, fc, amount, g, rg, c, h, ac=""):
+    def grantees(m, y, fc, amount, g, rg, c, h, ac="", none="nr|Country and Regional Fund grantees not recorded"):
         # released money: a CBPF / RhPF grantee implements directly (no sub-grant level), so
         # its band runs on, same amount, to the same organisation in the final column — every
         # band then reaches the last column and each grantee node stays balanced (in = out).
@@ -2010,7 +2042,7 @@ def _money_flows(d, pre, act):
                  if len(co) else co)
         osum = float(o.sum()) if len(o) else 0.0
         if osum <= 0:
-            on("nr|Country and Regional Fund grantees not recorded", amount, "nr|grantee not recorded")
+            on(none, amount, "nr|grantee not recorded")
             return
         for node, v in o.items():
             cat = _re.split(r"[|~]", node)[0]
@@ -2023,12 +2055,48 @@ def _money_flows(d, pre, act):
     # floods 2025: the regional fund's $1M, pre-arranged in August and released in September). By
     # framework, fund and year, not by version: the year's figure can carry another version's label
     # (Ethiopia drought 2026); the first release of the year where there are two
-    spent_ac = {}
-    for r in act[(act["event_type"] == "framework_aa") & (act["fund_code"] != "cerf")
+    spent_ac, cerf_rel = {}, {}
+    for r in act[(act["event_type"] == "framework_aa")
                  & (act["amount_usd"].fillna(0) > 0)].sort_values("event_date").itertuples():
         if isinstance(r.allocation_code, str) and r.allocation_code:
-            spent_ac.setdefault((r.country_iso3, r.hazard, r.fund_code, int(str(r.event_date)[:4])),
-                                r.allocation_code)
+            k_ = (r.country_iso3, r.hazard, r.fund_code, int(str(r.event_date)[:4]))
+            spent_ac.setdefault(k_, r.allocation_code)
+            if r.fund_code == "cerf" and r.allocation_code not in cerf_rel.setdefault(k_[:2] + k_[3:], []):
+                cerf_rel[k_[:2] + k_[3:]].append(r.allocation_code)
+    # CERF's projects by allocation: each project goes to one agency (owner, 2026-11-17: "The sort of
+    # atomic unit that goes to an agency should be a project. … That should be the level that it's
+    # split by"; D237), and the sub-grants those projects report
+    proj_a = {ac: g_ for ac, g_ in AG.groupby("application_code")} if "project_code" in AG else {}
+
+    def own_projects(ac, y=None, amount=None):
+        """The funded projects of a CERF allocation, or None. With a year and an amount: a release
+        of that year. Where the allocation's projects of that year make the amount (within 2%),
+        they are the release's — one allocation released in two years (Ethiopia drought: the
+        December 2020 release is its 2020 projects, the February 2021 one its 2021 projects)."""
+        P_ = proj_a.get(ac)
+        if P_ is None or float(P_["amount_approved"].sum()) <= 0:
+            return None
+        if y is not None and amount and P_["project_year"].nunique() > 1:
+            py = P_[P_["project_year"] == y]
+            if len(py) and abs(float(py["amount_approved"].sum()) - amount) <= 0.02 * amount:
+                return py
+        return P_
+    # the status of each framework at the end of each year, as the Map's year bar gives it (today's
+    # for the current year): landing.framework_status_by_year, set by build_all
+    st_y = {(x["k"], int(y_)): st for x in (d.get("fwy") or []) for y_, st in x["y"].items()}
+    life_now = dict(zip(zip(cur_["country_iso3"], cur_["hazard"]), cur_["lifecycle"]))
+
+    def undecided(c, h, y):
+        """An envelope with no split by agency: is the split still to be decided (owner, 2026-11-17:
+        "they basically haven't decided what the envelope distribution is going to be but they do
+        know the total amount")? Yes where the framework was in development at the end of that year
+        (today, for the current year): one rule for a year while it runs and once it has closed.
+        Only in development (owner, 2026-11-17: "this only applies to amounts in framework versions
+        that are in development"): a framework being updated holds an endorsed version's envelope,
+        whose split exists and is simply not on record."""
+        st = st_y.get((f"{c}|{h}", y)) or (life_now.get((c, h)) if y == today.year else None)
+        return st == "development"
+    TBD = "tbd|Envelope distribution TBD"
     # ---------------- pre-arranged, as at the end of each year (never summed over years)
     if "allocation_code" not in pre:
         pre = pre.assign(allocation_code=None)
@@ -2091,10 +2159,28 @@ def _money_flows(d, pre, act):
             if (sp is None or sp["amount_usd"].sum() <= 0) and fc != "cerf":
                 # pooled funds: grantee types, as allocated — the grantees of the allocation the
                 # envelope became, in the year a framework activation released it
-                grantees("p", y, fc, amount, g, rg, c, h, spent_ac.get((c, r.hazard, fc, y), ""))
+                grantees("p", y, fc, amount, g, rg, c, h, spent_ac.get((c, r.hazard, fc, y), ""),
+                         **({"none": TBD} if undecided(c, r.hazard, y) else {}))
                 continue
             if sp is None or sp["amount_usd"].sum() <= 0:
-                add("p", y, "f", "f:" + fc, "a:nr|agencies not recorded", amount, g, fc, rg, c, h)
+                # no split by agency in the budget. The part of the envelope that allocations
+                # released that year cover goes to the agencies of their projects (Nigeria floods
+                # 2025: the whole $5M); the rest is to be determined (a framework in development) or
+                # being updated) or not on record. An allocation worth the envelope to within 2%
+                # covers it all
+                left = amount
+                for ac_ in cerf_rel.get((c, r.hazard, y), ()):
+                    own = own_projects(ac_)
+                    tot = float(own["amount_approved"].sum()) if own is not None else 0.0
+                    part = left if tot >= 0.98 * left else tot
+                    if part <= 0.5:
+                        continue
+                    for agency, v in own.groupby("agency")["amount_approved"].sum().items():
+                        add("p", y, "f", "f:cerf", "a:" + _agency_node(agency), v / tot * part, g, fc, rg, c, h)
+                    left -= part
+                if left > 0.5:
+                    add("p", y, "f", "f:" + fc, "a:" + (TBD if undecided(c, r.hazard, y) else "nr|agencies not recorded"),
+                        left, g, fc, rg, c, h)
                 continue
             shares = sp.groupby("agency")["amount_usd"].sum()
             for agency, v in shares.items():
@@ -2108,10 +2194,10 @@ def _money_flows(d, pre, act):
                  # the framework's hazard, for the frameworks column ('' = none: a groupby
                  # drops the rows of a missing key)
                  h=[x if isinstance(x, str) and x not in ("multi", "?") else "" for x in R["hazard"]],
-                 # a pooled fund's allocation, for its grantees ('' = none recorded; CERF's
-                 # split is by country and year, never by allocation)
-                 ac=[a if isinstance(a, str) and f != "cerf" else ""
-                     for a, f in zip(R.get("allocation_code", pd.Series(None, index=R.index)), R["fund_code"])])
+                 # the allocation the release drew on: a pooled fund's for its grantees, CERF's
+                 # for its projects' agencies and their sub-grants ('' = none recorded)
+                 ac=[a if isinstance(a, str) else ""
+                     for a in R.get("allocation_code", pd.Series(None, index=R.index))])
     # an allocation that paid for more than the release (its projects well over the amount) is a
     # mixed one: list the release's own projects (aa.activation_funding_project), or its
     # grantees take a share of every project's money
@@ -2122,10 +2208,12 @@ def _money_flows(d, pre, act):
                   f"${float(rel):,.0f} released: list the release's projects if it paid for other things too")
     for (fc, y, g, rg), amount in R.groupby(["fund_code", "year", "g", "rg"])["amount_usd"].sum().items():
         donors("r", int(y), fc, amount, g, rg)
-    # CERF -> agency -> partner, per country (the countries column shows the country's own
-    # agencies): the AA projects approved that year in the country and the agencies' sub-grants
-    # there; the region's (its countries together) where the country has no project that year
-    fell_back = []      # CERF releases split by the region's projects: listed in the build log
+    # CERF -> agency -> partner: the projects of the allocation the release drew on, each project
+    # an agency's, and the sub-grants those projects report (D237). An allocation with no project
+    # on record yet: the AA projects approved that year in the country and the agencies' sub-grants
+    # there; the region's (its countries together) where the country has none that year
+    fell_back, by_year, over = [], [], []     # CERF releases not split by their own projects, and
+    # those whose projects are worth more than what was released (a refund, shared pro rata): logged
     ag_c = _by_key(AG.groupby(["year", "country_iso3", "agency"])["amount_approved"].sum(), 2)
     ag_r = _by_key(ag, 2)
     sg_c = _by_key(sg.groupby(["year", "country_iso3", "agency", "node"])["subgrant_usd"].sum(), 3)
@@ -2135,7 +2223,17 @@ def _money_flows(d, pre, act):
         if fc != "cerf":
             grantees("r", y, fc, amount, g, rg, c, h, ac)
             continue
-        key, a_, subs, borrowed = (y, c), ag_c.get((y, c)), sg_c, False
+        own, a_, borrowed = own_projects(ac, y, float(amount)), None, False
+        if own is not None:
+            a_ = own.groupby("agency")["amount_approved"].sum()
+            mine = sg[sg["project_code"].isin(set(own["project_code"]))]
+            key, subs = (ac,), {(ac, ag_): g_.groupby("node")["subgrant_usd"].sum() for ag_, g_ in mine.groupby("agency")}
+            if float(a_.sum()) > 1.1 * float(amount):
+                over.append((y, c, h, ac, float(a_.sum()), float(amount)))
+        if a_ is None or float(a_.sum()) <= 0:
+            key, a_, subs = (y, c), ag_c.get((y, c)), sg_c
+            if a_ is not None and float(a_.sum()) > 0:
+                by_year.append((y, c, h, g, float(amount)))
         if a_ is None or float(a_.sum()) <= 0:
             # no AA project of the country that year: the region's agency split, and the share
             # its agencies pass on. To whom is then not recorded: the region's partners are other
@@ -2166,6 +2264,16 @@ def _money_flows(d, pre, act):
             # what the agency implements itself: a final node with its own name
             add("r", y, "a", "a:" + node, "p:" + node, v * k - kept, g, fc, rg, c, h)
 
+    if over:
+        print("  money flows: CERF releases worth less than their allocation's projects (after a refund, or a "
+              "release in parts; shared among the projects in proportion): "
+              + "; ".join(f"{y} {c} {hazard_word(h) if h else ''} {ac}: ${rel:,.0f} of ${got:,.0f}"
+                          for y, c, h, ac, got, rel in sorted(over)))
+    if by_year:
+        print("  money flows: CERF releases with no allocation recorded, or none of its projects on record (the "
+              "country's AA projects of the year): "
+              + "; ".join(f"{y} {c} {hazard_word(h) if h else ''} ({'non-framework' if g == 'a' else 'framework'}) ${v:,.0f}"
+                          for y, c, h, g, v in sorted(by_year)))
     if fell_back:
         print("  money flows: CERF releases with no AA project of the country that year (the region's "
               "agency split; partners not recorded): "
@@ -2228,13 +2336,18 @@ FLOW_NOTE = " ".join(TB(x) for x in (
     "Financing page's annual series. Never summed over years: a two-year envelope would count twice. "
     "Fund → agency uses the agency split of the version in force at that date, scaled to the "
     "envelope; Country and Regional Fund allocations go to their grantee organisations (AA-keyword "
-    "project budgets). There is no <i>sub-grantees / implementing organisations</i> column: who an agency sub-grants to is only known once "
+    "project budgets). Where the budget gives no split by agency, the envelope is one box, "
+    "<i>Envelope distribution TBD</i> (to be determined), while the framework is in development; "
+    "in a year in which an activation released the envelope, the part released goes to the "
+    "agencies of the projects it paid. "
+    "There is no <i>sub-grantees / implementing organisations</i> column: who an agency sub-grants to is only known once "
     "money is released.",
     "<b>Released</b>: money that went out on activations in the chosen year (all years add up). "
-    "CERF → agency uses the AA projects approved that year in the same country (in the same region "
-    "where the country has none that year), scaled to the released total; agency → partner uses the "
-    "CERF AA sub-grants in that country (where the region stood in for the country, the share passed "
-    "on is the region's and the partners are <i>Not recorded</i>), and the rest goes to a box with the agency's own "
+    "CERF → agency uses the projects of the allocation the activation drew on, each project going to "
+    "one agency, scaled to the released total after refunds; agency → partner uses the sub-grants "
+    "those projects report (where no allocation is recorded for the release, the AA projects "
+    "approved that year in the country stand in; where the country has none, the region's, and the "
+    "partners are then <i>Not recorded</i>), and the rest goes to a box with the agency's own "
     "name in the <i>sub-grantees / implementing organisations</i> column — what it implements itself. Country and Regional Funds go to the grantee organisations "
     "of the allocation the activation drew on (only its anticipatory action projects, where the "
     "allocation also paid for other things), or, where no allocation is recorded, to the grantees "
@@ -2255,23 +2368,20 @@ FLOW_NOTE = " ".join(TB(x) for x in (
     f"one box, <i>Non-framework allocations</i>. The {FLOW_TOP_FRAMEWORKS} frameworks receiving the "
     "most in the view are named, the rest grouped as <i>Other</i>. An allocation of a country or "
     "regional fund that names no single framework is <i>No single framework</i>. A framework is one "
-    "box, whatever its version. CERF's released money is split among the agencies by country and "
-    "year (the region's, where the country has no project that year), not by allocation: a "
-    "framework's agency shares are those of every CERF AA project in its country that year, another "
-    "framework's or a non-framework allocation's included.",
+    "box, whatever its version. CERF's released money reaches the agencies by the projects of the "
+    "framework's own allocation.",
     f"<b>Recipients</b>: the {FLOW_TOP_ORGS} partner and grantee organisations receiving the most in "
     "the view are named, the rest grouped in one <i>Other</i> box per column; money whose recipient is "
     "not recorded (no data yet, or a partner still to be determined) is one <i>Not recorded</i> box. Every "
     "recipient node carries its category colour — UN agency, international NGO, national / local "
-    "NGO, government, Red Cross / Red Crescent, other, not recorded — from the sub-grant partner "
+    "NGO, government, Red Cross / Red Crescent, other, envelope distribution TBD, not recorded — from the sub-grant partner "
     "type or the organisation type recorded by the Country and Regional Funds; a band takes the "
     "colour of the node it leaves.",
     "<b>Columns</b>: every column has a tick box, in the order of the chart; untick one and the "
     "bands join the columns either side of it. A donor's band past the funds is an attribution, "
     "not a recorded payment: its share of each fund's income that year, applied to where that "
     "fund's money went. With <i>agencies and grantees</i> unticked, a country's or a framework's band "
-    "reaches the organisations the agencies and grantees passed that country's money to that year; "
-    "two frameworks of one country share them in proportion.",
+    "reaches the organisations the agencies and grantees passed that country's money to that year.",
     "<b>Recipient types</b>: the far-right column groups every band by the category of the "
     "organisation it reaches — UN agencies, international NGOs, national / local NGOs, Red Cross / "
     "Red Crescent, government, other (untick <i>recipient types</i> to hide it). "
@@ -2320,10 +2430,10 @@ FLOW_JS = """
 // _money_flows. Recipient node ids carry their category: 'a:un|WFP' (an agency: always named),
 // 'p:ingo~ActionAid' (an organisation: the top ones of the view named, the rest grouped).
 const FLOW_TOP_ORGS = """ + str(FLOW_TOP_ORGS) + """, FLOW_TOP_COUNTRIES = """ + str(FLOW_TOP_COUNTRIES) + """, FLOW_TOP_FRAMEWORKS = """ + str(FLOW_TOP_FRAMEWORKS) + """;
-const CAT_ORDER = ['un','ingo','nngo','gov','rc','oth','nr'];
+const CAT_ORDER = ['un','ingo','nngo','gov','rc','oth','tbd','nr'];
 // (labels in English: tr8() translates them where they are shown, so a language switch redraws them)
 const CAT_LABEL = {un:'UN agency', ingo:'international NGO', nngo:'national / local NGO', gov:'government',
-  rc:'Red Cross / Red Crescent', oth:'other', nr:'not recorded'};
+  rc:'Red Cross / Red Crescent', oth:'other', tbd:'envelope distribution TBD', nr:'not recorded'};
 // the two catch-alls, one box each per column and spelled the same everywhere (owner, 2026-11-02:
 // "consolidate the 'not recorded' entities … and same for other … just group them all … make sure
 // the spelling is consistent"): who received the money is not recorded (a placeholder, 'to be
@@ -2337,7 +2447,7 @@ const FLOW_NR = 'Not recorded', FLOW_OTHER = 'Other';
 const CAT_COLOR = """ + json.dumps(ORG_COLOR) + """;
 // the recipient-type column: one node per category, the far-right column
 const CAT_GROUP = {un:'UN agencies', ingo:'International NGOs', nngo:'National / local NGOs', gov:'Government',
-  rc:'Red Cross / Red Crescent', oth:FLOW_OTHER, nr:FLOW_NR};
+  rc:'Red Cross / Red Crescent', oth:FLOW_OTHER, tbd:'Envelope distribution TBD', nr:FLOW_NR};
 function flowNode(id){ const m = /^([apk]):([a-z]+)([|~])(.*)$/.exec(id);
   return m ? {p:m[1], cat:m[2], org:m[3]==='~', name:m[4]} : null; }
 // pick (2026-10-28): a donor ('d:…'), country ('c:…') or organisation name the search box chose,
@@ -2476,7 +2586,7 @@ function mountFlow(cfg){
       if(r.lv==='d' && r.s!=='d:'+FLOW_NR) add(r.s, ()=>`${tr8(r.s.slice(2))} (${tr8('donor')})`);
       if(r.lv==='f' && r.c) add('c:'+r.c, ()=>`${tr8(D.fundNames['c:'+r.c] || r.c)} (${tr8('country')})`);
       // an organisation (named in the view or grouped under 'other') or an agency (always named)
-      [r.s, r.t].forEach(x=>{ const n = flowNode(x); if(!n || n.p==='k' || n.cat==='nr' || n.name===FLOW_OTHER || n.name===FLOW_NR) return;
+      [r.s, r.t].forEach(x=>{ const n = flowNode(x); if(!n || n.p==='k' || n.cat==='nr' || n.cat==='tbd' || n.name===FLOW_OTHER || n.name===FLOW_NR) return;
         add('o:'+n.name, ()=>`${n.org ? n.name : tr8(n.name)} (${tr8(CAT_LABEL[n.cat])})`); });
     });
     document.getElementById('flSL').innerHTML = [...choices.keys()].sort((a,b)=>a.localeCompare(b)).map(k=>`<option value="${k.replace(/&/g,'&amp;').replace(/"/g,'&quot;')}">`).join('');
@@ -2610,7 +2720,7 @@ function mountFlow(cfg){
       nodeColor: nd => { const r = flowNode(nd.id); return r ? CAT_COLOR[r.cat] : null; }});
     if(flD.checked && !flF.checked) el.insertAdjacentHTML('beforeend', "<div class='note'><b>" + tr8('A donor’s band here is an attribution, not a recorded payment: its share of each fund’s income that year, applied to where that fund’s money went.') + "</b></div>");
     el.insertAdjacentHTML('beforeend', "<div class='note'>" + tr8('Hover a band or a box to follow the money; click a box to keep it in focus, click again to clear. Funds in their own colour (CERF blue, pooled funds orange, regional funds green); every agency, grantee and recipient in the colour of its category; a band takes the colour of the box it leaves.') + "</div>");
-    if(leg) leg.innerHTML = !F.cats.length ? '' : '<b>' + tr8('Recipients') + '</b>' + F.cats.map(c=>`<span style='display:inline-flex;align-items:center;gap:5px'><span style='width:11px;height:11px;border-radius:2px;background:${CAT_COLOR[c]};display:inline-block${c==='nr' ? ';box-shadow:inset 0 0 0 1px #aab2bd' : ''}'></span>${tr8(CAT_LABEL[c])}</span>`).join('');
+    if(leg) leg.innerHTML = !F.cats.length ? '' : '<b>' + tr8('Recipients') + '</b>' + F.cats.map(c=>`<span style='display:inline-flex;align-items:center;gap:5px'><span style='width:11px;height:11px;border-radius:2px;background:${CAT_COLOR[c]};display:inline-block${c==='nr' || c==='tbd' ? ';box-shadow:inset 0 0 0 1px #aab2bd' : ''}'></span>${tr8(CAT_LABEL[c])}</span>`).join('');
     // the pick's boxes: ringed and their names in bold; the first one focused, as a click would
     if(hit){ const nds = [...el.querySelectorAll('.sk-n')].filter(n=>isPick(n.dataset.id));
       nds.forEach(n=>{ n.setAttribute('stroke', '#0f2540'); });

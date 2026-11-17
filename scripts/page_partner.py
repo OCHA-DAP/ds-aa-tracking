@@ -545,8 +545,7 @@ ${keys.length ? `<div class="scroll" style="max-height:none"><table class="data 
 <th class="num">${tr8('pre-arranged now')}</th><th class="num">${tr8('released to it, {0}–{1}', YS[0], CY)}</th><th class="num">${tr8('of which passed on')}</th>
 <th class="num">${tr8('received through another organisation')}</th><th class="num">${tr8('co-financing now')}</th></tr></thead><tbody>${body}
 <tr class="tot"><td colspan="3">${tr8('Total')}</td><td class="num">${f.preNow ? usd(f.preNow) : ''}</td><td class="num">${f.rel ? usd(f.rel) : ''}</td>
-<td class="num">${f.on ? usd(f.on) : ''}</td><td class="num">${f.sub ? usd(f.sub) : ''}</td><td class="num">${cof ? usd(cof) : ''}</td></tr></tbody></table></div>
-<p class="note" style="color:#666;font-size:11.5px">${tr8('CERF’s releases are shared among its agencies in proportion to the projects approved in the country that year, after refunds. An agency’s figure for one framework can therefore differ from its own projects under that framework; the sectors below are its own projects.')}</p>`
+<td class="num">${f.on ? usd(f.on) : ''}</td><td class="num">${f.sub ? usd(f.sub) : ''}</td><td class="num">${cof ? usd(cof) : ''}</td></tr></tbody></table></div>`
   : `<p class="meta">${tr8('No framework names it and no framework money is recorded for it with these boxes ticked.')}</p>`}
 <h3>${tr8('Sectors')}</h3>
 ${secs.length ? `<div class="scroll" style="max-height:none"><table class="data pp"><thead><tr><th>${tr8('sector')}</th><th>${tr8('current frameworks whose budget gives it this sector')}</th>
@@ -624,7 +623,7 @@ def build_partner(page, d):
         "Regional Fund, the grantees of its allocation; who a UN agency will sub-grant to is known only "
         "once money is released. It is what is in place at a date, never added over years. "
         "<b>Released</b>: what the funds paid the organisation for framework activations since {y0}: for "
-        "CERF, the agencies of the projects approved that year in the country; for a Country or Regional "
+        "CERF, the agency of each project of the allocation the activation drew on; for a Country or Regional "
         "Fund, the grantees of the allocation the activation drew on. What it passed on to other "
         "organisations is part of that figure; what it received through another organisation (a "
         "sub-grant) is shown apart and is part of the other organisation's figure, so the two are not "
@@ -633,9 +632,8 @@ def build_partner(page, d):
         "listed and not added. <b>Sectors</b>: the sectors a current framework's budget gives the "
         "organisation, and the sectors of its projects that framework releases paid (CERF's project "
         "sectors and the Country and Regional Funds' project clusters). These are the projects' "
-        "approved budgets, so they can differ from the released figure: CERF's releases are shared "
-        "among its agencies in proportion to the projects approved in the country that year, or in "
-        "its region where the country has none that year, after refunds. Frameworks since retired count in the years they were in "
+        "approved budgets, so they can differ from the released figure, which is what went out "
+        "after refunds. Frameworks since retired count in the years they were in "
         "place; non-framework allocations only with their box ticked. The figures are the "
         "<a href='dash-funding.html'>Financing</a> page's money flows, organisation by organisation. "
         "One organisation can appear twice where a framework document and a fund's records spell its "
