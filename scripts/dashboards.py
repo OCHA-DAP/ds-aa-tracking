@@ -2839,6 +2839,7 @@ def build_funding(page, d):
 
     flow_rows, flow_years, flow_default, fund_names = _money_flows(d, pre, act)
     d["_flows"] = flow_rows   # the Activities page's partner series are these rows, by year (page_plan)
+    d["_flow_names"] = fund_names     # ... and the partner profile's, with the countries' names (page_partner)
 
     # co-financing PRE-ARRANGED, by year: the yearly totals (window_funding kind='cofinancing'
     # with a year and no agency / sector line, i.e. aa.prearranged_funding — an agency breakdown
@@ -2854,6 +2855,7 @@ def build_funding(page, d):
     cof_now["region"] = [region_of.get((c, h)) or "?" for c, h in zip(cof_now["country_iso3"], cof_now["hazard"])]
     cof_now["g"] = [layer(c, h, v) for c, h, v in zip(cof_now["country_iso3"], cof_now["hazard"], cof_now["version"])]
     cof_now["in_gho"] = cof_now["country_iso3"].isin(gho_cy)
+    d["_cof_now"] = cof_now           # the partner profile's co-financing, by co-financer (page_partner)
     cname = dict(zip(cur["country_iso3"], cur["country_name"]))
     nonaa = pre[pre["kind"] == "non_aa_mobilised"]
     nonaa_html = ("" if not len(nonaa) else
@@ -5442,6 +5444,8 @@ def build_all(e, page, tbl):
     # reached or targeted) and build_landing below draws the map from the same object
     d["_map"] = landing.assemble(d, e)
     build_plan(page, d)
+    import page_partner     # the partner profile, a sub-tab of Activities (D235)
+    page_partner.build_partner(page, d)
     build_learning(page, d)
     import page_definitions
     page_definitions.build_definitions(page, d)
