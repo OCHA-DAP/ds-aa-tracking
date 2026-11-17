@@ -70,7 +70,7 @@ header a:focus-visible, header button:focus-visible { outline:2px solid #fff; ou
 .foot { max-width:1500px; margin:8px auto 18px; padding:0 28px; font-size:12px; color:#64748b; } .foot a { color:#475569; }
 main:focus { outline:none; }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior:auto !important; } }
-header nav.pub a.sub { color:#9ec5f0; font-weight:400; font-size:12px; margin-left:-10px; }
+header nav.pub a.sub { color:#9ec5f0; font-weight:400; font-size:12px; margin-left:-10px; white-space:nowrap; }
 header.adm { background:#3b2338; }
 header.adm .tag { background:#f0b429; color:#3b2338; font-size:10.5px; font-weight:700; letter-spacing:.06em; padding:1px 7px; border-radius:9px; margin-right:18px; }
 header .tosite { margin-left:auto; margin-right:0; font-size:13px; }
@@ -166,9 +166,10 @@ function dlcsv(id, name) {
 # the map is known. An admin page may link to the public site; a public page never links
 # to the admin site, and never carries the data service's token.
 PUBLIC_TABS = ("index.html", "pillar-model.html", "pillar-history.html", "pillar-plan.html",
+               "pillar-partners.html",
                "dash-funding.html", "pillar-learning.html", "media.html", "definitions.html",
                "climate-adaptation.html", "climate-coding-accuracy.html", "accessibility.html",
-               "privacy.html", "assistant.html")
+               "privacy.html")
               # definitions, accessibility and privacy: public and linked (the legend, the foot), not tabs
 # public, so behind the same password as the tabs, but deliberately NOT in NAV nor linked
 # from any listed page: reached only by their links (they may link to each other), until
@@ -251,11 +252,10 @@ NAV = f"""
   <nav class="pub">
    <a href="index.html">{T("Map")}</a>
    <a href="pillar-model.html">{T("Model")}</a><a class="sub" href="pillar-history.html" {ATTR("title", "simulated and real activations of the current triggers")}>{T("historical activations")}</a>
-   <a href="pillar-plan.html">{T("Activities")}</a>
+   <a href="pillar-plan.html">{T("Activities")}</a><a class="sub" href="pillar-partners.html" {ATTR("title", "one organisation: its frameworks, money, co-financing and sectors")}>{T("partner profile")}</a>
    <a href="dash-funding.html">{T("Financing")}</a>
    <a href="pillar-learning.html">{T("Learning")}</a>
    <a href="media.html">{T("Media")}</a>
-   <a href="assistant.html">{T("Assistant")}</a>
   </nav>
   {i18n.TOGGLE_HTML}
 </header>
@@ -739,8 +739,7 @@ def write_site():
     for name, (title, body) in _PAGES.items():
         if name in public:
             doc = public_doc(name, title, body, DEV_BANNER)
-            if name != page_assistant.PAGE:     # its corner button, on every page but its own tab
-                doc = doc.replace("</body>", panel + "</body>", 1)
+            doc = doc.replace("</body>", panel + "</body>", 1)     # its corner button, on every page
             (dev_dir / name).write_text(doc)
             if name in left_out["pages"]:
                 continue
@@ -919,8 +918,6 @@ def main():
     page_accessibility.build(page)
     import page_privacy
     page_privacy.build(page)
-    import page_assistant
-    page_assistant.build(page)
 
     write_site()
     import figure_check

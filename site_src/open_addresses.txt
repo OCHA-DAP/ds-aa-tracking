@@ -16,6 +16,7 @@ privacy.html
 pillar-model.html
 pillar-history.html
 pillar-plan.html
+pillar-partners.html
 pillar-learning.html
 dash-funding.html
 media.html

@@ -58,6 +58,12 @@ POLICY = {
         "show how often a trigger is expected to release money and whether it would have caught "
         "the shocks that mattered. <b>Real activations</b> (when money actually went out) are "
         "marked alongside, so the design can be compared with what happened."),
+    "pillar-partners.html": (
+        "Who takes part in anticipatory action?",
+        "Anticipatory action is carried out by many organisations: UN agencies, the Red Cross and "
+        "Red Crescent, national and international NGOs and government bodies. Choose one to see "
+        "the frameworks that name it, the money pre-arranged for it and released to it, what it "
+        "co-finances and the sectors it works in."),
     # the AA team's wording (review of the Activities page, 2026-11-10), with the hazard guidance
     # notes (OCHA, on ReliefWeb: GUIDANCE below)
     "pillar-plan.html": (
