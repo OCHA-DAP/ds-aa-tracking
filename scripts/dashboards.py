@@ -2018,15 +2018,17 @@ def _money_flows(d, pre, act):
             on(node, v / osum * amount, final)
 
     warned = set()
-    # a Country or Regional Fund envelope that an activation of its version drew on (D134): from the
-    # year of that release, the envelope's grantees are those of the allocation it became (Burkina
-    # Faso floods 2025: the regional fund's $1M, pre-arranged in August and released in September)
+    # a Country or Regional Fund envelope that a framework activation drew on (D134): in the year of
+    # that release, the envelope's grantees are those of the allocation it became (Burkina Faso
+    # floods 2025: the regional fund's $1M, pre-arranged in August and released in September). By
+    # framework, fund and year, not by version: the year's figure can carry another version's label
+    # (Ethiopia drought 2026); the first release of the year where there are two
     spent_ac = {}
     for r in act[(act["event_type"] == "framework_aa") & (act["fund_code"] != "cerf")
                  & (act["amount_usd"].fillna(0) > 0)].sort_values("event_date").itertuples():
-        if isinstance(r.allocation_code, str) and r.allocation_code and pd.notna(r.version):
-            spent_ac.setdefault((r.country_iso3, r.hazard, str(r.version), r.fund_code),
-                                (int(str(r.event_date)[:4]), r.allocation_code))
+        if isinstance(r.allocation_code, str) and r.allocation_code:
+            spent_ac.setdefault((r.country_iso3, r.hazard, r.fund_code, int(str(r.event_date)[:4])),
+                                r.allocation_code)
     # ---------------- pre-arranged, as at the end of each year (never summed over years)
     if "allocation_code" not in pre:
         pre = pre.assign(allocation_code=None)
@@ -2088,9 +2090,8 @@ def _money_flows(d, pre, act):
                     break
             if (sp is None or sp["amount_usd"].sum() <= 0) and fc != "cerf":
                 # pooled funds: grantee types, as allocated — the grantees of the allocation the
-                # envelope became, from the year an activation of the version released it
-                y0, ac = spent_ac.get((c, r.hazard, str(r.version), fc), (None, ""))
-                grantees("p", y, fc, amount, g, rg, c, h, ac if y0 is not None and y >= y0 else "")
+                # envelope became, in the year a framework activation released it
+                grantees("p", y, fc, amount, g, rg, c, h, spent_ac.get((c, r.hazard, fc, y), ""))
                 continue
             if sp is None or sp["amount_usd"].sum() <= 0:
                 add("p", y, "f", "f:" + fc, "a:nr|agencies not recorded", amount, g, fc, rg, c, h)
