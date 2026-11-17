@@ -42,6 +42,10 @@ OPEN_GLOBS='*.md aa-*.json aa-*.csv pdf-*.txt llms.txt llms-full.txt robots.txt 
 open_files() { ( cd "$1" && shopt -s nullglob && for g in $OPEN_GLOBS; do for f in $g; do [ -f "$f" ] && echo "$f"; done; done; true ); }
 cd "$(dirname "$0")/.."
 PW="${SITE_PASSWORD:-anticipation2026}"
+# the AA assistant's panel key (D233): derived from the site password, which is the assistant's;
+# it opens the assistant's panel and nothing else (the chatbot app derives the same)
+AA_KEY=$(printf '%s' "$PW" | python3 -c 'import hashlib, hmac, sys; print(hmac.new(b"aa-assistant-panel", sys.stdin.buffer.read(), hashlib.sha256).hexdigest())')
+[[ "$AA_KEY" =~ ^[0-9a-f]{64}$ ]] || { echo "FATAL: could not derive the assistant's panel key" >&2; exit 1; }
 ADMIN_PW="${ADMIN_PASSWORD:-}"
 ADMIN=admin
 DEV=dev
@@ -81,8 +85,8 @@ check_stage() (
           echo "FATAL: $f is served without a password but is not a 'Coming soon' page — aborting" >&2; exit 1
         fi
         # the AA assistant is on the development site only (scripts/page_assistant.py), and so is
-        # the password its panel hands over (D233)
-        if grep -q -e "aa-assistant-panel" -e "/aa/embed" "$f" || { [ -n "$PW" ] && grep -qF -- "$PW" "$f"; }; then
+        # the key its panel hands over (D233)
+        if grep -q -e "aa-assistant-panel" -e "/aa/embed" -e "$AA_KEY" "$f"; then
           echo "FATAL: $f is served without a password but carries the assistant — aborting" >&2; exit 1
         fi ;;
     esac
@@ -90,7 +94,7 @@ check_stage() (
   [ -f "$ADMIN/index.html" ] || { echo "FATAL: the admin site has no index.html — aborting" >&2; exit 1; }
   # the open files are plain data: never a token, never a page
   for f in $(open_files .); do
-    if grep -q "x-site-token\|staticrypt\|aa-assistant-panel\|/aa/embed" "$f" || { [ -n "$PW" ] && grep -qF -- "$PW" "$f"; }; then
+    if grep -q "x-site-token\|staticrypt\|aa-assistant-panel\|/aa/embed\|$AA_KEY" "$f"; then
       echo "FATAL: open file $f carries a token or a page — aborting" >&2; exit 1
     fi
   done
@@ -109,8 +113,8 @@ fi
 [ "$ADMIN_PW" != "$PW" ] || { echo "FATAL: the admin password must differ from the public one" >&2; exit 1; }
 
 if [ -z "${SKIP_BUILD:-}" ]; then
-  # the AA assistant's password is the dev site's (D233): the dev pages carry it, encrypted with it
-  AA_ASSISTANT_KEY="$PW" uv run python scripts/build_site.py
+  # the AA assistant's password is the dev site's (D233): the dev pages carry a key derived from it
+  AA_ASSISTANT_KEY="$AA_KEY" uv run python scripts/build_site.py
   # the mock-up never stops the site: if it fails, none of its pages goes out (a half-written
   # set would link to twins that are not there)
   uv run python scripts/mock_unocha.py site_build/$DEV \

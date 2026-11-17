@@ -185,6 +185,7 @@ jobs:
       - name: Put the site together
         env:
           GH_TOKEN: ${{ github.token }}      # the summary's list of pull requests not on the open site yet
+          SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}   # the check below looks for the assistant's key (D233)
           OPEN_FROM: ${{ steps.which.outputs.open_from }}
           PROD_SHA: ${{ steps.which.outputs.prod_sha }}
         run: |

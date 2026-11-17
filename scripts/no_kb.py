@@ -41,11 +41,11 @@ CSV_HEAD = re.compile(r"(?:^|,)\"?kb(?:_\w+)?\"?(?:,|$)")
 
 def _exempt():
     """D233: the AA assistant's own address on the development site (its app's name has a "kb" in
-    it). An address in a page's code, never a reference a reader sees: taken out before the check,
-    that host name and nothing else."""
-    from urllib.parse import urlsplit
-    from page_assistant import ASSISTANT_URL
-    return urlsplit(ASSISTANT_URL).netloc
+    it), as the panel and the tab write it: the embeddable page's full address, and the origin as
+    the panel's script quotes it. An address in a page's code, never a reference a reader sees.
+    Nothing else of that host: a link to its other pages is still a hit."""
+    from page_assistant import ASSISTANT_URL, KEY, _js, origin
+    return tuple(x for x in (ASSISTANT_URL, _js(origin()), KEY) if x)
 
 
 EXEMPT = _exempt()
@@ -53,8 +53,8 @@ EXEMPT = _exempt()
 
 def _hits(rel, s, suffix):
     public = not rel.startswith(ADMIN_DIR + "/")
-    if EXEMPT:
-        s = s.replace(EXEMPT, "")
+    for x in EXEMPT:
+        s = s.replace(x, "")
     text = html.unescape(s) if suffix == ".html" else s
     found = [re.sub(r"\s+", " ", text[max(0, m.start() - 50):m.end() + 50])
              for m in (WORDS_PUBLIC if public else WORDS).finditer(text)]

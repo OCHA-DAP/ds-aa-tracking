@@ -17,11 +17,13 @@ same code):
                         the frame is made on the first open, never on a page view.
   * one password        the assistant's password is the development site's (owner, 2026-11-17: "it's
                         already the same password, so … people shouldn't have to type twice"):
-                        publish.sh hands it to the build (AA_ASSISTANT_KEY), the dev pages carry it,
-                        encrypted with that same password, so it is readable only by whoever could
-                        already open them, and give it to the assistant's frame (postMessage, to the
-                        assistant's origin only), which logs in with it. Without it (a local build),
-                        or if the passwords ever differ, the frame asks for its own.
+                        publish.sh derives a key from it (HMAC-SHA256, see publish.sh) and hands it
+                        to the build (AA_ASSISTANT_KEY); the dev pages carry the key, encrypted with
+                        the site password, and give it to the assistant's frame (postMessage, to the
+                        assistant's origin only), whose login takes it. The key opens the
+                        assistant's panel and nothing else, never the dev site or the /aa page.
+                        Without it (a local build), or if the passwords ever differ, the frame asks
+                        for the password, once per browser tab.
   * the open site       assistant.html is a "Coming soon" page like the other tabs not public yet;
                         no page or file at the root carries the panel or the assistant's address
                         (build_site.write_site stops the build otherwise; publish.sh checks again).
@@ -36,7 +38,7 @@ from site_i18n import ATTR, T
 PAGE, TITLE = "assistant.html", "AA assistant"
 # the assistant's embeddable page; a local build points it at a local copy of the app
 ASSISTANT_URL = os.environ.get("AA_ASSISTANT_URL", "https://chd-ds-kb-chat.azurewebsites.net/aa/embed")
-# the development site's password (publish.sh): written into the dev pages only, which it encrypts
+# the assistant's panel key, derived from the site password by publish.sh: dev pages only
 KEY = os.environ.get("AA_ASSISTANT_KEY", "")
 MARK = "aa-assistant-panel"     # in the panel's code alone: the open site must never carry it
 EMBED_PATH = "/aa/embed"        # in the assistant's address alone: likewise
@@ -79,7 +81,7 @@ PAGE_CSS = """
 
 def build(page):
     body = (f"<style>{PAGE_CSS}</style>"
-            f"<p class='asst-intro'>{T('Ask about the frameworks, the money, the activations and the framework documents on this site. The answers come from the site’s data and documents and say where each figure comes from. Check a figure before you use it. The assistant asks for its own password the first time.')}</p>"
+            f"<p class='asst-intro'>{T('Ask about the frameworks, the money, the activations and the framework documents on this site. The answers come from the site’s data and documents and say where each figure comes from. Check a figure before you use it.')}</p>"
             f"<div class='asst-full'>{_frame('asst')}</div>"
             f"<script>{_key_js()} aaKey(document.querySelector('iframe.asst'));</script>")
     page(PAGE, TITLE, body)
