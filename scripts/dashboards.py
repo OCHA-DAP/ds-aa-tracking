@@ -615,7 +615,11 @@ def _backfill_years(pre, e, first_year=2020):
         if k.endswith("hf") or "cbpf" in k:
             return cbpf_by_c.get(c, "cbpf-unspecified")
         return k
-    have = set(zip(pre["country_iso3"], pre["hazard"], pre["year"].astype(int)))
+    # the framework-years that have a dated PRE-ARRANGED row. A dated co-financing row alone is not
+    # one: Burkina Faso floods' 2025 co-financing (entered 2026-11-03, D188) kept the version's own
+    # $1M regional-fund envelope out of 2025 until 2026-11-17 (D234)
+    dated = pre[pre["kind"] == "prearranged"]
+    have = set(zip(dated["country_iso3"], dated["hazard"], dated["year"].astype(int)))
     today = dt.date.today()
     rows = []
     # a PAST year whose latest version allows N > 1 activations (activation_factors) counts that
@@ -692,6 +696,8 @@ def _backfill_years(pre, e, first_year=2020):
                 stale_idx.extend(drop)
                 amounts = [(fc, usd) for fc, usd in amounts if fc not in keep_funds]
             for fc, usd in amounts:
+                if not usd > 0:     # a fund the version records at nothing (Burkina Faso floods: CERF $0)
+                    continue        # holds no money: not a row, or the framework would count as that fund's
                 rows.append({"country_iso3": c, "hazard": h, "year": y, "kind": "prearranged",
                              "fund_code": fc, "financier": None, "amount_usd": usd,
                              "source": "version-inferred", "version": str(v["version"])})
@@ -2012,6 +2018,17 @@ def _money_flows(d, pre, act):
             on(node, v / osum * amount, final)
 
     warned = set()
+    # a Country or Regional Fund envelope that a framework activation drew on (D134): in the year of
+    # that release, the envelope's grantees are those of the allocation it became (Burkina Faso
+    # floods 2025: the regional fund's $1M, pre-arranged in August and released in September). By
+    # framework, fund and year, not by version: the year's figure can carry another version's label
+    # (Ethiopia drought 2026); the first release of the year where there are two
+    spent_ac = {}
+    for r in act[(act["event_type"] == "framework_aa") & (act["fund_code"] != "cerf")
+                 & (act["amount_usd"].fillna(0) > 0)].sort_values("event_date").itertuples():
+        if isinstance(r.allocation_code, str) and r.allocation_code:
+            spent_ac.setdefault((r.country_iso3, r.hazard, r.fund_code, int(str(r.event_date)[:4])),
+                                r.allocation_code)
     # ---------------- pre-arranged, as at the end of each year (never summed over years)
     if "allocation_code" not in pre:
         pre = pre.assign(allocation_code=None)
@@ -2072,7 +2089,9 @@ def _money_flows(d, pre, act):
                     sp = own if len(own) else None
                     break
             if (sp is None or sp["amount_usd"].sum() <= 0) and fc != "cerf":
-                grantees("p", y, fc, amount, g, rg, c, h)   # pooled funds: grantee types, as allocated
+                # pooled funds: grantee types, as allocated — the grantees of the allocation the
+                # envelope became, in the year a framework activation released it
+                grantees("p", y, fc, amount, g, rg, c, h, spent_ac.get((c, r.hazard, fc, y), ""))
                 continue
             if sp is None or sp["amount_usd"].sum() <= 0:
                 add("p", y, "f", "f:" + fc, "a:nr|agencies not recorded", amount, g, fc, rg, c, h)
