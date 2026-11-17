@@ -13,7 +13,7 @@ name their layers explicitly either way):
   * frameworks by status, retired frameworks: Map ↔ Financing ↔ History (↔ Activities' count)
   * pre-arranged now — total, CERF, Country and Regional Funds — and per framework: Map ↔
     Financing ↔ the framework page (its chart's current-year bar; its version envelope when it is
-    the version the figure comes from, times the activations a year it allows)
+    the version the figure comes from, times the activations it allows)
   * people covered now, and co-financing pre-arranged now: Map ↔ Financing
   * released this year by fund (current frameworks): Map ↔ Financing
   * released to date, framework activations and non-framework allocations, and the number of
@@ -281,7 +281,7 @@ def check() -> None:
     cmp("CERF allocations of framework activations", "Map ↔ Activities", t_fr["n_cerf"], A["n_cerf"], "n")
 
     # ---- framework pages: the chart's current-year bar, and the version envelope when it is the
-    # version pre-arranged now comes from (times the activations a year it allows)
+    # version pre-arranged now comes from (times the activations it allows)
     # (a framework with no envelope has no figure to compare; a page whose envelope is an earlier
     # version's, or a page missing, is counted and named in the summary line)
     n_pg = n_env = 0

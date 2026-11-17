@@ -71,13 +71,13 @@ MAP_FIELDS = {
                       "(how it was matched to the pair), event, url (CERF's page), agencies, sectors, "
                       "reached, planned}]",
         "pre_now": "pre-arranged money now, all funds: what the Pre-arranged tile adds up (= "
-                   "`prearranged_usd` in aa-frameworks; two activations a year: the CERF envelope counted "
-                   "twice)",
+                   "`prearranged_usd` in aa-frameworks; a version allowing N activations before it must be "
+                   "endorsed again: the CERF envelope counted N times)",
         "pre_parts": "`pre_now` split: {cerf, pooled (Country and Regional Funds), version (the version "
-                     "it is the envelope of), apy (activations a year counted)}; `pooled` again as cbpf "
+                     "it is the envelope of), apy (activations counted: the activations the version allows)}; `pooled` again as cbpf "
                      "(country-based pooled funds) + rhpf (regional humanitarian pooled funds, their "
                      "country windows included), for the map's fund switch — never add them to `pooled`",
-        "apy": "activations a year counted in `pre_now`, where more than one",
+        "apy": "activations counted in `pre_now` (those the version allows before it must be endorsed again), where more than one",
         "prearranged": "the registry's CERF figure of the in-force endorsed version: NOT the headline "
                        "figure, which is `pre_now`",
         "prearranged_year": "the year of `prearranged`",
@@ -95,7 +95,7 @@ MAP_FIELDS = {
         "cov": "people covered by date, [[date, people]] (a figure from a framework document that is not "
                "published is left out)",
         "pre": "pre-arranged money per past year, {year: [usd, derived (1: carried from the version in "
-               "force rather than reported for the year), activations a year counted, {cerf, cbpf, rhpf, "
+               "force rather than reported for the year), activations counted, {cerf, cbpf, rhpf, "
                "all (no fund named)}: usd by the map's fund switch]}",
         "retired": "the pair counts as retired",
         "ret_on": "from when, derived (no retirement date is recorded): the day after its last version's "
@@ -158,7 +158,7 @@ MAP_FIELDS = {
         "rp_st": "the return period the document states",
         "rp_bt": "the one from the backtest",
         "rp_src": "which of the two `rp` is: stated or backtest",
-        "apy": "activations a year the document allows",
+        "apy": "activations the document allows before the version must be endorsed again",
         "funding": "the version's pre-arranged budget split: {src (document: the framework document; sheet: the team's "
                    "sheet), agency [{agency, fund, usd}], sector [{sector, fund, usd}], fund [{fund, usd}], "
                    "pair [{agency, sector, usd}], cofin [{from (the financier), usd}]: the document's "
@@ -230,7 +230,7 @@ TILE_FIELDS = {
     "pre_pooled": "its Country and Regional Funds part", "pre_all": "its part not split by fund",
     "pre_cbpf": "of the Country and Regional Funds part, the country-based pooled funds'",
     "pre_rhpf": "of the Country and Regional Funds part, the regional humanitarian pooled funds'",
-    "apy": "[activations a year, country, hazard, hazard in words] of the frameworks counting more than one",
+    "apy": "[activations allowed, country, hazard, hazard in words] of the frameworks counting more than one",
     "cofin": "co-financing pre-arranged now", "n_cofin": "frameworks with a co-financing figure",
     "covered": "people covered now", "n_cov": "frameworks with a figure",
     "n_act": "framework activations this year", "released": "money they released, net of refunds",
