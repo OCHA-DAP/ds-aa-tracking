@@ -28,6 +28,7 @@ records gives two entries."""
 import html
 import json
 import re
+import unicodedata
 
 import pandas as pd
 from dashboards import (
@@ -35,6 +36,7 @@ from dashboards import (
     CERF_FW_CODES_SQL,
     ORG_COLOR,
     _dash_page,
+    _fu,
     _is_un,
     _un_short,
     hazard_word,
@@ -63,8 +65,10 @@ ORG_TYPE = {"UN": "un", "INGO": "ingo", "NNGO": "nngo", "Red Cross": "rcrc"}   #
 
 
 def _fold(s):
-    """One key per name: entities decoded, case, spaces and punctuation ignored (as _money_flows)."""
-    return re.sub(r"[^0-9a-z]+", "", html.unescape(str(s)).casefold())
+    """One key per name: entities decoded; case, accents, spaces and punctuation ignored (the
+    page's script folds what is typed the same way)."""
+    t = unicodedata.normalize("NFD", html.unescape(str(s)))
+    return re.sub(r"[^0-9a-z]+", "", "".join(ch for ch in t if not unicodedata.combining(ch)).casefold())
 
 
 def _un_name(name, acronym):
@@ -88,8 +92,8 @@ def _released_sectors():
     """US$ of project budgets by organisation and sector for the projects framework releases paid:
     CERF's project sectors by agency, and the Country and Regional Funds' project clusters by
     grantee (only the projects listed for the release where the allocation paid for other things
-    too, D192). Rows (fund 'c' CERF / 'p' pooled, organisation, sector label, usd); empty on a
-    snapshot without the tables."""
+    too, D192). Rows (fund code, organisation, sector label, usd); empty on a snapshot without the
+    tables."""
     import ocha_stratus as stratus
     e = stratus.get_engine(stage="dev")
     out = []
@@ -100,7 +104,7 @@ def _released_sectors():
                FROM aa.cerf_project_sector s JOIN aa.cerf_project p USING (project_code)
                WHERE p.application_code IN (""" + CERF_FW_CODES_SQL + """) AND s.sector_amount > 0
                GROUP BY 1, 2, 3""", e)
-        out += [("c", r.org, _cerf_label(r.iasc, r.sector), float(r.usd)) for r in c.itertuples()]
+        out += [("cerf", r.org, _cerf_label(r.iasc, r.sector), float(r.usd)) for r in c.itertuples()]
     except Exception as exc:  # noqa: BLE001 — an older snapshot lacks the table
         print(f"  partner profile: CERF project sectors unavailable ({exc.__class__.__name__})")
     try:
@@ -111,16 +115,16 @@ def _released_sectors():
                       OR NOT EXISTS (SELECT 1 FROM aa.activation_funding_project x
                                      WHERE x.allocation_code = f.allocation_code))""" if has_afp else "")
         p = pd.read_sql(
-            """SELECT p.org_name AS org, c.cluster AS sector,
+            """SELECT f.fund_code, p.org_name AS org, c.cluster AS sector,
                       sum(coalesce(c.budget_by_cluster, p.budget * c.cluster_percentage / 100.0)) AS usd
-               FROM (SELECT DISTINCT allocation_code FROM aa.activation_funding
+               FROM (SELECT allocation_code, min(fund_code) AS fund_code FROM aa.activation_funding
                      WHERE fund_code <> 'cerf' AND event_type = 'framework_aa'
-                       AND allocation_code ~ '^cbpf-[0-9]+-[0-9]+$') f
+                       AND allocation_code ~ '^cbpf-[0-9]+-[0-9]+$' GROUP BY 1) f
                JOIN aa.cbpf_project p
                  ON 'cbpf-' || p.pooled_fund_id || '-' || p.allocation_type_id = f.allocation_code
                JOIN aa.cbpf_project_cluster c ON c.chf_project_code = p.chf_project_code
-               WHERE true""" + listed + " GROUP BY 1, 2", e)
-        out += [("p", r.org, r.sector, float(r.usd)) for r in p.itertuples() if pd.notna(r.usd) and r.usd > 0]
+               WHERE true""" + listed + " GROUP BY 1, 2, 3", e)
+        out += [(r.fund_code, r.org, r.sector, float(r.usd)) for r in p.itertuples() if pd.notna(r.usd) and r.usd > 0]
     except Exception as exc:  # noqa: BLE001
         print(f"  partner profile: pooled-fund project clusters unavailable ({exc.__class__.__name__})")
     return out
@@ -164,8 +168,9 @@ def assemble(d):
             en = names.get("c:" + c) or cname.get(c) or c
             fw_i[k] = len(fws)
             fws.append({"c": c or "", "n": en if c else "", "h": hazard_word(h) if h else "", "a": g == "a",
-                        "lc": "retired" if earlier else lc, "e": earlier, "pl": (c, h) in listed and not earlier,
-                        "p": f"fw-{c.lower()}-{h}.html" if lc is not None else None})
+                        "lc": "retired" if earlier else lc, "e": earlier,
+                        "pl": (c, h) in listed and not earlier and g != "a",
+                        "p": f"fw-{c.lower()}-{h}.html" if lc is not None and not earlier else None})
         return fw_i[k]
 
     # ---- money: the flow rows. One organisation per box: a UN agency ('un|WFP') or a named partner
@@ -204,12 +209,61 @@ def assemble(d):
     for k in order:
         by_name.setdefault(_fold(ent[k]["n"]), k)
     in_country = {}         # organisation -> the countries its money rows name
-    for (k, _t, _y, f, _g, _fu) in agg:
+    for (k, _t, _y, f, _g, _f2) in agg:
         in_country.setdefault(k, set()).add(fws[f]["c"])
+    # A framework budget names an organisation by its acronym ('NRCS'), a fund's records by its
+    # name ('Nigeria Red Cross Society'): two boxes in the money flows, one organisation. Where a
+    # partner list of the country gives both the acronym and (nearly) the name, the acronym's box
+    # joins the name's
+    import difflib
+    merged = []
+    for r in (pt.itertuples() if len(pt) else ()):
+        if not (isinstance(r.acronym, str) and len(_fold(r.acronym)) >= 3):
+            continue
+        ka, n = by_name.get(_fold(r.acronym)), _fold(r.name)
+        if ka is None or ent[ka]["k"] == "un" or r.country_iso3 not in in_country.get(ka, ()):
+            continue
+        near = [(difflib.SequenceMatcher(None, n, f_).ratio(), kb) for f_, kb in by_name.items()
+                if kb != ka and kb in in_country and ent[kb]["k"] != "un" and r.country_iso3 in in_country[kb]
+                and len(f_) >= 8]
+        near = [x for x in near if x[0] >= 0.9]
+        if near:
+            kb = max(near)[1]
+            for key in [key for key in agg if key[0] == ka]:
+                agg[(kb, *key[1:])] = agg.get((kb, *key[1:]), 0.0) + agg.pop(key)
+            in_country[kb] |= in_country.pop(ka)
+            ent[kb]["al"].add(ent[ka]["n"])
+            by_name[_fold(ent[ka]["n"])] = kb
+            merged.append((ent[ka]["n"], ent[kb]["n"]))
+            order.remove(ka)
+            del ent[ka]
+    # ... or where the acronym is the initials of one organisation's name in the same country
+    # ('HARAF': Hope And Rural Aid Foundation; 'BCHR': Benevolence Coalition for Humanitarian Relief)
+    def initials(name):
+        ws = re.findall(r"[A-Za-zÀ-ÿ]+", name)
+        small = {"and", "of", "for", "the", "in", "et", "de", "du", "des", "la", "le", "pour", "y", "para"}
+        return {"".join(w[0] for w in ws).upper(), "".join(w[0] for w in ws if w.lower() not in small).upper()}
+    for ka in [k for k in order if k in in_country and re.fullmatch(r"[A-Z]{4,8}", ent[k]["n"]) and ent[k]["k"] != "un"]:
+        cand = [kb for kb in order if kb != ka and kb in in_country and ent[kb]["k"] != "un"
+                and in_country[kb] & in_country[ka] and " " in ent[kb]["n"] and ent[ka]["n"] in initials(ent[kb]["n"])]
+        if len(cand) == 1:
+            kb = cand[0]
+            for key in [key for key in agg if key[0] == ka]:
+                agg[(kb, *key[1:])] = agg.get((kb, *key[1:]), 0.0) + agg.pop(key)
+            in_country[kb] |= in_country.pop(ka)
+            ent[kb]["al"].add(ent[ka]["n"])
+            by_name[_fold(ent[ka]["n"])] = kb
+            merged.append((ent[ka]["n"], ent[kb]["n"]))
+            order.remove(ka)
+            del ent[ka]
+    if merged:
+        print("  partner profile: a budget's acronym and a fund's name read as one organisation: "
+              + "; ".join(f"{a} = {b}" for a, b in merged))
 
     # ---- the partner lists of the current frameworks
     n_listed = len(listed)
-    acr = {}                # folded acronym -> organisation, for the co-financers
+    acr = {}                # folded acronym -> organisation
+    in_fw, in_c = {}, {}    # the names and acronyms of a framework's / a country's lists -> organisation
     for _oid, g in (pt.groupby("oid", sort=False) if len(pt) else ()):
         rows = list(g.itertuples())
         key = None
@@ -237,30 +291,53 @@ def assemble(d):
                 key = k
                 break
         if key is None:
-            nm = g["name"].astype(str).value_counts().index[0]
+            # only in the lists: its most usual name, or the shortest where the lists of several
+            # countries name it differently (a coordinator named with one country in its title)
+            vc = g["name"].astype(str).value_counts()
+            nm = vc.index[0] if g["country_iso3"].nunique() == 1 or len(vc) == 1 else min(vc.index, key=len)
             ac = next((r.acronym for r in rows if isinstance(r.acronym, str) and r.acronym.strip()), None)
             label = nm if not ac or _fold(ac) in _fold(nm) else f"{nm} ({ac.strip()})"
-            grp = g["grp"].value_counts().index[0]
-            key = entity(f"l|{_oid}", html.unescape(label), GRP_KIND.get(grp, "oth"))
-            by_name.setdefault(_fold(nm), key)
+            kind = GRP_KIND.get(g["grp"].value_counts().index[0], "oth")
+            # the same name in another country's list is the same organisation, unless it is a
+            # government body (two countries' "Ministry of Agriculture")
+            same = by_name.get(_fold(nm))
+            if same is not None and same.startswith("l|") and kind != "gov" and ent[same]["k"] == kind:
+                key = same
+            else:
+                key = entity(f"l|{_oid}", html.unescape(label), kind)
+                by_name.setdefault(_fold(nm), key)
         for r in rows:
             f = fw(r.country_iso3, r.hazard)
             got = ent[key]["l"].setdefault(f, [])
             for x in (r.roles if isinstance(r.roles, (list, tuple)) else []):
                 if x in ROLES and ROLES[x] not in got:
                     got.append(ROLES[x])
+            for x in (r.name, r.acronym):
+                if isinstance(x, str) and len(_fold(x)) >= 3:
+                    in_fw.setdefault((r.country_iso3, r.hazard), {}).setdefault(_fold(x), key)
+                    in_c.setdefault(r.country_iso3, {}).setdefault(_fold(x), key)
             if isinstance(r.acronym, str) and len(_fold(r.acronym)) >= 3:
                 acr.setdefault(_fold(r.acronym), key)
             if isinstance(r.acronym, str) and 2 <= len(r.acronym.strip()) <= 12:
                 ent[key]["al"].add(html.unescape(r.acronym.strip()))      # what the Find box also answers to
 
-    def find(name):
-        """The organisation a budget line or a co-financing line names, or None."""
+    def find(name, c=None, h=None):
+        """The organisation a budget line, a co-financing line or a project names, or None: a UN
+        agency; else what the name stands for in that framework's partner list, then in the
+        country's lists; else an organisation of that name or acronym anywhere, unless it is a
+        national one of another country."""
         n = str(name).strip()
         if _is_un(n):
             short = _un_short(n) or n
             return entity(f"un|{short.casefold()}", short, "un")
-        return by_name.get(_fold(n)) or acr.get(_fold(n))
+        f = _fold(n)
+        k = in_fw.get((c, h), {}).get(f) or in_c.get(c, {}).get(f)
+        if k is None:
+            k = by_name.get(f) or acr.get(f)
+            if k is not None and c is not None and ent[k]["k"] in ("gov", "nngo", "rc") and c not in (
+                    in_country.get(k, set()) | {fws[x]["c"] for x in ent[k]["l"]}):
+                k = None
+        return k
 
     # ---- co-financing now, by co-financer (the Financing page's rows)
     cof = d.get("_cof_now")
@@ -270,7 +347,7 @@ def assemble(d):
             continue
         members = [x.strip() for x in re.split(r",\s*|\s+and\s+", who) if x.strip()] if "," in who else [who]
         for m in members:
-            k = find(AGENCY_ALIAS.get(m, m))
+            k = find(AGENCY_ALIAS.get(m, m), r.country_iso3, r.hazard)
             if k is None:       # a co-financer the other records do not name
                 k = entity(f"c|{_fold(m)}", m, "oth")
                 by_name.setdefault(_fold(m), k)
@@ -291,28 +368,39 @@ def assemble(d):
             lines = sp[(sp["country_iso3"] == c) & (sp["hazard"] == h) & (sp["version"] == v)]
             if len(lines):
                 for x in lines[lines["sector"].notna()].itertuples():
-                    k = find(x.agency)
+                    k = find(x.agency, c, h)
                     for col in (_cols(x.sector) if k else ()):
                         s = ent[k]["sb"].setdefault(col, [])
                         if fw(c, h) not in s:
                             s.append(fw(c, h))
                 break
-    # released: the projects framework releases paid, by sector (a label in two columns: halves)
-    for fu, org, label, usd in _released_sectors():
-        k = find(AGENCY_ALIAS.get(org, org)) if fu == "c" else by_name.get(_fold(org))
+    # released: the projects framework releases paid, by sector and kind of fund (a label in two
+    # columns: halves). A pooled fund's grantee under the one spelling the money flows give it
+    spell = dict(d.get("org_spelling") or [])
+    lost = 0.0
+    for fc, org, label, usd in _released_sectors():
+        if fc == "cerf":
+            k = find(AGENCY_ALIAS.get(org, org))
+        else:
+            org = spell.get(str(org), html.unescape(str(org)))
+            k = find(_un_short(org)) if _un_short(org) else by_name.get(_fold(org))
         cols = sorted(_cols(label)) if k else []
+        lost += 0.0 if k else usd
         for col in cols:
-            ent[k]["sr"][col] = ent[k]["sr"].get(col, 0.0) + usd / len(cols)
+            by = ent[k]["sr"].setdefault(col, {})
+            by[_fu(fc)] = by.get(_fu(fc), 0.0) + usd / len(cols)
+    if lost >= 0.5:
+        print(f"  partner profile: ${lost:,.0f} of project budgets by sector under a name no organisation has")
 
     # two organisations of one name (two countries' "Ministry of Agriculture"): each says its country
     seen = {}
     for k in order:
-        seen.setdefault(ent[k]["n"].casefold(), []).append(k)
+        seen.setdefault(_fold(ent[k]["n"]), []).append(k)
     for ks in seen.values():
         if len(ks) > 1:
             for k in ks:
                 cs = sorted({fws[f]["n"] for f in ent[k]["l"]} | {fws[f]["n"] for f, *_ in ent[k]["c"]}
-                            | {fws[f]["n"] for (k_, _t, _y, f, _g, _fu) in agg if k_ == k})
+                            | {fws[f]["n"] for (k_, _t, _y, f, _g, _f2) in agg if k_ == k})
                 if cs and all(cs):
                     ent[k]["n"] += " — " + ", ".join(cs)
     # a UN agency also answers to its acronym in the site's other languages (OMS, PAM)
@@ -323,7 +411,7 @@ def assemble(d):
     idx = {k: i for i, k in enumerate(order)}
     orgs = [{"n": e["n"], "k": e["k"], "l": sorted([f, rs] for f, rs in e["l"].items()), "c": e["c"],
              "al": sorted(a for a in e["al"] if _fold(a) not in _fold(e["n"])),
-             "sb": e["sb"], "sr": {c: round(v) for c, v in e["sr"].items() if v >= 0.5}}
+             "sb": e["sb"], "sr": {c: {fu: round(v) for fu, v in by.items() if v >= 0.5} for c, by in e["sr"].items()}}
             for e in (ent[k] for k in order)]
     rows = [[idx[k], t, y, f, g, fu, round(v)] for (k, t, y, f, g, fu), v in sorted(agg.items()) if v >= 0.5]
     return {"cy": cy, "years": years, "orgs": orgs, "fw": fws, "rows": rows,
@@ -365,8 +453,8 @@ const el = id => document.getElementById(id);
 const sum = xs => xs.reduce((a, b) => a + (b || 0), 0);
 const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 const yLab = y => +y === CY ? y + '*' : String(y);
-const fold = s => String(s).normalize('NFD').toLowerCase().replace(/[^0-9a-z]+/g, '');
-const pct = (a, b) => b > 0 ? (a / b >= 0.0995 ? Math.round(100 * a / b) : (100 * a / b).toFixed(1)) + '%' : '';
+const fold = s => String(s).normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/[^0-9a-z]+/g, '');
+const pct = (a, b) => !(b > 0) ? '' : a / b >= 0.0995 ? Math.round(100 * a / b) + '%' : a / b < 0.0005 ? (a > 0 ? '<0.1%' : '0%') : (100 * a / b).toFixed(1) + '%';
 const KIND = {un:'UN', nngo:'National / local NGOs', ingo:'International NGOs', rc:'Red Cross / Red Crescent',
               gov:'Government', oth:'Other'};
 const LIFE = {active:'active', updating:'being updated', development:'in development', retired:'retired'};
@@ -421,7 +509,8 @@ function drawProfile(i){
   const tile = (v, name, line, sub) => `<div class="tile"><div class="v">${v}</div><div class="l"><span class="tk">${name}</span>${line}${sub ? `<div class="sub">${sub}</div>` : ''}</div></div>`;
   const tiles = [
     tile(nList, tr8('Frameworks'), tr8('of the {0} current frameworks with a partner list name it', D.nListed),
-         tr8('It has pre-arranged or released money under {0} frameworks.', withMoney)),
+         withMoney === 1 ? tr8('It has pre-arranged or released money under 1 framework.')
+                         : tr8('It has pre-arranged or released money under {0} frameworks.', withMoney)),
     tile(f.preNow ? usd(f.preNow) : '–', tr8('Pre-arranged now'),
          f.preNow ? tr8('{0} of the {1} pre-arranged now', pct(f.preNow, f.totPre), usd(f.totPre))
                   : tr8('No budget of a current framework names it for a share of the {0} pre-arranged now.', usd(f.totPre)), ''),
@@ -431,15 +520,18 @@ function drawProfile(i){
          [f.on ? tr8('{0} of it passed on to other organisations.', usd(f.on)) : '',
           f.sub ? tr8('{0} more received through another organisation.', usd(f.sub)) : ''].filter(Boolean).join(' ')),
     tile(cof ? usd(cof) : '–', tr8('Co-financing now'),
-         cof ? tr8('its own money beside the funds, in {0} frameworks', nCof) : tr8('No current framework records co-financing from it alone.'),
-         shared.length ? tr8('Not in this figure: {0}.', shared.map(c => tr8('{0} stated jointly with {1} ({2})', usd(c[1]), c[2].join(', '), fwName(FW[c[0]]))).join('; ')) : '')];
+         cof ? (nCof === 1 ? tr8('its own money beside the funds, in 1 framework') : tr8('its own money beside the funds, in {0} frameworks', nCof))
+             : tr8('No current framework records co-financing from it alone.'),
+         shared.length ? esc(tr8('Not in this figure: {0}.', shared.map(c => tr8('{0} stated jointly with {1} ({2})', usd(c[1]), c[2].join(', '), fwName(FW[c[0]]))).join('; '))) : '')];
   const body = keys.map(k => { const p = per.get(k), fw = FW[k];
     return `<tr><td>${fwCell(fw)}</td><td>${fw.lc ? tr8(LIFE[fw.lc] || fw.lc) : ''}</td>
 <td>${p.roles ? (p.roles.length ? p.roles.map(r => tr8(r)).join(', ') : tr8('named')) : '<span class="muted">' + (fw.pl ? tr8('not named') : fw.a || !fw.h || fw.lc === 'retired' ? '' : tr8('no partner list')) + '</span>'}</td>
 <td class="num">${p.P ? usd(p.P) : ''}</td><td class="num">${p.R ? usd(p.R) : ''}</td><td class="num">${p.O ? usd(p.O) : ''}</td>
 <td class="num">${p.S ? usd(p.S) : ''}</td><td class="num">${p.cof ? usd(p.cof) : ''}${p.shared.map(s => `<div class="muted">${tr8('{0} with {1}', usd(s[0]), esc(s[1].join(', ')))}</div>`).join('')}</td></tr>`; }).join('');
-  const secs = D.cols.filter(c => (x.sb[c] && x.sb[c].length) || x.sr[c]);
-  const srTot = sum(Object.values(x.sr));
+  // its projects' budgets by sector, for the funds ticked (non-framework allocations have none here)
+  const sr = {}; Object.keys(x.sr).forEach(c => { const v = sum(Object.keys(x.sr[c]).filter(fu => o.fu[fu]).map(fu => x.sr[c][fu])); if(v) sr[c] = v; });
+  const secs = D.cols.filter(c => (x.sb[c] && x.sb[c].length) || sr[c]);
+  const srTot = sum(Object.values(sr));
   el('ppOut').innerHTML = `<div class="phead"><h2>${esc(x.n)}</h2><span class="pkind" style="background:${D.kind[x.k]}">${tr8(KIND[x.k])}</span></div>
 <div class="tiles">${tiles.join('')}</div>
 <div class="grid">
@@ -453,13 +545,14 @@ ${keys.length ? `<div class="scroll" style="max-height:none"><table class="data 
 <th class="num">${tr8('pre-arranged now')}</th><th class="num">${tr8('released to it, {0}–{1}', YS[0], CY)}</th><th class="num">${tr8('of which passed on')}</th>
 <th class="num">${tr8('received through another organisation')}</th><th class="num">${tr8('co-financing now')}</th></tr></thead><tbody>${body}
 <tr class="tot"><td colspan="3">${tr8('Total')}</td><td class="num">${f.preNow ? usd(f.preNow) : ''}</td><td class="num">${f.rel ? usd(f.rel) : ''}</td>
-<td class="num">${f.on ? usd(f.on) : ''}</td><td class="num">${f.sub ? usd(f.sub) : ''}</td><td class="num">${cof ? usd(cof) : ''}</td></tr></tbody></table></div>`
+<td class="num">${f.on ? usd(f.on) : ''}</td><td class="num">${f.sub ? usd(f.sub) : ''}</td><td class="num">${cof ? usd(cof) : ''}</td></tr></tbody></table></div>
+<p class="note" style="color:#666;font-size:11.5px">${tr8('CERF’s releases are shared among its agencies in proportion to the projects approved in the country that year, after refunds. An agency’s figure for one framework can therefore differ from its own projects under that framework; the sectors below are its own projects.')}</p>`
   : `<p class="meta">${tr8('No framework names it and no framework money is recorded for it with these boxes ticked.')}</p>`}
 <h3>${tr8('Sectors')}</h3>
 ${secs.length ? `<div class="scroll" style="max-height:none"><table class="data pp"><thead><tr><th>${tr8('sector')}</th><th>${tr8('current frameworks whose budget gives it this sector')}</th>
 <th class="num">${tr8('its projects paid by framework releases, all years')}</th></tr></thead><tbody>` +
     secs.map(c => `<tr><td>${tr8(c)}</td><td>${(x.sb[c] || []).map(k => fwCell(FW[k])).join(', ')}</td>
-<td class="num">${x.sr[c] ? usd(x.sr[c]) + ' <span class="muted">' + pct(x.sr[c], srTot) + '</span>' : ''}</td></tr>`).join('') + '</tbody></table></div>'
+<td class="num">${sr[c] ? usd(sr[c]) + ' <span class="muted">' + pct(sr[c], srTot) + '</span>' : ''}</td></tr>`).join('') + '</tbody></table></div>'
   : `<p class="meta">${tr8('No sector is recorded for it: no framework budget gives it one, and no project of a framework release is recorded under its name.')}</p>`}`;
   charts.forEach(c => c.destroy()); charts = [];
   charts.push(mkChart('ppc1', 'bar', YS.map(yLab), [{label:tr8('pre-arranged'), data:f.pre, backgroundColor:D.kind[x.k]}], {allLabels:true}));
@@ -501,11 +594,12 @@ function find(q){
 function setup(){
   el('ppList').innerHTML = O.map(x => `<option value="${esc(x.n)}">`).join('');
   // the UN agencies with money, by what they hold now and have received: one click each
-  const un = O.map((x, i) => i).filter(i => O[i].k === 'un' && BY.has(i))
-    .sort((a, b) => sum(BY.get(b).filter(r => r[1] !== 'O').map(r => r[6])) - sum(BY.get(a).filter(r => r[1] !== 'O').map(r => r[6])));
+  const held = i => sum(BY.get(i).filter(r => r[4] !== 'a' && (r[1] === 'R' || r[1] === 'S' || (r[1] === 'P' && r[2] === CY))).map(r => r[6]));
+  const un = O.map((x, i) => i).filter(i => O[i].k === 'un' && BY.has(i)).sort((a, b) => held(b) - held(a));
   el('ppChips').innerHTML = `<span class="muted">${tr8('UN agencies:')}</span> ` +
     un.map(i => `<button type="button" data-i="${i}" aria-pressed="false">${esc(O[i].n)}</button>`).join('');
-  const h = decodeURIComponent((location.hash || '').slice(1));
+  let h = (location.hash || '').slice(1);
+  try { h = decodeURIComponent(h); } catch(e){}
   const i = h ? O.findIndex(x => fold(x.n) === fold(h)) : -1;
   if(i >= 0) choose(i); else draw();
 }
@@ -538,14 +632,15 @@ def build_partner(page, d):
         "frameworks record it; an amount a document states for several organisations together is "
         "listed and not added. <b>Sectors</b>: the sectors a current framework's budget gives the "
         "organisation, and the sectors of its projects that framework releases paid (CERF's project "
-        "sectors and the Country and Regional Funds' project clusters, as approved, so they can differ "
-        "slightly from the released figure). Frameworks since retired count in the years they were in "
+        "sectors and the Country and Regional Funds' project clusters). These are the projects' "
+        "approved budgets, so they can differ from the released figure: CERF's releases are shared "
+        "among its agencies in proportion to the projects approved in the country that year, or in "
+        "its region where the country has none that year, after refunds. Frameworks since retired count in the years they were in "
         "place; non-framework allocations only with their box ticked. The figures are the "
         "<a href='dash-funding.html'>Financing</a> page's money flows, organisation by organisation. "
         "One organisation can appear twice where a framework document and a fund's records spell its "
         "name differently.", n=data["nListed"], m=data["nLive"], y0=y0)
     panels = f"""
-<p class='meta'>{TB("Choose an organisation to see the frameworks that name it, the money pre-arranged for it and released to it, its co-financing and its sectors.")}</p>
 <form class='ppick' id='ppForm' role='search'>
  <label for='ppS'>{T("Organisation")}</label>
  <input type='search' id='ppS' list='ppList' autocomplete='off' {ATTR("placeholder", "type a name, for instance WHO")}>
