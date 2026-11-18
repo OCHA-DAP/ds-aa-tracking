@@ -905,9 +905,9 @@ NOTES = {
     "emergency_type_override": "Re-tagged CERF allocations from the CERF workbook: the GMS emergency type vs the actual shock (mostly Flood→Storm, with the storm name).",
     "cerf_climate_coding": "CERF projects coded against climate-adaptation indicators (one row per project × indicator × coder; NULL value = blank cell). Hand coding on the unlisted climate-adaptation page, model runs (coders model-*) scored against it on the unlisted climate-coding-accuracy page (public password; the two link only to each other); indicator wording in scripts/page_climate.py.",
     "build_contribution": "Donor earmarks to the OCHA AA project itself (\"build\" money): not pooled-fund income, so not in the contribution mirrors. A handful of rows a year, entered by hand; donor names follow <code>v_contribution.donor</code> so they line up with the pooled-fund donors.",
-    "funding_breakdown": "The earlier record's per-window, per-fund, agency and sector budgets: not loaded since 2026-09-28 (when this database became the record), read-only in the admin page, corrected since only through entries files. Superseded by <code>window_funding</code> (+ <code>v_window_funding_split</code>). Kept because views still read it (<code>v_funding_by_sector</code>, <code>v_funding_by_agency</code>, <code>v_funding_by_window</code>).",
-    "actual_activation": "The earlier record's activations: not loaded since 2026-09-28 (when this database became the record), read-only in the admin page, corrected since only through entries files. Superseded by <code>window_activation</code>. Kept because the pages still read its announcement links (<code>url</code>) and <code>v_activation_funding</code> reads it.",
-    "activation_allocation": "The earlier record's links from activations to CERF allocations: not loaded since 2026-09-28 (when this database became the record), read-only in the admin page, corrected since only through entries files. Superseded by <code>activation_funding</code>. Three row kinds: link (framework, date, application code), NO_CERF (no application code), ADHOC_AA (no framework). Its one declared key: <code>application_code</code> → <code>cerf_allocation</code>. Kept because <code>v_aa_allocation</code> and <code>v_activation_funding</code> read it.",
+    "funding_breakdown": "The earlier record's per-window, per-fund, agency and sector budgets: not loaded since 2026-09-28 (when this database became the record) and read-only in the admin page: only entries files and version relabels can change it. Superseded by <code>window_funding</code> (+ <code>v_window_funding_split</code>). Kept because views still read it (<code>v_funding_by_sector</code>, <code>v_funding_by_agency</code>, <code>v_funding_by_window</code>).",
+    "actual_activation": "The earlier record's activations: not loaded since 2026-09-28 (when this database became the record) and read-only in the admin page: only entries files and version relabels can change it. Superseded by <code>window_activation</code>. Kept because the pages still read its announcement links (<code>url</code>) and <code>v_activation_funding</code> reads it.",
+    "activation_allocation": "The earlier record's links from activations to CERF allocations: not loaded since 2026-09-28 (when this database became the record) and read-only in the admin page: only entries files and version relabels can change it. Superseded by <code>activation_funding</code>. Three row kinds: link (framework, date, application code), NO_CERF (no application code), ADHOC_AA (no framework). Its one declared key: <code>application_code</code> → <code>cerf_allocation</code>. Kept because <code>v_aa_allocation</code> and <code>v_activation_funding</code> read it.",
     "entered_version": "A version as entered on the Data entry page (entry.html: upload the framework PDF or fill the form), one row per version, the last entry kept. The same save merges it into <code>framework_version</code> (an entered value wins; <code>source</code> 'entered' on a new row). Every field change is audited in <code>entry_audit</code>.",
     "entered_window": "The windows entered with a version on the Data entry page: basis, the trigger in plain words, the monitoring period. The posted windows are the version's (a replace-set), audited in <code>entry_audit</code>. Not merged into <code>window</code>, which holds the backtested windows.",
     "entered_window_funding": "No longer written by the Data entry page, which puts a window's money straight into <code>window_funding</code> (<code>provenance</code> 'entered'); its rows are from before that change.",
@@ -1303,10 +1303,13 @@ def schema_doc_gaps(tables, views, fks):
     gaps += [f"the foreign key {k['conname']} joins aa.{k['child']} to aa.{k['parent']}, "
              "which the schema page's diagram does not both draw"
              for _, k in fks.iterrows() if not {k["child"], k["parent"]} <= drawn]
-    gaps += [f"the foreign key {k}, which schema.py adds, is not in the database: the schema page "
-             "draws its edge dashed" for k in sorted(set(_declared_keys()) - set(fks["conname"]))]
+    gaps += [f"the foreign key {k}, which schema.py adds, is not in the database the build read "
+             "(not migrated yet, or lost in the restore): the schema page draws its edge dashed" for k in sorted(set(_declared_keys()) - set(fks["conname"]))]
+    # a table schema.py defines but the database read does not have yet (its migration has not
+    # run) keeps its note quietly
     gaps += [f"the schema page has a note for aa.{t}, which is not in the aa schema"
-             for t in sorted(set(NOTES) - set(tables))]
+             for t in sorted(set(NOTES) - set(tables) - set(trk_schema.TABLES)
+                             - set(trk_schema.DURABLE_TABLES))]
     gaps += [f"the schema page's diagram has an edge from {c} to {p}, and does not draw {n}"
              for c, p, *_ in ERD_EDGES for n in (c, p) if n not in drawn]
     return gaps
@@ -1320,7 +1323,7 @@ def _declared_keys():
     """The foreign keys the database should have: the ones schema.py's migrations add, and
     _KEYS_NOT_IN_MIGRATIONS."""
     added = {m for ddl in trk_schema.ADDITIVE_MIGRATIONS
-             for m in re.findall(r"ADD CONSTRAINT (\w+) FOREIGN KEY", ddl)}
+             for m in re.findall(r"ADD\s+CONSTRAINT\s+(\w+)\s+FOREIGN\s+KEY", ddl)}
     return sorted(added | set(_KEYS_NOT_IN_MIGRATIONS))
 
 
@@ -1393,9 +1396,9 @@ def build_schema_page(e):
         "<code>framework_version</code> (the approved unit), and its money, activations and "
         "backtest to its windows (<code>window</code>, joined by <code>window_code</code>); "
         "<code>country_hazard</code> holds only the pair's identity and descriptive "
-        "attributes, and money outside a framework hangs off the pair. Two boxes group the tables "
-        "with no framework key: the country-level context (joined on country alone) and data "
-        "entry with the site's own records. <b>Edits:</b> changes made through the admin page and "
+        "attributes, and money outside a framework hangs off the pair. Two boxes group tables: "
+        "the country-level context (joined on country alone), and data entry with the site's "
+        "own records. <b>Edits:</b> changes made through the admin page and "
         "the Data entry page, the entries files the nightly job applies and the nightly CERF "
         "sync are logged in <code>entry_audit</code>; the <code>entered_*</code> tables hold "
         "what the Data entry page was given.</p>"
