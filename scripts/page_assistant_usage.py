@@ -38,10 +38,9 @@ def build(page):
 panel of the development site, what it used to answer them, how it went and what readers thought of
 the answers (D248; the rows: the <a href='admin.html#assistant_question'>assistant_question table</a>).
 Loaded live from the database when this page opens and every minute while it is in view.
-No name, login or IP address is recorded: everyone shares one password, so the questions cannot be
-tied to a person. The answer is kept only where the question failed or the reader marked it
-not helpful. Questions, comments and answers are removed after <span id='au-keep'>180</span> days;
-the counts stay.</p>
+No name, login or IP address is recorded; everyone shares one password. The answer is kept only
+where the question failed or the reader marked it not helpful. Questions, comments and answers are
+removed after <span id='au-keep'>180</span> days; the counts stay.</p>
 <p class='us-live' id='us-live' role='status'></p>
 <div class='us-filter' role='group' aria-label='Period'>
  <span class='lab' id='us-plab'>Period</span>
@@ -53,7 +52,9 @@ the counts stay.</p>
 <div id='us-body'></div>
 <script src='chart.umd.js'></script>
 <script>
-window.PROXY = new URLSearchParams(location.search).get('proxy') || '{PROXY_URL}';
+// (a test copy of the proxy on this computer may be named in the address; nothing else, since
+// the request carries this page's token and returns what readers asked)
+window.PROXY = (p => p && /^http:[/][/](localhost|127[.]0[.]0[.]1)(:[0-9]+)?$/.test(p) ? p : '{PROXY_URL}')(new URLSearchParams(location.search).get('proxy'));
 window.SITE_TOKEN = '{site_token()}';
 {SCRIPT}
 </script>"""
@@ -65,11 +66,11 @@ SCRIPT = r"""
 const ACCENT = '#007ce0', INK = '#52514e', GRID = '#ececec';
 const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let R = [], NAMES = {}, TODAY = new Date().toISOString().slice(0, 10), loaded = false;
-let period = 30, liveSpan = 90, sig = '', find = '';
+let period = 30, liveSpan = 90, sig = '', find = '', KEEP = 180;
 const HAZ = {storm: 'tropical cyclone', flood: 'floods', drought: 'drought', cholera: 'cholera', plague: 'plague',
              locusts: 'locusts', food_insecurity: 'food insecurity'};
 const OUT = {answered: 'answered', no_answer: 'no answer given', error: 'failed', limit: 'usage limit reached',
-             timeout: 'ran out of time', stopped: 'stopped by the reader'};
+             timeout: 'ran out of time', stopped: 'stopped (Stop pressed, page changed or connection lost)'};
 const TOOL = {aa_sql: 'a query of the database', aa_tables: 'the list of tables', aa_chart: 'a chart', aa_export: 'a CSV file',
               aa_documents: 'the list of framework documents', aa_doc_search: 'a search of framework documents',
               aa_doc_read: 'a framework document read', WebSearch: 'a web search', WebFetch: 'a web page read'};
@@ -109,7 +110,7 @@ function qrow(r){
   const more = [r.comment ? `<div class='au-q'><b>Comment:</b> ${esc(r.comment)}</div>` : '',
                 r.error ? `<div class='au-q'><b>Message shown:</b> ${esc(r.error)}</div>` : '',
                 r.answer ? `<details class='au-ans'><summary>The answer given</summary><div class='txt'>${esc(r.answer)}</div></details>` : ''].join('');
-  return `<tr><td class='when'>${esc(when(r.at))}</td><td><div class='au-q'>${r.question == null ? "<span class='us-empty'>(text removed after the keeping period)</span>" : esc(r.question)}</div>
+  return `<tr><td class='when'>${esc(when(r.at))}</td><td><div class='au-q'>${r.question == null ? "<span class='us-empty'>(text removed after " + KEEP + " days)</span>" : esc(r.question)}</div>
 <div style='margin-top:4px'>${tags(r)}</div>${more}</td></tr>`; }
 function qlist(rows, empty, cap){
   if(!rows.length) return `<div class='us-empty'>${esc(empty)}</div>`;
@@ -144,9 +145,9 @@ function draw(days, quiet){
   document.getElementById('us-body').innerHTML = `
 <div class='us-tiles'>
  ${tile('Questions', fmt(n), fmt(convs) + ' conversation' + (convs === 1 ? '' : 's'))}
- ${tile('Time to answer', med == null ? '–' : Math.round(med) + ' s', 'the middle one, of the answered')}
+ ${tile('Time to answer', med == null ? '–' : Math.round(med) + ' s', 'the middle one, of the answered; any wait in the queue included')}
  ${tile('With a chart or a file', pct(withOut, n), fmt(withOut) + ' question' + (withOut === 1 ? '' : 's'))}
- ${tile('Used document text', pct(P.filter(r => r.used_documents).length, n), 'searched or read a framework document')}
+ ${tile('Used document text', pct(P.filter(r => r.used_documents).length, n), 'searched or read the text of a framework document')}
  ${tile('Failed', fmt(failed.length), pct(failed.length, n) + ' of questions')}
  ${tile('Rated', fmt(up) + ' helpful · ' + fmt(down.length) + ' not', pct(up + down.length, n) + ' of questions rated')}
 </div>
@@ -156,9 +157,9 @@ function draw(days, quiet){
 </div>
 <div class='card us-card'><h2>Marked not helpful</h2><p class='sub'>With the reader's comment where one was left, and the answer given.</p>
  ${qlist(down, 'No answer was marked not helpful in this period.')}</div>
-<div class='card us-card'><h2>Failed</h2><p class='sub'>Questions that ended with an error, no answer, the time limit or the usage limit (a question the reader stopped is not a failure).</p>
+<div class='card us-card'><h2>Failed</h2><p class='sub'>Questions that ended with an error, no answer, the time limit or the usage limit (a stopped question is not a failure).</p>
  ${qlist(failed, 'No question failed in this period.')}</div>
-<div class='card us-card'><h2>Answered, but something was missing</h2><p class='sub'>Answers whose wording says the assistant could not find something. Read from the wording, so a guess: some are wrongly here, and some are missed.</p>
+<div class='card us-card'><h2>Answered, but something was missing</h2><p class='sub'>Answers whose closing words say the assistant could not find something. Read from the wording, so a guess: some are wrongly here, and some are missed.</p>
  ${qlist(missing, 'No answer in this period says something was missing.', 50)}</div>
 <div class='us-grid'>
  <div class='card us-card'><h2>Countries asked about</h2><p class='sub'>Named in the question or in the assistant's queries; a question can name several.</p>
@@ -174,7 +175,7 @@ function draw(days, quiet){
  <div class='card us-card'><h2>How the questions ended</h2><p class='sub'>Every question of the period.</p>
   ${table([{t: 'Ended'}, {t: 'Questions', num: true}, {t: 'Share', num: true}], byOutcome.map(([o, k]) => [o, fmt(k), pct(k, n)]))}</div>
 </div>
-<div class='card us-card'><h2>All questions</h2><p class='sub'>The most recent first.</p>
+<div class='card us-card'><h2>All questions</h2><p class='sub'>The most recent first${R.length >= 20000 ? '; only the 20,000 most recent are loaded' : ''}.</p>
  <input type='search' class='au-find' id='au-find' placeholder='Find in the questions' aria-label='Find in the questions' value="${esc(find)}">
  <div id='au-all'>${qlist(all, f ? 'No question of this period has that text.' : 'No question was asked in this period.', 200)}</div></div>`;
   document.querySelectorAll('#us-body details[id]').forEach(d => { if(opened.has(d.id)) d.open = true; });
@@ -205,11 +206,14 @@ async function live(){
     const r = await fetch(PROXY + '/assistant-usage' + (since ? '?since=' + since : ''), {headers: {'x-site-token': SITE_TOKEN}, cache: 'no-store'});
     const j = await r.json().catch(() => ({}));
     if(!r.ok || !j.ok) throw new Error(j.error || 'HTTP ' + r.status);
-    const s = liveSpan + '|' + j.rows.length + '|' + j.rows.filter(x => x.rating != null).length + '|' + (j.rows[0] ? j.rows[0].id : '') + '|' + j.at.slice(0, 10);
+    // redraw when anything shown changed: a new question, a rating or its comment, a text removed
+    const s = liveSpan + '|' + j.rows.length + '|' + j.rows.reduce((a, x) => a + (x.rating || 0) * 3 + (x.rating != null ? 1 : 0) * 101 + (x.comment ? x.comment.length : 0) + (x.question == null ? 7 : 0) + (x.answer ? 13 : 0), 0)
+      + '|' + (j.rows[0] ? j.rows[0].id : '') + '|' + j.at.slice(0, 10);
     NAMES = j.names || {}; TODAY = j.at.slice(0, 10);
-    if(j.keep_days) document.getElementById('au-keep').textContent = j.keep_days;
-    say(`Live: the record as of ${hhmm(j.at)} UTC, refreshed every minute while this page is in view.`
-        + (j.recording ? '' : ' Recording is not switched on: the assistant has no key for it yet.'), j.recording ? 'on' : 'off');
+    if(j.keep_days){ KEEP = j.keep_days; document.getElementById('au-keep').textContent = j.keep_days; }
+    const off = j.table === false ? ' Nothing can be recorded yet: the table does not exist in the database (the nightly job creates it when run once with its schema option).'
+      : j.recording ? '' : ' Recording is not switched on: this site\'s proxy has no key for it yet.';
+    say(`Live: the record as of ${hhmm(j.at)} UTC, refreshed every minute while this page is in view.` + off, off ? 'off' : 'on');
     if(s !== sig || !loaded){ sig = s; R = j.rows; loaded = true; draw(period, true); }
   } catch(e){
     say(loaded ? `The last refresh failed (${e.message}); showing the record loaded before.`

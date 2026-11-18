@@ -914,46 +914,64 @@ async function usage(req, res, qs) {
 // ends and one when the reader rates it; a page never calls these. Every field is checked against
 // a fixed shape. Nothing identifies a reader: no name, login or IP address is read or stored.
 // Texts older than A_KEEP_DAYS are removed here, at most once an hour, as records come in.
-const A_KEEP_DAYS = 180;
+const A_KEEP_DAYS = 180;          // = schema.ASSISTANT_KEEP_DAYS: change them together
 const A_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const A_OUTCOMES = new Set(["answered", "no_answer", "error", "limit", "timeout", "stopped"]);
 const A_HAZARDS = [
   ["drought", /\bdroughts?\b|s[ée]cheresse|sequ[ií]a/i],
   ["flood", /\bflood(s|ing)?\b|inondation|inundaci/i],
-  ["storm", /\bstorms?\b|cyclone|hurricane|typhoon|ouragan|hurac[aá]n|cicl[oó]n/i],
+  ["storm", /\bstorms?\b|cyclone|hurricane|typhoon|ouragan|hurac[aá]n|cicl[oó]n|temp[êe]te|tormenta/i],
   ["cholera", /chol[ée]ra|c[oó]lera/i],
   ["plague", /\bplague\b|\bpeste\b/i],
   ["locusts", /locusts?\b|criquet|langosta/i],
-  ["food_insecurity", /food insecurity|ins[ée]curit[ée] alimentaire|inseguridad alimentaria/i],
+  ["food_insecurity", /food[ _]insecurity|ins[ée]curit[ée] alimentaire|inseguridad alimentaria/i],
 ];
 // names people type that the tracker's own country names do not contain
-const A_ALIASES = { COD: /\bDRC\b|\bRDC\b|democratic republic of (the )?congo/i };
+const A_ALIASES = { COD: /(^|[^\p{L}])(?:DRC|RDC|democratic republic of (?:the )?congo|DR Congo)(?=$|[^\p{L}])/giu };
 function assistantAuth(req) {
   const t = req.headers["x-assistant-token"];
   if (!ASSISTANT_TOKEN || typeof t !== "string" || !t) return false;
   const h = (x) => crypto.createHash("sha256").update(x).digest();
   return crypto.timingSafeEqual(h(t), h(ASSISTANT_TOKEN));
 }
-let aCountries = { at: 0, list: [] };      // [ISO3, a pattern for its name], re-read hourly
-async function assistantCountries() {
-  if (Date.now() - aCountries.at < 3600e3) return aCountries.list;
-  const r = await pool.query("SELECT country_iso3, max(country_name) AS name FROM aa.country_hazard GROUP BY 1");
+// the countries the tracker has, longest name first, and the names of its tables and views:
+// re-read hourly
+let aKnown = { at: 0, countries: [], relations: new Set() };
+const A_OPEN = ["frameworks", "versions", "activations", "prearranged_funding", "cofinancing", "funds"].map((x) => "open." + x);
+const aFold = (x) => x.normalize("NFD").replace(/[̀-ͯ]/g, "");      // accents off: Haïti = Haiti
+async function assistantKnown() {
+  if (Date.now() - aKnown.at < 3600e3) return aKnown;
+  const c = await pool.query("SELECT country_iso3, max(country_name) AS name FROM aa.country_hazard GROUP BY 1");
+  const t = await pool.query(
+    `SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'aa' AND c.relkind IN ('r', 'p', 'v', 'm')`);
   const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  aCountries = { at: Date.now(), list: r.rows.filter((x) => x.name && x.name.length >= 4)
-    .map((x) => [x.country_iso3, new RegExp("(^|[^\\p{L}])" + esc(x.name) + "($|[^\\p{L}])", "iu")]) };
-  return aCountries.list;
+  aKnown = { at: Date.now(),
+    countries: c.rows.filter((x) => x.name && x.name.length >= 4).sort((a, b) => b.name.length - a.name.length)
+      .map((x) => [x.country_iso3, new RegExp("(^|[^\\p{L}])" + esc(aFold(x.name)) + "(?=$|[^\\p{L}])", "giu")]),
+    relations: new Set([...t.rows.map((x) => x.relname), ...A_OPEN]) };
+  return aKnown;
 }
-// the countries and hazards a question is about: named in its text, or by code in its queries
+// The countries and hazards a question is about. A country: its name in the question (the longest
+// names first, each taken out once found, so "South Sudan" is not also "Sudan"), or its code
+// between quotes in the assistant's queries (never a bare three-letter word of the question:
+// "AGO", "COL" and "TON" are words too). A hazard: its word in the question or the queries.
 async function assistantSubjects(question, hay) {
-  const list = await assistantCountries(), known = new Set(list.map((x) => x[0])), out = new Set();
-  for (const [iso, rx] of list) if (rx.test(question) || (A_ALIASES[iso] && A_ALIASES[iso].test(question))) out.add(iso);
-  for (const m of (question + " " + hay).matchAll(/(?:^|[^A-Za-z])([A-Z]{3})(?![A-Za-z])/g)) if (known.has(m[1])) out.add(m[1]);
-  const text = question + " " + hay;
-  return { countries: [...out].sort(), hazards: A_HAZARDS.filter(([, rx]) => rx.test(text)).map(([h]) => h) };
+  const known = await assistantKnown(), iso = new Set(known.countries.map((x) => x[0])), out = new Set();
+  let text = aFold(question);
+  for (const [code, rx] of [["COD", A_ALIASES.COD], ...known.countries]) {
+    rx.lastIndex = 0;
+    if (rx.test(text)) { out.add(code); rx.lastIndex = 0; text = text.replace(rx, "$1 "); }
+  }
+  for (const m of hay.matchAll(/'([A-Z]{3})'/g)) if (iso.has(m[1])) out.add(m[1]);
+  const all = question + " " + hay;
+  return { countries: [...out].sort(), hazards: A_HAZARDS.filter(([, rx]) => rx.test(all)).map(([h]) => h) };
 }
 let aTrimmed = 0;
-async function assistantTrim() {
-  if (Date.now() - aTrimmed < 3600e3) return;
+// the texts older than the keeping period go: as records come in and whenever the admin page reads
+// (at most once an hour here), and every night whether or not anyone asks (scripts/trim_assistant_log.py)
+async function assistantTrim(force) {
+  if (!force && Date.now() - aTrimmed < 3600e3) return;
   aTrimmed = Date.now();
   await pool.query(
     `UPDATE aa.assistant_question SET question = NULL, answer = NULL, comment = NULL, error = NULL
@@ -964,20 +982,21 @@ async function assistantWrite(req, res, path) {
   if (!assistantAuth(req)) return send(res, 401, { error: "bad assistant token" });
   if (limited(req, res, "assistant")) return;
   if (!pool) return send(res, 500, { error: "DB not configured" });
-  const b = await readBody(req, res, 200 * 1024);
+  const b = await readBody(req, res, 600 * 1024);     // the limits below are in characters, up to 4 bytes each
   if (!b) return;
-  const str = (x, max) => (typeof x === "string" && x.trim() ? x.slice(0, max) : null);
+  const str = (x, max) => (typeof x === "string" && x.replace(/\u0000/g, "").trim() ? x.replace(/\u0000/g, "").slice(0, max) : null);
   const list = (x, rx, max) => [...new Set((Array.isArray(x) ? x : []).filter((v) => typeof v === "string" && rx.test(v)))].slice(0, max);
   const int = (x, lo, hi) => (Number.isInteger(x) && x >= lo && x <= hi ? x : null);
   if (typeof b.id !== "string" || !A_ID.test(b.id)) return send(res, 400, { error: "id" });
   try {
     if (path === "/assistant-rating") {
       if (b.rating !== 1 && b.rating !== -1) return send(res, 400, { error: "rating: 1 or -1" });
-      // the answer is kept with a "not helpful"; a later "helpful" drops it again unless the question failed
+      // the answer is kept with a "not helpful" (the assistant's server sends its own copy, and an
+      // answer already held is never replaced); a later "helpful" drops it again unless the question failed
       const r = await pool.query(
         `UPDATE aa.assistant_question SET rating = $2::smallint, comment = $3, rated_at = now(),
-                answer = CASE WHEN $2::smallint = -1 THEN coalesce($4, answer)
-                              WHEN outcome = 'answered' THEN NULL ELSE answer END
+                answer = CASE WHEN $2::smallint = -1 THEN coalesce(answer, $4)
+                              WHEN outcome IN ('answered', 'stopped') THEN NULL ELSE answer END
          WHERE id = $1 AND asked_at > now() - interval '7 days'`,
         [b.id.toLowerCase(), b.rating, str(b.comment, 2000), str(b.answer, 30000)]);
       return send(res, r.rowCount ? 200 : 404, r.rowCount ? { ok: true } : { error: "no such question" });
@@ -987,7 +1006,8 @@ async function assistantWrite(req, res, path) {
     const question = str(b.question, 20000);
     if (!question) return send(res, 400, { error: "question" });
     const subj = await assistantSubjects(question, str(b.hay, 60000) || "");
-    const failed = outcome !== "answered";
+    const relations = (await assistantKnown()).relations;
+    const failed = outcome !== "answered" && outcome !== "stopped";      // only a failure keeps what was said
     await pool.query(
       `INSERT INTO aa.assistant_question (id, conversation, turn, surface, from_page, thorough, question,
            countries, hazards, tables_used, tools, n_steps, used_documents, made_chart, made_file, searched_web,
@@ -998,7 +1018,9 @@ async function assistantWrite(req, res, path) {
        int(b.turn, 1, 10000) || 1, b.surface === "panel" ? "panel" : "page",
        typeof b.from_page === "string" && /^[a-z0-9-]{1,60}\.html$/.test(b.from_page) ? b.from_page : "",
        b.thorough === true, question, subj.countries, subj.hazards,
-       list(b.tables, /^[a-z][a-z0-9_.]{0,80}$/, 60), list(b.tools, /^[A-Za-z][A-Za-z0-9_]{0,60}$/, 40),
+       // only what the database has: the assistant's reading of its queries also catches columns and functions
+       list(b.tables, /^[a-z][a-z0-9_.]{0,80}$/, 200).filter((t) => relations.has(t)).slice(0, 60),
+       list(b.tools, /^[A-Za-z][A-Za-z0-9_]{0,60}$/, 40),
        int(b.n_steps, 0, 10000) || 0, b.used_documents === true, b.made_chart === true, b.made_file === true,
        b.searched_web === true,
        typeof b.seconds === "number" && b.seconds >= 0 && b.seconds < 36000 ? Math.round(b.seconds * 10) / 10 : null,
@@ -1019,16 +1041,17 @@ async function assistantUsage(req, res, qs) {
   try {
     const at = new Date().toISOString();
     if (!(await pool.query("SELECT to_regclass('aa.assistant_question') IS NOT NULL AS ok")).rows[0].ok)
-      return send(res, 200, { ok: true, rows: [], names: {}, at, keep_days: A_KEEP_DAYS, recording: !!ASSISTANT_TOKEN });
+      return send(res, 200, { ok: true, rows: [], names: {}, at, keep_days: A_KEEP_DAYS, recording: !!ASSISTANT_TOKEN, table: false });
+    await assistantTrim(true);      // nothing older than the keeping period is ever served
     const r = await pool.query(
       `SELECT id, to_char(asked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI') AS at, conversation, turn, surface,
               from_page, thorough, question, countries, hazards, tables_used, tools, n_steps, used_documents,
               made_chart, made_file, searched_web, seconds::float AS seconds, outcome, missing, error, rating,
               comment, answer
-       FROM aa.assistant_question ${since ? "WHERE asked_at >= $1::date" : ""}
+       FROM aa.assistant_question ${since ? "WHERE asked_at >= ($1::timestamp AT TIME ZONE 'UTC')" : ""}
        ORDER BY asked_at DESC LIMIT 20000`, since ? [since] : []);
     const nm = await pool.query("SELECT country_iso3, max(country_name) AS name FROM aa.country_hazard GROUP BY 1");
-    send(res, 200, { ok: true, at, keep_days: A_KEEP_DAYS, recording: !!ASSISTANT_TOKEN, rows: r.rows,
+    send(res, 200, { ok: true, at, keep_days: A_KEEP_DAYS, recording: !!ASSISTANT_TOKEN, table: true, rows: r.rows,
       names: Object.fromEntries(nm.rows.map((x) => [x.country_iso3, x.name])) });
   } catch (e) { send(res, 502, { error: String(e.message || e) }); }
 }

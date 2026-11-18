@@ -356,6 +356,8 @@ site's page counts (D197: `POST /hit`, the one endpoint without a token, adds 1 
 `ASSISTANT_TOKEN` switches on the record of the AA assistant's questions (D248): the assistant's
 server sends it in `x-assistant-token` to `POST /assistant-log` and `/assistant-rating`, which write
 `aa.assistant_question` (no name, login or IP address; texts removed after 180 days; never in a
-snapshot). The admin site's Assistant use page reads it live from `GET /assistant-usage`.
+snapshot; only the table's owner may read it). The table is created by a run of the nightly job
+with `--ensure-schema`: until then nothing can be recorded, and the page says so. The admin site's
+Assistant use page reads it live from `GET /assistant-usage`.
 Redeploy with `az webapp deploy -g IMB-CHD-DataScience-EastUS2 -n chd-ds-aa-extract --type zip --src-path <zip>` from a zip of `proxy/` (`server.js`, `package.json`
 and `mirror_tables.json`: the proxy will not start without the mirror list).

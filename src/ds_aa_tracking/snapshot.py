@@ -184,6 +184,17 @@ def export(engine, out: Path, source: str = "") -> dict:
     # one REPEATABLE READ transaction => every table, view and the catalog agree
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as conn:
         with conn.begin():
+            # a view over a table that is never exported would carry its rows out through
+            # aa_views/: no such view may exist
+            leak = conn.execute(sa.text(
+                """SELECT DISTINCT v.relname FROM pg_depend d
+                   JOIN pg_rewrite r ON r.oid = d.objid JOIN pg_class v ON v.oid = r.ev_class
+                   JOIN pg_class t ON t.oid = d.refobjid JOIN pg_namespace n ON n.oid = t.relnamespace
+                   WHERE n.nspname = :s AND t.relname = ANY(:names) AND v.oid <> t.oid"""),
+                {"s": SCHEMA, "names": sorted(NOT_EXPORTED)}).scalars().all()
+            if leak:
+                raise SystemExit(f"FATAL: view(s) {', '.join(sorted(leak))} read a table that is never exported "
+                                 f"({', '.join(sorted(NOT_EXPORTED))}): the snapshot would carry its rows")
             for key, sql in _CATALOG.items():
                 meta[key] = [r for r in _records(pd.read_sql(sa.text(sql), conn, params={"s": SCHEMA}))
                              if (r.get("name") if key == "tables" else r.get("table_name")) not in NOT_EXPORTED]
@@ -322,6 +333,9 @@ def restore(engine, src: Path, allow_remote: bool = False) -> dict:
     if host not in LOCAL_HOSTS and not allow_remote:
         raise SystemExit(f"refusing to DROP SCHEMA {SCHEMA} on non-local host {host!r} "
                          "(pass --allow-remote if you really mean it)")
+    if host not in LOCAL_HOSTS and NOT_EXPORTED:
+        print(f"!! restoring over {host}: the tables no snapshot holds ({', '.join(sorted(NOT_EXPORTED))}) "
+              "are dropped with the schema and do not come back", flush=True)
     meta = json.loads((src / "schema.json").read_text())
     manifest = json.loads((src / "manifest.json").read_text())
     S = q(SCHEMA)

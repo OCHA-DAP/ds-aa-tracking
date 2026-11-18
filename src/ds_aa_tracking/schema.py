@@ -496,6 +496,12 @@ TABLES = {
 # "versions ENTERED, not inferred"). The full-refresh load creates them if
 # missing but NEVER drops or truncates them: they are the durable record of
 # human entry, not derived data.
+# the AA assistant's questions (D248): their texts are removed after this many days (the proxy's
+# A_KEEP_DAYS is the same number: change them together), and only the login that owns the table
+# reads it (scripts/ensure_schema.py takes every other login's rights away)
+ASSISTANT_KEEP_DAYS = 180
+OWNER_ONLY_TABLES = ("assistant_question",)
+
 DURABLE_TABLES = {
     # data-entry files applied by scripts/apply_entries.py (nightly job): one row per file,
     # so a file is applied once and later admin-page edits are never overwritten
@@ -831,6 +837,9 @@ DURABLE_TABLES = {
     # answer, comment, error) are removed after 180 days; the counts stay.
     # Kept OUT of the snapshot (snapshot.NOT_EXPORTED): a snapshot of 31 December is kept for
     # good, and the assistant reads the snapshot, so it must never read other people's questions.
+    # For the same reason only the owning login may read it (OWNER_ONLY_TABLES): the database's
+    # read login, which other tools hold, cannot. A restore of a snapshot DROPS it (the snapshot
+    # does not hold it): never restore over the real database without saving it first.
     "assistant_question": """
         CREATE TABLE IF NOT EXISTS aa.assistant_question (
             id text PRIMARY KEY,                    -- random, one per question
