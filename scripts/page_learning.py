@@ -1011,7 +1011,10 @@ function matches(d){
   if(h === '_none' ? d.hz : h && d.hz !== h) return false;
   return true;
 }
-function renderTable(){
+// fresh: a new filter or sort — on a wide screen the first document listed opens, next to the top
+// of the list (a document kept from before could be far down the reordered list)
+function renderTable(fresh){
+  if(fresh === true && wideList()) closeListPanel(false);
   const list = DOCS.filter(matches).sort((a, b) => sortBy(state.key, a, b));
   rows.innerHTML = list.map(d => `<tr data-id='${d.id}' tabindex='0'>`
     + `<td class='lt'><span class='lt-t'>${esc(d.t)}</span>${d.pub ? `<span class='lt-p'>${esc(d.pub)}</span>` : ''}</td>`
@@ -1031,14 +1034,14 @@ function renderTable(){
 }
 function markRow(){ rows.querySelectorAll('tr.sel').forEach(tr => tr.classList.remove('sel'));
   const tr = state.sel == null ? null : rows.querySelector(`tr[data-id='${state.sel}']`); if(tr) tr.classList.add('sel'); }
-function filterTo(iso){ fC.value = iso; fH.value = ''; renderTable(); repo.scrollIntoView({behavior:'smooth', block:'start'}); }
-fC.addEventListener('change', renderTable); fH.addEventListener('change', renderTable);
-$('lclear').addEventListener('click', () => { fC.value = ''; fH.value = ''; renderTable(); });
+function filterTo(iso){ fC.value = iso; fH.value = ''; renderTable(true); repo.scrollIntoView({behavior:'smooth', block:'start'}); }
+fC.addEventListener('change', () => renderTable(true)); fH.addEventListener('change', () => renderTable(true));
+$('lclear').addEventListener('click', () => { fC.value = ''; fH.value = ''; renderTable(true); });
 document.querySelectorAll('#lrepo .lsort').forEach(b => b.addEventListener('click', () => {
   const k = b.dataset.k;
   if(state.key === k) state.desc = !state.desc;
   else { state.key = k; state.desc = k === 'date'; }        // a new column starts newest first / A to Z
-  renderTable(); }));
+  renderTable(true); }));
 rows.addEventListener('click', e => { if(e.target.closest('a')) return; const tr = e.target.closest('tr[data-id]'); if(tr) openInList(+tr.dataset.id); });
 // hovering anywhere on a row (not only its link) previews the document; a click opens it in full
 const peek = $('tpeek'), canHover = matchMedia('(hover: hover) and (pointer: fine)');
@@ -1139,26 +1142,28 @@ function sourceHTML(f){
 const closeBtn = () => `<button type='button' class='sd-x' aria-label='${esc(tr8('Close'))}'>×</button>`;
 // what a panel was opened from gets the focus back when it closes: the element itself, or (the
 // list and the cards are re-rendered by sorting, filtering and pinning) the one now in its place
-let opener = null, openerKey = null;
-function refocus(yes){
-  const el = opener && document.contains(opener) && opener.offsetParent ? opener
-    : openerKey ? [...document.querySelectorAll(openerKey)].find(e => e.offsetParent) : null;
+// (one per panel: both can be open on a wide screen, D247)
+const OPENER = {map: {el: null, key: null}, list: {el: null, key: null}};
+function refocus(which, yes){
+  const o = OPENER[which];
+  const el = o.el && document.contains(o.el) && o.el.offsetParent ? o.el
+    : o.key ? [...document.querySelectorAll(o.key)].find(e => e.offsetParent) : null;
   if(yes && el) el.focus({preventScroll:true});
-  opener = openerKey = null;
+  o.el = o.key = null;
 }
-function closeMapPanel(back){ if(mpanel.hidden) return false; mpanel.hidden = true; mpanel.innerHTML = ''; refocus(back); return true; }
+function closeMapPanel(back){ if(mpanel.hidden) return false; mpanel.hidden = true; mpanel.innerHTML = ''; refocus('map', back); return true; }
 function dropSpacer(){ rows.querySelectorAll('tr.lspacer').forEach(tr => tr.remove()); }
 function closeListPanel(back){
   if(tpanel.hidden) return false;
   tpanel.hidden = true; tpanel.innerHTML = ''; lbody.classList.remove('open'); lbody.style.minHeight = ''; dropSpacer();
-  state.sel = null; markRow(); refocus(back); return true;
+  state.sel = null; markRow(); refocus('list', back); return true;
 }
 // over the map, on the side away from what was clicked, so that the card it came from stays in view
 function openOnMap(html, from){
   if(!wideList()) closeListPanel(false);
   closeMapPanel(false);
-  opener = from || null;
-  openerKey = !from ? null : from.dataset.f != null ? `.hl[data-f='${+from.dataset.f}']` : from.dataset.doc ? `.hl[data-doc='${+from.dataset.doc}']` : null;
+  OPENER.map.el = from || null;
+  OPENER.map.key = !from ? null : from.dataset.f != null ? `.hl[data-f='${+from.dataset.f}']` : from.dataset.doc ? `.hl[data-doc='${+from.dataset.doc}']` : null;
   const m = mapbox.getBoundingClientRect(), r = from ? from.getBoundingClientRect() : null;
   mpanel.classList.toggle('left', !!r && (r.left + r.right) / 2 > (m.left + m.right) / 2);
   mpanel.innerHTML = closeBtn() + html; mpanel.hidden = false; mpanel.scrollTop = 0;
@@ -1174,13 +1179,14 @@ function openFinding(i, from){
 function openInList(id, quiet){
   const d = BYID.get(id); if(!d) return;
   hidePeek(); if(!quiet) closeMapPanel(false); closeListPanel(false);
-  if(!quiet){ openerKey = `#lrows tr[data-id='${id}']`; opener = document.querySelector(openerKey); }
+  if(!quiet){ OPENER.list.key = `#lrows tr[data-id='${id}']`; OPENER.list.el = document.querySelector(OPENER.list.key); }
   // the panel says which row it belongs to (a wide screen: the row is marked in the same blue)
   state.sel = id; tpanel.innerHTML = closeBtn() + `<div class='sd-from'>${esc(tr8('Selected in the list'))}</div>` + docHTML(d, {});
   tpanel.hidden = false; lbody.classList.add('open');
   markRow(); placeListPanel(); if(!quiet) tpanel.focus({preventScroll:true});
 }
-function syncNarrow(){ lbody.classList.toggle('narrow', lbody.clientWidth < 760); }
+// narrow: the list cannot keep ~450 px beside the 400 px panel (a tablet in portrait is narrow)
+function syncNarrow(){ lbody.classList.toggle('narrow', lbody.clientWidth < 860); }
 function placeListPanel(){
   if(tpanel.hidden) return;
   const tr = rows.querySelector(`tr[data-id='${state.sel}']`);
@@ -1212,7 +1218,11 @@ function keepOpen(){
 mpanel.addEventListener('click', e => { if(e.target.closest('.sd-x')) closeMapPanel(true); });
 tpanel.addEventListener('click', e => { if(e.target.closest('.sd-x')) closeListPanel(true); });
 document.addEventListener('keydown', e => { if(e.key !== 'Escape') return;
-  if(closeMapPanel(true) || (!wideList() && closeListPanel(true))) return;
+  if(closeMapPanel(true)) return;
+  if(!wideList()){ if(closeListPanel(true)) return; }
+  else if(tpanel.contains(document.activeElement)){          // the panel stays open: back to its row
+    const tr = rows.querySelector(`tr[data-id='${state.sel}']`);
+    if(tr){ tr.focus({preventScroll:true}); tr.scrollIntoView({block:'nearest'}); return; } }
   if(pinned) unpin(); });
 
 // relayout whenever the map's rendered size changes: the callouts are positioned in CSS px

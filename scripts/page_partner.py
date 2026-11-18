@@ -21,8 +21,7 @@ One organisation at a time, from what the other pages already show:
 One organisation is one money-flow box (one spelling and one kind across CERF and the pooled
 funds), joined to its names in the partner lists: a UN agency by its acronym in any of the site's
 languages (OMS, PAM, OPS/OMS), another organisation by its name, or by its acronym in a country
-where it has money. An organisation only in a partner list, or only a co-financer, has a profile
-too. The matching is approximate: a name spelt differently in a framework document and in a fund's
+where it has money. An organisation that is only a co-financer has a profile too. The matching is approximate: a name spelt differently in a framework document and in a fund's
 records gives two entries.
 
 Only an organisation with money has a profile (D242): pre-arranged or released, through a
@@ -475,6 +474,8 @@ button.nfw { border:0; background:none; padding:0; font:inherit; color:#1c5cab; 
   padding:8px 10px; font-size:12.5px; line-height:1.45; color:#23364d; pointer-events:none;
   box-shadow:0 2px 6px rgba(15,23,42,.14), 0 10px 24px -10px rgba(15,23,42,.35); }
 .pftip[hidden] { display:none; }
+.pftip.cols { column-count:2; column-gap:18px; max-width:min(520px, 100%); }
+.pftip.cols div { break-inside:avoid; }
 """
 
 JS = """
@@ -541,9 +542,9 @@ function drawList(){
   pg = Math.min(Math.max(pg, 0), pages - 1);
   const shown = all.slice(pg * PAGE_N, (pg + 1) * PAGE_N);
   const nav = pages < 2 ? '' : `<div class="ppg" role="group" aria-label="${esc(tr8('pages of the list'))}">
-<button type="button" data-pg="${pg - 1}"${pg ? '' : ' disabled'}>${tr8('‹ previous')}</button>
+<button type="button" data-pg="${pg - 1}" data-dir="prev"${pg ? '' : ' disabled'}>${tr8('‹ previous')}</button>
 <span>${tr8('page {0} of {1}', pg + 1, pages)} · ${tr8('{0}–{1} of {2}', pg * PAGE_N + 1, pg * PAGE_N + shown.length, all.length)}</span>
-<button type="button" data-pg="${pg + 1}"${pg < pages - 1 ? '' : ' disabled'}>${tr8('next ›')}</button></div>`;
+<button type="button" data-pg="${pg + 1}" data-dir="next"${pg < pages - 1 ? '' : ' disabled'}>${tr8('next ›')}</button></div>`;
   const nfw = r => { if(!r.fws.length) return '–';
     const names = r.fws.map(k => fwName(FW[k]));
     return `<button type="button" class="nfw" data-fw="${esc(JSON.stringify(names))}" aria-label="${esc((r.fws.length === 1 ? tr8('1 framework:') : tr8('{0} frameworks:', r.fws.length)) + ' ' + names.join(', '))}">${r.fws.length}</button>`; };
@@ -565,9 +566,12 @@ function fwTip(span){
   if(!span){ tip.hidden = true; return; }
   let names = []; try { names = JSON.parse(span.dataset.fw); } catch(e){}
   tip.innerHTML = names.map(n => `<div>${esc(n)}</div>`).join(''); tip.hidden = false;
-  const box = el('ppOut').getBoundingClientRect(), r = span.getBoundingClientRect();
-  const below = r.bottom + tip.offsetHeight + 8 < innerHeight || r.top - tip.offsetHeight - 8 < 0;
-  tip.style.top = ((below ? r.bottom + 4 : r.top - tip.offsetHeight - 4) - box.top) + 'px';
+  tip.classList.toggle('cols', names.length > 12);           // WFP's 27: two columns, half the height
+  const box = el('ppOut').getBoundingClientRect(), r = span.getBoundingClientRect(), h = tip.offsetHeight;
+  // below the number, else above it, else wherever it fits best inside the window
+  const y = r.bottom + h + 8 < innerHeight ? r.bottom + 4 : r.top - h - 8 > 0 ? r.top - h - 4
+    : Math.max(8, Math.min(r.bottom + 4, innerHeight - h - 8));
+  tip.style.top = (y - box.top) + 'px';
   tip.style.left = Math.max(0, Math.min(r.right - box.left - tip.offsetWidth, el('ppOut').clientWidth - tip.offsetWidth)) + 'px';
 }
 el('ppOut').addEventListener('mouseover', e => { const s = e.target.closest('.nfw'); if(s) fwTip(s); });
@@ -575,7 +579,12 @@ el('ppOut').addEventListener('mouseout', e => { if(e.target.closest('.nfw') && !
 el('ppOut').addEventListener('focusin', e => { const s = e.target.closest('.nfw'); fwTip(s || null); });
 el('ppOut').addEventListener('focusout', e => { if(e.target.closest('.nfw')) fwTip(null); });
 el('ppOut').addEventListener('click', e => { const b = e.target.closest('.ppg button[data-pg]'); if(!b || b.disabled) return;
+  const dir = b.dataset.dir, below = !!b.closest('.scroll ~ .ppg');   // the pager under the list?
   pg = +b.dataset.pg; drawList();
+  // focus stays on the same button (or its other one at the first and last page)
+  const bars = el('ppOut').querySelectorAll('.ppg'), bar = bars[below ? bars.length - 1 : 0];
+  const nb = bar && (bar.querySelector(`button[data-dir='${dir}']:not(:disabled)`) || bar.querySelector('button:not(:disabled)'));
+  if(nb) nb.focus({preventScroll:true});
   const h = el('ppOut').querySelector('h2'); if(h && h.getBoundingClientRect().top < 0) h.scrollIntoView({block:'start'}); });
 
 function drawProfile(i){
@@ -679,7 +688,7 @@ function setup(){
   let h = (location.hash || '').slice(1);
   try { h = decodeURIComponent(h); } catch(e){}
   const i = h ? O.findIndex(x => fold(x.n) === fold(h)) : -1;
-  if(i >= 0) choose(i); else draw();
+  if(i >= 0) choose(i); else { if(h) try { history.replaceState(null, '', location.pathname + location.search); } catch(e){} draw(); }
 }
 el('ppForm').addEventListener('submit', e => { e.preventDefault(); find(el('ppS').value); });
 el('ppS').addEventListener('change', () => { const i = O.findIndex(x => x.n === el('ppS').value); if(i >= 0) choose(i); });
@@ -704,8 +713,8 @@ def build_partner(page, d):
         "<b>Released</b>: what the funds paid the organisation for framework activations since {y0}: for "
         "CERF, the agency of each project of the allocation the activation drew on; for a Country or Regional "
         "Fund, the grantees of the allocation the activation drew on. What it passed on to other "
-        "organisations is part of that figure; what it received through another organisation (a "
-        "sub-grant) is shown apart and is part of the other organisation's figure, so the two are not "
+        "organisations is part of that figure; what it received through sub-grants from another "
+        "organisation is shown apart and is part of the other organisation's figure, so the two are not "
         "added. <b>Co-financing</b>: the organisation's own money beside the funds, as the current "
         "frameworks record it; an amount a document states for several organisations together is "
         "listed and not added. <b>Sectors</b>: the sectors a current framework's budget gives the "

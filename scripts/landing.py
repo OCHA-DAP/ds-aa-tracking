@@ -235,15 +235,21 @@ def announcements(path=ANNOUNCEMENTS):
         raise SystemExit(f"FATAL: {path.name} must hold a list of announcements")
     out = []
     for i, r in enumerate(rows):
-        bad = (not isinstance(r, dict) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(r.get("date", "")))
-               or not str(r.get("en", "")).strip()
-               or set(r) - {"date", "en", "fr", "es", "href"}
-               or (r.get("href") and not re.fullmatch(r"(https://\S+|[a-z0-9-]+\.html(#[\w.-]*)?)", str(r["href"]))))
+        def real_day(x):
+            try:
+                return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", x)) and bool(_dt.date.fromisoformat(x))
+            except ValueError:
+                return False
+        # every value text (a null would be published as "None"); date a real day; en not empty
+        bad = (not isinstance(r, dict) or set(r) - {"date", "en", "fr", "es", "href"}
+               or not all(isinstance(v, str) for v in r.values())
+               or not real_day(r.get("date", "")) or not r.get("en", "").strip()
+               or (r.get("href", "").strip()
+                   and not re.fullmatch(r"(https://\S+|[a-z0-9_-]+\.html(#[\w.-]*)?)", r["href"].strip())))
         if bad:
-            raise SystemExit(f"FATAL: {path.name}, entry {i + 1}: needs date (YYYY-MM-DD) and en; "
-                             "optional fr, es, href (a page of the site or an https:// address)")
-        _dt.date.fromisoformat(r["date"])           # a real day
-        out.append({k: str(v).strip() for k, v in r.items() if str(v).strip()})
+            raise SystemExit(f"FATAL: {path.name}, entry {i + 1}: needs date (a real day, YYYY-MM-DD) and en, "
+                             "every value text; optional fr, es, href (a page of the site or an https:// address)")
+        out.append({k: v.strip() for k, v in r.items() if v.strip()})
     missing = [r["en"] for r in out if not (r.get("fr") and r.get("es"))]
     if missing:
         print(f"  announcements: {len(missing)} without French or Spanish (shown in English): " + "; ".join(missing))

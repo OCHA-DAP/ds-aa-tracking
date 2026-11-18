@@ -2560,7 +2560,8 @@ function buildFlow(rows, mode, year, show, names, topN, keep, topOrgs, pick){
 // to call when its own filters change.
 // cfg.noYear: a year the chart never shows, in any view, 'all years' included — the Financing
 // page's current year, until the donors' contributions for it are final (owner, 2026-10-30; the
-// rows stay in the page data, and the page says nothing about it)
+// page says nothing about it). Since D245 the Financing page's data holds no row of that year
+// either: the admin page money-flows-this-year.html has them
 function mountFlow(cfg){
   if(!window.sankeySVG) return ()=>{};
   const noY = cfg.noYear == null ? null : +cfg.noYear, keep0 = cfg.keep || (()=>true);
@@ -3292,7 +3293,11 @@ def build_funding(page, d):
         "fwList": fw_list,
         "fwy": d.get("fwy") or [],
         "unSplit": un_split,
-        "flow": flow_rows, "flowYears": flow_years, "flowDefault": flow_default,
+        # the money flows without the current year (D167): not drawn, and not in the page either
+        # (D245: its figures are sensitive; the admin page has them)
+        "flow": [r for r in flow_rows if int(r["y"]) != cy],
+        "flowYears": {m: [y for y in ys if int(y) != cy] for m, ys in flow_years.items()},
+        "flowDefault": flow_default,
         "fundNames": fund_names, "cy": cy,
         "heat": {"steps": HEAT_STEPS, "colors": HEAT_COLORS},
     }
@@ -3715,7 +3720,7 @@ draw();"""
                   "subset (a sub-region, a few countries) to total it. The money-flow chart can start from "
                   "the donors of each fund."),
                panels, json.dumps(data, default=str), js)
-    build_flows_this_year(page, data)
+    build_flows_this_year(page, data, flow_rows, flow_years, flow_default)
 
 
 # the money flows of the current year, which the Financing page's chart leaves out until the
@@ -3725,12 +3730,15 @@ draw();"""
 FLOWS_THIS_YEAR = "money-flows-this-year.html"
 
 
-def build_flows_this_year(page, data):
+def build_flows_this_year(page, data, flow_rows, flow_years, flow_default):
+    """Every year's flows, the current year's included (the Financing page's data has none)."""
     cy = int(data["cy"])
-    years = {m: [int(y) for y in data["flowYears"].get(m) or []] for m in ("p", "r")}
-    sub = {"flow": data["flow"], "flowYears": years, "fundNames": data["fundNames"], "cy": cy,
+    years = {m: [int(y) for y in flow_years.get(m) or []] for m in ("p", "r")}
+    sub = {"flow": flow_rows, "flowYears": years, "fundNames": data["fundNames"], "cy": cy,
            # it opens on this year, in both views, where there is money for it
-           "flowDefault": {m: cy if cy in years[m] else data["flowDefault"].get(m) for m in ("p", "r")}}
+           "flowDefault": {m: cy if cy in years[m] else flow_default.get(m) for m in ("p", "r")}}
+    opens = (f"Opens on the money released in {cy} so far," if sub["flowDefault"]["r"] == cy else
+             f"Nothing is released in {cy} yet: it opens on {sub['flowDefault']['r']},")
     panels = f"""
 <div class='card'><b>Not public.</b> The Financing page's money-flow chart with the current year, {cy}, which the
 public pages leave out until the donors' contributions for it are final. The figures update every night
@@ -3742,8 +3750,8 @@ until the year closes. Every other year is on the <a href='dash-funding.html'>Fi
  <label title='AA money allocated without a framework: released, or pre-arranged and not yet released'><input type='checkbox' id='fAdh'> Non-framework allocations</label>
  <label>Fund <select id='fFund'><option value=''>CERF and Country and Regional Funds</option><option value='cerf'>CERF</option><option value='pooled'>Country and Regional Funds</option></select></label>
 </div>
-<h2>Where the money flows, {cy}</h2>
-<p class='meta'>Opens on the money released in {cy} so far, from each fund's donors; switch to <i>pre-arranged</i>
+<h2>Where the money flows, {cy} included</h2>
+<p class='meta'>{opens} from each fund's donors; switch to <i>pre-arranged</i>
 for the envelopes in place today. The year list holds every year.</p>
 {_flow_panel(donors_on=True)}"""
     js = FLOW_JS + """

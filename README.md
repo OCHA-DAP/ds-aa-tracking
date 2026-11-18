@@ -276,7 +276,8 @@ are kept forever (the year-end official state, for the map's time view).
   "es": "…", "href": "pillar-learning.html"}` (date and en required; href a page of the site or
   an `https://` address). Each shows from its date for 30 days by the reader's clock, so one
   dated ahead appears on its day. It is on the open map too: words only, nothing that is not
-  public (D246)
+  public. The open map is built from `prod`, so an announcement reaches it after the next
+  promote; the development map shows it after the next publish (D246)
 
 ## Entering data without database access
 
