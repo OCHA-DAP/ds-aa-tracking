@@ -60,8 +60,12 @@ def _js(v):
 def _key_js():
     """aaKey(frame): each time the frame loads, offer it the password, to the assistant's origin
     only; its login page takes it (and nothing else does)."""
-    return ("function aaKey(f){ var K = " + _js(KEY) + ", O = " + _js(origin()) + "; if (!K || !f) return;"
-            " function give(){ try { f.contentWindow.postMessage({type: 'aa-key', key: K}, O); } catch(e){} }"
+    # ... and say which page the panel is open on (the file name only), for the record of the
+    # assistant's use (D248): the frame cannot see it, its referrer is the site's address alone
+    return ("function aaKey(f){ var K = " + _js(KEY) + ", O = " + _js(origin()) + "; if (!f) return;"
+            " var P = (location.pathname.split('/').pop() || 'index.html').slice(0, 64);"
+            " function give(){ try { f.contentWindow.postMessage(K ? {type: 'aa-key', key: K, page: P}"
+            " : {type: 'aa-page', page: P}, O); } catch(e){} }"
             " f.addEventListener('load', give); give(); }")
 
 

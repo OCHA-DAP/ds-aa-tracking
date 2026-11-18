@@ -353,5 +353,9 @@ Anthropic key, the DB write login, `SITE_TOKEN` (viewer), `EDITOR_TOKEN` (editor
 `GITHUB_TOKEN` (Publish changes) and `COUNT_DB_UID` / `COUNT_DB_PW`: the login of the open
 site's page counts (D197: `POST /hit`, the one endpoint without a token, adds 1 to a day's row of
 `aa.page_count`; that login can only read and add to that table; unset, the write login is used).
+`ASSISTANT_TOKEN` switches on the record of the AA assistant's questions (D248): the assistant's
+server sends it in `x-assistant-token` to `POST /assistant-log` and `/assistant-rating`, which write
+`aa.assistant_question` (no name, login or IP address; texts removed after 180 days; never in a
+snapshot). The admin site's Assistant use page reads it live from `GET /assistant-usage`.
 Redeploy with `az webapp deploy -g IMB-CHD-DataScience-EastUS2 -n chd-ds-aa-extract --type zip --src-path <zip>` from a zip of `proxy/` (`server.js`, `package.json`
 and `mirror_tables.json`: the proxy will not start without the mirror list).

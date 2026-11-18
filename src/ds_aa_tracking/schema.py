@@ -820,6 +820,45 @@ DURABLE_TABLES = {
             n bigint NOT NULL DEFAULT 0,
             PRIMARY KEY (day, page, event, detail, lang, device, referrer)
         )""",
+    # ------------------------------------------- the AA assistant's questions (D248)
+    # One row per question put to the AA assistant (the chatbot of D228, D233): what was asked,
+    # what the assistant used to answer, how it went and, where the reader gave one, a rating.
+    # Written only by the proxy's POST /assistant-log and /assistant-rating, which the assistant's
+    # own server calls with a token of its own; read by the admin site's "Assistant use" page
+    # (GET /assistant-usage). No name, login or IP address is stored: everyone shares one
+    # password, and `conversation` is a random id per browser tab that groups a conversation.
+    # The answer is kept only for a failure or a "not helpful" rating. The texts (question,
+    # answer, comment, error) are removed after 180 days; the counts stay.
+    # Kept OUT of the snapshot (snapshot.NOT_EXPORTED): a snapshot of 31 December is kept for
+    # good, and the assistant reads the snapshot, so it must never read other people's questions.
+    "assistant_question": """
+        CREATE TABLE IF NOT EXISTS aa.assistant_question (
+            id text PRIMARY KEY,                    -- random, one per question
+            asked_at timestamptz NOT NULL DEFAULT now(),
+            conversation text NOT NULL DEFAULT '',  -- random, one per conversation in a browser tab
+            turn integer NOT NULL DEFAULT 1,        -- the question's place in its conversation
+            surface text NOT NULL DEFAULT '',       -- page (the assistant's own page) | panel (inside the tracker's development site)
+            from_page text NOT NULL DEFAULT '',     -- panel: the tracker page it was open on
+            thorough boolean NOT NULL DEFAULT false,  -- asked with the "Thorough" box ticked
+            question text,                          -- removed after 180 days
+            countries text[] NOT NULL DEFAULT '{}', -- ISO3 of the countries the question or its queries name
+            hazards text[] NOT NULL DEFAULT '{}',   -- the tracker's hazard codes they name
+            tables_used text[] NOT NULL DEFAULT '{}',  -- tables and views its queries read
+            tools text[] NOT NULL DEFAULT '{}',     -- the assistant's tools it called
+            n_steps integer NOT NULL DEFAULT 0,
+            used_documents boolean NOT NULL DEFAULT false,  -- searched or read framework document text
+            made_chart boolean NOT NULL DEFAULT false,
+            made_file boolean NOT NULL DEFAULT false,       -- a CSV to download
+            searched_web boolean NOT NULL DEFAULT false,
+            seconds numeric,
+            outcome text NOT NULL DEFAULT 'answered',  -- answered | no_answer | error | limit | timeout | stopped
+            missing boolean NOT NULL DEFAULT false,    -- the answer says it could not find something (read from its wording: a guess)
+            error text,                             -- the message shown for a failure; removed after 180 days
+            rating smallint,                        -- 1 helpful | -1 not helpful
+            comment text,                           -- the reader's comment with a rating; removed after 180 days
+            answer text,                            -- only for a failure or a "not helpful"; removed after 180 days
+            rated_at timestamptz
+        )""",
     # ------------------------------------------- backtests (simulated activations)
     # Written by the knowledge base's load_aa_performance.py until 2026-10-05 (from its
     # gsheet / insurance-Excel crosswalk); owned here since. Shapes are the live ones.

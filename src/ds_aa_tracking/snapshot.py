@@ -48,6 +48,10 @@ def q(ident: str) -> str:
 
 
 # --------------------------------------------------------------------------- export
+# Tables that never go into a snapshot, with everything about them (columns, constraints, indexes,
+# comments): the AA assistant's question log (D248) holds what readers typed, kept 180 days, while
+# a snapshot of 31 December is kept for good and the assistant itself reads the snapshot
+NOT_EXPORTED = {"assistant_question"}
 _CATALOG = {
     "tables": """
         SELECT c.relname AS name
@@ -181,7 +185,8 @@ def export(engine, out: Path, source: str = "") -> dict:
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as conn:
         with conn.begin():
             for key, sql in _CATALOG.items():
-                meta[key] = _records(pd.read_sql(sa.text(sql), conn, params={"s": SCHEMA}))
+                meta[key] = [r for r in _records(pd.read_sql(sa.text(sql), conn, params={"s": SCHEMA}))
+                             if (r.get("name") if key == "tables" else r.get("table_name")) not in NOT_EXPORTED]
             for t in [r["name"] for r in meta["tables"]]:
                 types = {c["name"]: c["type"] for c in meta["columns"] if c["table_name"] == t}
                 df = _read(conn, t, types)
