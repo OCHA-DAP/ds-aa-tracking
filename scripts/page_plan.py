@@ -369,8 +369,8 @@ def _people_series(M, ex, years):
                     continue
                 r["nA"] += 1
                 reached, stand = x.get("reached"), x.get("planned")
-                plan = al.at[code, "individuals_planned"] if code in al.index else None
-                plan = float(plan) if plan is not None and pd.notna(plan) and plan > 0 else stand
+                plan = al.at[code, "individuals_planned"] if code in al.index and not x.get("part") else None
+                plan = float(plan) if plan is not None and pd.notna(plan) and plan > 0 else stand   # D250: a part keeps its own
                 put("p", plan, shares(code, "planned"))
                 if (code, "planned") in dis:
                     r["dp"] += dis[(code, "planned")]

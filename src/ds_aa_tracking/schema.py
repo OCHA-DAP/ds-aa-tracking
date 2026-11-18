@@ -239,7 +239,9 @@ TABLES = {
                                            -- amount entered before OneGMS records the CERF
                                            -- allocation: scripts/resolve_provisional.py (nightly)
                                            -- swaps in OneGMS's code and amount once it appears
-                                           -- ('onegms-auto')
+                                           -- ('onegms-auto'); 'part' = the activation drew only
+                                           -- part of the allocation (D250): sync_cerf.py keeps
+                                           -- its amount and people as entered
             source text NOT NULL,
             updated_at timestamptz NOT NULL DEFAULT now(),
             UNIQUE NULLS NOT DISTINCT

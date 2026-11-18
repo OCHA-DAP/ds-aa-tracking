@@ -29,7 +29,12 @@ mirror, aa.cerf_allocation) gives a figure above zero:
    a NULL window last: the row the pages give the allocation's reach to, landing's reach_row)
    and that row's activation. A later row's people figure is cleared, and so is its
    activation's when it repeats the allocation's planned people; a figure of its own stays.
-4. Left as entered, with a warning in the log:
+4. Left as entered, without a warning: a funding row marked match_method 'part' (D250), an
+   activation that drew only part of its CERF allocation, the rest of which paid for something
+   else (Somalia's CERF-SOM-25-RR-1496, 2025: $10M approved, half drought response in the north,
+   half anticipatory action in the south, so $5M here). Its amount and people stay as entered,
+   and so does its activation's people figure.
+5. Left as entered, with a warning in the log:
    - a CERF funding row whose allocation is of another country than the row (a wrong code);
    - a coded CERF row while another CERF row of the same country, hazard and year has no code
      yet (the allocation may be split over both, e.g. two windows), until it is coded;
@@ -138,6 +143,9 @@ def _activation(conn, r):
 def _blocked(r, say):
     """Warn and return True when a funding row must be left as entered."""
     lab = _lab(r, FKEY)
+    if r["match_method"] == "part":     # D250: only part of the allocation is this activation's
+        say(f"  {lab}: part of {r['allocation_code']} (match_method 'part'): amount and people as entered")
+        return True
     if r["alloc_country"] != r["country_iso3"]:
         say(f"::warning::{lab}: allocation {r['allocation_code']} is of {r['alloc_country']}, not "
             f"{r['country_iso3']}: a wrong allocation code? Left as entered")

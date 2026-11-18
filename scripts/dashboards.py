@@ -1367,9 +1367,6 @@ def _fetch(e):
     _opt("wact", """SELECT country_iso3, hazard, event_date::text AS event_date, window_name,
                            full_activation FROM aa.window_activation""",
          ["country_iso3", "hazard", "event_date", "window_name", "full_activation"])
-    _opt("actual_url", """SELECT kb_framework, event_date::text AS event_date, window_name, url
-                          FROM aa.actual_activation WHERE url IS NOT NULL""",
-         ["kb_framework", "event_date", "window_name", "url"])
     _opt("cerf_year", "SELECT application_code, year FROM aa.cerf_allocation",
          ["application_code", "year"])
     _opt("cbpf_org", """SELECT p.allocation_year AS year, fu.fund_code, p.org_type,
@@ -4175,18 +4172,16 @@ def _cerf_page(code, cy):
 
 def _event_links(d, c, h, kb_fw, umap, ed, window_name, event_type):
     """The funding rows and recorded pages of one real activation: its announcement
-    (aa.window_activation url), CERF allocations [(code, page)] and other recorded pages
-    (aa.actual_activation, same month and window)."""
+    (aa.window_activation url) and CERF allocations [(code, page)]. `other` (pages recorded
+    beside the announcement) is empty since D249: the knowledge-base era's copy of the
+    activations that held them is no longer read; kb_fw is kept for the callers."""
     wn = window_name if isinstance(window_name, str) else ""
     fund = d["activation"]
     f = fund[(fund["country_iso3"] == c) & (fund["hazard"] == h)
              & (fund["event_date"].astype(str) == ed) & (fund["event_type"] == event_type)
              & (fund["window_name"].fillna("") == wn)]
     ann = umap.get((c, h, ed, wn or window_name))
-    au = d["actual_url"][d["actual_url"]["kb_framework"] == kb_fw] if kb_fw else d["actual_url"].iloc[0:0]
-    other = [u for u in au.loc[[str(x)[:7] == ed[:7] and (_loose(w, wn) or not wn)
-                                for x, w in zip(au["event_date"], au["window_name"])], "url"]
-             if isinstance(u, str) and u and u != ann]
+    other = []
     cy = dict(zip(d["cerf_year"]["application_code"], d["cerf_year"]["year"]))
     cerf = [(x.allocation_code, _cerf_page(x.allocation_code, cy)) for x in f.itertuples()
             if x.fund_code == "cerf" and isinstance(x.allocation_code, str)]
