@@ -290,6 +290,11 @@ ADMIN_HOME = [
         ("usage.html", "how the open site is used: page views, map panels opened, languages, "
                        "downloads and links out, from its daily counts"),
     ]),
+    ("Figures not public yet", [
+        ("money-flows-this-year.html", "the Financing page's money-flow chart with the current year, "
+                                       "which the public pages leave out until the donors' contributions "
+                                       "for it are final"),
+    ]),
 ]
 
 
