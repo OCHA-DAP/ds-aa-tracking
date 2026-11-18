@@ -112,24 +112,18 @@ def policy_box(page_name):
         return ""
     from site_i18n import ATTR, T, TB
     title, body = POLICY[page_name]
-    # a <details> box: open on wide screens, folded to its heading on phones (owner, 2026-10-28:
-    # "too big" on mobile); without scripts it stays open
-    return (f"<details class='policy' open><summary class='policy-h'>{T(title)}"
-            f"<span class='policy-draft' {ATTR('title', 'wording under review')}>{T('draft')}</span></summary>"
-            f"<div class='policy-b'>{TB(body)}</div></details>"
-            "<script>if(matchMedia('(max-width:759px)').matches)"
-            "document.currentScript.previousElementSibling.removeAttribute('open');</script>")
+    # always open, on every screen (D243; owner, 2026-11-18: "let's have all these definitions be
+    # non-collapsible"). It was a <details> box folded to its heading on phones (owner, 2026-10-28:
+    # "too big" on mobile)
+    return (f"<section class='policy'><h2 class='policy-h'>{T(title)}"
+            f"<span class='policy-draft' {ATTR('title', 'wording under review')}>{T('draft')}</span></h2>"
+            f"<div class='policy-b'>{TB(body)}</div></section>")
 
 
 POLICY_CSS = """
 .policy { background:#f3f7fb; border:1px solid #d5e3f0; border-left:4px solid #1f69b3; border-radius:8px;
           padding:12px 16px; margin:4px 0 14px; max-width:980px; }
-.policy-h { font-weight:700; font-size:15px; color:#0f2540; margin-bottom:4px; cursor:pointer; list-style:none; }
-.policy-h::-webkit-details-marker { display:none; }
-.policy-h::before { content:"\\25B8"; display:inline-block; width:1em; color:#1f69b3; transition:transform .15s; }
-.policy[open] > .policy-h::before { transform:rotate(90deg); }
-.policy:not([open]) > .policy-h { margin-bottom:0; }
-@media (prefers-reduced-motion: reduce) { .policy-h::before { transition:none; } }
+.policy-h { font-weight:700; font-size:15px; line-height:1.3; color:#0f2540; margin:0 0 4px; }
 .policy-b { font-size:13.5px; line-height:1.55; color:#23364d; }
 .policy-b a { color:#1f69b3; }
 .policy-q { margin:2px 0 8px; padding:0 0 0 12px; border-left:3px solid #b9cfe6; font-style:italic; color:#23364d; }

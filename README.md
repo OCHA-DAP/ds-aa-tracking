@@ -268,7 +268,15 @@ are kept forever (the year-end official state, for the map's time view).
   `adm-<ISO3>.json` per country with its neighbours, simplified as one shared-edge topology; layers cached under `data/fieldmaps/`)
   Scope tiers: inside a block-form `geographic_scope`, a comment line on its own names a tier
   for the items below it (`# riverine window — …`), and an item like `Non-endemic provinces
-  (all other)` is a rest-of-country tier; tiers render as shades of the hazard colour
+  (all other)` is a rest-of-country tier; tiers render as shades of the hazard colour.
+  The **What's new** box beside the definition box lists the last 30 days: framework
+  activations, versions endorsed or in development, non-framework allocations (whatever layers
+  are on), and the team's own announcements, which are hand-edited in
+  `site_src/announcements.json` — a list of `{"date": "YYYY-MM-DD", "en": "…", "fr": "…",
+  "es": "…", "href": "pillar-learning.html"}` (date and en required; href a page of the site or
+  an `https://` address). Each shows from its date for 30 days by the reader's clock, so one
+  dated ahead appears on its day. It is on the open map too: words only, nothing that is not
+  public (D246)
 
 ## Entering data without database access
 

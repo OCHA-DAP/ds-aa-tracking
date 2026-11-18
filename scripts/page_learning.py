@@ -626,6 +626,7 @@ table.ldocs { border:1px solid #e3e6ea; }
 table.ldocs td { padding:7px 8px; font-size:13px; max-width:none; }
 table.ldocs tbody tr { cursor:pointer; }
 table.ldocs tbody tr.sel td { background:#e6f0fb; }
+table.ldocs tbody tr.sel td.lt { box-shadow:inset 4px 0 0 #1d5aa8; }
 table.ldocs tbody tr:focus-visible { outline:2px solid #2a78d6; outline-offset:-2px; }
 table.ldocs td.lt { width:58%; } .lt-t { font-weight:600; color:#0f2540; } .lt-p { color:#56657a; font-size:12px; margin-left:8px; }
 table.ldocs td.yr, table.ldocs th.yr { text-align:right; white-space:nowrap; }
@@ -660,7 +661,17 @@ table.ldocs td.lk a { color:#1d5aa8; text-decoration:none; } table.ldocs td.lk a
 .lmapbox.compact ~ .mpanel { position:relative; inset:auto; width:auto; margin-top:10px; overflow:visible; }
 .lbody { position:relative; overflow-x:auto; }   /* five columns: on a phone the list scrolls, not the page */
 .lbody.open:not(.narrow) table.ldocs { width:calc(100% - 400px); }
+/* a wide screen: a document is always open beside the list (D247; owner, 2026-11-18), so the list
+   keeps its width; the open document's row and its panel share the same blue, and a notch on the
+   panel points at the row */
+.lbody:not(.narrow) table.ldocs { width:calc(100% - 400px); }
 .tpanel { position:absolute; z-index:4; right:0; top:0; width:384px; }
+.lbody:not(.narrow) .tpanel { border-left:4px solid #1d5aa8; }
+.lbody:not(.narrow) .tpanel::before { content:''; position:absolute; top:var(--nt, 12px); left:-13px;
+  border:9px solid transparent; border-left:0; border-right-color:#1d5aa8; }
+.lbody:not(.narrow) .tpanel .sd-x { display:none; }   /* always open: nothing to close */
+.sd-from { font-size:11px; font-weight:600; color:#1d5aa8; margin:0 30px 6px 0; }
+.lbody.narrow .sd-from { display:none; }
 .lbody.narrow .tpanel { left:0; width:auto; }
 table.ldocs tr.lspacer, table.ldocs tr.lspacer:hover td { cursor:default; background:none; } table.ldocs tr.lspacer td { padding:0; border:0; }
 .sd-x { position:absolute; top:10px; right:12px; border:0; background:none; font-size:24px; line-height:1; color:#56657a; cursor:pointer; }
@@ -1016,7 +1027,7 @@ function renderTable(){
     const ar = b.querySelector('.larrow'); ar.textContent = on ? (state.desc ? '▼' : '▲') : '↕'; ar.classList.toggle('off', !on);
     b.closest('th').setAttribute('aria-sort', !on ? 'none' : state.desc ? 'descending' : 'ascending'); });
   hidePeek();
-  markRow(); placeListPanel();
+  markRow(); placeListPanel(); keepOpen();
 }
 function markRow(){ rows.querySelectorAll('tr.sel').forEach(tr => tr.classList.remove('sel'));
   const tr = state.sel == null ? null : rows.querySelector(`tr[data-id='${state.sel}']`); if(tr) tr.classList.add('sel'); }
@@ -1144,7 +1155,8 @@ function closeListPanel(back){
 }
 // over the map, on the side away from what was clicked, so that the card it came from stays in view
 function openOnMap(html, from){
-  closeListPanel(false); closeMapPanel(false);
+  if(!wideList()) closeListPanel(false);
+  closeMapPanel(false);
   opener = from || null;
   openerKey = !from ? null : from.dataset.f != null ? `.hl[data-f='${+from.dataset.f}']` : from.dataset.doc ? `.hl[data-doc='${+from.dataset.doc}']` : null;
   const m = mapbox.getBoundingClientRect(), r = from ? from.getBoundingClientRect() : null;
@@ -1159,12 +1171,14 @@ function openFinding(i, from){
 }
 // in the list, beside the row it belongs to; where the list is too narrow for both, under the row,
 // with the rows below moved down to make room
-function openInList(id){
+function openInList(id, quiet){
   const d = BYID.get(id); if(!d) return;
-  hidePeek(); closeMapPanel(false); closeListPanel(false);
-  openerKey = `#lrows tr[data-id='${id}']`; opener = document.querySelector(openerKey);
-  state.sel = id; tpanel.innerHTML = closeBtn() + docHTML(d, {}); tpanel.hidden = false; lbody.classList.add('open');
-  markRow(); placeListPanel(); tpanel.focus({preventScroll:true});
+  hidePeek(); if(!quiet) closeMapPanel(false); closeListPanel(false);
+  if(!quiet){ openerKey = `#lrows tr[data-id='${id}']`; opener = document.querySelector(openerKey); }
+  // the panel says which row it belongs to (a wide screen: the row is marked in the same blue)
+  state.sel = id; tpanel.innerHTML = closeBtn() + `<div class='sd-from'>${esc(tr8('Selected in the list'))}</div>` + docHTML(d, {});
+  tpanel.hidden = false; lbody.classList.add('open');
+  markRow(); placeListPanel(); if(!quiet) tpanel.focus({preventScroll:true});
 }
 function syncNarrow(){ lbody.classList.toggle('narrow', lbody.clientWidth < 760); }
 function placeListPanel(){
@@ -1181,10 +1195,24 @@ function placeListPanel(){
   const top = (narrow ? row.bottom + 6 : row.top) - box.top;
   // always level with its row; the list grows when the panel runs past its end
   tpanel.style.top = top + 'px'; lbody.style.minHeight = (top + tpanel.offsetHeight) + 'px';
+  tpanel.style.setProperty('--nt', Math.max(6, Math.round(row.height / 2 - 9)) + 'px');   // the notch, at the row's middle
 }
-[mpanel, tpanel].forEach(el => el.addEventListener('click', e => { if(e.target.closest('.sd-x')){ closeMapPanel(true); closeListPanel(true); } }));
+// a wide screen: a document is always open beside the list, the first one listed until another is
+// chosen (D247; owner, 2026-11-18: "can we always have a document open on the right, starting
+// with the first document by default? then the table doesn't keep changing size"). A phone keeps
+// the panel under its row, opened by a click and closed by its ×
+const wideList = () => !lbody.classList.contains('narrow');
+function keepOpen(){
+  if(!wideList()) return;
+  const sel = state.sel != null && rows.querySelector(`tr[data-id='${state.sel}']`);
+  if(sel && !tpanel.hidden) return;
+  const tr = sel || rows.querySelector('tr[data-id]');      // the one chosen (a language switch keeps it), else the first
+  if(tr) openInList(+tr.dataset.id, true);
+}
+mpanel.addEventListener('click', e => { if(e.target.closest('.sd-x')) closeMapPanel(true); });
+tpanel.addEventListener('click', e => { if(e.target.closest('.sd-x')) closeListPanel(true); });
 document.addEventListener('keydown', e => { if(e.key !== 'Escape') return;
-  if(closeMapPanel(true) || closeListPanel(true)) return;
+  if(closeMapPanel(true) || (!wideList() && closeListPanel(true))) return;
   if(pinned) unpin(); });
 
 // relayout whenever the map's rendered size changes: the callouts are positioned in CSS px
@@ -1193,7 +1221,7 @@ document.addEventListener('keydown', e => { if(e.key !== 'Escape') return;
 let rto = null, laidW = 0;
 const boxW = () => mapbox.getBoundingClientRect().width;
 function relayout(){ clearTimeout(rto); rto = setTimeout(() => {
-  const w = boxW(); syncNarrow(); placeListPanel();
+  const w = boxW(); syncNarrow(); placeListPanel(); keepOpen();
   if(Math.abs(w - laidW) < 1) return;
   laidW = w; runLayout(); if(pinned && !compact) placeCard(pinned); }, 120); }
 new ResizeObserver(relayout).observe(mapbox);
@@ -1204,8 +1232,10 @@ buildCallouts(); syncNarrow(); renderTable(); runLayout(); laidW = boxW();
 // cards, the list and its count are written again; an open panel closes
 document.addEventListener('aalang', () => {
   labels.forEach(Lb => { Lb.el.remove(); Lb.lns.forEach(ln => ln.remove()); }); labels.length = 0;
+  const keep = wideList() && !tpanel.hidden ? state.sel : null;
   buildCallouts(); closeMapPanel(false); closeListPanel(false);
   const pin = pinned; unpin();
+  if(keep != null) state.sel = keep;          // renderTable opens it again (keepOpen), in the new language
   renderTable(); runLayout(); laidW = boxW();
   if(pin && C[pin]){ pinned = pin; showCountry(pin, true); }
 });

@@ -23,7 +23,11 @@ funds), joined to its names in the partner lists: a UN agency by its acronym in 
 languages (OMS, PAM, OPS/OMS), another organisation by its name, or by its acronym in a country
 where it has money. An organisation only in a partner list, or only a co-financer, has a profile
 too. The matching is approximate: a name spelt differently in a framework document and in a fund's
-records gives two entries."""
+records gives two entries.
+
+Only an organisation with money has a profile (D242): pre-arranged or released, through a
+framework or a non-framework allocation, from a fund or through a sub-grant, or co-financing. One
+named in a partner list alone (technical support, coordination) is left out."""
 
 import html
 import json
@@ -392,6 +396,18 @@ def assemble(d):
     if lost >= 0.5:
         print(f"  partner profile: ${lost:,.0f} of project budgets by sector under a name no organisation has")
 
+    # only the organisations with money (D242; owner, 2026-11-18: "don't include only technical
+    # support organizations. include only orgs who receive framework, non-framework, or via
+    # subgrants, prearranged or released, or provide cofinancing"): a money row of any kind, year,
+    # layer or fund, or a co-financing line, its own or stated jointly. An organisation only in a
+    # partner list (technical support, coordination, a government counterpart) has no profile
+    paid = {key[0] for key, v in agg.items() if v >= 0.5} | {k for k in order if ent[k]["c"]}
+    n_list_only = sum(k not in paid for k in order)
+    order = [k for k in order if k in paid]
+    if n_list_only:
+        print(f"  partner profile: {n_list_only} organisation(s) named only in partner lists, with no money "
+              "or co-financing, left out")
+
     # two organisations of one name (two countries' "Ministry of Agriculture"): each says its country
     seen = {}
     for k in order:
@@ -409,6 +425,7 @@ def assemble(d):
         if k in ent:
             ent[k]["al"].add(alias.upper())
     idx = {k: i for i, k in enumerate(order)}
+    assert all(key[0] in idx for key, v in agg.items() if v >= 0.5)
     orgs = [{"n": e["n"], "k": e["k"], "l": sorted([f, rs] for f, rs in e["l"].items()), "c": e["c"],
              "al": sorted(a for a in e["al"] if _fold(a) not in _fold(e["n"])),
              "sb": e["sb"], "sr": {c: {fu: round(v) for fu, v in by.items() if v >= 0.5} for c, by in e["sr"].items()}}
@@ -445,6 +462,19 @@ table.pp tr.tot td { font-weight:600; border-top:2px solid #c9d1dc; }
 table.pp button.lnk { border:0; background:none; padding:0; color:#1c5cab; cursor:pointer; font:inherit; text-align:left; }
 table.pp button.lnk:hover { text-decoration:underline; }
 .muted { color:#666; }
+#ppOut { position:relative; }
+/* the list's pages (D242) */
+.ppg { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; font-size:13px; margin:6px 0; }
+.ppg button { font-size:13px; padding:4px 10px; border:1px solid #b9c2cf; border-radius:6px; background:#fff; cursor:pointer; }
+.ppg button:hover:not(:disabled) { background:#f0f4f9; }
+.ppg button:disabled { color:#9aa3ae; cursor:default; }
+/* the number of frameworks: their names on hover or focus */
+button.nfw { border:0; background:none; padding:0; font:inherit; color:#1c5cab; cursor:help;
+  text-decoration:underline dotted; text-underline-offset:3px; }
+.pftip { position:absolute; z-index:6; max-width:min(360px, 100%); background:#fff; border:1px solid #cfd8e3; border-radius:8px;
+  padding:8px 10px; font-size:12.5px; line-height:1.45; color:#23364d; pointer-events:none;
+  box-shadow:0 2px 6px rgba(15,23,42,.14), 0 10px 24px -10px rgba(15,23,42,.35); }
+.pftip[hidden] { display:none; }
 """
 
 JS = """
@@ -479,31 +509,80 @@ function figures(i, o){
           pre: YS.map(y => of('P', y)), relY: YS.map(y => of('R', y)), subY: YS.map(y => of('S', y))};
 }
 
-// the organisations ranked, before one is chosen
+// an organisation's figures framework by framework, as its profile's table lists them: the money
+// rows of the boxes ticked (pre-arranged: this year's only), its roles in the partner lists, its
+// co-financing
+function perFramework(i, o, f){
+  const x = O[i], per = new Map();
+  const at = k => { if(!per.has(k)) per.set(k, {P:0, R:0, S:0, O:0, roles:null, cof:0, shared:[]}); return per.get(k); };
+  (f || figures(i, o)).rows.forEach(r => { if(r[1] !== 'P' || r[2] === CY) at(r[3])[r[1]] += r[6]; });
+  x.l.forEach(([k, roles]) => { at(k).roles = roles; });
+  x.c.forEach(([k, usd, shared]) => { if(shared) at(k).shared.push([usd, shared]); else at(k).cof += usd; });
+  return per;
+}
+const cofOf = i => sum(O[i].c.filter(c => !c[2]).map(c => c[1]));
+
+// every organisation, the most money first, a page at a time (owner, 2026-11-18: "show them all
+// with pagination"), with the number of frameworks it is in and their names on hover
+const PAGE_N = 25;
+let pg = 0;
 function drawList(){
   const o = opts();
-  const all = O.map((x, i) => ({i, x, f: figures(i, o)})).filter(r => r.f.preNow || r.f.rel || r.f.sub)
-    .sort((a, b) => (b.f.preNow + b.f.rel + b.f.sub) - (a.f.preNow + a.f.rel + a.f.sub));
-  const top = all.slice(0, 25);
-  el('ppOut').innerHTML = `<h2>${tr8('Organisations with the most framework money')}</h2>
-<p class="meta">${tr8('The {0} organisations with the most pre-arranged money now and money released since {1}, of the {2} that have either. Choose one for its profile.', top.length, YS[0], all.length)}</p>
-<div class="scroll" style="max-height:none"><table class="data pp"><thead><tr><th>${tr8('organisation')}</th><th>${tr8('kind')}</th>
+  const all = O.map((x, i) => { const f = figures(i, o), cof = cofOf(i);
+      // the frameworks of its profile's table: not a non-framework allocation, nor a country's money of no single framework
+      const fws = [...perFramework(i, o, f).keys()].filter(k => FW[k].h && !FW[k].a)
+        .sort((a, b) => fwName(FW[a]).localeCompare(fwName(FW[b])));
+      return {i, x, f, cof, fws}; })
+    // every organisation of the profile with money under the boxes ticked: also one pre-arranged for only in an
+    // earlier year, or co-financing only jointly with others (its figures then show '–')
+    .filter(r => r.f.preNow || r.f.rel || r.f.sub || r.cof || r.f.pre.some(v => v) || r.x.c.length)
+    .sort((a, b) => (b.f.preNow + b.f.rel + b.f.sub) - (a.f.preNow + a.f.rel + a.f.sub) || b.cof - a.cof || a.x.n.localeCompare(b.x.n));
+  const pages = Math.max(1, Math.ceil(all.length / PAGE_N));
+  pg = Math.min(Math.max(pg, 0), pages - 1);
+  const shown = all.slice(pg * PAGE_N, (pg + 1) * PAGE_N);
+  const nav = pages < 2 ? '' : `<div class="ppg" role="group" aria-label="${esc(tr8('pages of the list'))}">
+<button type="button" data-pg="${pg - 1}"${pg ? '' : ' disabled'}>${tr8('‹ previous')}</button>
+<span>${tr8('page {0} of {1}', pg + 1, pages)} · ${tr8('{0}–{1} of {2}', pg * PAGE_N + 1, pg * PAGE_N + shown.length, all.length)}</span>
+<button type="button" data-pg="${pg + 1}"${pg < pages - 1 ? '' : ' disabled'}>${tr8('next ›')}</button></div>`;
+  const nfw = r => { if(!r.fws.length) return '–';
+    const names = r.fws.map(k => fwName(FW[k]));
+    return `<button type="button" class="nfw" data-fw="${esc(JSON.stringify(names))}" aria-label="${esc((r.fws.length === 1 ? tr8('1 framework:') : tr8('{0} frameworks:', r.fws.length)) + ' ' + names.join(', '))}">${r.fws.length}</button>`; };
+  el('ppOut').innerHTML = `<h2>${tr8('Organisations')}</h2>
+<p class="meta">${tr8('The {0} organisations with pre-arranged or released money since {1}, money through sub-grants or co-financing, the most money now and released first. Choose one for its profile.', all.length, YS[0])}</p>
+${nav}<div class="scroll" style="max-height:none"><table class="data pp"><thead><tr><th>${tr8('organisation')}</th><th>${tr8('kind')}</th>
+<th class="num" title="${esc(tr8('the frameworks that name it in their partner list, give it money or record its co-financing: hover the number for their names'))}">${tr8('frameworks')}</th>
 <th class="num">${tr8('pre-arranged now')}</th><th class="num">${tr8('released, {0}–{1}', YS[0], CY)}</th>
-<th class="num">${tr8('received through another organisation')}</th></tr></thead><tbody>` +
-    top.map(r => `<tr><td><button type="button" class="lnk" data-i="${r.i}">${esc(r.x.n)}</button></td><td>${tr8(KIND[r.x.k])}</td>
+<th class="num">${tr8('through sub-grants')}</th><th class="num">${tr8('co-financing now')}</th></tr></thead><tbody>` +
+    shown.map(r => `<tr><td><button type="button" class="lnk" data-i="${r.i}">${esc(r.x.n)}</button></td><td>${tr8(KIND[r.x.k])}</td>
+<td class="num">${nfw(r)}</td>
 <td class="num">${r.f.preNow ? usd(r.f.preNow) : '–'}</td><td class="num">${r.f.rel ? usd(r.f.rel) : '–'}</td>
-<td class="num">${r.f.sub ? usd(r.f.sub) : '–'}</td></tr>`).join('') + '</tbody></table></div>';
+<td class="num">${r.f.sub ? usd(r.f.sub) : '–'}</td><td class="num">${r.cof ? usd(r.cof) : '–'}</td></tr>`).join('') + `</tbody></table></div>${nav}
+<div class="pftip" id="ppTip" role="tooltip" hidden></div>`;
 }
+// the frameworks behind a number of the list, on hover or keyboard focus
+function fwTip(span){
+  const tip = el('ppTip'); if(!tip) return;
+  if(!span){ tip.hidden = true; return; }
+  let names = []; try { names = JSON.parse(span.dataset.fw); } catch(e){}
+  tip.innerHTML = names.map(n => `<div>${esc(n)}</div>`).join(''); tip.hidden = false;
+  const box = el('ppOut').getBoundingClientRect(), r = span.getBoundingClientRect();
+  const below = r.bottom + tip.offsetHeight + 8 < innerHeight || r.top - tip.offsetHeight - 8 < 0;
+  tip.style.top = ((below ? r.bottom + 4 : r.top - tip.offsetHeight - 4) - box.top) + 'px';
+  tip.style.left = Math.max(0, Math.min(r.right - box.left - tip.offsetWidth, el('ppOut').clientWidth - tip.offsetWidth)) + 'px';
+}
+el('ppOut').addEventListener('mouseover', e => { const s = e.target.closest('.nfw'); if(s) fwTip(s); });
+el('ppOut').addEventListener('mouseout', e => { if(e.target.closest('.nfw') && !e.relatedTarget?.closest?.('.nfw')) fwTip(null); });
+el('ppOut').addEventListener('focusin', e => { const s = e.target.closest('.nfw'); fwTip(s || null); });
+el('ppOut').addEventListener('focusout', e => { if(e.target.closest('.nfw')) fwTip(null); });
+el('ppOut').addEventListener('click', e => { const b = e.target.closest('.ppg button[data-pg]'); if(!b || b.disabled) return;
+  pg = +b.dataset.pg; drawList();
+  const h = el('ppOut').querySelector('h2'); if(h && h.getBoundingClientRect().top < 0) h.scrollIntoView({block:'start'}); });
 
 function drawProfile(i){
   const x = O[i], o = opts(), f = figures(i, o);
-  const per = new Map();      // framework -> its figures
-  const at = k => { if(!per.has(k)) per.set(k, {P:0, R:0, S:0, O:0, roles:null, cof:0, shared:[]}); return per.get(k); };
-  f.rows.forEach(r => { if(r[1] !== 'P' || r[2] === CY) at(r[3])[r[1]] += r[6]; });
-  x.l.forEach(([k, roles]) => { at(k).roles = roles; });
-  x.c.forEach(([k, usd, shared]) => { if(shared) at(k).shared.push([usd, shared]); else at(k).cof += usd; });
+  const per = perFramework(i, o, f);      // framework -> its figures
   const keys = [...per.keys()].sort((a, b) => (FW[a].a - FW[b].a) || fwName(FW[a]).localeCompare(fwName(FW[b])));
-  const cof = sum(x.c.filter(c => !c[2]).map(c => c[1])), nCof = new Set(x.c.filter(c => !c[2]).map(c => c[0])).size;
+  const cof = cofOf(i), nCof = new Set(x.c.filter(c => !c[2]).map(c => c[0])).size;
   const shared = x.c.filter(c => c[2]);
   const nList = x.l.length, withMoney = keys.filter(k => !FW[k].a && FW[k].h && (per.get(k).P || per.get(k).R || per.get(k).S)).length;
   const tile = (v, name, line, sub) => `<div class="tile"><div class="v">${v}</div><div class="l"><span class="tk">${name}</span>${line}${sub ? `<div class="sub">${sub}</div>` : ''}</div></div>`;
@@ -518,7 +597,7 @@ function drawProfile(i){
          f.rel ? tr8('received from the funds: {0} of the {1} released', pct(f.rel, f.totRel), usd(f.totRel))
                : tr8('No release went to it directly, of the {0} released.', usd(f.totRel)),
          [f.on ? tr8('{0} of it passed on to other organisations.', usd(f.on)) : '',
-          f.sub ? tr8('{0} more received through another organisation.', usd(f.sub)) : ''].filter(Boolean).join(' ')),
+          f.sub ? tr8('{0} more received through sub-grants.', usd(f.sub)) : ''].filter(Boolean).join(' ')),
     tile(cof ? usd(cof) : '–', tr8('Co-financing now'),
          cof ? (nCof === 1 ? tr8('its own money beside the funds, in 1 framework') : tr8('its own money beside the funds, in {0} frameworks', nCof))
              : tr8('No current framework records co-financing from it alone.'),
@@ -535,15 +614,15 @@ function drawProfile(i){
   el('ppOut').innerHTML = `<div class="phead"><h2>${esc(x.n)}</h2><span class="pkind" style="background:${D.kind[x.k]}">${tr8(KIND[x.k])}</span></div>
 <div class="tiles">${tiles.join('')}</div>
 <div class="grid">
- <div class="panel"><h3>${tr8('Pre-arranged for it, by year')}</h3><div class="cv"><canvas id="ppc1" style="max-height:none"></canvas></div>
+ <div class="panel"><h3>${tr8('Pre-arranged, by year')}</h3><div class="cv"><canvas id="ppc1" style="max-height:none"></canvas></div>
   <div class="note">${tr8('What was in place for it in each year, not added over years. * {0}: now.', CY)}</div></div>
- <div class="panel"><h3>${tr8('Released to it, by year')}</h3><div class="cv"><canvas id="ppc2" style="max-height:none"></canvas></div>
+ <div class="panel"><h3>${tr8('Released, by year')}</h3><div class="cv"><canvas id="ppc2" style="max-height:none"></canvas></div>
   <div class="note">${tr8('* {0}: to date.', CY)}</div></div>
 </div>
 <h3>${tr8('Frameworks')}</h3>
 ${keys.length ? `<div class="scroll" style="max-height:none"><table class="data pp"><thead><tr><th>${tr8('framework')}</th><th>${tr8('status')}</th><th>${tr8('in the partner list as')}</th>
-<th class="num">${tr8('pre-arranged now')}</th><th class="num">${tr8('released to it, {0}–{1}', YS[0], CY)}</th><th class="num">${tr8('of which passed on')}</th>
-<th class="num">${tr8('received through another organisation')}</th><th class="num">${tr8('co-financing now')}</th></tr></thead><tbody>${body}
+<th class="num">${tr8('pre-arranged now')}</th><th class="num">${tr8('released, {0}–{1}', YS[0], CY)}</th><th class="num">${tr8('of which passed on')}</th>
+<th class="num">${tr8('through sub-grants')}</th><th class="num">${tr8('co-financing now')}</th></tr></thead><tbody>${body}
 <tr class="tot"><td colspan="3">${tr8('Total')}</td><td class="num">${f.preNow ? usd(f.preNow) : ''}</td><td class="num">${f.rel ? usd(f.rel) : ''}</td>
 <td class="num">${f.on ? usd(f.on) : ''}</td><td class="num">${f.sub ? usd(f.sub) : ''}</td><td class="num">${cof ? usd(cof) : ''}</td></tr></tbody></table></div>`
   : `<p class="meta">${tr8('No framework names it and no framework money is recorded for it with these boxes ticked.')}</p>`}
@@ -556,7 +635,7 @@ ${secs.length ? `<div class="scroll" style="max-height:none"><table class="data 
   charts.forEach(c => c.destroy()); charts = [];
   charts.push(mkChart('ppc1', 'bar', YS.map(yLab), [{label:tr8('pre-arranged'), data:f.pre, backgroundColor:D.kind[x.k]}], {allLabels:true}));
   const ds = [{label:tr8('received from the funds'), data:f.relY, backgroundColor:D.kind[x.k]},
-              {label:tr8('received through another organisation'), data:f.subY, backgroundColor:'#9aa3ae'}].filter(d => d.data.some(v => v));
+              {label:tr8('through sub-grants'), data:f.subY, backgroundColor:'#9aa3ae'}].filter(d => d.data.some(v => v));
   charts.push(mkChart('ppc2', 'bar', YS.map(yLab), ds.length ? ds : [{label:tr8('received from the funds'), data:f.relY, backgroundColor:D.kind[x.k]}],
                       {stacked:true, totals:true, allLabels:true}));
 }
@@ -607,7 +686,7 @@ el('ppS').addEventListener('change', () => { const i = O.findIndex(x => x.n === 
 el('ppBack').addEventListener('click', () => choose(null));
 document.addEventListener('click', e => { const b = e.target.closest('#ppChips button, #ppMsg button, #ppOut button.lnk');
   if(b) choose(+b.dataset.i); });
-['ppAdh', 'ppC', 'ppP', 'ppR'].forEach(id => el(id).addEventListener('change', draw));
+['ppAdh', 'ppC', 'ppP', 'ppR'].forEach(id => el(id).addEventListener('change', () => { pg = 0; draw(); }));
 document.addEventListener('aalang', () => { setup(); });
 setup();
 """
@@ -656,7 +735,7 @@ def build_partner(page, d):
  <label {ATTR("title", "AA money allocated without a framework: released, or pre-arranged and not yet released")}><input type='checkbox' id='ppAdh'> {T("Non-framework allocations")}</label>
 </div>
 <div id='ppOut'></div>
-<details class='note' style='font-size:12px;margin:14px 0 10px'><summary style='cursor:pointer'>{T("How the profile is counted")}</summary>{how}</details>
+<details class='note' style='font-size:12px;margin:14px 0 10px'><summary style='cursor:pointer'>{T("How the profile is counted")}</summary>{how} {TB("An organisation named only in a partner list, with no money and no co-financing (technical support, coordination), has no profile.")}</details>
 <style>{CSS}</style>"""
     _dash_page(page, PAGE, "Partner profile", "", panels, json.dumps(data, default=str), JS)
     return data
