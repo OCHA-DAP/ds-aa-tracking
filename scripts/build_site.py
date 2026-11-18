@@ -863,11 +863,11 @@ _CODED = ("A row gets its window's <code>window_code</code> from the name it giv
           "<code>v_trk_window_links</code> lists it.")
 NOTES = {
     "country_hazard": "The (country, hazard) pair — the identity everything hangs off: pipeline entries with no version yet, plus descriptive attributes that aren't approved per version (region, language, coordination group); the manual <code>retired</code> flag (a retired framework is hidden from the map whatever its versions say) and <code>technical_support</code> (OCHA supported the framework technically, without a funding commitment). The framework status everyone shows comes from <code>v_framework_lifecycle</code>. Hierarchy: country_hazard → framework_version → window → {window_trigger → trigger_event, window_activation, simulated_activation, backtest_event, window_funding, window_status}; ad hoc / early-action allocations and pre-arranged money outside a framework attach to the pair (adhoc_activation, adhoc_prearranged).",
-    "window": "A framework version's trigger windows as BACKTESTED: analysis span (the RP denominator) and the years in it the backtest could not assess (<code>analysis_gap_years</code>, D221), all-in flag, monitored months, reported RP/prob. Each window carries CERF's code, <code>window_code</code> (ws, wt1, …; unique within its version, D207): the tables below a window join it on (country, hazard, version, <code>window_code</code>) through declared keys, and <code>window_name</code> stays as its label. <code>cannot_trigger_if</code> names the window of the same version after which this one cannot release. With <code>simulated_activation</code> and <code>version_performance_reported</code> it is the version's backtest. Owned and edited here since 2026-10-05 (entries files with <code>op: replace</code>, this admin page); corrected as errors are found — <code>v_trk_backtest_check</code> lists the rows that break a rule. Written by a loader in another repository until then.",
-    "window_trigger": "The conditions inside a window, joined by OR (D208): several can go off for the same window, which still activates once. A window with no row here has one implicit trigger, <code>main</code> (<code>v_window_trigger</code>), whose events are the window's own. Rows are entered where a window has more than one condition, and for every window whose historical activations are entered per event (D214); a trigger can carry analysis years and gap years of its own. <code>trigger_code</code> says what the trigger is (forecast, observational, …; D213).",
+    "window": "A framework version's trigger windows as BACKTESTED: analysis span (the RP denominator) and the years in it the backtest could not assess (<code>analysis_gap_years</code>, D221), all-in flag, monitored months, reported RP/prob. Each window has a code, <code>window_code</code>, that says what it is (<code>ws</code>, <code>wt_readiness</code>, <code>wt_action</code>, …; unique within its version, D207, D213): the tables below a window join it on (country, hazard, version, <code>window_code</code>) through declared keys, and <code>window_name</code> stays as its label. CERF's own window uids are in <code>cerf_uid_crosswalk</code>. <code>cannot_trigger_if</code> names the window of the same version after which this one cannot release. With <code>simulated_activation</code> and <code>version_performance_reported</code> it is the version's backtest. Owned and edited here since 2026-10-05 (entries files with <code>op: replace</code>, this admin page); corrected as errors are found — <code>v_trk_backtest_check</code> lists the rows that break a rule. Written by a loader in another repository until then.",
+    "window_trigger": "The conditions inside a window, joined by OR (D208): several can go off for the same window, which still activates once. A window with no row here has one implicit trigger, <code>main</code> (<code>v_window_trigger</code>), whose events are the window's own. Rows are entered where a window has more than one condition, and for every window whose historical activations are entered per event (D214); a trigger can carry analysis years and gap years of its own. <code>trigger_code</code> says what the trigger is (<code>forecast</code>, <code>obsv</code>, <code>readiness_forecast</code>, …; D213).",
     "trigger_event": "Every event a trigger was tested on, met or not: a year, a date, a storm or any event the document names. Entered only for windows with rows in <code>window_trigger</code>. The window's simulated years (<code>simulated_activation</code>) stay the set the return periods count; <code>v_trk_trigger_check</code> lists a window whose met trigger events disagree with them.",
     "simulated_activation": "The years a version's trigger WOULD have fired, per window — never a real activation of the version itself (those are <code>window_activation</code>). Should fall inside the window's analysis span: the data loaded before 2026-10-05 broke that where real activations were appended (listed by <code>v_trk_backtest_check</code>). " + _CODED,
-    "backtest_event": "Every event a version's backtest tested, met or not, one row per event and window (D189: the storms that would NOT have activated too). <code>simulated_activation</code> stays the set the return periods count: a window's met rows should fall in the years it lists (the build warns otherwise). " + _CODED,
+    "backtest_event": "Every event a version's backtest tested, met or not, one row per event and window (D189: the storms that would NOT have activated too). <code>simulated_activation</code> stays the set the return periods count: a window's met rows should fall in the years it lists (the build log lists the ones that do not). " + _CODED,
     "version_performance_reported": "A version's backtest result as published: the overall return period, probability and spend, one row per version (with <code>window</code> and <code>simulated_activation</code>, the version's backtest). <code>flag</code> is the flag the earlier crosswalk gave it. Owned here since 2026-10-05, like <code>window</code>; written by a loader in another repository until then.",
     "cerf_uid_crosswalk": "The window uids CERF's and the insurer's sheets use (afg_drought_v2_wt1), each with the window it stands for now and, where two of their windows are one window here, the trigger (D212). It keeps the financial-exposure app and those sheets matchable now that the tracker numbers versions its own way and names windows by what they are (D213); <code>v_cerf_window</code> lists the uids per window.",
     "framework_version": "The unit that actually gets approved: one row per framework version (incl. superseded versions), first recorded from the team's records (<code>source='aa-team'</code>), the historical sweep of the OCHA AA web page and the pa-anticipatory-action monorepo (<code>source='ocha-web'/'pa-monorepo'</code>, with <code>doc_url</code>/<code>analysis_ref</code>), and since then entered here (<code>source='entered'</code>). Version-specific facts (budgets, sector budgets, coverage, calendar, activations, status) carry a <code>version</code>. The tracker numbers each framework's versions itself, from its first version on record (<code>version_no</code>, D212); CERF's own id is <code>cerf_version_id</code>.",
@@ -877,7 +877,7 @@ NOTES = {
     "window_funding": "ALL framework funding, off the WINDOW: pre-arranged envelopes, co-financing and the agency × sector split (envelope rows have agency and sector NULL; never sum the two kinds together). <code>window_name</code> is one of the version's windows or a sentinel — <code>single</code> (one-window framework, window not named) / <code>unattributed</code> (a version-level figure for a multi-window framework: a curation queue, see <code>v_trk_funding_rollup</code>). Version totals are derived by <code>v_version_funding</code> under the version's rollup mode. Seeded from the sheets, earlier reads of the framework documents and browser entries; <code>provenance</code> says which. " + _CODED + " The sentinel rows have no code and are not listed there.",
     "people_covered": "People covered per framework, per source; includes double-activation assessment for cyclone frameworks.",
     "fund": "OCHA pooled funds only (CERF, CBPFs, regional funds) — the fund dimension every funding row references. Agency co-financing is deliberately NOT here (free-text financier on commitments instead). Seeded from the CBPF mirror's fund registry.",
-    "window_activation": "A framework activation is a WINDOW firing: keyed (country, hazard, version, window, date). It joins its window by <code>window_code</code> and, where it is known, the trigger that fired it by <code>trigger_code</code> (D214). " + _CODED + " (Rows with window <code>unspecified</code> are not listed; <code>v_trk_activation_window_check</code> lists the rows whose window is not in the window registry.) <code>event_date</code> is partial ISO at the source's precision.",
+    "window_activation": "A framework activation is a WINDOW firing: keyed (country, hazard, version, window, date, label). It joins its window by <code>window_code</code> and, where it is known, the trigger that fired it by <code>trigger_code</code> (D214). The code is given with the row or, when the row's label is one of its version's window names, filled in from it; the label is kept as written (an activation's money is matched by it), so it need not be the window's name. A row with no code is not checked by the key, and <code>v_trk_window_links</code> lists it (window <code>unspecified</code> aside). <code>event_date</code> is partial ISO at the source's precision.",
     "adhoc_activation": "Ad hoc AA and early-action allocations, off the (country, hazard) pair — no version, no window.",
     "adhoc_prearranged": "Anticipatory-action money a fund has set aside outside any framework and not yet released (D223), off the (country, hazard) pair. Never an activation and never released money: the pages add it to pre-arranged money while the non-framework layer is on, from the year of <code>arranged_date</code> until <code>ended_date</code> (empty = still pre-arranged). When it is released, a non-framework allocation (<code>adhoc_activation</code> with its <code>activation_funding</code>) takes over and the row here gets its <code>ended_date</code>.",
     "window_status": "Curated trigger state per window: <code>triggered</code> yes/no (+ date, note). It lives apart from <code>window</code> because the loader that wrote that table until 2026-10-05 emptied it on every run. A version is <i>fully triggered</i> when any window fired (all-in / exclusive rollup) or every window fired (independent windows); that, with validity, drives the framework status on the map. Seeded once from <code>window_activation</code> — a window is flagged when an activation names it, the version has a single window, or an activation is marked full. " + _CODED,
@@ -885,10 +885,10 @@ NOTES = {
     "activation_refund": "Money an activation sent back to its fund after it was paused or stopped (CERF, mostly), keyed like the activation's funding row (fund, and the allocation when known; NULL = the activation's only allocation from that fund). Every page counts released money net of these rows. OneGMS shows a refund months later, so it is recorded here first. A funding row with <code>match_method</code> 'provisional' is an amount entered before OneGMS recorded the CERF allocation; the nightly job gives it OneGMS's code and amount once the allocation appears.",
     "framework_activity": "What each organisation does under a framework version, in a line or two, read from the version's public framework document (the one named by its hash, with the pages). The map panel's Activities tab shows them; a version without lines of its own links to the latest version of the same framework that has them (lines are not carried across versions: the agencies change). A line whose document is not public is never shown.",
     "framework_partner": "Organisations with a role in a framework version (government counterparts, technical partners, sub-grantees named in the plan), extracted from the endorsed framework documents (scripts/import_partners.py) and curated here. Funded partners per allocation stay in <code>cerf_subgrant</code> / <code>cbpf_project_subip</code>: this is the framework's own list, which those cannot give.",
-    "framework_document": "The document registry: which file is a version's framework document, by content hash (<code>sha256</code>). The bytes are archived in the dev blob, content-addressed (projects/ds-aa-tracking/raw/framework_documents/&lt;sha256&gt;.pdf), so a file several versions share (the Dry Corridor's one document for SLV/GTM/HND) is stored once; publication stays with OCHA (<code>version_document.official_url</code>). <code>is_public</code> false: never on the public site, though its text is still stored (<code>framework_document_page</code>). Written only by scripts/register_documents.py (read-only in the admin page): a changed file is a new row, never an edit.",
+    "framework_document": "The document registry: which file is a version's framework document, by content hash (<code>sha256</code>). The bytes are archived in the dev blob, content-addressed (projects/ds-aa-tracking/raw/framework_documents/&lt;sha256&gt;.pdf), so a file several versions share (the Dry Corridor's one document for SLV/GTM/HND) is stored once; publication stays with OCHA (<code>version_document.official_url</code>). <code>is_public</code> false: never on the public site, though its text is still stored (<code>framework_document_page</code>). Written by scripts/register_documents.py or an entries file, and read-only in the admin page: a changed file is a new row, never an edit.",
     "version_document": "Version ⇄ document, many to many: a version can have several files (the endorsed original, the published rendition, translations, annexes) and a file can serve several versions (a shared regional document). <code>official_url</code> is the version's publication landing page; <code>superseded_by</code> names the file that replaced this one in the same role (one current endorsed and one current published file per version).",
     "framework_document_page": "The text of every registered document, page by page (D228), so a framework document can be searched and quoted with its page number. The nightly job (scripts/extract_document_text.py) reads each registered PDF that has no pages from the current extractor yet; a page without a text layer (a scan) is kept with text ''. Same audience as the file (<code>framework_document.is_public</code>). Read-only in the admin page.",
-    "version_page": "The framework pages' frontmatter as the earlier record kept it, per framework slug and version (scope, monitoring months, trigger facets, data sources, agencies, learning links, the Trigger windows table): imported once on 2026-09-28, when this database became the record, and edited here since. <code>body_md</code> is the page body, kept for reference.",
+    "version_page": "One row per framework slug and version: scope, monitoring months, trigger facets, data sources, agencies, learning links and the Trigger windows table (<code>frontmatter</code>, <code>triggers</code>). The first rows were imported once on 2026-09-28, when this database became the record; later ones come from reads of the framework documents and from entries (<code>source</code> says which), and all are edited here. <code>body_md</code> is the page body, kept for reference.",
     "trigger_timeline": "When each trigger window of a framework version can activate, on its hazard's clock (the Model page's trigger timelines): storms in hours (<code>h</code>) and floods in days (<code>d</code>) before (−) / after (+) landfall or the flood peak, as a bar <code>lead_from</code> → <code>lead_to</code>; drought as the calendar <code>months</code> a trigger is checked, against the rainy season (<code>season_start</code>, <code>season_len</code>). A leg is a river or a season; <code>seq</code> orders the rows. Read by hand from the framework document and entered through entries files (<code>op: replace</code> per version); only the current version's rows are drawn.",
     "activation_funding_project": "The projects of a Country or Regional Fund allocation that an activation's money went to, where the allocation paid for other things too (Ethiopia's 2026 Third Reserve Allocation: $1M of anticipatory action beside a refugee response). The money-flow chart takes a release's grantees from the allocation it drew on: only these projects when the allocation is listed here, all of its projects when it is not.",
     "learning_document": "Learning products (AARs, evaluations, monitoring and activation reports, case studies, stories, research, guidance), per framework (country × hazard) or global, seeded from the AA Compendium of Available Resources (Sept 2026) and the AA website's resources list; the Learning page lists them. <code>internal</code> rows never render on the public pages.",
@@ -905,14 +905,14 @@ NOTES = {
     "emergency_type_override": "Re-tagged CERF allocations from the CERF workbook: the GMS emergency type vs the actual shock (mostly Flood→Storm, with the storm name).",
     "cerf_climate_coding": "CERF projects coded against climate-adaptation indicators (one row per project × indicator × coder; NULL value = blank cell). Hand coding on the unlisted climate-adaptation page, model runs (coders model-*) scored against it on the unlisted climate-coding-accuracy page (public password; the two link only to each other); indicator wording in scripts/page_climate.py.",
     "build_contribution": "Donor earmarks to the OCHA AA project itself (\"build\" money): not pooled-fund income, so not in the contribution mirrors. A handful of rows a year, entered by hand; donor names follow <code>v_contribution.donor</code> so they line up with the pooled-fund donors.",
-    "funding_breakdown": "The earlier record's per-window, per-fund, agency and sector budgets, frozen since 2026-09-28 (when this database became the record) and no longer loaded: superseded by <code>window_funding</code> (+ <code>v_window_funding_split</code>). Kept because views still read it (<code>v_funding_by_sector</code>, <code>v_funding_by_agency</code>, <code>v_funding_by_window</code>).",
-    "actual_activation": "The earlier record's activations, frozen since 2026-09-28 and no longer loaded: superseded by <code>window_activation</code>. Kept because the pages still read its announcement links (<code>url</code>) and <code>v_activation_funding</code> reads it.",
-    "activation_allocation": "The earlier record's links from activations to CERF allocations, frozen since 2026-09-28: superseded by <code>activation_funding</code>. Three row kinds: link (framework, date, application code), NO_CERF (no application code), ADHOC_AA (no framework). Its one declared key: <code>application_code</code> → <code>cerf_allocation</code>. Kept because <code>v_aa_allocation</code> and <code>v_activation_funding</code> read it.",
+    "funding_breakdown": "The earlier record's per-window, per-fund, agency and sector budgets: not loaded since 2026-09-28 (when this database became the record), read-only in the admin page, corrected since only through entries files. Superseded by <code>window_funding</code> (+ <code>v_window_funding_split</code>). Kept because views still read it (<code>v_funding_by_sector</code>, <code>v_funding_by_agency</code>, <code>v_funding_by_window</code>).",
+    "actual_activation": "The earlier record's activations: not loaded since 2026-09-28 (when this database became the record), read-only in the admin page, corrected since only through entries files. Superseded by <code>window_activation</code>. Kept because the pages still read its announcement links (<code>url</code>) and <code>v_activation_funding</code> reads it.",
+    "activation_allocation": "The earlier record's links from activations to CERF allocations: not loaded since 2026-09-28 (when this database became the record), read-only in the admin page, corrected since only through entries files. Superseded by <code>activation_funding</code>. Three row kinds: link (framework, date, application code), NO_CERF (no application code), ADHOC_AA (no framework). Its one declared key: <code>application_code</code> → <code>cerf_allocation</code>. Kept because <code>v_aa_allocation</code> and <code>v_activation_funding</code> read it.",
     "entered_version": "A version as entered on the Data entry page (entry.html: upload the framework PDF or fill the form), one row per version, the last entry kept. The same save merges it into <code>framework_version</code> (an entered value wins; <code>source</code> 'entered' on a new row). Every field change is audited in <code>entry_audit</code>.",
     "entered_window": "The windows entered with a version on the Data entry page: basis, the trigger in plain words, the monitoring period. The posted windows are the version's (a replace-set), audited in <code>entry_audit</code>. Not merged into <code>window</code>, which holds the backtested windows.",
-    "entered_window_funding": "Not written any more: the Data entry page puts a window's money straight into <code>window_funding</code> (<code>provenance</code> 'entered'). Its rows are from before that change.",
-    "entry_audit": "Every change made to the data by hand: the admin page's saves and deletes, the Data entry page, and each row an entries file applies (scripts/apply_entries.py) — who, when, the table, the row's key, the field, the old and the new value. Append-only; read-only in the admin page.",
-    "applied_entries": "The entries files the nightly job has applied (scripts/apply_entries.py), one row per file: its name, content hash, rows and who entered it. A file is applied once, so a later edit in the admin page is never overwritten by it.",
+    "entered_window_funding": "No longer written by the Data entry page, which puts a window's money straight into <code>window_funding</code> (<code>provenance</code> 'entered'); its rows are from before that change.",
+    "entry_audit": "Changes to the data, by row or by field: those made through the admin page (saves, deletes) and the Data entry page, each row an entries file applies (scripts/apply_entries.py; one whole-row entry per row), and the nightly corrections (the CERF sync, D232; provisional amounts resolved; version relabels) — who or what, when, the table, the row's key, the field, the old and the new value. Not every write: the import scripts (partners, learning documents) write without it. Append-only; read-only in the admin page.",
+    "applied_entries": "The entries files the nightly job has applied (scripts/apply_entries.py), one row per file: its name, content hash, rows and who entered it. A file is applied once per content, so a later edit in the admin page is not overwritten by a re-run; a file whose content changes is applied again.",
     "page_count": "The open site's usage, as daily totals (D197): page views, map panels opened (the country or framework), language switches, downloads and links followed out, each with the page's language and phone or desktop; a view also with the referring site's host. Written only by the proxy's anonymous <code>POST /hit</code> (one row per day and combination, n + 1 per event) from the pages at the root, never dev/ or admin/; no IP address, identifier or time of day is stored (privacy.html says so to readers). Indicative counts, never audited: an anonymous endpoint can be inflated. The Site usage page (usage.html) shows them as a dashboard, loaded live from the proxy's <code>GET /usage</code>.",
 }
 
@@ -999,7 +999,7 @@ ERD_NODES = [
     ("framework_partner", "new", "+ name · source"),
     ("framework_activity", "new", "+ agency"),
     ("version_page", "new", "kb_framework · version (page record)"),
-    ("version_document", "new", "+ sha256 · role"),
+    ("version_document", "new", "+ sha256 (and its role)"),
     ("framework_document", "new", "sha256 (the file)"),
     ("framework_document_page", "new", "sha256 · page"),
     ("learning_document", "new", "id · country_iso3[] · hazard"),
@@ -1038,27 +1038,28 @@ ERD_CLUSTERS = [
         ("entry_audit", "new", "id · table_name · row_key · field"),
         ("applied_entries", "new", "name (an entries file) · sha256"),
         ("page_count", "new", "day · page · event · detail · lang · device · referrer"),
-        ("build_contribution", "new", "donor · year · purpose"),
+        ("build_contribution", "new", "donor · year · purpose · source"),
     ]),
 ]
 
 # crow's-foot cardinalities: child end (tail) / parent end (head)
 TAIL = {"many": "crowtee", "many0": "crowodot", "one0": "teeodot"}
-HEAD = {"one": "teetee", "one0": "teeodot"}
+HEAD = {"one": "teetee", "one0": "teeodot", "many": "crowtee", "many0": "crowodot"}
 
 # (child, parent, label, child_card, parent_card). Whether an edge is a declared foreign key is
-# read from the database (build_erd): a key's edge is drawn solid and labelled with its columns,
+# read from the database (erd_edges): a key's edge is drawn solid and labelled with its columns,
 # and a key with no edge here is drawn anyway. The rest are joins by convention, drawn dashed.
+# The labels here are what an edge shows when the database lacks its key (schema_doc_gaps warns).
 ERD_EDGES = [
-    ("framework_version", "country_hazard", "country+hazard", "many", "one"),
+    ("framework_version", "country_hazard", "country+hazard", "many0", "one"),
     ("framework_status", "framework_version", "", "many0", "one0"),
     ("framework_focal_point", "framework_version", "", "many0", "one0"),
     ("framework_calendar", "framework_version", "", "many0", "one0"),
-    ("window_status", "window", "", "one0", "one"),
-    ("window_funding", "window", "", "many", "one"),
+    ("window_status", "window", "window_code", "one0", "one"),
+    ("window_funding", "window", "window_code", "many0", "one"),
     ("people_covered", "framework_version", "", "many0", "one0"),
-    ("window_activation", "window", "", "many", "one"),
-    ("window_activation", "window_trigger", "", "many0", "one0"),
+    ("window_activation", "window", "window_code", "many0", "one"),
+    ("window_activation", "window_trigger", "window_code · trigger_code", "many0", "one0"),
     ("adhoc_activation", "country_hazard", "country · hazard (no version, no window)", "many", "one"),
     ("adhoc_prearranged", "country_hazard", "country · hazard (no version, no window)", "many", "one"),
     ("adhoc_prearranged", "fund", "fund_code", "many", "one"),
@@ -1066,38 +1067,39 @@ ERD_EDGES = [
     ("activation_funding", "adhoc_activation", "", "many0", "one0"),
     ("activation_funding", "fund", "fund_code", "many", "one"),
     ("activation_refund", "activation_funding", "fund_code · allocation_code", "many0", "one"),
-    ("activation_funding_project", "activation_funding", "allocation_code", "many0", "one"),
+    ("activation_funding_project", "activation_funding", "allocation_code", "many0", "many"),
     ("activation_funding_project", "cbpf_project", "project_code → chf_project_code", "many0", "one"),
     ("report_channel_inclusion", "framework_version", "", "many0", "one0"),
     ("version_performance_reported", "framework_version", "country_iso3 · hazard · version", "one0", "one0"),
-    ("window", "framework_version", "country_iso3 · hazard · version", "many", "one"),
-    ("window_trigger", "window", "", "many0", "one"),
-    ("trigger_event", "window_trigger", "", "many0", "one"),
-    ("simulated_activation", "window", "", "many", "one"),
-    ("backtest_event", "window", "", "many0", "one"),
-    ("cerf_uid_crosswalk", "window", "", "many0", "one"),
-    ("cerf_uid_crosswalk", "window_trigger", "", "many0", "one0"),
+    ("window", "framework_version", "country_iso3 · hazard · version", "many0", "one"),
+    ("window", "window", "cannot_trigger_if → window_code", "many0", "one0"),
+    ("window_trigger", "window", "window_code", "many0", "one"),
+    ("trigger_event", "window_trigger", "window_code · trigger_code", "many0", "one"),
+    ("simulated_activation", "window", "window_code", "many0", "one"),
+    ("backtest_event", "window", "window_code", "many0", "one"),
+    ("cerf_uid_crosswalk", "window", "window_code", "many0", "one"),
+    ("cerf_uid_crosswalk", "window_trigger", "window_code · trigger_code", "many0", "one0"),
     ("trigger_timeline", "framework_version", "", "many0", "one"),
-    ("framework_partner", "framework_version", "", "many0", "one"),
+    ("framework_partner", "framework_version", "", "many0", "one0"),
     ("framework_activity", "framework_version", "", "many0", "one"),
     ("framework_activity", "framework_document", "sha256", "many0", "one"),
     ("version_page", "framework_version", "kb_framework · version", "one0", "one0"),
     ("version_document", "framework_version", "", "many0", "one"),
     ("version_document", "framework_document", "sha256", "many0", "one"),
     ("framework_document_page", "framework_document", "sha256", "many0", "one"),
-    ("learning_document", "country_hazard", "country_iso3[] · hazard (none: global)", "many0", "one0"),
+    ("learning_document", "country_hazard", "country_iso3[] · hazard (none: global)", "many0", "many0"),
     ("funding_breakdown", "window", "", "many0", "one0"),
     ("actual_activation", "window", "country · hazard · version · window_name", "many0", "one0"),
     ("window_activation", "actual_activation", "kb_framework+event_date+window", "many0", "one0"),
     ("activation_funding", "v_allocation", "allocation_code", "many0", "one0"),
     ("activation_allocation", "actual_activation", "kb_framework · event_date", "many0", "one0"),
-    ("activation_allocation", "cerf_allocation", "", "many0", "one0"),
+    ("activation_allocation", "cerf_allocation", "application_code", "many0", "one0"),
     ("cerf_project", "cerf_allocation", "application_code", "many0", "one0"),
     ("cerf_project_sector", "cerf_project", "", "many", "one"),
     ("cerf_project_country", "cerf_project", "", "many", "one"),
     ("cerf_project_supplement", "cerf_project", "", "one0", "one"),
     ("cerf_subgrant", "cerf_project", "project_code", "many0", "one0"),
-    ("cerf_climate_coding", "cerf_project", "project_code", "many", "one"),
+    ("cerf_climate_coding", "cerf_project", "project_code", "many0", "one"),
     ("cerf_allocation_storm", "cerf_allocation", "", "many", "one"),
     ("cerf_allocation_storm", "ibtracs_storms", "sid (m:n via link table)", "many", "one"),
     ("cbpf_allocation", "cbpf_fund", "pooled_fund_id", "many", "one"),
@@ -1123,12 +1125,13 @@ _KEY_PREFIX = ("country_iso3", "hazard", "version")
 
 def erd_foreign_keys(e):
     """The declared foreign keys of the aa schema, one row per key: child, parent, the columns on
-    each side (in key order) and whether every child column is NOT NULL."""
+    each side (in key order) and whether every child column is NOT NULL and the key validated
+    (a key added NOT VALID may still have rows that reference nothing)."""
     return pd.read_sql(
         """SELECT c.conname, rel.relname AS child, frel.relname AS parent,
                   array_agg(a.attname::text ORDER BY k.ord) AS child_cols,
                   array_agg(fa.attname::text ORDER BY k.ord) AS parent_cols,
-                  bool_and(a.attnotnull) AS not_null
+                  bool_and(a.attnotnull) AND c.convalidated AS not_null
            FROM pg_constraint c
            JOIN pg_class rel ON rel.oid = c.conrelid
            JOIN pg_namespace ns ON ns.oid = rel.relnamespace
@@ -1137,7 +1140,7 @@ def erd_foreign_keys(e):
            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.ck
            JOIN pg_attribute fa ON fa.attrelid = c.confrelid AND fa.attnum = k.fk
            WHERE c.contype = 'f' AND ns.nspname = 'aa'
-           GROUP BY c.conname, rel.relname, frel.relname
+           GROUP BY c.conname, c.convalidated, rel.relname, frel.relname
            ORDER BY child, parent, c.conname""",
         e,
     )
@@ -1149,6 +1152,7 @@ def _fk_label(child_cols, parent_cols):
     pairs = list(zip(child_cols, parent_cols))
     while pairs and pairs[0][0] == pairs[0][1] and pairs[0][0] in _KEY_PREFIX:
         pairs.pop(0)
+    pairs = pairs or list(zip(child_cols, parent_cols))     # a key on the shared columns alone
     return " · ".join(c if c == p else f"{c} → {p}" for c, p in pairs)
 
 
@@ -1299,7 +1303,25 @@ def schema_doc_gaps(tables, views, fks):
     gaps += [f"the foreign key {k['conname']} joins aa.{k['child']} to aa.{k['parent']}, "
              "which the schema page's diagram does not both draw"
              for _, k in fks.iterrows() if not {k["child"], k["parent"]} <= drawn]
+    gaps += [f"the foreign key {k}, which schema.py adds, is not in the database: the schema page "
+             "draws its edge dashed" for k in sorted(set(_declared_keys()) - set(fks["conname"]))]
+    gaps += [f"the schema page has a note for aa.{t}, which is not in the aa schema"
+             for t in sorted(set(NOTES) - set(tables))]
+    gaps += [f"the schema page's diagram has an edge from {c} to {p}, and does not draw {n}"
+             for c, p, *_ in ERD_EDGES for n in (c, p) if n not in drawn]
     return gaps
+
+
+# the one key schema.py does not add itself (its table was created elsewhere; schema.py says so)
+_KEYS_NOT_IN_MIGRATIONS = ("activation_allocation_application_code_fkey",)
+
+
+def _declared_keys():
+    """The foreign keys the database should have: the ones schema.py's migrations add, and
+    _KEYS_NOT_IN_MIGRATIONS."""
+    added = {m for ddl in trk_schema.ADDITIVE_MIGRATIONS
+             for m in re.findall(r"ADD CONSTRAINT (\w+) FOREIGN KEY", ddl)}
+    return sorted(added | set(_KEYS_NOT_IN_MIGRATIONS))
 
 
 def build_schema_page(e):
@@ -1371,11 +1393,12 @@ def build_schema_page(e):
         "<code>framework_version</code> (the approved unit), and its money, activations and "
         "backtest to its windows (<code>window</code>, joined by <code>window_code</code>); "
         "<code>country_hazard</code> holds only the pair's identity and descriptive "
-        "attributes, and money outside a framework hangs off the pair. Country-level context "
-        "tables (boxed) join on country alone. <b>Edits:</b> every change made by hand — the "
-        "admin page's saves and deletes, the Data entry page, the entries files the nightly job "
-        "applies — is audited in <code>entry_audit</code>; the <code>entered_*</code> tables "
-        "hold what the Data entry page was given.</p>"
+        "attributes, and money outside a framework hangs off the pair. Two boxes group the tables "
+        "with no framework key: the country-level context (joined on country alone) and data "
+        "entry with the site's own records. <b>Edits:</b> changes made through the admin page and "
+        "the Data entry page, the entries files the nightly job applies and the nightly CERF "
+        "sync are logged in <code>entry_audit</code>; the <code>entered_*</code> tables hold "
+        "what the Data entry page was given.</p>"
         f"<div class='scroll' style='max-height:none'>{build_erd(edges)}</div></div>"
     )
     tables = sorted(cols["table_name"].unique(), key=lambda t: (owner_of(t) != "ds-aa-tracking", t))
