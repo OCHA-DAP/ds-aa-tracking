@@ -213,6 +213,49 @@ DESCRIPTORS = ("region", "province", "district", "state", "governorate", "depart
                "division", "prefecture", "municipality", "palika")
 
 
+# ---------------------------------------------------------------- announcements
+# The team's own lines in the map's "What's new" box (D246; owner, 2026-11-18: "can we include
+# specific announcements? like we are going to open the learning page to the public soon, so that
+# would go here when we do"). Edited by hand, one object per announcement:
+#   {"date": "2026-12-01", "en": "The Learning page is open to everyone", "fr": "…", "es": "…",
+#    "href": "pillar-learning.html"}
+# date (YYYY-MM-DD) and en are required; fr and es fall back to the English; href (optional) is a
+# page of the site or an https:// address. Each shows from its date for the box's 30 days, by the
+# reader's clock: one dated ahead appears on its day without a rebuild. Words only: on the open map
+# too, so never a figure that is not public.
+ANNOUNCEMENTS = ROOT / "site_src" / "announcements.json"
+
+
+def announcements(path=ANNOUNCEMENTS):
+    """The announcements file, checked: a malformed entry stops the build (it would be published)."""
+    if not path.exists():
+        return []
+    rows = json.loads(path.read_text())
+    if not isinstance(rows, list):
+        raise SystemExit(f"FATAL: {path.name} must hold a list of announcements")
+    out = []
+    for i, r in enumerate(rows):
+        def real_day(x):
+            try:
+                return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", x)) and bool(_dt.date.fromisoformat(x))
+            except ValueError:
+                return False
+        # every value text (a null would be published as "None"); date a real day; en not empty
+        bad = (not isinstance(r, dict) or set(r) - {"date", "en", "fr", "es", "href"}
+               or not all(isinstance(v, str) for v in r.values())
+               or not real_day(r.get("date", "")) or not r.get("en", "").strip()
+               or (r.get("href", "").strip()
+                   and not re.fullmatch(r"(https://\S+|[a-z0-9_-]+\.html(#[\w.-]*)?)", r["href"].strip())))
+        if bad:
+            raise SystemExit(f"FATAL: {path.name}, entry {i + 1}: needs date (a real day, YYYY-MM-DD) and en, "
+                             "every value text; optional fr, es, href (a page of the site or an https:// address)")
+        out.append({k: v.strip() for k, v in r.items() if v.strip()})
+    missing = [r["en"] for r in out if not (r.get("fr") and r.get("es"))]
+    if missing:
+        print(f"  announcements: {len(missing)} without French or Spanish (shown in English): " + "; ".join(missing))
+    return sorted(out, key=lambda r: r["date"], reverse=True)
+
+
 # ---------------------------------------------------------------- world base
 WORLD_SRC = ROOT / "data" / "world" / "ne_50m_admin_0_countries.geojson"
 WORLD_URL = ("https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/"
@@ -2249,6 +2292,7 @@ def build_landing(page, d, e):
 
     # What's new sits beside the definition box (owner, 2026-10-30); build_site puts the box at
     # the placeholder
+    news_js = json.dumps(announcements()).replace("</", "<\\/")   # the box's announcements (D246)
     body = f"""
 <div class='toprow'><!--POLICY-->
  <section class='tile news' id='news' {ATTR("aria-label", "What's new in the last 30 days")}>
@@ -2297,7 +2341,7 @@ def build_landing(page, d, e):
 <!-- 2026-10-02 meeting: the internal links that sat here (dashboards, explorer, data entry,
      data & schema review) were easy to miss below the map; they all live in the Internal menu -->
 <script>window.L = /*AA_L*/null;
-window.FUNDLAB = {json.dumps(regional_fund_labels())};
+window.FUNDLAB = {json.dumps(regional_fund_labels())}; window.NEWS = {news_js};
 window.HAZ = {json.dumps(HAZ_COLOR)}; window.COLOR = {json.dumps(STATUS_COLOR)};
 window.DISPLABEL = {json.dumps(DISP_LABEL)}; window.GLYPH = {json.dumps(HAZARD_SVG)};
 window.LAYER_ORDER = {json.dumps(list(LAYER_ORDER))}; window.LAYER_COLOR = {json.dumps(LAYER_COLOR)};
@@ -2592,6 +2636,8 @@ table.bt .bt-c { text-align:center; min-width:40px; } table.bt td.lbl { width:au
 .news-l button { background:none; border:0; padding:0; font:inherit; color:#334155; text-align:left; cursor:pointer; }
 .news-l button:hover, .news-l button:focus-visible { color:var(--ocha); text-decoration:underline; }
 .news-l .nd { color:#b3261e; font-weight:650; margin-right:2px; }
+.news-l li.news-a { color:#0f2540; font-weight:600; }   /* the team's announcements (D246) */
+.news-l li.news-a a { color:#1a5ea8; }
 .news-0 { color:#64748b; }
 .gtiles .tile .l .tsub { color:#334155; font-weight:600; margin-top:2px; }
 @media (max-width:759px){ .news-l { height:auto; max-height:150px; }
@@ -3365,9 +3411,12 @@ function applyLayers(){
 // endorsement date) and versions that went into development (development_since; its nightly
 // stamp's first run, 5 Oct 2026, dated every version then in development, so a version listed as
 // such must still be in development). Dates follow the ring's rule (dayOf / actDate). It is about
-// today, so it reads the live records whatever year the map shows; it follows the layer toggles
-// as the tiles do: a framework's own items while the current-frameworks layer is on, ad hoc
-// allocations while the ad hoc layer is on (a replaced framework's activations are never news).
+// today, so it reads the live records whatever year the map shows; a framework's own items follow
+// the current-frameworks layer, as the tiles do (a replaced framework's activations are never news).
+// Non-framework allocations are news whatever the layers (D246; owner, 2026-11-18: "this should
+// include non-framework allocations"): money released, and money a fund pre-arranged outside a
+// framework (its arranged date); a click on one turns the non-framework layer on. The fund switch
+// applies to all of them. The team's own announcements (site_src/announcements.json) come first.
 const NEWS_DAYS = RECENT_DAYS;
 function newsItems(){
   const out = [];
@@ -3376,10 +3425,11 @@ function newsItems(){
     // whose envelope today has such money
     const P = (LIVE.get(f) || f).pre_parts || {};
     const cur = LAYERS.framework && (LIVE.get(f) || f).layers.includes('framework'), curV = cur && (allFunds() || FKEYS.some(k => FUNDS[k] && P[k] > 0));
-    const who = `${tr8(c.name)} ${tr8(f.hz_label).toLowerCase()}`, add = (d, what) => out.push({d, iso, hz: f.hazard, who, what});
+    const who = `${tr8(c.name)} ${tr8(f.hz_label).toLowerCase()}`, add = (d, what, adh) => out.push({d, iso, hz: f.hazard, who, what, adh: !!adh});
     f.activations.forEach(a => { if(a.old || !inWindow(actDate(a), NEWS_DAYS) || !actFundOK(a)) return;
       if(a.type === 'framework_aa' && cur) add(actDate(a), '{0} activated');
-      else if(a.type === 'adhoc_aa' && LAYERS.adhoc) add(actDate(a), '{0}: non-framework allocation'); });
+      else if(a.type === 'adhoc_aa') add(actDate(a), '{0}: non-framework allocation released', true); });
+    fundRows(f.pre_ad || []).forEach(x => { if(inWindow(x.date, NEWS_DAYS)) add(String(x.date), '{0}: non-framework allocation pre-arranged', true); });
     if(!curV) return;
     f.versions.forEach((v, i) => { const again = f.versions.slice(0, i).some(x => x.status === 'endorsed');
       if(v.status === 'endorsed' && inWindow(v.valid_from, NEWS_DAYS)) add(v.valid_from, again ? '{0}: new version endorsed' : '{0} endorsed');
@@ -3388,15 +3438,25 @@ function newsItems(){
   }));
   return out.sort((a, b) => dayOf(b.d)[0] - dayOf(a.d)[0] || a.who.localeCompare(b.who));
 }
+// the team's announcements (site_src/announcements.json, landing.announcements): each from its date
+// for NEWS_DAYS days, by the reader's clock (one dated ahead appears on its day), in the page's
+// language where it has one
+function newsNotes(){
+  return (window.NEWS || []).filter(n => inWindow(n.date, NEWS_DAYS))
+    .map(n => ({d: n.date, text: n[aaLang()] || n.en, href: n.href || null}));
+}
 function buildNews(){
   const ul = document.getElementById('newsl'); if(!ul) return;
-  const xs = newsItems();
-  ul.innerHTML = xs.length ? xs.map(x => `<li><button type='button' data-iso='${x.iso}' data-hz='${esc(x.hz)}'>`
+  const xs = newsItems(), ns = newsNotes();
+  const note = n => `<li class='news-a'><span class='nd'>${esc(shortDate(n.d))}</span> `
+      + (n.href ? `<a href='${esc(n.href)}'${/^https?:/.test(n.href) ? " target='_blank' rel='noopener'" : ''}>${esc(n.text)}</a>` : esc(n.text)) + '</li>';
+  ul.innerHTML = ns.length || xs.length ? ns.map(note).join('') + xs.map(x => `<li><button type='button' data-iso='${x.iso}' data-hz='${esc(x.hz)}'${x.adh ? " data-adh='1'" : ''}>`
       + `<span class='nd'>${esc(shortDate(x.d))}</span> ${esc(tr8(x.what, x.who))}</button></li>`).join('')
     : `<li class='news-0'>${esc(tr8('Nothing new on the layers shown.'))}</li>`;
 }
 (function(){ const box = document.getElementById('news'); if(!box) return;
   box.addEventListener('click', e => { const b = e.target.closest('button[data-iso]'); if(!b) return;
+    if(b.dataset.adh && !LAYERS.adhoc) setLayer('adhoc', true);   // a non-framework allocation: its layer on
     if(pastY()) setYear(YEARS.now);   // the news is today's: a past year may not have the framework
     // an ad hoc allocation of last December read in January: only all years still shows that pair
     if(!c_has(b.dataset.iso, b.dataset.hz)) setYear('');

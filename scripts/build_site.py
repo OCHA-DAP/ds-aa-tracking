@@ -292,6 +292,11 @@ ADMIN_HOME = [
         ("assistant-usage.html", "how the AA assistant is used: the questions put to it, what it used to "
                                  "answer them, the failures and the answers marked not helpful"),
     ]),
+    ("Figures not public yet", [
+        ("money-flows-this-year.html", "the Financing page's money-flow chart with the current year, "
+                                       "which the public pages leave out until the donors' contributions "
+                                       "for it are final"),
+    ]),
 ]
 
 

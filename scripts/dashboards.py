@@ -2560,7 +2560,8 @@ function buildFlow(rows, mode, year, show, names, topN, keep, topOrgs, pick){
 // to call when its own filters change.
 // cfg.noYear: a year the chart never shows, in any view, 'all years' included — the Financing
 // page's current year, until the donors' contributions for it are final (owner, 2026-10-30; the
-// rows stay in the page data, and the page says nothing about it)
+// page says nothing about it). Since D245 the Financing page's data holds no row of that year
+// either: the admin page money-flows-this-year.html has them
 function mountFlow(cfg){
   if(!window.sankeySVG) return ()=>{};
   const noY = cfg.noYear == null ? null : +cfg.noYear, keep0 = cfg.keep || (()=>true);
@@ -3138,10 +3139,14 @@ def build_funding(page, d):
 .hm table.data {{ width:auto; min-width:100%; }}
 .hm table.data th, .hm table.data td {{ white-space:nowrap; }}
 .hm thead th {{ vertical-align:bottom; text-align:center; }}
+/* every agency column the same width (D244; owner, 2026-11-18: "make the cols equal widths"): a
+   fixed width, a long name ("WHO (incl. PAHO)") on two lines; the framework column takes the rest */
+.hm thead th:not(.fw), .hm td.c {{ width:76px; min-width:76px; max-width:76px; box-sizing:border-box; }}
+.hm table.data thead th:not(.fw) {{ white-space:normal; line-height:1.2; }}
 .hm th.fw {{ position:sticky; left:0; top:auto; z-index:1; background:#fff; text-align:left;
              font-weight:400; border-bottom:1px solid #eee; }}
 .hm thead th.fw {{ background:#eef3f8; top:0; z-index:3; border-bottom:2px solid #cbd6e2; }}
-.hm td.c {{ text-align:center; font-variant-numeric:tabular-nums; min-width:40px; padding:3px 6px;
+.hm td.c {{ text-align:center; font-variant-numeric:tabular-nums; padding:3px 6px;
             border:2px solid #fff; vertical-align:middle; }}
 .hm td.c[title]:hover {{ outline:2px solid #0d366b; outline-offset:-2px; }}
 .hm tr.g td {{ background:#f7f9fb; color:#555; font-weight:600; font-size:12px; }}
@@ -3288,7 +3293,11 @@ def build_funding(page, d):
         "fwList": fw_list,
         "fwy": d.get("fwy") or [],
         "unSplit": un_split,
-        "flow": flow_rows, "flowYears": flow_years, "flowDefault": flow_default,
+        # the money flows without the current year (D167): not drawn, and not in the page either
+        # (D245: its figures are sensitive; the admin page has them)
+        "flow": [r for r in flow_rows if int(r["y"]) != cy],
+        "flowYears": {m: [y for y in ys if int(y) != cy] for m, ys in flow_years.items()},
+        "flowDefault": flow_default,
         "fundNames": fund_names, "cy": cy,
         "heat": {"steps": HEAT_STEPS, "colors": HEAT_COLORS},
     }
@@ -3711,6 +3720,51 @@ draw();"""
                   "subset (a sub-region, a few countries) to total it. The money-flow chart can start from "
                   "the donors of each fund."),
                panels, json.dumps(data, default=str), js)
+    build_flows_this_year(page, data, flow_rows, flow_years, flow_default)
+
+
+# the money flows of the current year, which the Financing page's chart leaves out until the
+# donors' contributions for it are final (D167): a page of the admin site, behind its own password
+# (D245; owner, 2026-11-18: "we need a totally separate page for the 2026 numbers (which we had
+# previously hidden here, because they are sensitive). can we put them in the admin page?")
+FLOWS_THIS_YEAR = "money-flows-this-year.html"
+
+
+def build_flows_this_year(page, data, flow_rows, flow_years, flow_default):
+    """Every year's flows, the current year's included (the Financing page's data has none)."""
+    cy = int(data["cy"])
+    years = {m: [int(y) for y in flow_years.get(m) or []] for m in ("p", "r")}
+    sub = {"flow": flow_rows, "flowYears": years, "fundNames": data["fundNames"], "cy": cy,
+           # it opens on this year, in both views, where there is money for it
+           "flowDefault": {m: cy if cy in years[m] else flow_default.get(m) for m in ("p", "r")}}
+    opens = (f"Opens on the money released in {cy} so far," if sub["flowDefault"]["r"] == cy else
+             f"Nothing is released in {cy} yet: it opens on {sub['flowDefault']['r']},")
+    panels = f"""
+<div class='card'><b>Not public.</b> The Financing page's money-flow chart with the current year, {cy}, which the
+public pages leave out until the donors' contributions for it are final. The figures update every night
+until the year closes. Every other year is on the <a href='dash-funding.html'>Financing</a> page too.</div>
+<div class='fbar hi'>
+ <span class='fbar-t'>Count:</span>
+ <label title='frameworks active, being updated or in development'><input type='checkbox' id='fCur' checked> Current frameworks</label>
+ <label title='frameworks since retired: their money counts with current frameworks too'><input type='checkbox' id='fRet'> Retired</label>
+ <label title='AA money allocated without a framework: released, or pre-arranged and not yet released'><input type='checkbox' id='fAdh'> Non-framework allocations</label>
+ <label>Fund <select id='fFund'><option value=''>CERF and Country and Regional Funds</option><option value='cerf'>CERF</option><option value='pooled'>Country and Regional Funds</option></select></label>
+</div>
+<h2>Where the money flows, {cy} included</h2>
+<p class='meta'>{opens} from each fund's donors; switch to <i>pre-arranged</i>
+for the envelopes in place today. The year list holds every year.</p>
+{_flow_panel(donors_on=True)}"""
+    js = FLOW_JS + """
+const CY = D.cy, yLab = y => +y===CY ? y+'*' : String(y);
+const fCur = document.getElementById('fCur'), fRet = document.getElementById('fRet'),
+      fAdh = document.getElementById('fAdh'), fFund = document.getElementById('fFund');
+const sel = () => ({cur:fCur.checked, ret:fRet.checked, adh:fAdh.checked, fund:fFund.value});
+// as the Financing page counts released money and the envelopes of the years (relOK there)
+const relOK = (g, s) => g==='a' ? s.adh : g==='r' ? (s.ret || s.cur) : s.cur;
+const redraw = mountFlow({label:'AA money through funds and agencies to partners', yLab, cy:CY,
+  keep: r=>{ const s = sel(); return relOK(r.g, s) && (!s.fund || (s.fund==='cerf') === (r.fu==='c')); }});
+[fCur, fRet, fAdh, fFund].forEach(el=>el.addEventListener('change', ()=>redraw()));"""
+    _dash_page(page, FLOWS_THIS_YEAR, f"Money flows, {cy}", "", panels, json.dumps(sub, default=str), js)
 
 
 # --------------------------------------------------------- model (triggers)
