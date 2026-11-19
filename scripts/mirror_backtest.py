@@ -1,22 +1,27 @@
 """Regenerate aa.simulated_activation and aa.backtest_event from aa.window_event (D252).
 
 Since D252 the window's event record (aa.window_event) is what is entered and edited. The two
-tables it replaces stay until the next promote, because the open site's code still reads them
-(D203); every night this step makes them say what the record says, so the open site keeps
-showing current backtests. After the promote, the pages read the record and both tables go.
+tables it replaces stay while code on the open site, or the pages, still read them (D203): every
+night this step makes them say what the record says, so the open site keeps showing current
+backtests. They go once the pages read the record and that code has been promoted.
 
 Changes only what differs, so an unchanged record changes nothing:
 - simulated_activation: one row per window and year with a met event the return periods count
   (inside the window's analysis span and not a gap year; any year when the span is not
-  recorded). A year that is no
-  longer met goes; a new one comes in, labelled with its events' names ("Dennis, Wilma"). An
-  existing row keeps its label while it names the same events (in any order), and its date
-  while the year has one event with the same date.
-- backtest_event: for the windows whose record lists tested events one by one (those already in
-  the table, and any whose record has an event that was not met or not assessed), every named
-  event of the record, with whether it was met and its value.
-Only windows with a code are touched. Nothing happens while aa.window_event is empty (before
-the one-off backfill, scripts/backfill_window_events.py) or does not exist.
+  recorded). A year that is no longer met goes; a new one comes in, labelled with its events'
+  names ("Dennis, Wilma"). An existing row keeps its label while it names the same events (in any
+  order). A year with one event takes that event's date, time and precision (a cleared date is
+  cleared), and, for a window whose record is not per tested event, its note.
+- backtest_event: for the windows whose record lists tested events one by one, every named
+  event of the record with whether it was met and its value. A window counts as one only when
+  every met event in its record is named (a storm), and it is already in the table or its
+  record has an event that was not met or not assessed: a year-only record with one named storm
+  added stays out, so aa.v_trigger_event (the CERF app's view) keeps reading its simulated years.
+Only windows with a code are touched, and never a window whose record has no event at all
+(its rows stay, with a warning: emptying a window's record does not empty them). Nothing
+happens before the one-off backfill (scripts/backfill_window_events.py) has committed: the
+sign is its rows in aa.entry_audit, not rows in aa.window_event, which an editor could have
+entered first.
 
 Every change is audited to aa.entry_audit (entered_by 'nightly mirror_backtest').
 
@@ -37,6 +42,7 @@ os.environ.setdefault("PGSSLMODE", "require")
 import ocha_stratus as stratus
 
 BY = "nightly mirror_backtest"
+BACKFILL_BY = "backfill_window_events"     # entry_audit.entered_by of the one-off backfill
 WKEY = ("country_iso3", "hazard", "version", "window_code")
 
 
@@ -59,10 +65,20 @@ def _rows(conn, sql):
 
 
 def record_live(conn):
-    """True once aa.window_event exists and holds rows (the backfill has run)."""
+    """True once the one-off backfill has committed (its audit rows exist), so aa.window_event
+    holds every window's record. Rows in aa.window_event alone prove nothing: an editor or an
+    entries file could have entered one before the backfill."""
     if conn.execute(sa.text("SELECT to_regclass('aa.window_event')")).scalar() is None:
         return False
-    return conn.execute(sa.text("SELECT EXISTS (SELECT 1 FROM aa.window_event)")).scalar()
+    return bool(conn.execute(sa.text(
+        "SELECT EXISTS (SELECT 1 FROM aa.entry_audit WHERE entered_by = :by AND table_name = 'window_event')"),
+        {"by": BACKFILL_BY}).scalar())
+
+
+def _same(a, b):
+    """Equal, with NaN equal to NaN (numeric NaN would otherwise rewrite a row every night)."""
+    nan = lambda x: x is not None and x != x  # noqa: E731  (float and Decimal NaN)
+    return a == b or (nan(a) and nan(b))
 
 
 def _counted(w, year):
@@ -83,7 +99,7 @@ def mirror(conn, verbose=True):
     """One pass. Returns the number of changes (rows inserted or deleted, fields updated)."""
     say = print if verbose else (lambda *a, **k: None)
     if not record_live(conn):
-        say("window events: aa.window_event is empty or missing (not backfilled yet); nothing mirrored")
+        say("window events: the one-off backfill has not run yet; nothing mirrored")
         return 0
     wins = {tuple(w[k] for k in WKEY): w for w in _rows(conn, """
         SELECT country_iso3, hazard, version, window_code, window_name, kb_framework,
@@ -93,6 +109,25 @@ def mirror(conn, verbose=True):
     for e in _rows(conn, "SELECT * FROM aa.window_event"):
         events.setdefault(tuple(e[k] for k in WKEY), []).append(e)
     changed = 0
+    bt = {}
+    for b in _rows(conn, "SELECT * FROM aa.backtest_event WHERE window_code IS NOT NULL"):
+        bt[(tuple(b[k] for k in WKEY), b["event_year"], b["event_label"])] = b
+    # windows whose record lists tested events one by one (see the docstring)
+    in_bt = {k[0] for k in bt}
+    tested = {wk for wk, evs in events.items()
+              if all(e["event_label"] for e in evs if e["met"])
+              and (wk in in_bt or any(e["met"] is not True for e in evs))}
+    empty_warned = set()
+
+    def empty(wk, table):
+        """A coded window with rows here and no event in its record: left as it is, warned once."""
+        if wk in events:
+            return False
+        if (wk, table) not in empty_warned:
+            empty_warned.add((wk, table))
+            say(f"::warning::{'/'.join(map(str, wk))}: no event in aa.window_event but rows in aa.{table}; "
+                "left as they are (delete them by hand if the record was emptied on purpose)")
+        return True
 
     # ---- simulated_activation: the met years of the reference span
     sim = {}
@@ -107,7 +142,7 @@ def mirror(conn, verbose=True):
             if e["met"] and _counted(w, e["event_year"]):
                 want.setdefault((wk, e["event_year"]), []).append(e)
     for (wk, y), s in sorted(sim.items(), key=lambda x: (x[0][0], x[0][1])):
-        if wk in wins and (wk, y) not in want:
+        if wk in wins and (wk, y) not in want and not empty(wk, "simulated_activation"):
             lab = "/".join(str(v) for v in (*wk, y))
             conn.execute(sa.text(
                 "DELETE FROM aa.simulated_activation WHERE country_iso3 = :country_iso3 AND hazard = :hazard "
@@ -127,7 +162,7 @@ def mirror(conn, verbose=True):
                    "event_label": ", ".join(e["event_label"] for e in evs if e["event_label"]) or None,
                    "event_date": one["event_date"] if one else None,
                    "event_time": one["event_time"] if one else None,
-                   "time_precision": (one["time_precision"] if one else None) or "year",
+                   "time_precision": one["time_precision"] if one else "year",
                    "source_note": "; ".join(dict.fromkeys(e["source_note"] for e in evs if e["source_note"])) or None}
             conn.execute(sa.text(
                 "INSERT INTO aa.simulated_activation (" + ", ".join(row) + ") VALUES ("
@@ -140,8 +175,8 @@ def mirror(conn, verbose=True):
         if _names(s["event_label"]) != names:
             sets["event_label"] = ", ".join(e["event_label"] for e in evs if e["event_label"]) or None
         if one is not None:
-            for c in ("event_date", "event_time", "time_precision"):
-                if one[c] is not None and one[c] != s[c]:
+            for c in ("event_date", "event_time", "time_precision") + (() if wk in tested else ("source_note",)):
+                if not _same(one[c], s[c]):
                     sets[c] = one[c]
         if sets:
             conn.execute(sa.text(
@@ -155,15 +190,11 @@ def mirror(conn, verbose=True):
             changed += len(sets)
 
     # ---- backtest_event: the named events of the windows that list tested events one by one
-    bt = {}
-    for b in _rows(conn, "SELECT * FROM aa.backtest_event WHERE window_code IS NOT NULL"):
-        bt[(tuple(b[k] for k in WKEY), b["event_year"], b["event_label"])] = b
-    tested = {k[0] for k in bt} | {wk for wk, evs in events.items() if any(e["met"] is not True for e in evs)}
     want_bt = {(wk, e["event_year"], e["event_label"]): e
                for wk, evs in events.items() if wk in tested and wk in wins
                for e in evs if e["event_label"]}
     for k, b in sorted(bt.items(), key=lambda x: x[0]):
-        if k[0] in wins and k not in want_bt:
+        if k[0] in wins and k not in want_bt and not empty(k[0], "backtest_event"):
             lab = "/".join(str(v) for v in (*k[0], k[1], k[2]))
             conn.execute(sa.text(
                 "DELETE FROM aa.backtest_event WHERE country_iso3 = :country_iso3 AND hazard = :hazard "
@@ -187,7 +218,7 @@ def mirror(conn, verbose=True):
             say(f"  backtest_event {lab}: new")
             changed += 1
             continue
-        sets = {c: e[c] for c in ("met", "value", "unit", "source_note") if e[c] != b[c]}
+        sets = {c: e[c] for c in ("met", "value", "unit", "source_note") if not _same(e[c], b[c])}
         if sets:
             conn.execute(sa.text(
                 "UPDATE aa.backtest_event SET " + ", ".join(f"{c} = :s_{c}" for c in sets)

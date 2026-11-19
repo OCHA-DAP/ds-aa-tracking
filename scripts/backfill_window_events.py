@@ -10,7 +10,9 @@ Per window with a code and no event yet:
 - otherwise its simulated years (aa.simulated_activation), each a met event with the label,
   date and note its row carries. A label that names several storms ("Dennis, Wilma") stays one
   event: the record does not split what the document lists together.
-A window that already has events is left as it is, so a second run changes nothing.
+Runs once: after it has committed, a second run does nothing. It refuses to start while
+aa.window_event has rows it did not write (entered before it ran): their windows would not
+match the two tables, so delete them first and enter them again afterwards.
 chance_unit (where not set): 'event' for storm windows (one chance per storm), 'year' for the
 others (a year or season), for a person to correct where a framework counts otherwise.
 
@@ -37,9 +39,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 os.environ.setdefault("PGSSLMODE", "require")
 
 import ocha_stratus as stratus  # noqa: E402
-from mirror_backtest import mirror  # noqa: E402
+from mirror_backtest import BACKFILL_BY, mirror, record_live  # noqa: E402
 
-BY = "backfill_window_events"
+BY = BACKFILL_BY      # its audit rows are the sign, for the nightly step and the entries, that it ran
 COLS = ("country_iso3", "hazard", "version", "window_code", "event_year", "event_label", "event_date",
         "event_time", "time_precision", "met", "value", "unit", "source_note")
 
@@ -91,6 +93,14 @@ def events_for(conn, w):
 
 def backfill(conn, verbose=True):
     say = print if verbose else (lambda *a, **k: None)
+    if record_live(conn):
+        say("window events: backfilled already; nothing to do")
+        return 0
+    early = conn.execute(sa.text("SELECT count(*) FROM aa.window_event")).scalar()
+    if early:
+        raise SystemExit(f"::error::aa.window_event has {early} row(s) entered before the backfill: delete "
+                         "them, run the backfill, then enter them again (the record of their windows would "
+                         "not match the backtest tables)")
     n_win = n_ev = 0
     for w in _rows(conn, TODO):
         evs = events_for(conn, w)
@@ -126,16 +136,23 @@ def main():
     with eng.connect() as conn:
         tx = conn.begin()
         try:
+            if record_live(conn):
+                tx.rollback()
+                print("window events: backfilled already; nothing to do")
+                return
             backfill(conn)
             conn.execute(sa.text("SET CONSTRAINTS ALL IMMEDIATE"))     # the window key, now
-            # before the round trip, which would make the backtest tables agree by construction
+            # before the round trip, which would make the backtest tables agree by construction:
+            # a return period that moves, or a counted year the CERF app's view does not show
             bad = conn.execute(sa.text(
-                "SELECT count(*) FROM aa.v_trk_event_check WHERE position('activation year' in problem) > 0")).scalar()
+                "SELECT count(*) FROM aa.v_trk_event_check WHERE position('activation year' in problem) > 0 "
+                "OR position('v_trigger_event' in problem) > 0")).scalar()
             n = mirror(conn, verbose=True)
             if n or bad:
                 tx.rollback()
                 sys.exit(f"::error::backfill rolled back: regenerating the backtest tables would change {n} "
-                         f"thing(s); {bad} window(s) or version(s) would get another return period")
+                         f"thing(s); {bad} problem(s) in aa.v_trk_event_check (a return period that moves, "
+                         "or a year the CERF app's view would show differently)")
             if a.write:
                 tx.commit()
                 print("window events: committed; the round trip changes nothing and the return periods agree")

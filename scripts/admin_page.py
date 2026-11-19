@@ -72,8 +72,8 @@ IMPORTED = {
 # tables of ours regenerated every night from another (D252): shown, never offered for editing
 DERIVED = {
     t: ("Regenerated every night from window_event (the window's event record, D252), so an "
-        "edit here would be undone: change the events in window_event. Kept for the open site "
-        "until the next promote, then dropped.")
+        "edit here would be undone: change the events in window_event. Kept while the pages and "
+        "the open site read it; dropped once the pages read window_event and that code is promoted.")
     for t in ("simulated_activation", "backtest_event")
 }
 

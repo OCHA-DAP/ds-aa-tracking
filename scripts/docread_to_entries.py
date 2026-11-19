@@ -19,8 +19,9 @@ tunnel, or a snapshot restored locally) and writes:
   not, with its value), and the years the document lists the trigger as met that no tested
   event covers; only those BEFORE the version took effect (a version's backtest is fixed before
   it is endorsed). Upserted by the window's code, so a window new in this read (no code yet)
-  gets its events in a later run, once it has one; an event the document no longer lists is
-  not removed (delete it by hand).
+  gets its events in a later run, once it has one. An event the document no longer lists, or
+  spells differently on a re-read, is not removed (delete it by hand): a second spelling of a
+  storm would count as a second event.
 - people_covered — the people targeted, as at the version's start, source 'framework-doc'.
 Partners are compared with aa.framework_partner and reported, not written.
 
@@ -386,22 +387,27 @@ def convert(read, body, db):
         events, uncoded = {}, set()
 
         def event(win, y, label, **f):
+            """Enter one event; False when its window has no code or the event is in already (a
+            tested event wins over a simulated year of the same name)."""
             code = codes.get(win)
             if code is None:
                 uncoded.add(win)
-                return
-            events[(code, int(y), label or "")] = {
-                "country_iso3": c, "hazard": hz, "version": ver, "window_code": code,
-                "event_year": int(y), "event_label": label or "", **f}
+                return False
+            k = (code, int(y), label or "")
+            if k in events:
+                return False
+            events[k] = {"country_iso3": c, "hazard": hz, "version": ver, "window_code": code,
+                         "event_year": int(y), "event_label": label or "", **f}
+            return True
 
         # every event the backtest tested, met or not (D189)
         tested = [t for t in read.get("tested_events") or [] if mine(t) and t.get("event_year") is not None
                   and t.get("event_label") and not (vf_year and int(t["event_year"]) >= vf_year)]
         for t_ in tested:
-            event(t_.get("window") or "window not recorded", t_["event_year"], str(t_["event_label"]),
-                  met=t_.get("met"), value=_num(t_.get("value")), unit=t_.get("unit"),
-                  source_note="; ".join(x for x in (f"framework document p.{t_.get('page')}", t_.get("note")) if x))
-        n_tested += len(tested)
+            n_tested += event(t_.get("window") or "window not recorded", t_["event_year"], str(t_["event_label"]),
+                              met=t_.get("met"), value=_num(t_.get("value")), unit=t_.get("unit"),
+                              source_note="; ".join(x for x in (f"framework document p.{t_.get('page')}",
+                                                                t_.get("note")) if x))
         met_years = {(k[0], k[1]) for k, v in events.items() if v.get("met")}
         for s in [s for s in read.get("simulated_activations") or [] if mine(s)]:
             y = s.get("event_year")
@@ -418,14 +424,14 @@ def convert(read, body, db):
             raw = s.get("event_label")
             lab = _storm_names(raw) if hz == "storm" else None
             extra = raw if raw and raw != lab else None
-            event(win, y, lab, met=True, event_date=d or None, time_precision="day" if d else "year",
-                  source_note="; ".join(x for x in (f"framework document p.{s.get('page')}", extra) if x))
-            n_sim += 1
+            n_sim += event(win, y, lab, met=True, event_date=d or None, time_precision="day" if d else "year",
+                           source_note="; ".join(x for x in (f"framework document p.{s.get('page')}", extra) if x))
         for ev in events.values():
             add("window_event", ev)
         if uncoded:
-            notes.append(f"{c}: no events entered for window(s) without a code yet: "
-                         + ", ".join(sorted(uncoded)) + " (re-run once they have one, D207)")
+            notes.append(f"{c}: no events entered for window(s) the database has no code for (new in "
+                         "this read, or named differently there): " + ", ".join(sorted(uncoded))
+                         + " (re-run once each has a code, D207)")
         tp = _num(fm.get("target_people"))
         if isinstance(fm.get("target_people_by_country"), dict):
             tp = _num(fm["target_people_by_country"].get(c)) or tp

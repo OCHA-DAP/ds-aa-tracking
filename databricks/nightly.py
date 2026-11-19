@@ -34,7 +34,7 @@ Steps
      for (D232); the amounts of an allocation split over several rows are left as entered and
      warned about when the parts don't add up to OneGMS's figures
   2c''. scripts/mirror_backtest.py: simulated_activation and backtest_event say what the window
-     event record (aa.window_event) says, for the open site's code until the next promote (D252);
+     event record (aa.window_event) says, while the pages and the open site's code still read them (D252);
      nothing happens before the backfill
   2d. scripts/extract_document_text.py: the text of each newly registered framework
      document, page by page, into aa.framework_document_page (D228)

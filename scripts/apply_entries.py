@@ -46,7 +46,8 @@ pending, and never blocks the files after it. So does a file with any item on a 
 table (D154, proxy/mirror_tables.json): those are copied in every day by ds-cerf-supplement
 and never written here. So does a file with an item on aa.simulated_activation or
 aa.backtest_event once the window event record is filled (D252): those two are regenerated
-from aa.window_event every night, so the events are entered there. --dry-run applies each file in its
+from aa.window_event every night, so the events are entered there; a file with an item on
+aa.window_event waits (fails, stays pending) until the one-off backfill has filled it. --dry-run applies each file in its
 transaction, lets the database check it, and rolls back.
 
 Usage:
@@ -195,10 +196,11 @@ def _replace(conn, name, by, table, scope, rows, dry):
 
 
 def _record_live(conn):
-    """True once the window event record (aa.window_event) exists and has been filled (D252)."""
-    if conn.execute(sa.text("SELECT to_regclass('aa.window_event')")).scalar() is None:
-        return False
-    return bool(conn.execute(sa.text("SELECT EXISTS (SELECT 1 FROM aa.window_event)")).scalar())
+    """True once the one-off backfill of the window event record has committed (D252): its rows
+    in aa.entry_audit are the sign (scripts/mirror_backtest.record_live)."""
+    sys.path.insert(0, str(Path(__file__).parent))
+    from mirror_backtest import record_live
+    return record_live(conn)
 
 
 def apply_file(conn, name, payload, dry=False):
@@ -213,6 +215,9 @@ def apply_file(conn, name, payload, dry=False):
         if table in DERIVED_BACKTEST_TABLES and _record_live(conn):   # D252: the whole file fails
             raise SystemExit(f"{name}: aa.{table} is regenerated every night from aa.window_event "
                              "(D252): enter the window's events there (a replace scoped to the window)")
+        if table == "window_event" and not _record_live(conn):     # D252: the backfill comes first
+            raise SystemExit(f"{name}: aa.window_event is filled by the one-off backfill first "
+                             "(nightly --backfill-events, D252); this file stays pending until then")
         if "delete" in item:
             _delete(conn, name, by, item["table"], item["delete"], dry)
             n += 1

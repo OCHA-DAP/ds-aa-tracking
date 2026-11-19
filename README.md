@@ -38,8 +38,8 @@ only the database snapshot.
 `schema.py`; the loaders that used to write some of them from elsewhere are retired): the
 **backtests** — `window`, `window_event` (the window's event record, D252),
 `window_trigger` / `trigger_event`, `version_performance_reported` — are edited here
-(`simulated_activation` and `backtest_event` are regenerated from `window_event` every night
-until the next promote, then dropped), and `funding_breakdown`, `actual_activation`, `activation_allocation` are the
+(`simulated_activation` and `backtest_event` are regenerated from `window_event` every night,
+and dropped once the pages read `window_event` and that code is promoted), and `funding_breakdown`, `actual_activation`, `activation_allocation` are the
 frozen record from before 2026-10-05 (superseded by `window_funding`, `window_activation`,
 `activation_funding`). This database is the record
 of every AA table; backtests are edited freely and corrected as errors are found
@@ -86,7 +86,7 @@ are kept forever (the year-end official state, for the map's time view).
   `v_window_event` adds each event's period, what the return periods count (`counted`), and the
   real activations as met events after endorsement. `window_trigger.required` /
   `consecutive` / `cadence` and `window.chance_unit` describe how a window's triggers combine,
-  how often they are checked and how a blank reads. Until the cleanup after the next promote,
+  how often they are checked and how a blank reads. Until the pages read the record and that code is promoted,
   `scripts/mirror_backtest.py` (nightly) regenerates `simulated_activation` and `backtest_event`
   from the record for the open site's code, `v_window_event_performance` /
   `v_framework_event_performance` compute the return periods from it, and `v_trk_event_check`
