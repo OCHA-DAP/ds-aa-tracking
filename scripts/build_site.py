@@ -868,11 +868,12 @@ _CODED = ("A row gets its window's <code>window_code</code> from the name it giv
           "<code>v_trk_window_links</code> lists it.")
 NOTES = {
     "country_hazard": "The (country, hazard) pair — the identity everything hangs off: pipeline entries with no version yet, plus descriptive attributes that aren't approved per version (region, language, coordination group); the manual <code>retired</code> flag (a retired framework is hidden from the map whatever its versions say) and <code>technical_support</code> (OCHA supported the framework technically, without a funding commitment). The framework status everyone shows comes from <code>v_framework_lifecycle</code>. Hierarchy: country_hazard → framework_version → window → {window_trigger → trigger_event, window_activation, simulated_activation, backtest_event, window_funding, window_status}; ad hoc / early-action allocations and pre-arranged money outside a framework attach to the pair (adhoc_activation, adhoc_prearranged).",
-    "window": "A framework version's trigger windows as BACKTESTED: analysis span (the RP denominator) and the years in it the backtest could not assess (<code>analysis_gap_years</code>, D221), all-in flag, monitored months, reported RP/prob. Each window has a code, <code>window_code</code>, that says what it is (<code>ws</code>, <code>wt_readiness</code>, <code>wt_action</code>, …; unique within its version, D207, D213): the tables below a window join it on (country, hazard, version, <code>window_code</code>) through declared keys, and <code>window_name</code> stays as its label. CERF's own window uids are in <code>cerf_uid_crosswalk</code>. <code>cannot_trigger_if</code> names the window of the same version after which this one cannot release. With <code>simulated_activation</code> and <code>version_performance_reported</code> it is the version's backtest. Owned and edited here since 2026-10-05 (entries files with <code>op: replace</code>, this admin page); corrected as errors are found — <code>v_trk_backtest_check</code> lists the rows that break a rule. Written by a loader in another repository until then.",
-    "window_trigger": "The conditions inside a window, joined by OR (D208): several can go off for the same window, which still activates once. A window with no row here has one implicit trigger, <code>main</code> (<code>v_window_trigger</code>), whose events are the window's own. Rows are entered where a window has more than one condition, and for every window whose historical activations are entered per event (D214); a trigger can carry analysis years and gap years of its own. <code>trigger_code</code> says what the trigger is (<code>forecast</code>, <code>obsv</code>, <code>readiness_forecast</code>, …; D213).",
-    "trigger_event": "Every event a trigger was tested on, met or not: a year, a date, a storm or any event the document names. Entered only for windows with rows in <code>window_trigger</code>. The window's simulated years (<code>simulated_activation</code>) stay the set the return periods count; <code>v_trk_trigger_check</code> lists a window whose met trigger events disagree with them.",
-    "simulated_activation": "The years a version's trigger WOULD have fired, per window — never a real activation of the version itself (those are <code>window_activation</code>). Should fall inside the window's analysis span: the data loaded before 2026-10-05 broke that where real activations were appended (listed by <code>v_trk_backtest_check</code>). " + _CODED,
-    "backtest_event": "Every event a version's backtest tested, met or not, one row per event and window (D189: the storms that would NOT have activated too). <code>simulated_activation</code> stays the set the return periods count: a window's met rows should fall in the years it lists (the build log lists the ones that do not). " + _CODED,
+    "window": "A framework version's trigger windows as BACKTESTED: analysis span (the RP denominator) and the years in it the backtest could not assess (<code>analysis_gap_years</code>, D221), all-in flag, monitored months, reported RP/prob. Each window has a code, <code>window_code</code>, that says what it is (<code>ws</code>, <code>wt_readiness</code>, <code>wt_action</code>, …; unique within its version, D207, D213): the tables below a window join it on (country, hazard, version, <code>window_code</code>) through declared keys, and <code>window_name</code> stays as its label. CERF's own window uids are in <code>cerf_uid_crosswalk</code>. <code>cannot_trigger_if</code> names the window of the same version after which this one cannot release. With <code>window_event</code> and <code>version_performance_reported</code> it is the version's backtest. Owned and edited here since 2026-10-05 (entries files with <code>op: replace</code>, this admin page); corrected as errors are found — <code>v_trk_backtest_check</code> lists the rows that break a rule. Written by a loader in another repository until then. <code>chance_unit</code> (D253): one chance to activate per <code>year</code> (a year or season: a year in the analysis span with no event did not activate) or per <code>event</code> (a storm, an outbreak: only the listed events were assessed).",
+    "window_trigger": "The conditions inside a window, joined by OR (D208): several can go off for the same window, which still activates once. A window with no row here has one implicit trigger, <code>main</code> (<code>v_window_trigger</code>), whose events are the window's own. Rows are entered where a window has more than one condition, and for every window whose historical activations are entered per event (D214); a trigger can carry analysis years and gap years of its own. <code>trigger_code</code> says what the trigger is (<code>forecast</code>, <code>obsv</code>, <code>readiness_forecast</code>, …; D213). How a window's triggers combine (D253): it activates when every <code>required</code> trigger is met and, if it has optional ones, at least one of them (all optional = any, the default; all required = all); <code>consecutive</code> = forecasts in a row that must meet the threshold; <code>cadence</code> = how often it is checked. Descriptive: the window's met events are entered in <code>window_event</code>.",
+    "trigger_event": "Every event a trigger was tested on, met or not: a year, a date, a storm or any event the document names. Entered only for windows with rows in <code>window_trigger</code>. The window's own record (<code>window_event</code>, D252) stays what the return periods count; <code>v_trk_event_check</code> lists a year where the window's triggers, combined by their rule (D253), disagree with it.",
+    "simulated_activation": "The years a version's trigger WOULD have fired, per window — never a real activation of the version itself (those are <code>window_activation</code>). Since D252 regenerated every night from <code>window_event</code> (its met events the return periods count, one row per year) and never edited directly; kept for the open site's code until the next promote, then dropped. " + _CODED,
+    "backtest_event": "Every event a version's backtest tested, met or not, one row per event and window (D189: the storms that would NOT have activated too). Since D252 regenerated every night from <code>window_event</code> (the named events of the windows that list them one by one) and never edited directly; kept for the open site's code until the next promote, then dropped. " + _CODED,
+    "window_event": "The window's event record (D252): every event the window was assessed on — a year, a season, a storm, an outbreak — met, not met or not assessed (<code>met</code> NULL), before, inside or after the backtest's analysis years, with the storm's IBTrACS <code>sid</code> where known. <code>met</code> is entered, never computed from the triggers; <code>trigger_event</code> is the detail below it, where known. The return periods count its met events of the reference span, by year (<code>v_window_event.counted</code>); a real activation counts as a met event after endorsement without being entered (<code>v_window_event</code> adds it). Replaces <code>simulated_activation</code> and <code>backtest_event</code>, which <code>scripts/mirror_backtest.py</code> regenerates from it every night until the next promote; <code>v_trk_event_check</code> lists disagreements.",
     "version_performance_reported": "A version's backtest result as published: the overall return period, probability and spend, one row per version (with <code>window</code> and <code>simulated_activation</code>, the version's backtest). <code>flag</code> is the flag the earlier crosswalk gave it. Owned here since 2026-10-05, like <code>window</code>; written by a loader in another repository until then.",
     "cerf_uid_crosswalk": "The window uids CERF's sheet uses (afg_drought_v2_wt1: its <code>uid</code> and <code>old_uid</code>), each with the window it stands for now and, where two of its windows are one window here, the trigger (D212). It keeps the financial-exposure app and the sheet matchable now that the tracker numbers versions its own way and names windows by what they are (D213); <code>v_cerf_window</code> lists the uids per window. The insurer's ids were taken out in November 2026 (D251).",
     "framework_version": "The unit that actually gets approved: one row per framework version (incl. superseded versions), first recorded from the team's records (<code>source='aa-team'</code>), the historical sweep of the OCHA AA web page and the pa-anticipatory-action monorepo (<code>source='ocha-web'/'pa-monorepo'</code>, with <code>doc_url</code>/<code>analysis_ref</code>), and since then entered here (<code>source='entered'</code>). Version-specific facts (budgets, sector budgets, coverage, calendar, activations, status) carry a <code>version</code>. The tracker numbers each framework's versions itself, from its first version on record (<code>version_no</code>, D212); CERF's own id is <code>cerf_version_id</code>.",
@@ -999,6 +1000,7 @@ ERD_NODES = [
     ("trigger_event", "new", "+ trigger_code · event_year · event_label"),
     ("simulated_activation", "new", "+ window_name · event_year"),
     ("backtest_event", "new", "+ window_name · event_year · event_label"),
+    ("window_event", "new", "+ window_code · event_year · event_label"),
     ("cerf_uid_crosswalk", "new", "source · cerf_uid"),
     ("trigger_timeline", "new", "+ leg · seq"),
     ("framework_partner", "new", "+ name · source"),
@@ -1082,6 +1084,7 @@ ERD_EDGES = [
     ("trigger_event", "window_trigger", "window_code · trigger_code", "many0", "one"),
     ("simulated_activation", "window", "window_code", "many0", "one"),
     ("backtest_event", "window", "window_code", "many0", "one"),
+    ("window_event", "window", "window_code", "many0", "one"),
     ("cerf_uid_crosswalk", "window", "window_code", "many0", "one"),
     ("cerf_uid_crosswalk", "window_trigger", "window_code · trigger_code", "many0", "one0"),
     ("trigger_timeline", "framework_version", "", "many0", "one"),
@@ -1244,12 +1247,19 @@ def erd_edges(fks):
     return edges
 
 
-def build_erd(edges):
+def build_erd(edges, present=None):
     """Crow's-foot ERD rendered to SVG with graphviz (brew install graphviz).
 
     Cardinality glyphs: crow = many, double bar = exactly one, bar+circle =
     zero-or-one; crow+circle = zero-or-many. Solid green = declared FK; dashed =
-    join by convention. edges: erd_edges()."""
+    join by convention. edges: erd_edges(). present: the names the database has; a box for
+    anything else (a table schema.py defines whose schema run has not happened yet) and its
+    edges are left out."""
+    if present is not None:
+        keep = lambda n: n in present  # noqa: E731
+        edges = [x for x in edges if keep(x[0]) and keep(x[1])]
+    else:
+        keep = lambda n: True  # noqa: E731
     import shutil
     import subprocess
 
@@ -1263,13 +1273,15 @@ def build_erd(edges):
         ' fontcolor="#5a6675", dir=both, arrowsize=0.7];',
     ]
     for name, owner, keys in ERD_NODES:
-        lines.append(_erd_node(name, owner, keys))
+        if keep(name):
+            lines.append(_erd_node(name, owner, keys))
     for cid, label, nodes in ERD_CLUSTERS:
         lines.append(f'  subgraph {cid} {{')
         lines.append(f'    label="{label}";')
         lines.append('    fontname="Helvetica"; fontsize=10; color="#c8d2dc"; style=dashed;')
         for name, owner, keys in nodes:
-            lines.append("  " + _erd_node(name, owner, keys))
+            if keep(name):
+                lines.append("  " + _erd_node(name, owner, keys))
         lines.append("  }")
     for child, parent, label, ccard, pcard, fk in edges:
         attrs = [
@@ -1302,8 +1314,13 @@ def schema_doc_gaps(tables, views, fks):
     gaps = [f"aa.{t} has no note on the schema page (build_site.NOTES)" for t in sorted(ours - set(NOTES))]
     gaps += [f"aa.{t} is not drawn in the schema page's diagram (build_site.ERD_NODES)"
              for t in sorted(ours - drawn)]
+    pending = (set(trk_schema.TABLES) | set(trk_schema.DURABLE_TABLES)) - set(tables)
     gaps += [f"the schema page's diagram draws {n}, which is not in the aa schema"
-             for n in sorted(drawn - set(tables) - set(views) - {"ibtracs_storms"})]
+             for n in sorted(drawn - set(tables) - set(views) - {"ibtracs_storms"} - pending)]
+    # a table schema.py defines that the database read does not have yet: its box is left out
+    # until the schema run creates it (build_erd's `present`)
+    gaps += [f"aa.{n} is defined in schema.py but not in the database the build read (its schema "
+             "run has not happened yet): the schema page leaves its box out" for n in sorted(drawn & pending)]
     gaps += [f"the foreign key {k['conname']} joins aa.{k['child']} to aa.{k['parent']}, "
              "which the schema page's diagram does not both draw"
              for _, k in fks.iterrows() if not {k["child"], k["parent"]} <= drawn]
@@ -1368,6 +1385,13 @@ def build_schema_page(e):
     edges = erd_edges(fks)
     for gap in schema_doc_gaps(cols["table_name"].unique(), all_views, fks):
         print(f"::warning::{gap}")
+    # D252: a return period from the window's event record that differs from the one the pages
+    # show means the nightly regeneration of the backtest tables did not run or failed
+    if "v_trk_event_check" in all_views:
+        for r in pd.read_sql("SELECT * FROM aa.v_trk_event_check WHERE position('activation year' in problem) > 0",
+                             e).itertuples():
+            print(f"::warning::event record vs backtest tables: {r.country_iso3} {r.hazard} {r.version} "
+                  f"{r.window_code or ''}: {r.problem}")
 
     def owner_of(t):
         if t in trk_schema.TABLES or t in trk_schema.DURABLE_TABLES:
@@ -1406,7 +1430,8 @@ def build_schema_page(e):
         "the Data entry page, the entries files the nightly job applies and the nightly CERF "
         "sync are logged in <code>entry_audit</code>; the <code>entered_*</code> tables hold "
         "what the Data entry page was given.</p>"
-        f"<div class='scroll' style='max-height:none'>{build_erd(edges)}</div></div>"
+        f"<div class='scroll' style='max-height:none'>"
+        f"{build_erd(edges, set(cols['table_name']) | set(all_views) | {'ibtracs_storms'})}</div></div>"
     )
     tables = sorted(cols["table_name"].unique(), key=lambda t: (owner_of(t) != "ds-aa-tracking", t))
     for owner in ("ds-aa-tracking", "ds-cerf-supplement", "other"):

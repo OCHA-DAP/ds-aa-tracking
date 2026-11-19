@@ -872,6 +872,9 @@ DURABLE_TABLES = {
             source_note text,
             PRIMARY KEY (country_iso3, hazard, version, window_name, event_year)
         )""",
+    # Since D252 (2026-11-19) simulated_activation and backtest_event are regenerated every night
+    # from aa.window_event (scripts/mirror_backtest.py) and edited there; they stay for the open
+    # site's code until the next promote, then go.
     # every event a version's backtest tested, met or not (owner, 2026-11-03: "include the full
     # record we tested (i.e. including the storms we would NOT have activated for)"; D189). One
     # row per event and window. simulated_activation stays the set the return periods count:
@@ -938,6 +941,41 @@ DURABLE_TABLES = {
             unit text,
             source_note text,
             PRIMARY KEY (country_iso3, hazard, version, window_code, trigger_code, event_year, event_label)
+        )""",
+    # ------------------------------------------------ the event record (D252, 2026-11-19)
+    # Every event a window was assessed on — a year, a season, a storm, an outbreak — met or not,
+    # before, inside or after the backtest's analysis years: THE window-level record of what the
+    # trigger would have done (owner, 2026-11-18: "we absolutely need the activation record per
+    # window"; aa.trigger_event below it is the detail, where known). `met` is stored, never
+    # computed from the triggers. The return periods count the met events of the reference
+    # period, by year (aa.v_window_event: a year, outside the gap years, inside the analysis span).
+    # A real activation counts as a met event after endorsement without being entered here
+    # (v_window_event adds it). Replaces simulated_activation and backtest_event, which are
+    # regenerated from it every night (scripts/mirror_backtest.py) until they are dropped after
+    # the next promote (D203).
+    "window_event": """
+        CREATE TABLE IF NOT EXISTS aa.window_event (
+            country_iso3 text NOT NULL,
+            hazard text NOT NULL,
+            version text NOT NULL,
+            window_code text NOT NULL,     -- aa.window.window_code (D207)
+            event_year integer NOT NULL,   -- labelled as the document labels it (seasons that
+                                           -- straddle two years: either way, as before)
+            event_label text NOT NULL DEFAULT '',  -- the event the document names (a storm,
+                                           -- "Dennis, Wilma" where it lists them together);
+                                           -- '' = the year or season itself
+            sid text,                      -- the storm's IBTrACS id, where known
+            event_date date,
+            event_time timestamptz,
+            time_precision text            -- year | month | day | hour
+                CHECK (time_precision IN ('year', 'month', 'day', 'hour')),
+            met boolean,                   -- the window would have activated; NULL = it could
+                                           -- not be assessed (no forecast record, …)
+            value numeric,                 -- the trigger's indicator for the event, as reported
+            unit text,
+            source_note text,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (country_iso3, hazard, version, window_code, event_year, event_label)
         )""",
     # CERF's sheet's window uids (afg_drought_v2_wt1: its uid and old_uid) and the window, and
     # where two of its windows are one window here, the trigger, each now stands for (D212).
@@ -1024,7 +1062,9 @@ DURABLE_TABLES = {
 
 # the backtest tables (edited here) and the KB-era tables kept read-only
 BACKTEST_TABLES = ["window", "simulated_activation", "backtest_event", "version_performance_reported",
-                   "window_trigger", "trigger_event", "cerf_uid_crosswalk"]
+                   "window_trigger", "trigger_event", "window_event", "cerf_uid_crosswalk"]
+# regenerated every night from aa.window_event (D252): never written directly
+DERIVED_BACKTEST_TABLES = ["simulated_activation", "backtest_event"]
 KB_ERA_TABLES = ["funding_breakdown", "actual_activation", "activation_allocation"]
 
 # ------------------------------------------------------------ additive migrations
@@ -1308,6 +1348,31 @@ ADDITIVE_MIGRATIONS = [
     """UPDATE aa.window_status c SET window_code = w.window_code FROM aa.window w
        WHERE c.window_code IS NULL AND w.window_code IS NOT NULL AND (c.country_iso3, c.hazard,
              c.version, c.window_name) = (w.country_iso3, w.hazard, w.version, w.window_name)""",
+    # 2026-11-19 (D252): the window's event record hangs off the window by code
+    """DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'window_event_window_fk'
+                       AND conrelid = 'aa.window_event'::regclass) THEN
+            ALTER TABLE aa.window_event ADD CONSTRAINT window_event_window_fk FOREIGN KEY (country_iso3, hazard, version, window_code)
+                REFERENCES aa.window (country_iso3, hazard, version, window_code) ON UPDATE CASCADE
+                DEFERRABLE INITIALLY DEFERRED NOT VALID;
+        END IF;
+    END $$""",
+    # 2026-11-19 (D253): how a window's triggers combine and how often they are checked (owner,
+    # 2026-11-18). A window activates when every REQUIRED trigger is met and, if it has optional
+    # ones, at least one of them (all optional = ANY, the default; all required = ALL; DRC
+    # cholera's "a confirmed case AND (cases OR growth)" = one required, two optional).
+    # `consecutive`: forecasts in a row that must meet the threshold (Mauritania and Niger
+    # drought: 2). `cadence`: how often the trigger is checked (monthly, dekadal, daily,
+    # 6-hourly, …). Descriptive: a window's met events are entered, never computed from these.
+    "ALTER TABLE IF EXISTS aa.window_trigger ADD COLUMN IF NOT EXISTS required boolean NOT NULL DEFAULT false",
+    "ALTER TABLE IF EXISTS aa.window_trigger ADD COLUMN IF NOT EXISTS consecutive smallint NOT NULL DEFAULT 1 "
+    "CHECK (consecutive >= 1)",
+    "ALTER TABLE IF EXISTS aa.window_trigger ADD COLUMN IF NOT EXISTS cadence text",
+    # the unit of one chance to activate, which says how a blank reads (D253): 'year' (a year or
+    # season: a year in the analysis span with no event did not activate) or 'event' (a storm,
+    # an outbreak: only the listed events were assessed, a blank says nothing)
+    "ALTER TABLE IF EXISTS aa.window ADD COLUMN IF NOT EXISTS chance_unit text "
+    "CHECK (chance_unit IN ('year', 'event'))",
     # the backfill's deferred key checks run now: a later ALTER on these tables in the same
     # transaction would otherwise fail on "pending trigger events"
     "SET CONSTRAINTS ALL IMMEDIATE",
@@ -1318,7 +1383,7 @@ ADDITIVE_MIGRATIONS = [
                  WHERE contype = 'f' AND NOT convalidated AND conname IN
                  ('window_funding_window_fk', 'simulated_activation_window_fk', 'backtest_event_window_fk', 'window_activation_window_fk', 'window_status_window_fk', 'window_cannot_trigger_if_fk',
                   'window_trigger_window_fk', 'trigger_event_trigger_fk', 'window_activation_trigger_fk',
-                  'cerf_uid_crosswalk_window_fk', 'cerf_uid_crosswalk_trigger_fk')
+                  'cerf_uid_crosswalk_window_fk', 'cerf_uid_crosswalk_trigger_fk', 'window_event_window_fk')
         LOOP
             BEGIN
                 EXECUTE format('ALTER TABLE %s VALIDATE CONSTRAINT %I', r.t, r.conname);
@@ -2226,5 +2291,200 @@ VIEWS = {
                OR EXISTS (SELECT 1 FROM aa.backtest_event b
                           WHERE (b.country_iso3, b.hazard, b.version, b.window_code)
                               = (t.country_iso3, t.hazard, t.version, t.window_code)))
+    """,    # ---- the event record (D252). Every event of a window with its PERIOD: before the analysis,
+    # in the reference span (counted by the return periods), a gap year inside it (not assessed),
+    # after the analysis but before the version took effect, after it took effect, or unknown (a
+    # year-only event in the year the version took effect, or any event of a window whose analysis
+    # years are not recorded). `counted`: what the return periods count. A real activation counts as a met
+    # event after endorsement (owner, 2026-11-18), added here unless the record has the event.
+    "v_window_event": """
+        CREATE OR REPLACE VIEW aa.v_window_event AS
+        WITH ev AS (
+            SELECT e.country_iso3, e.hazard, e.version, e.window_code, e.event_year, e.event_label,
+                   e.sid, e.event_date, e.event_time, e.time_precision, e.met, e.value, e.unit,
+                   e.source_note, 'window_event'::text AS recorded_in
+            FROM aa.window_event e
+            UNION ALL
+            SELECT a.country_iso3, a.hazard, a.version, a.window_code, left(a.event_date, 4)::int,
+                   a.event_label, NULL::text,
+                   CASE WHEN a.event_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN a.event_date::date END,
+                   NULL::timestamptz,
+                   CASE WHEN a.event_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN 'day'
+                        WHEN a.event_date ~ '^[0-9]{4}-[0-9]{2}' THEN 'month' ELSE 'year' END,
+                   true, NULL::numeric, NULL::text, 'a real activation', 'window_activation'
+            FROM aa.window_activation a
+            WHERE a.window_code IS NOT NULL AND a.event_date ~ '^[0-9]{4}'
+              AND NOT EXISTS (
+                  SELECT 1 FROM aa.window_event e
+                  WHERE (e.country_iso3, e.hazard, e.version, e.window_code, e.event_year, e.event_label)
+                      = (a.country_iso3, a.hazard, a.version, a.window_code,
+                         left(a.event_date, 4)::int, a.event_label))
+        )
+        SELECT ev.*,
+               CASE WHEN ev.recorded_in = 'window_activation' THEN 'after_endorsement'
+                    WHEN w.analysis_start IS NULL OR w.analysis_end IS NULL THEN 'unknown'
+                    WHEN ev.event_year < w.analysis_start THEN 'before_analysis'
+                    WHEN ev.event_year <= w.analysis_end THEN
+                         CASE WHEN ev.event_year = ANY (coalesce(w.analysis_gap_years, '{}')) THEN 'gap'
+                              ELSE 'reference' END
+                    WHEN v.valid_from IS NULL THEN 'unknown'
+                    WHEN ev.event_date IS NOT NULL THEN
+                         CASE WHEN ev.event_date < v.valid_from THEN 'after_analysis'
+                              ELSE 'after_endorsement' END
+                    WHEN ev.event_year < extract(year FROM v.valid_from) THEN 'after_analysis'
+                    WHEN ev.event_year > extract(year FROM v.valid_from) THEN 'after_endorsement'
+                    ELSE 'unknown' END AS period,
+               -- what the return periods count: a met event of the record in the reference span,
+               -- or any met event of a window whose analysis years are not recorded (as before)
+               coalesce(ev.met AND ev.recorded_in = 'window_event'
+                        AND (w.analysis_start IS NULL OR w.analysis_end IS NULL
+                             OR (ev.event_year BETWEEN w.analysis_start AND w.analysis_end
+                                 AND (ev.event_year = ANY (coalesce(w.analysis_gap_years, '{}'))) IS NOT TRUE)),
+                        false) AS counted,
+               w.window_name, w.chance_unit
+        FROM ev
+        JOIN aa.window w USING (country_iso3, hazard, version, window_code)
+        LEFT JOIN aa.framework_version v USING (country_iso3, hazard, version)
+    """,
+    # v_window_performance and v_framework_performance computed from the event record: the same
+    # columns, the met events of the reference span counted by year (all met events of a window
+    # whose analysis years are not recorded, as the simulated years were). They replace the two at the
+    # cleanup after the next promote; until then v_trk_event_check lists any window or version
+    # where the two disagree (none while the backtest tables are regenerated from the record).
+    "v_window_event_performance": """
+        CREATE OR REPLACE VIEW aa.v_window_event_performance AS
+        SELECT w.country_iso3, w.hazard, w.version, w.window_name, w.kb_framework,
+               w.version AS kb_version, w.all_in,
+               w.allocation_usd, w.analysis_start, w.analysis_end,
+               w.n_years::int                                       AS analysis_years,
+               count(DISTINCT e.event_year)                         AS n_activations,
+               round((w.n_years + 1.0)
+                     / nullif(count(DISTINCT e.event_year), 0), 2)  AS return_period,
+               round(count(DISTINCT e.event_year)::numeric
+                     / nullif(w.n_years, 0), 3)                     AS activation_prob,
+               w.rp_reported, w.prob_reported, w.analysis_gap_years
+        FROM (
+            SELECT x.*, x.analysis_end - x.analysis_start + 1
+                        - (SELECT count(DISTINCT g) FROM unnest(x.analysis_gap_years) g
+                           WHERE g BETWEEN x.analysis_start AND x.analysis_end) AS n_years
+            FROM aa.window x
+        ) w
+        LEFT JOIN aa.window_event e
+          ON (e.country_iso3, e.hazard, e.version, e.window_code)
+           = (w.country_iso3, w.hazard, w.version, w.window_code)
+         AND e.met
+         AND (w.analysis_start IS NULL OR w.analysis_end IS NULL
+              OR (e.event_year BETWEEN w.analysis_start AND w.analysis_end
+                  AND (e.event_year = ANY (coalesce(w.analysis_gap_years, '{}'))) IS NOT TRUE))
+        GROUP BY w.country_iso3, w.hazard, w.version, w.window_name, w.kb_framework, w.all_in,
+                 w.allocation_usd, w.analysis_start, w.analysis_end, w.n_years, w.rp_reported,
+                 w.prob_reported, w.analysis_gap_years
+    """,
+    "v_framework_event_performance": """
+        CREATE OR REPLACE VIEW aa.v_framework_event_performance AS
+        WITH act AS (
+            SELECT e.country_iso3, e.hazard, e.version, e.event_year
+            FROM aa.window_event e
+            JOIN aa.window w USING (country_iso3, hazard, version, window_code)
+            WHERE e.met
+              AND (w.analysis_start IS NULL OR w.analysis_end IS NULL
+                   OR (e.event_year BETWEEN w.analysis_start AND w.analysis_end
+                       AND (e.event_year = ANY (coalesce(w.analysis_gap_years, '{}'))) IS NOT TRUE))
+            GROUP BY 1, 2, 3, 4
+        ),
+        dims AS (
+            SELECT country_iso3, hazard, version, max(kb_framework) AS kb_framework,
+                   min(analysis_start) AS a0, max(analysis_end) AS a1,
+                   bool_or(all_in) AS all_in, sum(allocation_usd) AS total_budget
+            FROM aa.window GROUP BY 1, 2, 3
+        ),
+        gap AS (
+            SELECT d.country_iso3, d.hazard, d.version, count(*) AS n
+            FROM dims d CROSS JOIN LATERAL generate_series(d.a0, d.a1) y
+            WHERE NOT EXISTS (
+                SELECT 1 FROM aa.window w
+                WHERE (w.country_iso3, w.hazard, w.version) = (d.country_iso3, d.hazard, d.version)
+                  AND y BETWEEN w.analysis_start AND w.analysis_end
+                  AND (y = ANY (coalesce(w.analysis_gap_years, '{}'))) IS NOT TRUE)
+            GROUP BY 1, 2, 3
+        )
+        SELECT d.country_iso3, d.hazard, d.version, d.kb_framework, d.version AS kb_version,
+               (d.a1 - d.a0 + 1 - coalesce(g.n, 0))::int          AS analysis_years,
+               count(a.event_year)                                AS n_activation_years,
+               round((d.a1 - d.a0 + 1 - coalesce(g.n, 0) + 1.0)
+                     / nullif(count(a.event_year), 0), 2)         AS overall_return_period,
+               round(count(a.event_year)::numeric
+                     / nullif(d.a1 - d.a0 + 1 - coalesce(g.n, 0), 0), 3) AS overall_activation_prob,
+               d.all_in, d.total_budget
+        FROM dims d
+        LEFT JOIN gap g
+          ON (g.country_iso3, g.hazard, g.version) = (d.country_iso3, d.hazard, d.version)
+        LEFT JOIN act a
+          ON (a.country_iso3, a.hazard, a.version) = (d.country_iso3, d.hazard, d.version)
+        GROUP BY d.country_iso3, d.hazard, d.version, d.kb_framework, d.a0, d.a1, g.n, d.all_in,
+                 d.total_budget
+    """,
+    # curation queue for the event record (D252): a window or version whose return period from
+    # the record differs from the one the pages show; a real activation the record says was not
+    # met; a year where the window's entered triggers, combined by their rule (D253: every
+    # required one met and, if any are optional, one of those), disagree with the window record
+    "v_trk_event_check": """
+        CREATE OR REPLACE VIEW aa.v_trk_event_check AS
+        WITH tr AS (     -- each trigger's verdict per year, then the window's by the triggers' rule
+            SELECT te.country_iso3, te.hazard, te.version, te.window_code, te.event_year,
+                   t.trigger_code, t.required, bool_or(te.met) AS met
+            FROM aa.trigger_event te
+            JOIN aa.window_trigger t USING (country_iso3, hazard, version, window_code, trigger_code)
+            GROUP BY 1, 2, 3, 4, 5, 6, 7
+        ),
+        tw AS (
+            SELECT country_iso3, hazard, version, window_code, event_year,
+                   coalesce(bool_and(met) FILTER (WHERE required), true)
+                   AND (count(*) FILTER (WHERE NOT required) = 0
+                        OR coalesce(bool_or(met) FILTER (WHERE NOT required), false)) AS met
+            FROM tr GROUP BY 1, 2, 3, 4, 5
+        ),
+        we AS (
+            SELECT country_iso3, hazard, version, window_code, event_year, bool_or(met) AS met
+            FROM aa.window_event WHERE met IS NOT NULL GROUP BY 1, 2, 3, 4, 5
+        )
+        SELECT w.country_iso3, w.hazard, w.version, w.window_code, NULL::integer AS event_year,
+               format('%s activation year(s) in the event record, %s in the backtest tables',
+                      q.n_activations, p.n_activations) AS problem
+        FROM aa.v_window_performance p
+        JOIN aa.v_window_event_performance q USING (country_iso3, hazard, version, window_name)
+        JOIN aa.window w USING (country_iso3, hazard, version, window_name)
+        WHERE p.n_activations <> q.n_activations
+        UNION ALL
+        SELECT p.country_iso3, p.hazard, p.version, NULL, NULL,
+               format('version: %s activation year(s) in the event record, %s in the backtest tables',
+                      q.n_activation_years, p.n_activation_years)
+        FROM aa.v_framework_performance p
+        JOIN aa.v_framework_event_performance q USING (country_iso3, hazard, version)
+        WHERE p.n_activation_years <> q.n_activation_years
+        UNION ALL
+        SELECT a.country_iso3, a.hazard, a.version, a.window_code, e.event_year,
+               'a real activation; the event record says not met'
+        FROM aa.window_activation a
+        JOIN aa.window_event e
+          ON (e.country_iso3, e.hazard, e.version, e.window_code, e.event_year, e.event_label)
+           = (a.country_iso3, a.hazard, a.version, a.window_code,
+              CASE WHEN a.event_date ~ '^[0-9]{4}' THEN left(a.event_date, 4)::int END, a.event_label)
+        WHERE e.met IS FALSE
+        UNION ALL
+        SELECT coalesce(tw.country_iso3, we.country_iso3), coalesce(tw.hazard, we.hazard),
+               coalesce(tw.version, we.version), coalesce(tw.window_code, we.window_code),
+               coalesce(tw.event_year, we.event_year),
+               CASE WHEN we.met IS NULL THEN 'the triggers met it; no met event in the window record'
+                    WHEN tw.met IS NULL THEN 'a met event in the window record; no trigger event that year'
+                    WHEN tw.met THEN 'the triggers met it; the window record says not met'
+                    ELSE 'the window record says met; its triggers, by their rule, did not' END
+        FROM tw
+        FULL JOIN (SELECT * FROM we WHERE EXISTS (
+                       SELECT 1 FROM aa.trigger_event x
+                       WHERE (x.country_iso3, x.hazard, x.version, x.window_code)
+                           = (we.country_iso3, we.hazard, we.version, we.window_code))) we
+          USING (country_iso3, hazard, version, window_code, event_year)
+        WHERE (tw.met IS DISTINCT FROM we.met) AND (tw.met OR we.met)
     """,
 }

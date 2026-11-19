@@ -44,8 +44,9 @@
  * and /delete (and POST /publish) need editor. Generic writes are refused on the mirrors (tables another repo
  * copies in from an outside source every day, listed in mirror_tables.json — D154), on the
  * frozen KB-era record and on the append-only audit table.
- * The backtest tables (window, simulated_activation, version_performance_reported) are
- * this repo's since 2026-10-05 and editable here like any other owned table.
+ * The backtest tables (window, window_event, version_performance_reported, …) are this repo's
+ * since 2026-10-05 and editable here like any other owned table, except simulated_activation and
+ * backtest_event, which are regenerated every night from window_event (D252).
  *
  * Other guards: origin allowlist, model allowlist, size cap, per-IP rate limits.
  * The Anthropic key can never be used for arbitrary requests.
@@ -89,6 +90,9 @@ const READONLY_TABLES = new Set([
   "funding_breakdown", "actual_activation", "activation_allocation",
   // the open site's daily counts: written only by POST /hit (D197)
   "page_count",
+  // regenerated every night from aa.window_event by scripts/mirror_backtest.py (D252): an edit
+  // here would be undone; the events are edited in window_event
+  "simulated_activation", "backtest_event",
 ]);
 const READONLY_PREFIXES = ["zz_legacy_"];
 const TABLE_OWNER = (t) =>

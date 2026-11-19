@@ -4,7 +4,7 @@ This is the only place that will still reach the dev DB once its public network 
 goes (2026-09). It wraps the ordinary scripts unchanged, so the same steps run from a
 laptop while access lasts:
 
-    python databricks/nightly.py [--drop-leftovers] [--ensure-schema] [--relabel ISO3/HAZARD/OLD NEW] [--no-prune]
+    python databricks/nightly.py [--drop-leftovers] [--ensure-schema] [--backfill-events] [--relabel ISO3/HAZARD/OLD NEW] [--no-prune]
 
 Steps
   0. one-off --drop-leftovers: scripts/drop_leftovers.py --write (D168: archives, then drops
@@ -13,6 +13,10 @@ Steps
      ranks sources by their new labels over rows still carrying the old ones
   1. optional --ensure-schema: scripts/ensure_schema.py (idempotent DDL; off by default so
      a schema change ships deliberately, via a one-off run of this job with the flag)
+  1a. one-off --backfill-events: scripts/backfill_window_events.py --write (D252): fills the
+     window event record from the two backtest tables it replaces, once, after the schema pass
+     that creates it; it rolls back (and stops the run) unless regenerating the two tables
+     from the record changes nothing and every return period stays the same
   1b. optional --relabel ISO3/HAZARD/OLD NEW: scripts/relabel_version.py — a version label
      is part of the key in several tables and entries files can only upsert, so a relabel
      (placeholder -> endorsement date) runs here, one-off, before the entries that may
@@ -29,6 +33,9 @@ Steps
      approved amount and planned people, as does the people figure of the activation it pays
      for (D232); the amounts of an allocation split over several rows are left as entered and
      warned about when the parts don't add up to OneGMS's figures
+  2c''. scripts/mirror_backtest.py: simulated_activation and backtest_event say what the window
+     event record (aa.window_event) says, for the open site's code until the next promote (D252);
+     nothing happens before the backfill
   2d. scripts/extract_document_text.py: the text of each newly registered framework
      document, page by page, into aa.framework_document_page (D228)
   3. scripts/export_snapshot.py: consistent snapshot of schema aa -> dev blob
@@ -93,6 +100,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ensure-schema", action="store_true")
     ap.add_argument("--drop-leftovers", action="store_true", help="one-off, D168")
+    ap.add_argument("--backfill-events", action="store_true", help="one-off, D252")
     ap.add_argument("--relabel", nargs=2, metavar=("ISO3/HAZARD/OLD", "NEW"))
     ap.add_argument("--no-prune", action="store_true")
     a, unknown = ap.parse_known_args()  # tolerate stray job parameters, but say so
@@ -108,6 +116,8 @@ def main():
         run("scripts/drop_leftovers.py", "--write")
     if a.ensure_schema:
         run("scripts/ensure_schema.py")
+    if a.backfill_events:
+        run("scripts/backfill_window_events.py", "--write")
     if a.relabel:
         run("scripts/relabel_version.py", *a.relabel, "--write", "--by", "nightly --relabel")
     try:
@@ -126,6 +136,10 @@ def main():
         run("scripts/sync_cerf.py")
     except subprocess.CalledProcessError as ex:
         print(f"!! sync_cerf failed ({ex}); continuing to the snapshot", flush=True)
+    try:   # the two backtest tables the open site still reads follow the event record (D252)
+        run("scripts/mirror_backtest.py")
+    except subprocess.CalledProcessError as ex:
+        print(f"!! mirror_backtest failed ({ex}); continuing to the snapshot", flush=True)
     try:   # a document registered today is searchable from tomorrow's snapshot. Time-limited:
         # it parses arbitrary PDFs, and each document commits on its own, so a stop is safe
         run("scripts/extract_document_text.py", timeout=900)
