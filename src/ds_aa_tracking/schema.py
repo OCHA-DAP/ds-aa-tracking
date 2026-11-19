@@ -873,8 +873,8 @@ DURABLE_TABLES = {
             PRIMARY KEY (country_iso3, hazard, version, window_name, event_year)
         )""",
     # Since D252 (2026-11-19) simulated_activation and backtest_event are regenerated every night
-    # from aa.window_event (scripts/mirror_backtest.py) and edited there; they stay for the open
-    # site's code read them, and go once the pages read the record and that code is promoted.
+    # from aa.window_event (scripts/mirror_backtest.py) and edited there; they stay while the pages
+    # and the open site's code read them, and go once the pages read the record and that code is promoted.
     # every event a version's backtest tested, met or not (owner, 2026-11-03: "include the full
     # record we tested (i.e. including the storms we would NOT have activated for)"; D189). One
     # row per event and window. simulated_activation stays the set the return periods count:
@@ -2322,7 +2322,7 @@ VIEWS = {
                   SELECT 1 FROM aa.window_event e
                   WHERE (e.country_iso3, e.hazard, e.version, e.window_code, e.event_year)
                       = (a.country_iso3, a.hazard, a.version, a.window_code, left(a.event_date, 4)::int)
-                    AND (e.event_label = a.event_label OR a.event_label = ''))
+                    AND (e.event_label = a.event_label OR a.event_label = '') AND e.met IS TRUE)
         )
         SELECT ev.*,
                CASE WHEN ev.recorded_in = 'window_activation' THEN 'after_endorsement'
@@ -2477,10 +2477,6 @@ VIEWS = {
         counted AS (
             SELECT DISTINCT country_iso3, hazard, version, window_code, event_year
             FROM aa.v_window_event WHERE counted
-        ),
-        metyr AS (
-            SELECT DISTINCT country_iso3, hazard, version, window_code, event_year
-            FROM aa.window_event WHERE met
         )
         SELECT w.country_iso3, w.hazard, w.version, w.window_code, NULL::integer AS event_year,
                format('%s activation year(s) in the event record, %s in the backtest tables',
@@ -2506,10 +2502,20 @@ VIEWS = {
                                                   = (c.country_iso3, c.hazard, c.version, c.window_code, c.event_year))
         UNION ALL
         SELECT a.country_iso3, a.hazard, a.version, a.window_code, a.event_year,
-               'v_trigger_event (the CERF app''s view) shows it met; the event record has no met event that year'
+               'v_trigger_event (the CERF app''s view) shows it met; the return periods do not count that year'
         FROM app a
-        WHERE NOT EXISTS (SELECT 1 FROM metyr m WHERE (m.country_iso3, m.hazard, m.version, m.window_code, m.event_year)
-                                                    = (a.country_iso3, a.hazard, a.version, a.window_code, a.event_year))
+        WHERE NOT EXISTS (SELECT 1 FROM counted m WHERE (m.country_iso3, m.hazard, m.version, m.window_code, m.event_year)
+                                                      = (a.country_iso3, a.hazard, a.version, a.window_code, a.event_year))
+        UNION ALL     -- a met year with no name among named met storms: the window leaves backtest_event
+        SELECT e.country_iso3, e.hazard, e.version, e.window_code, e.event_year,
+               'a met event with no name where the window''s other met events are named storms (its '
+               'tested storms leave backtest_event until it is named)'
+        FROM aa.window_event e
+        WHERE e.met AND e.event_label = ''
+          AND EXISTS (SELECT 1 FROM aa.window_event n
+                      WHERE (n.country_iso3, n.hazard, n.version, n.window_code)
+                          = (e.country_iso3, e.hazard, e.version, e.window_code)
+                        AND n.met AND n.event_label <> '')
         UNION ALL
         SELECT a.country_iso3, a.hazard, a.version, a.window_code, left(a.event_date, 4)::int,
                'a real activation; the event record says not met'
