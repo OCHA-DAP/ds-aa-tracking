@@ -702,9 +702,15 @@ def _f(v):
 
 def _flag(v):
     """A boolean column's value as True / False / None. A column with no NULL reads as numpy
-    bools, which json.dumps(default=str) writes as the strings "True" / "False"; one with a NULL
-    reads as Python bools. Either way this gives a real bool (NaN / NA: None)."""
-    return None if v is None or v is pd.NA or (isinstance(v, float) and pd.isna(v)) else bool(v)
+    bools, which json.dumps(default=str) writes as the strings "True" / "False" (the page script
+    tests a.full === false: every partial badge lost); one with a NULL reads as Python bools.
+    Either way this gives a real bool (NaN / NA / NaT: None), and stops the build on anything
+    else (a text "False" would otherwise read as True)."""
+    if v is None or v is pd.NA or v is pd.NaT or (isinstance(v, float) and math.isnan(v)):
+        return None
+    if type(v).__name__ in ("bool", "bool_"):       # bool, numpy.bool (numpy 2) / numpy.bool_
+        return bool(v)
+    raise TypeError(f"not a boolean: {v!r} ({type(v).__name__})")
 
 
 def _num(v):
@@ -1737,11 +1743,6 @@ def assemble(d, e):
                              **_reach_fields(x, reach, reach_row)}
                             for x in fr.itertuples()],
             })
-            # the page script tests a.full === false and fully_triggered `is not False`: a numpy
-            # bool here would be written as the string "False" and every partial badge lost
-            if type(activations[-1]["full"]) not in (bool, type(None)):
-                raise TypeError(f"{c} {h} {a.event_date}: full is "
-                                f"{type(activations[-1]['full']).__name__}, not bool / None")
 
         # the map and the sidebar default to the MOST RECENT version (as the KB map does);
         # the tracking view's in-force version is kept for reference
@@ -4359,7 +4360,7 @@ function adhocBlock(f){
   const detail = (p, x) => { used.add(p.code); return `<div class='tn' style='margin-top:4px'><a href='${esc(p.url)}' target='_blank' rel='noopener'>CERF ${esc(p.code)} ↗</a> <span class='muted'>· ${esc(p.emergency||'')} · ${p.year}</span></div>
       <div class='tt'><b>${money(p.usd)}</b>${p.planned?' · ' + esc(tr8('{0} people planned', num(p.planned))):''}${p.reached?' · ' + esc(tr8('{0} reached', num(p.reached))):''}</div>
       ${p.title?`<div class='tm'>${esc(p.title)}</div>`:''}
-      ${p.part?`<div class='tm'>${esc(tr8('Only {0} of this {1} CERF allocation was anticipatory action. The people, agencies and sectors shown here are the whole allocation’s.', x.usd != null ? money(x.usd) : tr8('an unrecorded amount'), money(p.usd)))}</div>`:''}
+      ${p.part?`<div class='tm'>${esc(x.usd != null ? tr8('Only {0} of this {1} CERF allocation was anticipatory action. The people, agencies and sectors shown here are the whole allocation’s.', money(x.usd), money(p.usd)) : tr8('Only part of this {0} CERF allocation was anticipatory action. The people, agencies and sectors shown here are the whole allocation’s.', money(p.usd)))}</div>`:''}
       ${p.agencies.length?`<div class='small' style='margin-top:4px'><b>${esc(tr8('Agencies'))}</b></div>` + hbarsSVG(p.agencies.map(x=>({label:x.agency, v:x.usd})), {width:CW, fmt:money, colorBy:'a', label:tr8('CERF allocation by agency')}):''}
       ${p.sectors.length?`<div class='small' style='margin-top:4px'><b>${esc(tr8('Sectors'))}</b></div>` + hbarsSVG(p.sectors.map(x=>({label:x.sector, v:x.usd})), {width:CW, fmt:money, color:'#64748b', label:tr8('CERF allocation by sector')}):''}
       <div class='tm'>${esc(tr8(p.how==='recorded allocation code' ? 'Allocation code recorded with the non-framework allocation.' : 'Matched to the CERF allocation of the same country, year and emergency type (no code recorded).'))}</div>`; };

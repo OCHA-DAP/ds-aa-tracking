@@ -1377,7 +1377,6 @@
  "other modalities": "autres modalités",
  "other national / local NGOs": "autres ONG nationales / locales",
  "other partners": "autres partenaires",
- "other ↗": "autre ↗",
  "other, type not recorded": "autres, type non renseigné",
  "partial": "partielle",
  "partial (independent windows)": "partiel (fenêtres indépendantes)",
@@ -2047,5 +2046,5 @@
  "{0}: non-framework allocation released": "{0} : allocation hors cadre débloquée",
  "{0}: non-framework allocation pre-arranged": "{0} : allocation hors cadre pré-arrangée",
  "Only {0} of this {1} CERF allocation was anticipatory action. The people, agencies and sectors shown here are the whole allocation’s.": "Seuls {0} de cette allocation du CERF de {1} relevaient de l’action anticipatoire. Les personnes, agences et secteurs indiqués ici sont ceux de l’allocation entière.",
- "an unrecorded amount": "un montant non renseigné"
+ "Only part of this {0} CERF allocation was anticipatory action. The people, agencies and sectors shown here are the whole allocation’s.": "Seule une partie de cette allocation du CERF de {0} relevait de l’action anticipatoire. Les personnes, agences et secteurs indiqués ici sont ceux de l’allocation entière."
 }

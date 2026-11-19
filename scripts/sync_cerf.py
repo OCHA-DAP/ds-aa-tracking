@@ -40,7 +40,7 @@ mirror, aa.cerf_allocation) gives a figure above zero:
    - a CERF funding row whose allocation is of another country than the row (a wrong code);
    - a coded CERF row while another CERF row of the same country, hazard and year has no code
      yet (the allocation may be split over both, e.g. two windows), until it is coded;
-   - every row of an allocation with one row left as entered for either reason;
+   - every row of an allocation with one row left as entered for any reason in 4 or 5;
    - the people figure of an activation with more than one CERF funding row.
 
 People reached is not stored in the tracker: the pages read it from the mirror at every build
