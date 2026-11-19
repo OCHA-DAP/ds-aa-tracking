@@ -29,11 +29,18 @@ mirror, aa.cerf_allocation) gives a figure above zero:
    a NULL window last: the row the pages give the allocation's reach to, landing's reach_row)
    and that row's activation. A later row's people figure is cleared, and so is its
    activation's when it repeats the allocation's planned people; a figure of its own stays.
-4. Left as entered, with a warning in the log:
+4. Left as entered, without a warning: a funding row marked match_method 'part' (D250), an
+   activation that drew only part of its CERF allocation, the rest of which paid for something
+   else (Somalia's CERF-SOM-25-RR-1496, 2025: $10M approved, half drought response in the north,
+   half anticipatory action in the south, so $5M here). Its amount and people stay as entered,
+   and so does its activation's people figure. If the allocation has other funding rows too,
+   they are all left as entered, with a warning (5), as a split's amounts are a person's call;
+   a 'part' row whose allocation is of another country is warned about too (5).
+5. Left as entered, with a warning in the log:
    - a CERF funding row whose allocation is of another country than the row (a wrong code);
    - a coded CERF row while another CERF row of the same country, hazard and year has no code
      yet (the allocation may be split over both, e.g. two windows), until it is coded;
-   - every row of an allocation with one row left as entered for either reason;
+   - every row of an allocation with one row left as entered for any reason in 4 or 5;
    - the people figure of an activation with more than one CERF funding row.
 
 People reached is not stored in the tracker: the pages read it from the mirror at every build
@@ -141,6 +148,9 @@ def _blocked(r, say):
     if r["alloc_country"] != r["country_iso3"]:
         say(f"::warning::{lab}: allocation {r['allocation_code']} is of {r['alloc_country']}, not "
             f"{r['country_iso3']}: a wrong allocation code? Left as entered")
+        return True
+    if r["match_method"] == "part":     # D250: only part of the allocation is this activation's
+        say(f"  {lab}: part of {r['allocation_code']} (match_method 'part'): amount and people as entered")
         return True
     if r["uncoded_siblings"]:
         say(f"::warning::{lab}: another CERF amount of {r['country_iso3']} {r['hazard']} that year has no "

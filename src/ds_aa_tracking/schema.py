@@ -199,7 +199,7 @@ TABLES = {
             people_targeted bigint,
             url text,                      -- announcement / allocation link
             reported_to_ahub text,
-            kb_event_date text,            -- KB actual_activation crosswalk
+            kb_event_date text,            -- the day, where event_date has only the month (Map: exact_date)
             comments text,
             source text NOT NULL,
             updated_at timestamptz NOT NULL DEFAULT now(),
@@ -239,7 +239,9 @@ TABLES = {
                                            -- amount entered before OneGMS records the CERF
                                            -- allocation: scripts/resolve_provisional.py (nightly)
                                            -- swaps in OneGMS's code and amount once it appears
-                                           -- ('onegms-auto')
+                                           -- ('onegms-auto'); 'part' = the activation drew only
+                                           -- part of the allocation (D250): sync_cerf.py keeps
+                                           -- its amount and people as entered
             source text NOT NULL,
             updated_at timestamptz NOT NULL DEFAULT now(),
             UNIQUE NULLS NOT DISTINCT
@@ -937,13 +939,14 @@ DURABLE_TABLES = {
             source_note text,
             PRIMARY KEY (country_iso3, hazard, version, window_code, trigger_code, event_year, event_label)
         )""",
-    # CERF's and the Gallagher workbook's window uids (afg_drought_v2_wt1) and the window, and
-    # where two of their windows are one window here, the trigger, each now stands for (D212).
-    # Kept so the financial-exposure app and the insurer's sheets can be matched after the
-    # tracker numbers versions its own way and names windows by what they are (D213).
+    # CERF's sheet's window uids (afg_drought_v2_wt1: its uid and old_uid) and the window, and
+    # where two of its windows are one window here, the trigger, each now stands for (D212).
+    # Kept so the financial-exposure app and the sheet can be matched after the tracker numbers
+    # versions its own way and names windows by what they are (D213). The insurer's (Gallagher)
+    # ids were deleted in November 2026 and are kept outside the database (D251).
     "cerf_uid_crosswalk": """
         CREATE TABLE IF NOT EXISTS aa.cerf_uid_crosswalk (
-            source text NOT NULL,          -- cerf-window-level | gallagher-2026-09-14 | …
+            source text NOT NULL,          -- cerf-window-level | cerf-window-level-old
             cerf_uid text NOT NULL,        -- the uid as that sheet writes it
             country_iso3 text NOT NULL,
             hazard text NOT NULL,
@@ -973,7 +976,8 @@ DURABLE_TABLES = {
     # 2026-09-28); owned here since 2026-10-05 and no longer loaded by anything.
     # funding_breakdown -> superseded by window_funding (+ v_window_funding_split);
     # actual_activation -> window_activation; activation_allocation -> activation_funding.
-    # Kept because views and pages still read them (announcement URLs, v_aa_allocation).
+    # No page reads them since D249; kept for the views that still do (v_aa_allocation,
+    # v_activation_funding, v_funding_by_*), all to be dropped after the next promote.
     "funding_breakdown": """
         CREATE TABLE IF NOT EXISTS aa.funding_breakdown (
             country_iso3 text NOT NULL,
@@ -1861,8 +1865,6 @@ VIEWS = {
         LEFT JOIN aa.window w USING (country_iso3, hazard, version, window_name)
         LEFT JOIN aa.entered_window ew USING (country_iso3, hazard, version, window_name)
     """,
-    # activation events vs KB actual_activation: matches + conflicts
-    # KB activations with no counterpart in the window activations
     "v_trk_aa_localization": """
         CREATE OR REPLACE VIEW aa.v_trk_aa_localization AS
         SELECT year, localization,
@@ -2051,7 +2053,7 @@ VIEWS = {
     # CERF's window_level sheet, from the database: one row per coded window, the columns and
     # words the financial-exposure app reads (uid = the framework's id and the tracker's own
     # version number, or the version's date label where it has none, + the window code, D212;
-    # cerf_uids = the uids CERF's and the insurer's sheets gave it, aa.cerf_uid_crosswalk). Amount = the window's pre-arranged CERF
+    # cerf_uids = the uids CERF's sheet gave it, aa.cerf_uid_crosswalk). Amount = the window's pre-arranged CERF
     # money (the most it can release; the rule between windows says whether they add up).
     "v_cerf_window": """
         CREATE OR REPLACE VIEW aa.v_cerf_window AS
@@ -2139,7 +2141,7 @@ VIEWS = {
         LEFT JOIN sim s USING (country_iso3, hazard, version, window_code, year)
         LEFT JOIN rl r USING (country_iso3, hazard, version, window_code, year)
     """,
-    # CERF's and the insurer's uids -> the window (and trigger) each stands for now, with its uid
+    # CERF's sheet's uids -> the window (and trigger) each stands for now, with its uid
     # in v_cerf_window (D212): how the financial-exposure app finds a window it knew by old uid
     "v_cerf_uid_crosswalk": """
         CREATE OR REPLACE VIEW aa.v_cerf_uid_crosswalk AS

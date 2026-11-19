@@ -66,7 +66,7 @@ framework (country_iso3, hazard)
 | `exposure_calc` | `exposure_calc` | Taken from the version's rule; blank where none is recorded. Read Budgets below instead. |
 | `overall_framework_prob` | `overall_framework_prob` | |
 | `status` | `status` | Always from the database, never from a sheet. |
-| `old_uid` | `cerf_uids` and `v_cerf_uid_crosswalk` | Every uid any sheet gave the window. |
+| `old_uid` | `cerf_uids` and `v_cerf_uid_crosswalk` | Every uid CERF's sheet gave the window, its `uid` and its `old_uid`. Blank for a window the sheet does not list. |
 | `cannot_trigger_if` | `cannot_trigger_if` | The uid of the window whose release blocks this one. |
 | `monitor_months` | `monitor_months` | Comma-separated months, `6,7,8,9,10,11,12`. |
 | the `activation_history` matrix | `v_cerf_activation_history` | Long format: `uid`, `year`, `n_simulated`, `n_real`, `n`. |
@@ -83,20 +83,18 @@ framework (country_iso3, hazard)
   | Burkina Faso drought 2026 | `bfa_drought_v2` | `bfa_drought_v4` |
 
   A superseded draft has no number, so its uid uses its date label instead.
-- **Old uids:** look them up in `v_cerf_uid_crosswalk`, and always by source. The same string can mean
-  two different windows in two sheets. For example, `afg_drought_v1_wt1` is the 2025 version's window A in
-  CERF's sheet, but the 2026 version's window A in the insurer's earlier ids.
+- **Old uids:** look them up in `v_cerf_uid_crosswalk`, by source.
 
   | `source` | What it holds |
   |---|---|
   | `cerf-window-level` | CERF's sheet: its `uid` |
   | `cerf-window-level-old` | CERF's sheet: its `old_uid` |
-  | `gallagher-2026-09-14` | The insurer's workbook: its `uid` |
-  | `gallagher-2026-09-14-old` | The insurer's workbook: its `old_uid` |
-  | `gallagher-2026-09-14-earlier` | The insurer's earlier ids |
 
   `trigger_code` is filled where a sheet's window is now one trigger of a window. `note` says when a
-  sheet's single window is several windows here. Ten old uids have no window to map to.
+  sheet's single window is several windows here.
+- **The insurer's ids are no longer in the database** (D251, November 2026). A uid only the insurer's
+  workbook used finds nothing in `v_cerf_uid_crosswalk`, and those windows have no `cerf_uids`. The
+  team keeps the insurer's ids elsewhere; ask for them if you need one.
 
 ## Budgets
 
@@ -204,7 +202,7 @@ ORDER BY w.uid, y.year;
 ```sql
 SELECT source, cerf_uid, uid, window_code, trigger_code, note
 FROM aa.v_cerf_uid_crosswalk
-WHERE cerf_uid = 'hti_storms_v2_wt2';
+WHERE cerf_uid = 'eth_drought_v1_ws';
 ```
 
 **4. The storms behind a window's history**
