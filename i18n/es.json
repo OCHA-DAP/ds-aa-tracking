@@ -1941,5 +1941,6 @@
  "{0} more received through sub-grants.": "{0} más recibidos mediante subvenciones secundarias.",
  "{0}: non-framework allocation released": "{0}: asignación fuera de marco liberada",
  "{0}: non-framework allocation pre-arranged": "{0}: asignación fuera de marco preestablecida",
- "Only part of this CERF allocation was anticipatory action: the amount above. Its people, agencies and sectors are the whole allocation’s.": "Solo una parte de esta asignación del CERF fue acción anticipatoria: el monto indicado arriba. Sus personas, agencias y sectores son los de la asignación completa."
+ "Only {0} of this {1} CERF allocation was anticipatory action. The people, agencies and sectors shown here are the whole allocation’s.": "Solo {0} de esta asignación del CERF de {1} fueron acción anticipatoria. Las personas, agencias y sectores que se muestran aquí son los de la asignación completa.",
+ "an unrecorded amount": "un monto no registrado"
 }

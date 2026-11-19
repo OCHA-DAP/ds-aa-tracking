@@ -33,7 +33,9 @@ mirror, aa.cerf_allocation) gives a figure above zero:
    activation that drew only part of its CERF allocation, the rest of which paid for something
    else (Somalia's CERF-SOM-25-RR-1496, 2025: $10M approved, half drought response in the north,
    half anticipatory action in the south, so $5M here). Its amount and people stay as entered,
-   and so does its activation's people figure.
+   and so does its activation's people figure. If the allocation has other funding rows too,
+   they are all left as entered, with a warning (5), as a split's amounts are a person's call;
+   a 'part' row whose allocation is of another country is warned about too (5).
 5. Left as entered, with a warning in the log:
    - a CERF funding row whose allocation is of another country than the row (a wrong code);
    - a coded CERF row while another CERF row of the same country, hazard and year has no code
@@ -143,12 +145,12 @@ def _activation(conn, r):
 def _blocked(r, say):
     """Warn and return True when a funding row must be left as entered."""
     lab = _lab(r, FKEY)
-    if r["match_method"] == "part":     # D250: only part of the allocation is this activation's
-        say(f"  {lab}: part of {r['allocation_code']} (match_method 'part'): amount and people as entered")
-        return True
     if r["alloc_country"] != r["country_iso3"]:
         say(f"::warning::{lab}: allocation {r['allocation_code']} is of {r['alloc_country']}, not "
             f"{r['country_iso3']}: a wrong allocation code? Left as entered")
+        return True
+    if r["match_method"] == "part":     # D250: only part of the allocation is this activation's
+        say(f"  {lab}: part of {r['allocation_code']} (match_method 'part'): amount and people as entered")
         return True
     if r["uncoded_siblings"]:
         say(f"::warning::{lab}: another CERF amount of {r['country_iso3']} {r['hazard']} that year has no "

@@ -2046,5 +2046,6 @@
  "{0} more received through sub-grants.": "{0} de plus reçus par des sous-subventions.",
  "{0}: non-framework allocation released": "{0} : allocation hors cadre débloquée",
  "{0}: non-framework allocation pre-arranged": "{0} : allocation hors cadre pré-arrangée",
- "Only part of this CERF allocation was anticipatory action: the amount above. Its people, agencies and sectors are the whole allocation’s.": "Seule une partie de cette allocation du CERF relevait de l’action anticipatoire : le montant ci-dessus. Ses personnes, agences et secteurs sont ceux de l’allocation entière."
+ "Only {0} of this {1} CERF allocation was anticipatory action. The people, agencies and sectors shown here are the whole allocation’s.": "Seuls {0} de cette allocation du CERF de {1} relevaient de l’action anticipatoire. Les personnes, agences et secteurs indiqués ici sont ceux de l’allocation entière.",
+ "an unrecorded amount": "un montant non renseigné"
 }

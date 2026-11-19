@@ -372,7 +372,7 @@ def _people_series(M, ex, years):
                 plan = al.at[code, "individuals_planned"] if code in al.index and not x.get("part") else None
                 plan = float(plan) if plan is not None and pd.notna(plan) and plan > 0 else stand   # D250: a part keeps its own
                 put("p", plan, shares(code, "planned"))
-                if (code, "planned") in dis:
+                if (code, "planned") in dis and not x.get("part"):   # D250: not a part's
                     r["dp"] += dis[(code, "planned")]
                     r["ndp"] += 1
                 if reached is not None:
@@ -386,6 +386,7 @@ def _people_series(M, ex, years):
                 # the people the allocation targets (reached or targeted, figure by figure)
                 d_ = dis.get((code, "reached")) if reached is not None else None
                 d_ = d_ if d_ is not None else dis.get((code, "planned")) if (reached is not None or stand) else None
+                d_ = None if x.get("part") else d_     # D250: the allocation's, not the part's
                 if d_ is not None:
                     r["dr"] += d_
                     r["ndr"] += 1

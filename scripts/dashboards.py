@@ -4170,35 +4170,32 @@ def _cerf_page(code, cy):
             if isinstance(code, str) and code and y is not None and pd.notna(y) else None)
 
 
-def _event_links(d, c, h, kb_fw, umap, ed, window_name, event_type):
+def _event_links(d, c, h, umap, ed, window_name, event_type):
     """The funding rows and recorded pages of one real activation: its announcement
-    (aa.window_activation url) and CERF allocations [(code, page)]. `other` (pages recorded
-    beside the announcement) is empty since D249: the knowledge-base era's copy of the
-    activations that held them is no longer read; kb_fw is kept for the callers."""
+    (aa.window_activation url) and CERF allocations [(code, page)]. Since D249 there are no
+    other recorded pages: the earlier record's copy of the activations that held them is no
+    longer read."""
     wn = window_name if isinstance(window_name, str) else ""
     fund = d["activation"]
     f = fund[(fund["country_iso3"] == c) & (fund["hazard"] == h)
              & (fund["event_date"].astype(str) == ed) & (fund["event_type"] == event_type)
              & (fund["window_name"].fillna("") == wn)]
     ann = umap.get((c, h, ed, wn or window_name))
-    other = []
     cy = dict(zip(d["cerf_year"]["application_code"], d["cerf_year"]["year"]))
     cerf = [(x.allocation_code, _cerf_page(x.allocation_code, cy)) for x in f.itertuples()
             if x.fund_code == "cerf" and isinstance(x.allocation_code, str)]
-    return dict(fund=f, ann=ann if isinstance(ann, str) and ann else None, other=other, cerf=cerf)
+    return dict(fund=f, ann=ann if isinstance(ann, str) and ann else None, cerf=cerf)
 
 
 def _event_href(lk):
     """The most relevant page for one real activation, as the activation tables link it:
-    the announcement, else the CERF allocation page, else another recorded page.
+    the announcement, else the CERF allocation page.
     (url, what it is) — (None, None) when nothing is recorded."""
     if lk["ann"]:
         return lk["ann"], "the activation announcement"
     u = next((u for _c, u in lk["cerf"] if u), None)
     if u:
         return u, "the CERF allocation page"
-    if lk["other"]:
-        return lk["other"][0], "the recorded activation page"
     return None, None
 
 
@@ -4412,7 +4409,7 @@ def _register_after_note(n, vf_y):
     return i18n.add(sim_after_note(n, vf_y), tmpl, n=same(n), y=same(vf_y))
 
 
-def _activation_blocks(d, c, h, kb_fw, version, umap):
+def _activation_blocks(d, c, h, version, umap):
     """(Historical activations grid, Actual activations table) for one framework."""
     import html as _h
     esc = lambda s: _h.escape(str(s))   # noqa: E731
@@ -4490,11 +4487,11 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
     for r in act.sort_values("event_date", ascending=False).itertuples():
         ed, wn = str(r.event_date), r.window_name
         wn = wn if isinstance(wn, str) else ""
-        lk = _event_links(d, c, h, kb_fw, umap, ed, r.window_name, r.event_type)
+        lk = _event_links(d, c, h, umap, ed, r.window_name, r.event_type)
         events.append(dict(date=ed, win=wn, typ=str(r.event_type),
                            label=r.event_label if isinstance(r.event_label, str) else "",
                            version=str(r.version) if pd.notna(r.version) else "", fund=lk["fund"],
-                           ann=lk["ann"], other=lk["other"], cerf=lk["cerf"],
+                           ann=lk["ann"], cerf=lk["cerf"],
                            partial=full.get((ed, wn)) is False))
     # a window never backtested gets no column, unless a real activation sits on it
     untested = [w for w in wins if w in untested_windows(ss, wv, ev)
@@ -4601,7 +4598,6 @@ def _activation_blocks(d, c, h, kb_fw, version, umap):
             links += [f"<span class='muted'>{esc(code)}</span>" for code, u in ev["cerf"] if not u]
             if ev["ann"]:
                 links.append(f"<a href='{esc(ev['ann'])}' target='_blank' rel='noopener'>{T('announcement ↗')}</a>")
-            links += [f"<a href='{esc(u)}' target='_blank' rel='noopener'>{T('other ↗')}</a>" for u in ev["other"]]
             vtag = ("" if (not ev["version"] or str(ev["version"]) == str(version))
                     else f" <span class='doctag' {ATTR('title', 'This activation happened under version {v}, an earlier version of the framework than the current one ({c}); its triggers and budget may differ.', v=ev['version'], c=version)}>{T('earlier version')}</span>")
             tr += (f"<tr><td>{esc(ev['date'])}</td><td>{esc(ev['version'])}{vtag}</td>"
@@ -4747,7 +4743,7 @@ def _no_framework_body(d, fw, c, h, umap, docs):
     rows, total, years = "", 0.0, set()
     for r in a.sort_values("event_date", ascending=False).itertuples():
         ed = str(r.event_date)
-        lk = _event_links(d, c, h, None, umap, ed, r.window_name, r.event_type)
+        lk = _event_links(d, c, h, umap, ed, r.window_name, r.event_type)
         fl = "<br>".join(f"{esc(fund_label(x.fund_code))}: {'' if pd.isna(x.amount_usd) else '$' + format(x.amount_usd, ',.0f')}"
                          for x in lk["fund"].itertuples()) or f"<span class='muted'>{T('not recorded')}</span>"
         total += float(lk["fund"]["amount_usd"].fillna(0).sum())
@@ -4757,7 +4753,6 @@ def _no_framework_body(d, fw, c, h, umap, docs):
         links += [f"<span class='muted'>{esc(code)}</span>" for code, u in lk["cerf"] if not u]
         if lk["ann"]:
             links.append(f"<a href='{esc(lk['ann'])}' target='_blank' rel='noopener'>{T('announcement ↗')}</a>")
-        links += [f"<a href='{esc(u)}' target='_blank' rel='noopener'>{T('other ↗')}</a>" for u in lk["other"]]
         what = code_words(EVENT_TYPE_LABEL, r.event_type, "event type") or "non-framework allocation"
         lab = r.event_label if isinstance(r.event_label, str) and r.event_label else ""
         ppl = getattr(r, "people_targeted", None)
@@ -4880,7 +4875,7 @@ def build_framework_pages(page, tbl, d, e=None):
             f"<td class='num'>{f'{x.activation_prob*100:.0f}%' if pd.notna(x.activation_prob) else ''}</td>"
             f"<td class='num'>{TF('{n} in {y} yrs', n=int(x.n_activations), y=int(x.analysis_years)) if pd.notna(x.n_activations) and pd.notna(x.analysis_years) else ''}</td></tr>"
             for x in wv.sort_values("window_name").itertuples())
-        hist_html, actual_html = _activation_blocks(d, c, h, kb_fw, version, umap)
+        hist_html, actual_html = _activation_blocks(d, c, h, version, umap)
         changes_html = _changes_block(d["fv_meta"], d["vpage"], c, h)
         valid_html = _validation_block(d["fv_meta"], c, h, version)
         # ---- Plan: people covered, agencies, the split vs the version envelope, partners
