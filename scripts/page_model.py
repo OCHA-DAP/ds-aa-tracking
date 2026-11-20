@@ -1105,9 +1105,7 @@ FWM_JS = r"""
 """
 
 
-def _flag(v):
-    """full_activation as True / False / None (numpy bools and NaN / NA included)."""
-    return None if v is None or v is pd.NA or (isinstance(v, float) and pd.isna(v)) else bool(v)
+_flag = landing._flag   # full_activation as True / False / None (numpy bools and NaN / NA)
 
 
 def _unrec(name):

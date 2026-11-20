@@ -144,10 +144,9 @@ def _frameworks(d, lifecycles=LIVE):
     for r in live.itertuples():
         version = (r.latest_version if pd.notna(r.latest_version)          # latest version, as the map and Model page
                    else r.current_version if pd.notna(r.current_version) else None)
-        kb_fw = r.kb_framework if pd.notna(r.kb_framework) else None
         out.append(dict(c=r.country_iso3, h=r.hazard, name=_fwname(r.country_iso3, r.country_name, hazard_word(r.hazard)),
                         life=r.lifecycle, version=None if version is None else str(version),
-                        kb_fw=kb_fw, slug=f"fw-{r.country_iso3.lower()}-{r.hazard}.html"))
+                        slug=f"fw-{r.country_iso3.lower()}-{r.hazard}.html"))
     return out
 
 
@@ -187,10 +186,10 @@ def _in_use(f, groups, closed, old=False):
     return dict(use=int(f["vf_y"]), ue=ue, uv=str(f["shown"]), ul=int(str(f["shown"]) != str(f["version"])))
 
 
-def _events(d, c, h, ref, kb_fw=None, umap=None, slug=None, adhoc=False):
+def _events(d, c, h, ref, umap=None, slug=None, adhoc=False):
     """Real framework activations of one framework, with the money released and the page
-    each one links to (as the activation tables: announcement, else CERF allocation, else
-    another recorded page — else the framework page `slug`). adhoc=True: its non-framework
+    each one links to (as the activation tables: announcement, else CERF allocation — else the
+    framework page `slug`). adhoc=True: its non-framework
     allocations instead (money released without a pre-agreed trigger)."""
     act = d["act_all"]
     act = act[(act["country_iso3"] == c) & (act["hazard"] == h)
@@ -201,7 +200,7 @@ def _events(d, c, h, ref, kb_fw=None, umap=None, slug=None, adhoc=False):
         ed, wn = _str(r.event_date), _str(r.window_name)
         if not ed[:4].isdigit():
             continue
-        lk = _event_links(d, c, h, kb_fw, umap or {}, ed, r.window_name, r.event_type)
+        lk = _event_links(d, c, h, umap or {}, ed, r.window_name, r.event_type)
         f = lk["fund"]
         href, goes = _event_href(lk)
         if not href and slug:
@@ -757,7 +756,7 @@ def build_history(page, d):
         (f["shown"], f["ss"], f["y0"], f["y1"], f["n_years"], f["vf_y"],
          f["n_after"]) = _backtest(d, f["c"], f["h"], f["version"], f["olds"])
         f["ref"] = f["shown"] or f["version"]
-        f["events"], f["events_old"] = _split_old(f, _events(d, f["c"], f["h"], f["ref"], f["kb_fw"], umap, f["slug"]))
+        f["events"], f["events_old"] = _split_old(f, _events(d, f["c"], f["h"], f["ref"], umap, f["slug"]))
         f["hit"] = {}   # year -> windows (and labels, dates) that would have activated
         for r in f["ss"].itertuples():
             lab, when = _str(r.event_label), sim_when(r)
@@ -781,14 +780,14 @@ def build_history(page, d):
         # a retired pair is a retired framework whichever of its frameworks activated: its row
         # keeps them all (the map counts it once); the version view still heads them apart
         f["olds"], f["by"] = _old_line(d, f["c"], f["h"])
-        f["events"], f["events_old"] = _split_old(f, _events(d, f["c"], f["h"], f["version"], f["kb_fw"], umap, f["slug"]))
+        f["events"], f["events_old"] = _split_old(f, _events(d, f["c"], f["h"], f["version"], umap, f["slug"]))
         f["events"] += f["events_old"]
         f["events_old"] = []
         (f["shown"], _, f["y0"], f["y1"], f["n_years"], f["vf_y"], _) = _backtest(d, f["c"], f["h"], f["version"], f["olds"])
     tl_rows, tl_fw, tl_by, tl_old = [], {}, {}, []
     for f in fws + ret:
         k = f"{f['c']}-{f['h']}"
-        ah = _events(d, f["c"], f["h"], None, f["kb_fw"], umap, f["slug"], adhoc=True)
+        ah = _events(d, f["c"], f["h"], None, umap, f["slug"], adhoc=True)
         cov, why = _cover(f)   # its reference period (the years its backtest analysed), hatched outside
         tl_fw[k] = _tl_detail(d, f)
         tl_rows.append(dict(k=k, name=f["name"], h=f["h"], life=f["life"], slug=f["slug"], cov=cov, why=why,
@@ -824,10 +823,9 @@ def build_history(page, d):
             continue
         cr = cur[(cur["country_iso3"] == c) & (cur["hazard"] == h)]
         slug = f"fw-{c.lower()}-{h}.html" if len(cr) else None   # a framework page exists for every d['current'] row
-        kb = cr["kb_framework"].iloc[0] if len(cr) and pd.notna(cr["kb_framework"].iloc[0]) else None
         cn = next((x for x in list(g["country_name"]) + list(cur.loc[cur["country_iso3"] == c, "country_name"])
                    if isinstance(x, str) and x), c)
-        ah = _events(d, c, h, None, kb, umap, slug, adhoc=True)
+        ah = _events(d, c, h, None, umap, slug, adhoc=True)
         ah_rows.append(dict(k=f"{c}-{h}", name=_fwname(c, cn, hazard_word(h)), h=h, life="", slug=slug or "",
                           ev=[_tl_ev(ev, True) for ev in ah]))
     tl_rows += sorted(ah_rows, key=lambda r: r["name"])

@@ -700,6 +700,19 @@ def _f(v):
     return None if v is None or (isinstance(v, float) and pd.isna(v)) or str(v) in ("None", "NaT", "nan") else v
 
 
+def _flag(v):
+    """A boolean column's value as True / False / None. A column with no NULL reads as numpy
+    bools, which json.dumps(default=str) writes as the strings "True" / "False" (the page script
+    tests a.full === false: every partial badge lost); one with a NULL reads as Python bools.
+    Either way this gives a real bool (NaN / NA / NaT: None), and stops the build on anything
+    else (a text "False" would otherwise read as True)."""
+    if v is None or v is pd.NA or v is pd.NaT or (isinstance(v, float) and math.isnan(v)):
+        return None
+    if type(v).__name__ in ("bool", "bool_"):       # bool, numpy.bool (numpy 2) / numpy.bool_
+        return bool(v)
+    raise TypeError(f"not a boolean: {v!r} ({type(v).__name__})")
+
+
 def _num(v):
     v = _f(v)
     return None if v is None else float(v)
@@ -1024,11 +1037,14 @@ def _adhoc_cerf(e, acts, actf, _try):
                     cand = (cand.iloc[[int((cand["amount_approved"] - target).abs().argmin())]]
                             if target > 0 else cand.iloc[0:0])        # ambiguous: show nothing
                 how = "matched by country, year and emergency type"
+            part = set(f.loc[f["match_method"].fillna("") == "part", "allocation_code"].dropna())
             for a in cand.itertuples():
                 if a.application_code not in [p["code"] for p in picked]:
                     picked.append({"code": a.application_code, "year": int(a.year), "emergency": a.emergency_type,
                                    "title": a.title, "usd": _num(a.amount_approved), "how": how,
                                    "event": str(ev.event_date),
+                                   # D250: the activation drew only part of it (its amount is the row's)
+                                   **({"part": True} if a.application_code in part else {}),
                                    "url": f"https://cerf.un.org/what-we-do/allocation/{int(a.year)}/summary/{a.application_code}"})
         if not picked:
             continue
@@ -1322,15 +1338,18 @@ def assemble(d, e):
     actf = pd.read_sql(
         """SELECT f.country_iso3, f.hazard, f.event_date, f.window_name, f.event_label,
                   f.event_type, f.fund_code, f.allocation_code, f.amount_usd, f.people_targeted,
-                  f.refund_usd, f.provisional, c.year AS alloc_year
+                  f.refund_usd, f.provisional, f.match_method, c.year AS alloc_year
            FROM """ + funding_sql(e) + """ f
            LEFT JOIN (SELECT DISTINCT ON (application_code) application_code, year
                       FROM aa.cerf_allocation ORDER BY application_code, year) c
              ON c.application_code = f.allocation_code
            WHERE f.event_type NOT IN (""" + excl + ")", e)
+    # an activation's announcement and whether it was full, from its own row (D249: the
+    # knowledge-base era's copy of the activations is no longer read)
     aurl = pd.read_sql(
-        """SELECT kb_framework, event_date, country_iso3, url, released_usd, full_activation, note
-           FROM aa.actual_activation""", e)
+        """SELECT country_iso3, hazard, version, event_date, window_name, event_label, url,
+                  full_activation
+           FROM aa.window_activation""", e)
     cal = d["calendar"]
     kb = _kb_pages(e)
 
@@ -1362,7 +1381,9 @@ def assemble(d, e):
     # people reached, per CERF allocation the activation record draws on. An allocation drawn by
     # two activations (two windows, or a second trigger months later) reports ONE figure: its
     # earliest activation carries it, the others are marked shared, so no sum counts it twice
-    cerf_f = actf[(actf["fund_code"] == "cerf") & actf["allocation_code"].notna()]
+    # A 'part' row (D250) counts its own people, so it never carries the allocation's figure
+    cerf_f = actf[(actf["fund_code"] == "cerf") & actf["allocation_code"].notna()
+                  & (actf["match_method"].fillna("") != "part")]
     reach = _cerf_reached(sorted(set(cerf_f["allocation_code"])), _try)
     reach_row = {code: g.sort_values(["event_date", "window_name"]).index[0]
                  for code, g in cerf_f.groupby("allocation_code")}
@@ -1688,12 +1709,12 @@ def assemble(d, e):
                       # ad hoc rows (no window) matched nothing and showed no money
                       & (actf["event_label"].fillna("") == (_s(a.event_label) or ""))
                       & (actf["window_name"].fillna("") == (_s(a.window_name) or ""))]
-            u = aurl[(aurl["kb_framework"] == (kb_fw or "—"))
-                     & (aurl["event_date"] == (a.kb_event_date or "—"))]
-            if len(u) > 1 and "country_iso3" in u.columns:
-                u2 = u[u["country_iso3"] == c]
-                u = u2 if len(u2) else u
-            u = u.iloc[0] if len(u) else None
+            u = (aurl[(aurl["country_iso3"] == c) & (aurl["hazard"] == h)
+                      & (aurl["version"] == _s(a.version)) & (aurl["event_date"] == a.event_date)
+                      & (aurl["window_name"].fillna("") == (_s(a.window_name) or ""))
+                      & (aurl["event_label"].fillna("") == (_s(a.event_label) or ""))]
+                 if a.event_type == "framework_aa" else aurl.iloc[0:0])
+            u = u.iloc[0] if len(u) == 1 else None
             activations.append({
                 "date": a.event_date, "exact_date": _s(a.kb_event_date),
                 "type": a.event_type, "window": _s(a.window_name), "version": _s(a.version),
@@ -1703,8 +1724,8 @@ def assemble(d, e):
                 "old": (c, h, _s(a.version)) in old_v,
                 "people": _num(a.people_targeted),
                 "url": _s(u["url"]) if u is not None else None,
-                "released": _num(u["released_usd"]) if u is not None else None,
-                "full": _f(u["full_activation"]) if u is not None else None,
+                "released": None,     # D249: kept in the open data's shape; `funding` has the amounts
+                "full": _flag(u["full_activation"]) if u is not None else None,
                 "funding": [{"fund": x.fund_code, "code": _s(x.allocation_code),
                              "usd": _num(x.amount_usd),     # net of any refund (funding_sql)
                              # money sent back after the activation stopped; an amount entered
@@ -1820,6 +1841,10 @@ def _reach_fields(x, reach, reach_row):
     owner's rule, "for allocations awaiting reports, we use the number targeted" (2026-11-02)."""
     if x.fund_code != "cerf":
         return {"planned": _num(x.people_targeted)} if pd.notna(x.people_targeted) else {}
+    if _s(getattr(x, "match_method", None)) == "part":
+        # D250: only part of the allocation is this activation's, so the allocation's people are
+        # not; the people its own record targets stand in, as for an allocation awaiting a report
+        return {"reached": None, "planned": _num(x.people_targeted) or None, "part": True}
     code = _s(x.allocation_code)
     if code and reach_row.get(code) != x.Index:
         return {"reached": None, "shared": True}
@@ -4332,9 +4357,10 @@ function adhocBlock(f){
   if(!acts.length) return '';
   const CW = Math.max(280, Math.min(560, (side.clientWidth || 420) - 36)), used = new Set();
   const cerfOf = (a, x) => A.find(p => !used.has(p.code) && (p.code === x.code || p.event === String(a.date)));
-  const detail = p => { used.add(p.code); return `<div class='tn' style='margin-top:4px'><a href='${esc(p.url)}' target='_blank' rel='noopener'>CERF ${esc(p.code)} ↗</a> <span class='muted'>· ${esc(p.emergency||'')} · ${p.year}</span></div>
+  const detail = (p, x) => { used.add(p.code); return `<div class='tn' style='margin-top:4px'><a href='${esc(p.url)}' target='_blank' rel='noopener'>CERF ${esc(p.code)} ↗</a> <span class='muted'>· ${esc(p.emergency||'')} · ${p.year}</span></div>
       <div class='tt'><b>${money(p.usd)}</b>${p.planned?' · ' + esc(tr8('{0} people planned', num(p.planned))):''}${p.reached?' · ' + esc(tr8('{0} reached', num(p.reached))):''}</div>
       ${p.title?`<div class='tm'>${esc(p.title)}</div>`:''}
+      ${p.part?`<div class='tm'>${esc(x.usd != null ? tr8('Only {0} of this {1} CERF allocation was anticipatory action. The people, agencies and sectors shown here are the whole allocation’s.', money(x.usd), money(p.usd)) : tr8('Only part of this {0} CERF allocation was anticipatory action. The people, agencies and sectors shown here are the whole allocation’s.', money(p.usd)))}</div>`:''}
       ${p.agencies.length?`<div class='small' style='margin-top:4px'><b>${esc(tr8('Agencies'))}</b></div>` + hbarsSVG(p.agencies.map(x=>({label:x.agency, v:x.usd})), {width:CW, fmt:money, colorBy:'a', label:tr8('CERF allocation by agency')}):''}
       ${p.sectors.length?`<div class='small' style='margin-top:4px'><b>${esc(tr8('Sectors'))}</b></div>` + hbarsSVG(p.sectors.map(x=>({label:x.sector, v:x.usd})), {width:CW, fmt:money, color:'#64748b', label:tr8('CERF allocation by sector')}):''}
       <div class='tm'>${esc(tr8(p.how==='recorded allocation code' ? 'Allocation code recorded with the non-framework allocation.' : 'Matched to the CERF allocation of the same country, year and emergency type (no code recorded).'))}</div>`; };
@@ -4343,7 +4369,7 @@ function adhocBlock(f){
     const p = x.fund === 'cerf' ? cerfOf(a, x) : null;
     return `<div class='trig'><div class='tn'>${esc(x.fund ? fundTitle(x, c) : tr8('fund not recorded'))}</div>
       <div class='tt'><b>${x.usd != null ? money(x.usd) : esc(tr8('amount not recorded'))}</b>${x.usd != null ? withNote(x) : ''} · ${esc(String(a.date).slice(0, 4))}</div>
-      ${p ? detail(p) : x.fund === 'cerf' ? `<div class='tm'>${esc(tr8('No CERF allocation found for this allocation in the CERF data.'))}</div>` : ''}</div>`; }).join('');
+      ${p ? detail(p, x) : x.fund === 'cerf' ? `<div class='tm'>${esc(tr8('No CERF allocation found for this allocation in the CERF data.'))}</div>` : ''}</div>`; }).join('');
 }
 function groupBy(rows, kf, vf){ const m = {}; rows.forEach(r=>{ const k = kf(r); m[k] = (m[k]||0) + (vf(r)||0); }); return m; }
 function fwHeader(c, f){

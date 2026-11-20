@@ -69,7 +69,7 @@ MAP_FIELDS = {
         "adhoc_cerf": "CERF allocations tagged as anticipatory on the pair outside any framework, from "
                       "CERF's records: [{code (CERF's allocation code), year, emergency, title, usd, how "
                       "(how it was matched to the pair), event, url (CERF's page), agencies, sectors, "
-                      "reached, planned}]",
+                      "reached, planned, part (only part of it was the pair's anticipatory action)}]",
         "pre_now": "pre-arranged money now, all funds: what the Pre-arranged tile adds up (= "
                    "`prearranged_usd` in aa-frameworks; a version allowing N activations before it must be "
                    "endorsed again: the CERF envelope counted N times)",
@@ -195,7 +195,7 @@ MAP_FIELDS = {
         "old": "an activation of an earlier framework that a new one replaced: a retired framework's",
         "people": "the people the activation targeted",
         "url": "a public page on the activation",
-        "released": "the amount its public record states (the counted figure is the sum of `funding`)",
+        "released": "always empty since 2026-11 (the amounts are in `funding`, whose sum is the counted figure)",
         "full": "a full activation (the whole envelope)",
         "funding": "the money released, per fund: fields under funding",
     },
@@ -216,6 +216,7 @@ MAP_FIELDS = {
         "planned": "the people counted while there is no report (CERF: those it plans to reach, else those "
                    "the activation targets; a Country or Regional Fund: those it targets)",
         "shared": "the allocation's people are counted on an earlier activation",
+        "part": "the activation drew only part of the CERF allocation: its amount and people are its own",
     },
 }
 

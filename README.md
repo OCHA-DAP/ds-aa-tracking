@@ -68,7 +68,7 @@ are kept forever (the year-end official state, for the map's time view).
   waiting under its name, a window renamed renames the rows that carried its old name; labels
   below a window are never rewritten (writers key on them). Versions carry the tracker's own
   number (`framework_version.version_no`, D212) and CERF's id (`cerf_version_id`); every uid
-  CERF's sheet or the insurer's workbook gave a window is in `cerf_uid_crosswalk`. Below the
+  CERF's sheet gave a window is in `cerf_uid_crosswalk` (the insurer's ids were taken out, D251). Below the
   window, `window_trigger` / `trigger_event` hold the OR'd conditions (with their analysis years)
   and the historical activations RAW, per event (a storm, with its date and hour; D214): a
   window's simulated years are written from its events, and `v_trk_trigger_check` stays empty. A
