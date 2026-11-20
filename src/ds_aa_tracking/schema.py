@@ -500,7 +500,8 @@ TABLES = {
 # human entry, not derived data.
 # the AA assistant's questions (D248): their texts are removed after this many days (the proxy's
 # A_KEEP_DAYS is the same number: change them together), and only the login that owns the table
-# reads it (scripts/ensure_schema.py takes every other login's rights away)
+# reads it (scripts/ensure_schema.py: row-level security with no policy, so every other login,
+# the read login included, sees no rows; and every other login's grants taken away)
 ASSISTANT_KEEP_DAYS = 180
 OWNER_ONLY_TABLES = ("assistant_question",)
 
