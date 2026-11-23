@@ -86,8 +86,9 @@ are kept forever (the year-end official state, for the map's time view).
   `adhoc_activation`, `activation_funding`, …); a view holding both says which a row is in a
   column (`v_window_history.kind`; `v_cerf_activation_history` counts them apart, `n_simulated` /
   `n_real`). Older names that don't follow it yet (`trigger_event`, `v_trigger_event`,
-  `version_performance_reported`, `window_status`) are renamed by a later change that reads the
-  new names, once that change is promoted (the open site's code reads the old ones until then).
+  `version_performance_reported`, `window_status`) are renamed by a later change, which keeps a
+  view under each old name until the code that reads the new names is promoted (the open
+  site's code reads the old ones).
 - **the window's simulated event record** (D252, D253, D254): `simulated_window_event` holds every
   event a window was assessed on, met, not met or not assessed, at any date (before the reference
   years, in them, between them and the version taking effect, or after it), with the storm's

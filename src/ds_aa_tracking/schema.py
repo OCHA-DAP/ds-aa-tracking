@@ -2351,7 +2351,8 @@ VIEWS = {
     # the window is listed beside the simulated record as a met event after endorsement (owner,
     # 2026-11-18; never counted), even where the record has the same event: `kind` says which a
     # row is, 'simulated' (aa.simulated_window_event) or 'activation' (a real one, from
-    # aa.window_activation), so WHERE kind = 'activation' is every real activation (D254).
+    # aa.window_activation), so WHERE kind = 'activation' is every real activation with a window
+    # code (D254; aa.v_trk_window_links lists those without one).
     "v_window_history": """
         CREATE OR REPLACE VIEW aa.v_window_history AS
         WITH ev AS (
