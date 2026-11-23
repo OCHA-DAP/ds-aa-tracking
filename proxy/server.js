@@ -37,6 +37,15 @@
  *                    counter, through its own DB login when COUNT_DB_UID is set (INSERT and
  *                    UPDATE on aa.page_count, nothing else). No IP or identifier is stored.
  *
+ *   POST /assistant-log     the AA assistant's server records one question (D248): what was asked,
+ *                    what the assistant used, how it went -> one row of aa.assistant_question
+ *   POST /assistant-rating  {id, rating, comment, answer} -> the reader's "helpful / not helpful" on
+ *                    that row. Both need the assistant's own token (header x-assistant-token =
+ *                    ASSISTANT_TOKEN, held by the assistant's server, never by a page); neither
+ *                    stores a name, a login or an IP address.
+ *   GET  /assistant-usage   ?since=YYYY-MM-DD -> those rows, for the admin site's Assistant use page
+ *                    (viewer token), live
+ *
  * Two roles, two shared secrets in header x-site-token: SITE_TOKEN (viewer —
  * embedded only in the pages of the admin site (admin/, its own staticrypt
  * password), so "has the admin-site password" = viewer) and EDITOR_TOKEN (editor — never embedded; the pages prompt for it
@@ -52,6 +61,7 @@
  * The Anthropic key can never be used for arbitrary requests.
  */
 const http = require("http");
+const crypto = require("crypto");
 const { Pool } = require("pg");
 
 const API_KEY = process.env.ANTHROPIC_API_KEY;
@@ -63,7 +73,9 @@ const MODELS = new Set(["claude-opus-5"]);
 const MAX_BODY = 45 * 1024 * 1024;
 // hit: per address and hour, generous for an office behind one address (each reader sends a view
 // and a few panel opens), low enough that one script cannot flood the counts
-const RATE = { extract: 20, entry: 60, read: 1200, write: 600, publish: 30, hit: 3000, windowMs: 60 * 60 * 1000 };
+const RATE = { extract: 20, entry: 60, read: 1200, write: 600, publish: 30, hit: 3000, assistant: 6000, windowMs: 60 * 60 * 1000 };
+// the AA assistant's server records its questions with this token (D248); unset -> nothing is recorded
+const ASSISTANT_TOKEN = process.env.ASSISTANT_TOKEN || "";
 // GitHub: a fine-grained token for this repo only, Actions read and write — it can start the
 // publish workflow and read its runs, nothing else. Unset -> the page hides the button.
 const GH_TOKEN = process.env.GITHUB_TOKEN || "";
@@ -93,6 +105,8 @@ const READONLY_TABLES = new Set([
   // regenerated every night from aa.window_event by scripts/mirror_backtest.py (D252): an edit
   // here would be undone; the events are edited in window_event
   "simulated_activation", "backtest_event",
+  // the AA assistant's questions: written only by POST /assistant-log and /assistant-rating (D248)
+  "assistant_question",
 ]);
 const READONLY_PREFIXES = ["zz_legacy_"];
 const TABLE_OWNER = (t) =>
@@ -899,6 +913,153 @@ async function usage(req, res, qs) {
   } catch (e) { send(res, 502, { error: String(e.message || e) }); }
 }
 
+// ------------------------------------------------- /assistant-log, /assistant-rating, /assistant-usage
+// The AA assistant's questions (D248). The assistant's own server sends one record when an answer
+// ends and one when the reader rates it; a page never calls these. Every field is checked against
+// a fixed shape. Nothing identifies a reader: no name, login or IP address is read or stored.
+// Texts older than A_KEEP_DAYS are removed here, at most once an hour, as records come in.
+const A_KEEP_DAYS = 180;          // = schema.ASSISTANT_KEEP_DAYS: change them together
+const A_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const A_OUTCOMES = new Set(["answered", "no_answer", "error", "limit", "timeout", "stopped"]);
+const A_HAZARDS = [
+  ["drought", /\bdroughts?\b|s[ée]cheresse|sequ[ií]a/i],
+  ["flood", /\bflood(s|ing)?\b|inondation|inundaci/i],
+  ["storm", /\bstorms?\b|cyclone|hurricane|typhoon|ouragan|hurac[aá]n|cicl[oó]n|temp[êe]te|tormenta/i],
+  ["cholera", /chol[ée]ra|c[oó]lera/i],
+  ["plague", /\bplague\b|\bpeste\b/i],
+  ["locusts", /locusts?\b|criquet|langosta/i],
+  ["food_insecurity", /food[ _]insecurity|ins[ée]curit[ée] alimentaire|inseguridad alimentaria/i],
+];
+// names people type that the tracker's own country names do not contain
+const A_ALIASES = { COD: /(^|[^\p{L}])(?:DRC|RDC|democratic republic of (?:the )?congo|DR Congo)(?=$|[^\p{L}])/giu };
+function assistantAuth(req) {
+  const t = req.headers["x-assistant-token"];
+  if (!ASSISTANT_TOKEN || typeof t !== "string" || !t) return false;
+  const h = (x) => crypto.createHash("sha256").update(x).digest();
+  return crypto.timingSafeEqual(h(t), h(ASSISTANT_TOKEN));
+}
+// the countries the tracker has, longest name first, and the names of its tables and views:
+// re-read hourly
+let aKnown = { at: 0, countries: [], relations: new Set() };
+const A_OPEN = ["frameworks", "versions", "activations", "prearranged_funding", "cofinancing", "funds"].map((x) => "open." + x);
+const aFold = (x) => x.normalize("NFD").replace(/[̀-ͯ]/g, "");      // accents off: Haïti = Haiti
+async function assistantKnown() {
+  if (Date.now() - aKnown.at < 3600e3) return aKnown;
+  const c = await pool.query("SELECT country_iso3, max(country_name) AS name FROM aa.country_hazard GROUP BY 1");
+  const t = await pool.query(
+    `SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'aa' AND c.relkind IN ('r', 'p', 'v', 'm')`);
+  const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  aKnown = { at: Date.now(),
+    countries: c.rows.filter((x) => x.name && x.name.length >= 4).sort((a, b) => b.name.length - a.name.length)
+      .map((x) => [x.country_iso3, new RegExp("(^|[^\\p{L}])" + esc(aFold(x.name)) + "(?=$|[^\\p{L}])", "giu")]),
+    relations: new Set([...t.rows.map((x) => x.relname), ...A_OPEN]) };
+  return aKnown;
+}
+// The countries and hazards a question is about. A country: its name in the question (the longest
+// names first, each taken out once found, so "South Sudan" is not also "Sudan"), or its code
+// between quotes in the assistant's queries (never a bare three-letter word of the question:
+// "AGO", "COL" and "TON" are words too). A hazard: its word in the question or the queries.
+async function assistantSubjects(question, hay) {
+  const known = await assistantKnown(), iso = new Set(known.countries.map((x) => x[0])), out = new Set();
+  let text = aFold(question);
+  for (const [code, rx] of [["COD", A_ALIASES.COD], ...known.countries]) {
+    rx.lastIndex = 0;
+    if (rx.test(text)) { out.add(code); rx.lastIndex = 0; text = text.replace(rx, "$1 "); }
+  }
+  for (const m of hay.matchAll(/'([A-Z]{3})'/g)) if (iso.has(m[1])) out.add(m[1]);
+  const all = question + " " + hay;
+  return { countries: [...out].sort(), hazards: A_HAZARDS.filter(([, rx]) => rx.test(all)).map(([h]) => h) };
+}
+let aTrimmed = 0;
+// the texts older than the keeping period go: as records come in and whenever the admin page reads
+// (at most once an hour here), and every night whether or not anyone asks (scripts/trim_assistant_log.py)
+async function assistantTrim(force) {
+  if (!force && Date.now() - aTrimmed < 3600e3) return;
+  aTrimmed = Date.now();
+  await pool.query(
+    `UPDATE aa.assistant_question SET question = NULL, answer = NULL, comment = NULL, error = NULL
+     WHERE asked_at < now() - make_interval(days => $1)
+       AND (question IS NOT NULL OR answer IS NOT NULL OR comment IS NOT NULL OR error IS NOT NULL)`, [A_KEEP_DAYS]);
+}
+async function assistantWrite(req, res, path) {
+  if (!assistantAuth(req)) return send(res, 401, { error: "bad assistant token" });
+  if (limited(req, res, "assistant")) return;
+  if (!pool) return send(res, 500, { error: "DB not configured" });
+  const b = await readBody(req, res, 600 * 1024);     // the limits below are in characters, up to 4 bytes each
+  if (!b) return;
+  const str = (x, max) => (typeof x === "string" && x.replace(/\u0000/g, "").trim() ? x.replace(/\u0000/g, "").slice(0, max) : null);
+  const list = (x, rx, max) => [...new Set((Array.isArray(x) ? x : []).filter((v) => typeof v === "string" && rx.test(v)))].slice(0, max);
+  const int = (x, lo, hi) => (Number.isInteger(x) && x >= lo && x <= hi ? x : null);
+  if (typeof b.id !== "string" || !A_ID.test(b.id)) return send(res, 400, { error: "id" });
+  try {
+    if (path === "/assistant-rating") {
+      if (b.rating !== 1 && b.rating !== -1) return send(res, 400, { error: "rating: 1 or -1" });
+      // the answer is kept with a "not helpful" (the assistant's server sends its own copy, and an
+      // answer already held is never replaced); a later "helpful" drops it again unless the question failed
+      const r = await pool.query(
+        `UPDATE aa.assistant_question SET rating = $2::smallint, comment = $3, rated_at = now(),
+                answer = CASE WHEN $2::smallint = -1 THEN coalesce(answer, $4)
+                              WHEN outcome IN ('answered', 'stopped') THEN NULL ELSE answer END
+         WHERE id = $1 AND asked_at > now() - interval '7 days'`,
+        [b.id.toLowerCase(), b.rating, str(b.comment, 2000), str(b.answer, 30000)]);
+      return send(res, r.rowCount ? 200 : 404, r.rowCount ? { ok: true } : { error: "no such question" });
+    }
+    const outcome = A_OUTCOMES.has(b.outcome) ? b.outcome : null;
+    if (!outcome) return send(res, 400, { error: "outcome" });
+    const question = str(b.question, 20000);
+    if (!question) return send(res, 400, { error: "question" });
+    const subj = await assistantSubjects(question, str(b.hay, 60000) || "");
+    const relations = (await assistantKnown()).relations;
+    const failed = outcome !== "answered" && outcome !== "stopped";      // only a failure keeps what was said
+    await pool.query(
+      `INSERT INTO aa.assistant_question (id, conversation, turn, surface, from_page, thorough, question,
+           countries, hazards, tables_used, tools, n_steps, used_documents, made_chart, made_file, searched_web,
+           seconds, outcome, missing, error, answer)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+       ON CONFLICT (id) DO NOTHING`,
+      [b.id.toLowerCase(), typeof b.conversation === "string" && A_ID.test(b.conversation) ? b.conversation.toLowerCase() : "",
+       int(b.turn, 1, 10000) || 1, b.surface === "panel" ? "panel" : "page",
+       typeof b.from_page === "string" && /^[a-z0-9-]{1,60}\.html$/.test(b.from_page) ? b.from_page : "",
+       b.thorough === true, question, subj.countries, subj.hazards,
+       // only what the database has: the assistant's reading of its queries also catches columns and functions
+       list(b.tables, /^[a-z][a-z0-9_.]{0,80}$/, 200).filter((t) => relations.has(t)).slice(0, 60),
+       list(b.tools, /^[A-Za-z][A-Za-z0-9_]{0,60}$/, 40),
+       int(b.n_steps, 0, 10000) || 0, b.used_documents === true, b.made_chart === true, b.made_file === true,
+       b.searched_web === true,
+       typeof b.seconds === "number" && b.seconds >= 0 && b.seconds < 36000 ? Math.round(b.seconds * 10) / 10 : null,
+       outcome, b.missing === true, failed ? str(b.error, 1000) : null, failed ? str(b.answer, 30000) : null]);
+    assistantTrim().catch((e) => console.error("assistant trim:", e.message));
+    send(res, 200, { ok: true });
+  } catch (e) {
+    console.error("assistant:", e.message);
+    send(res, 500, { error: "not recorded" });
+  }
+}
+// The admin site's Assistant use page reads the rows here, live, with the viewer token: the texts
+// are for the people who hold the admin-site password, and are in no built page or snapshot.
+async function assistantUsage(req, res, qs) {
+  if (limited(req, res, "read")) return;
+  const since = qs.get("since") || "";
+  if (since && !/^\d{4}-\d{2}-\d{2}$/.test(since)) return send(res, 400, { error: "since: YYYY-MM-DD" });
+  try {
+    const at = new Date().toISOString();
+    if (!(await pool.query("SELECT to_regclass('aa.assistant_question') IS NOT NULL AS ok")).rows[0].ok)
+      return send(res, 200, { ok: true, rows: [], names: {}, at, keep_days: A_KEEP_DAYS, recording: !!ASSISTANT_TOKEN, table: false });
+    await assistantTrim(true);      // nothing older than the keeping period is ever served
+    const r = await pool.query(
+      `SELECT id, to_char(asked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI') AS at, conversation, turn, surface,
+              from_page, thorough, question, countries, hazards, tables_used, tools, n_steps, used_documents,
+              made_chart, made_file, searched_web, seconds::float AS seconds, outcome, missing, error, rating,
+              comment, answer
+       FROM aa.assistant_question ${since ? "WHERE asked_at >= ($1::timestamp AT TIME ZONE 'UTC')" : ""}
+       ORDER BY asked_at DESC LIMIT 20000`, since ? [since] : []);
+    const nm = await pool.query("SELECT country_iso3, max(country_name) AS name FROM aa.country_hazard GROUP BY 1");
+    send(res, 200, { ok: true, at, keep_days: A_KEEP_DAYS, recording: !!ASSISTANT_TOKEN, table: true, rows: r.rows,
+      names: Object.fromEntries(nm.rows.map((x) => [x.country_iso3, x.name])) });
+  } catch (e) { send(res, 502, { error: String(e.message || e) }); }
+}
+
 // ------------------------------------------------------------------- server
 const server = http.createServer(async (req, res) => {
   const allowed = cors(req, res);
@@ -912,16 +1073,20 @@ const server = http.createServer(async (req, res) => {
   if (!allowed && req.headers.origin) return send(res, 403, { error: "origin not allowed" });
   // the open site's counts: no token (the open pages carry none), checked in hit()
   if (req.method === "POST" && url.pathname === "/hit") return hit(req, res);
+  // the assistant's records: its own token, checked in assistantWrite() (never the site's)
+  if (req.method === "POST" && (url.pathname === "/assistant-log" || url.pathname === "/assistant-rating"))
+    return assistantWrite(req, res, url.pathname);
   const r = role(req);
   if (!r) return send(res, 401, { error: "bad site token" });
   if (req.method === "GET" && url.pathname === "/whoami") return send(res, 200, { ok: true, role: r });
   if (req.method === "GET" && url.pathname === "/framework") return framework(req, res, url.searchParams);
-  if (!pool && ["/schema", "/rows", "/distinct", "/save", "/delete", "/usage"].includes(url.pathname))
+  if (!pool && ["/schema", "/rows", "/distinct", "/save", "/delete", "/usage", "/assistant-usage"].includes(url.pathname))
     return send(res, 500, { error: "DB not configured" });
   if (req.method === "GET" && url.pathname === "/schema") return adminSchema(req, res, url.searchParams);
   if (req.method === "GET" && url.pathname === "/rows") return adminRows(req, res, url.searchParams);
   if (req.method === "GET" && url.pathname === "/distinct") return adminDistinct(req, res, url.searchParams);
   if (req.method === "GET" && url.pathname === "/usage") return usage(req, res, url.searchParams);
+  if (req.method === "GET" && url.pathname === "/assistant-usage") return assistantUsage(req, res, url.searchParams);
   if (req.method === "GET" && url.pathname === "/publish") return publishStatus(req, res);
   if (r !== "editor" && ["/extract", "/entry", "/save", "/delete", "/publish"].includes(url.pathname))
     return send(res, 401, { error: "editor token required" });   // 401: pages prompt for it

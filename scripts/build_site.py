@@ -289,6 +289,8 @@ ADMIN_HOME = [
     ("Site", [
         ("usage.html", "how the open site is used: page views, map panels opened, languages, "
                        "downloads and links out, from its daily counts"),
+        ("assistant-usage.html", "how the AA assistant is used: the questions put to it, what it used to "
+                                 "answer them, the failures and the answers marked not helpful"),
     ]),
     ("Figures not public yet", [
         ("money-flows-this-year.html", "the Financing page's money-flow chart with the current year, "
@@ -920,6 +922,7 @@ NOTES = {
     "entry_audit": "Changes to the data, by row or by field: those made through the admin page (saves, deletes) and the Data entry page, each row an entries file applies (scripts/apply_entries.py; one whole-row entry per row), and the nightly corrections (the CERF sync, D232; provisional amounts resolved; version relabels) — who or what, when, the table, the row's key, the field, the old and the new value. Not every write: the import scripts (partners, learning documents) write without it. Append-only; read-only in the admin page.",
     "applied_entries": "The entries files the nightly job has applied (scripts/apply_entries.py), one row per file: its name, content hash, rows and who entered it. A file is applied once per content, so a later edit in the admin page is not overwritten by a re-run; a file whose content changes is applied again.",
     "page_count": "The open site's usage, as daily totals (D197): page views, map panels opened (the country or framework), language switches, downloads and links followed out, each with the page's language and phone or desktop; a view also with the referring site's host. Written only by the proxy's anonymous <code>POST /hit</code> (one row per day and combination, n + 1 per event) from the pages at the root, never dev/ or admin/; no IP address, identifier or time of day is stored (privacy.html says so to readers). Indicative counts, never audited: an anonymous endpoint can be inflated. The Site usage page (usage.html) shows them as a dashboard, loaded live from the proxy's <code>GET /usage</code>.",
+    "assistant_question": "The questions put to the AA assistant (D248), one row each: the question, the countries, hazards, tables and tools it involved, how long it took, how it ended and the reader's rating. Written only by the assistant's own server through the proxy; read-only in the admin page and shown on the admin site's Assistant use page. No name, login or IP address is stored. The answer is kept only for a failure or a \"not helpful\"; questions, comments and answers are removed after 180 days. Not in the snapshots: the assistant reads those, and a year-end snapshot is kept for good.",
 }
 
 def main():
@@ -940,6 +943,8 @@ def main():
     admin_page.build_admin(page)
     import page_usage   # the open site's page counts, as a dashboard (D197)
     page_usage.build(e, page, DATA_STAMP)
+    import page_assistant_usage   # the AA assistant's questions, as a dashboard, live only (D248)
+    page_assistant_usage.build(page)
     import page_backtest_table   # historical activations per framework, window and trigger, to check by eye (D221)
     page_backtest_table.build(e, page, DATA_STAMP)
     import page_climate
@@ -1310,7 +1315,9 @@ def schema_doc_gaps(tables, views, fks):
     note or no box in the diagram, a box naming nothing in the database, a key whose tables are
     not both drawn. tables / views: the names in the database."""
     drawn = {n for n, *_ in ERD_NODES} | {n for _, _, nodes in ERD_CLUSTERS for n, *_ in nodes}
-    ours = (set(trk_schema.TABLES) | set(trk_schema.DURABLE_TABLES)) & set(tables)
+    # (a table kept out of the snapshots, D248, is in no build's database but a laptop's: not drawn)
+    from ds_aa_tracking.snapshot import NOT_EXPORTED
+    ours = ((set(trk_schema.TABLES) | set(trk_schema.DURABLE_TABLES)) & set(tables)) - NOT_EXPORTED
     gaps = [f"aa.{t} has no note on the schema page (build_site.NOTES)" for t in sorted(ours - set(NOTES))]
     gaps += [f"aa.{t} is not drawn in the schema page's diagram (build_site.ERD_NODES)"
              for t in sorted(ours - drawn)]

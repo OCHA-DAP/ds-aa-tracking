@@ -38,6 +38,8 @@ Steps
      nothing happens before the backfill
   2d. scripts/extract_document_text.py: the text of each newly registered framework
      document, page by page, into aa.framework_document_page (D228)
+  2e. scripts/trim_assistant_log.py: the texts of the AA assistant's questions older than 180
+     days are removed (D248); the counts stay
   3. scripts/export_snapshot.py: consistent snapshot of schema aa -> dev blob
      projects/ds-aa-tracking/snapshot/{latest,YYYY-MM-DD}/ (dated copies kept 30 days,
      31-December copies forever), with each view's rows beside the tables (D228)
@@ -145,6 +147,10 @@ def main():
         run("scripts/extract_document_text.py", timeout=900)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as ex:
         print(f"!! extract_document_text failed ({ex}); continuing to the snapshot", flush=True)
+    try:   # the assistant's questions keep their texts 180 days (D248), whether or not anyone asks
+        run("scripts/trim_assistant_log.py")
+    except subprocess.CalledProcessError as ex:
+        print(f"!! trim_assistant_log failed ({ex}); continuing to the snapshot", flush=True)
     run("scripts/export_snapshot.py", *(["--no-prune"] if a.no_prune else []))
 
 

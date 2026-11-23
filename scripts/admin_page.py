@@ -53,6 +53,8 @@ GROUPS = [
                         "backtest_event", "version_performance_reported", "cerf_uid_crosswalk"]),
     ("Site usage (the open site's daily page counts, written only by the proxy's POST /hit; D197)",
      "ds-aa-tracking", ["page_count"]),
+    ("Assistant use (the AA assistant's questions, written only by its server through the proxy; D248)",
+     "ds-aa-tracking", ["assistant_question"]),
     ("Record before 2026-10-05 (read-only, frozen)", "ds-aa-tracking", [
         "funding_breakdown", "actual_activation", "activation_allocation"]),
     ("Mirrors — copied in every day, read-only", MIRRORS["repo"],

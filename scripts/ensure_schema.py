@@ -32,6 +32,25 @@ def ensure_schema(engine):
             conn.execute(sa.text(ddl))
         for stmt in schema.ADDITIVE_MIGRATIONS:
             conn.execute(sa.text(stmt))
+        # tables only their owner reads (D248: what readers asked the assistant): every other
+        # login's rights go, whatever the schema's default grants gave it at creation. That alone
+        # does not stop the database's read login, which may read every table whatever its grants
+        # (it is a member of pg_read_all_data: found on 2026-11-20, when it could still read the
+        # new table). Row-level security with no policy does: the owner still sees every row,
+        # any other login sees none.
+        for t in schema.OWNER_ONLY_TABLES:
+            conn.execute(sa.text(f"ALTER TABLE aa.{t} ENABLE ROW LEVEL SECURITY"))
+            conn.execute(sa.text(f"REVOKE ALL ON aa.{t} FROM PUBLIC"))
+            others = conn.execute(sa.text(
+                """SELECT DISTINCT grantee FROM information_schema.role_table_grants
+                   WHERE table_schema = 'aa' AND table_name = :t
+                     AND grantee NOT IN ('PUBLIC', current_user,
+                         (SELECT tableowner FROM pg_tables WHERE schemaname = 'aa' AND tablename = :t))"""),
+                {"t": t}).scalars().all()
+            for g in others:
+                conn.execute(sa.text(f'REVOKE ALL ON aa.{t} FROM "{g}"'))
+            if others:
+                print(f"  aa.{t}: rights taken from {', '.join(others)} (only its owner reads it)")
         seeded = migrations.collapse_statuses(conn)       # status collapse + window_status seed
         for idx in schema.INDEXES:
             conn.execute(sa.text(idx))
