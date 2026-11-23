@@ -83,16 +83,18 @@ are kept forever (the year-end official state, for the map's time view).
 - **simulated or actual, by name** (D254): a table or view whose name starts with `simulated_`
   (`v_simulated_`) holds what a trigger would have done, from the data; one with `activation` in
   its name and no `simulated_` holds what actually happened (`window_activation`,
-  `adhoc_activation`, `activation_funding`, …). Older names that don't follow it yet
-  (`trigger_event`, `v_trigger_event`, `version_performance_reported`, `window_status`) are
-  renamed after the next promote, because the open site's code reads them.
+  `adhoc_activation`, `activation_funding`, …); a view holding both says which a row is in a
+  column (`v_window_history.kind`; `v_cerf_activation_history` counts them apart, `n_simulated` /
+  `n_real`). Older names that don't follow it yet (`trigger_event`, `v_trigger_event`,
+  `version_performance_reported`, `window_status`) are renamed by a later change that reads the
+  new names, once that change is promoted (the open site's code reads the old ones until then).
 - **the window's simulated event record** (D252, D253, D254): `simulated_window_event` holds every
   event a window was assessed on, met, not met or not assessed, at any date (before the reference
   years, in them, between them and the version taking effect, or after it), with the storm's
   IBTrACS `sid` where known; `met` is entered, never computed from the triggers.
   `v_window_history` adds each event's period, what the return periods count (`counted`), and the
-  real activations as met events after endorsement; `kind` says which a row is (`simulated` or
-  `activation`). `window_trigger.required` /
+  window's real activations beside the record, as met events after endorsement, never counted;
+  `kind` says which a row is (`simulated` or `activation`). `window_trigger.required` /
   `consecutive` / `cadence` and `window.chance_unit` describe how a window's triggers combine,
   how often they are checked and how a blank reads. Until the pages read the record and that code is promoted,
   `scripts/mirror_backtest.py` (nightly) regenerates `simulated_activation` and `backtest_event`

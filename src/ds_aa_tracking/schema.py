@@ -2347,11 +2347,11 @@ VIEWS = {
     # in the reference span (counted by the return periods), a gap year inside it (not assessed),
     # after the analysis but before the version took effect, after it took effect, or unknown (a
     # year-only event in the year the version took effect, or any event of a window whose analysis
-    # years are not recorded). `counted`: what the return periods count. A real activation is
-    # listed as a met event after endorsement (owner, 2026-11-18; never counted), added here
-    # unless the record has the event (the same label, or any event that year for an activation
-    # that names none). `kind` says which a row is: 'simulated' (aa.simulated_window_event) or
-    # 'activation' (a real one, from aa.window_activation) (D254).
+    # years are not recorded). `counted`: what the return periods count. Every real activation of
+    # the window is listed beside the simulated record as a met event after endorsement (owner,
+    # 2026-11-18; never counted), even where the record has the same event: `kind` says which a
+    # row is, 'simulated' (aa.simulated_window_event) or 'activation' (a real one, from
+    # aa.window_activation), so WHERE kind = 'activation' is every real activation (D254).
     "v_window_history": """
         CREATE OR REPLACE VIEW aa.v_window_history AS
         WITH ev AS (
@@ -2369,13 +2369,6 @@ VIEWS = {
                    true, NULL::numeric, NULL::text, 'a real activation', 'window_activation'
             FROM aa.window_activation a
             WHERE a.window_code IS NOT NULL AND a.event_date ~ '^[0-9]{4}'
-              -- the record's own event stands for it: the same label, or, for an activation
-              -- that names no event (most do not), any event of the window that year
-              AND NOT EXISTS (
-                  SELECT 1 FROM aa.simulated_window_event e
-                  WHERE (e.country_iso3, e.hazard, e.version, e.window_code, e.event_year)
-                      = (a.country_iso3, a.hazard, a.version, a.window_code, left(a.event_date, 4)::int)
-                    AND (e.event_label = a.event_label OR a.event_label = '') AND e.met IS TRUE)
         )
         SELECT ev.*,
                CASE WHEN ev.recorded_in = 'window_activation' THEN 'activation' ELSE 'simulated' END AS kind,
