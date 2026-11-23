@@ -13,7 +13,7 @@ Steps
      ranks sources by their new labels over rows still carrying the old ones
   1. optional --ensure-schema: scripts/ensure_schema.py (idempotent DDL; off by default so
      a schema change ships deliberately, via a one-off run of this job with the flag)
-  1a. one-off --backfill-events: scripts/backfill_window_events.py --write (D252): fills the
+  1a. one-off --backfill-events: scripts/backfill_simulated_events.py --write (D252): fills the
      window event record from the two backtest tables it replaces, once, after the schema pass
      that creates it; it rolls back (and stops the run) unless regenerating the two tables
      from the record changes nothing and every return period stays the same
@@ -34,7 +34,7 @@ Steps
      for (D232); the amounts of an allocation split over several rows are left as entered and
      warned about when the parts don't add up to OneGMS's figures
   2c''. scripts/mirror_backtest.py: simulated_activation and backtest_event say what the window
-     event record (aa.window_event) says, while the pages and the open site's code still read them (D252);
+     event record (aa.simulated_window_event) says, while the pages and the open site's code still read them (D252);
      nothing happens before the backfill
   2d. scripts/extract_document_text.py: the text of each newly registered framework
      document, page by page, into aa.framework_document_page (D228)
@@ -119,7 +119,7 @@ def main():
     if a.ensure_schema:
         run("scripts/ensure_schema.py")
     if a.backfill_events:
-        run("scripts/backfill_window_events.py", "--write")
+        run("scripts/backfill_simulated_events.py", "--write")
     if a.relabel:
         run("scripts/relabel_version.py", *a.relabel, "--write", "--by", "nightly --relabel")
     try:

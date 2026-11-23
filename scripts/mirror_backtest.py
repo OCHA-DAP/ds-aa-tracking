@@ -1,6 +1,6 @@
-"""Regenerate aa.simulated_activation and aa.backtest_event from aa.window_event (D252).
+"""Regenerate aa.simulated_activation and aa.backtest_event from aa.simulated_window_event (D252).
 
-Since D252 the window's event record (aa.window_event) is what is entered and edited. The two
+Since D252 the window's event record (aa.simulated_window_event) is what is entered and edited. The two
 tables it replaces stay while code on the open site, or the pages, still read them (D203): every
 night this step makes them say what the record says, so the open site keeps showing current
 backtests. They go once the pages read the record and that code has been promoted.
@@ -19,8 +19,8 @@ Changes only what differs, so an unchanged record changes nothing:
   added stays out, so aa.v_trigger_event (the CERF app's view) keeps reading its simulated years.
 Only windows with a code are touched, and never a window whose record has no event at all
 (its rows stay, with a warning: emptying a window's record does not empty them). Nothing
-happens before the one-off backfill (scripts/backfill_window_events.py) has committed: the
-sign is its rows in aa.entry_audit, not rows in aa.window_event, which an editor could have
+happens before the one-off backfill (scripts/backfill_simulated_events.py) has committed: the
+sign is its rows in aa.entry_audit, not rows in aa.simulated_window_event, which an editor could have
 entered first.
 
 Every change is audited to aa.entry_audit (entered_by 'nightly mirror_backtest').
@@ -42,7 +42,7 @@ os.environ.setdefault("PGSSLMODE", "require")
 import ocha_stratus as stratus
 
 BY = "nightly mirror_backtest"
-BACKFILL_BY = "backfill_window_events"     # entry_audit.entered_by of the one-off backfill
+BACKFILL_BY = "backfill_simulated_events"     # entry_audit.entered_by of the one-off backfill
 WKEY = ("country_iso3", "hazard", "version", "window_code")
 
 
@@ -65,13 +65,13 @@ def _rows(conn, sql):
 
 
 def record_live(conn):
-    """True once the one-off backfill has committed (its audit rows exist), so aa.window_event
-    holds every window's record. Rows in aa.window_event alone prove nothing: an editor or an
+    """True once the one-off backfill has committed (its audit rows exist), so aa.simulated_window_event
+    holds every window's record. Rows in aa.simulated_window_event alone prove nothing: an editor or an
     entries file could have entered one before the backfill."""
-    if conn.execute(sa.text("SELECT to_regclass('aa.window_event')")).scalar() is None:
+    if conn.execute(sa.text("SELECT to_regclass('aa.simulated_window_event')")).scalar() is None:
         return False
     return bool(conn.execute(sa.text(
-        "SELECT EXISTS (SELECT 1 FROM aa.entry_audit WHERE entered_by = :by AND table_name = 'window_event')"),
+        "SELECT EXISTS (SELECT 1 FROM aa.entry_audit WHERE entered_by = :by AND table_name = 'simulated_window_event')"),
         {"by": BACKFILL_BY}).scalar())
 
 
@@ -82,7 +82,7 @@ def _same(a, b):
 
 
 def _counted(w, year):
-    """A met event of this year counts toward the return period (as aa.v_window_event.counted):
+    """A met event of this year counts toward the return period (as aa.v_window_history.counted):
     inside the window's analysis years and not a gap year, or any year when the window's
     analysis years are not recorded."""
     a, b = w["analysis_start"], w["analysis_end"]
@@ -106,7 +106,7 @@ def mirror(conn, verbose=True):
                analysis_start, analysis_end, analysis_gap_years
         FROM aa.window WHERE window_code IS NOT NULL""")}
     events = {}
-    for e in _rows(conn, "SELECT * FROM aa.window_event"):
+    for e in _rows(conn, "SELECT * FROM aa.simulated_window_event"):
         events.setdefault(tuple(e[k] for k in WKEY), []).append(e)
     changed = 0
     bt = {}
@@ -125,7 +125,7 @@ def mirror(conn, verbose=True):
             return False
         if (wk, table) not in empty_warned:
             empty_warned.add((wk, table))
-            say(f"::warning::{'/'.join(map(str, wk))}: no event in aa.window_event but rows in aa.{table}; "
+            say(f"::warning::{'/'.join(map(str, wk))}: no event in aa.simulated_window_event but rows in aa.{table}; "
                 "left as they are (delete them by hand if the record was emptied on purpose)")
         return True
 

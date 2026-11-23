@@ -36,10 +36,10 @@ only the database snapshot.
 
 **AA management (since 2026-10-05).** Every AA table is owned here (DDL and views in
 `schema.py`; the loaders that used to write some of them from elsewhere are retired): the
-**backtests** — `window`, `window_event` (the window's event record, D252),
+**backtests** — `window`, `simulated_window_event` (the window's simulated event record, D252),
 `window_trigger` / `trigger_event`, `version_performance_reported` — are edited here
-(`simulated_activation` and `backtest_event` are regenerated from `window_event` every night,
-and dropped once the pages read `window_event` and that code is promoted), and `funding_breakdown`, `actual_activation`, `activation_allocation` are the
+(`simulated_activation` and `backtest_event` are regenerated from `simulated_window_event` every night,
+and dropped once the pages read `simulated_window_event` and that code is promoted), and `funding_breakdown`, `actual_activation`, `activation_allocation` are the
 frozen record from before 2026-10-05 (superseded by `window_funding`, `window_activation`,
 `activation_funding`). This database is the record
 of every AA table; backtests are edited freely and corrected as errors are found
@@ -57,7 +57,7 @@ are kept forever (the year-end official state, for the map's time view).
 ## Layout
 
 - `src/ds_aa_tracking/schema.py` — DDL (tables + views), all in schema `aa`; hierarchy
-  country_hazard → framework_version → window → {window_activation, window_event,
+  country_hazard → framework_version → window → {window_activation, simulated_window_event,
   window_funding}; ad hoc / early-action allocations off the pair (adhoc_activation), and money a
   fund has pre-arranged outside a framework and not yet released (adhoc_prearranged, D223:
   never an activation, never released money)
@@ -80,17 +80,25 @@ are kept forever (the year-end official state, for the map's time view).
   uid from the tracker's numbering, `cerf_uids` beside), `v_cerf_activation_history` (uid × year:
   distinct simulated events, real activations, total) and `v_cerf_uid_crosswalk` (old uid → new).
   Curation queues: `v_trk_window_links`, `v_trk_trigger_check`, `v_trk_version_numbers`.
-- **the window's event record** (D252, D253): `window_event` holds every event a window was
-  assessed on, met, not met or not assessed, before, inside or after its analysis years, with
-  the storm's IBTrACS `sid` where known; `met` is entered, never computed from the triggers.
-  `v_window_event` adds each event's period, what the return periods count (`counted`), and the
-  real activations as met events after endorsement. `window_trigger.required` /
+- **simulated or actual, by name** (D254): a table or view whose name starts with `simulated_`
+  (`v_simulated_`) holds what a trigger would have done, from the data; one with `activation` in
+  its name and no `simulated_` holds what actually happened (`window_activation`,
+  `adhoc_activation`, `activation_funding`, …). Older names that don't follow it yet
+  (`trigger_event`, `v_trigger_event`, `version_performance_reported`, `window_status`) are
+  renamed after the next promote, because the open site's code reads them.
+- **the window's simulated event record** (D252, D253, D254): `simulated_window_event` holds every
+  event a window was assessed on, met, not met or not assessed, at any date (before the reference
+  years, in them, between them and the version taking effect, or after it), with the storm's
+  IBTrACS `sid` where known; `met` is entered, never computed from the triggers.
+  `v_window_history` adds each event's period, what the return periods count (`counted`), and the
+  real activations as met events after endorsement; `kind` says which a row is (`simulated` or
+  `activation`). `window_trigger.required` /
   `consecutive` / `cadence` and `window.chance_unit` describe how a window's triggers combine,
   how often they are checked and how a blank reads. Until the pages read the record and that code is promoted,
   `scripts/mirror_backtest.py` (nightly) regenerates `simulated_activation` and `backtest_event`
-  from the record for the open site's code, `v_window_event_performance` /
-  `v_framework_event_performance` compute the return periods from it, and `v_trk_event_check`
-  lists disagreements. `scripts/backfill_window_events.py` filled it once (nightly
+  from the record for the open site's code, `v_simulated_window_performance` /
+  `v_simulated_framework_performance` compute the return periods from it, and `v_trk_simulated_event_check`
+  lists disagreements. `scripts/backfill_simulated_events.py` filled it once (nightly
   `--backfill-events`).
   For readers of the old CERF `window_level` / `activation_history` sheets (the financial-exposure
   app): [docs/reading-windows-and-budgets.md](docs/reading-windows-and-budgets.md).
@@ -304,7 +312,7 @@ docstring; upload with `--upload FILE`, test against a restored local copy with 
 Every row is audited to `aa.entry_audit`; applied files are recorded in `aa.applied_entries`.
 Besides upserts, an item can `"delete"` one row by its full key or `"op": "replace"` a
 version's rows in a table (a re-run backtest). A file that fails stays pending and never
-blocks the others. A window's backtest goes in `window_event` (D252): a re-run
+blocks the others. A window's backtest goes in `simulated_window_event` (D252): a re-run
 backtest is a `"replace"` scoped to the version, or to one window with `window_code` in the
 scope; once the record is filled, a file that writes `simulated_activation` or `backtest_event`
 fails, because those two are regenerated from it every night.

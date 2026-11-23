@@ -15,7 +15,7 @@ tunnel, or a snapshot restored locally) and writes:
 - window_funding — the stated rows, provenance 'doc-stated' (agency / sector rows are the
   breakdown; rows without either are the envelope). When a fund's envelope is stated only as
   a total, it goes to window 'unattributed'.
-- window_event — the window's event record (D252): every event the backtest tested (met or
+- simulated_window_event — the window's event record (D252): every event the backtest tested (met or
   not, with its value), and the years the document lists the trigger as met that no tested
   event covers; only those BEFORE the version took effect (a version's backtest is fixed before
   it is endorsed). Upserted by the window's code, so a window new in this read (no code yet)
@@ -427,7 +427,7 @@ def convert(read, body, db):
             n_sim += event(win, y, lab, met=True, event_date=d or None, time_precision="day" if d else "year",
                            source_note="; ".join(x for x in (f"framework document p.{s.get('page')}", extra) if x))
         for ev in events.values():
-            add("window_event", ev)
+            add("simulated_window_event", ev)
         if uncoded:
             notes.append(f"{c}: no events entered for window(s) the database has no code for (new in "
                          "this read, or named differently there): " + ", ".join(sorted(uncoded))

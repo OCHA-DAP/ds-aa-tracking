@@ -1,4 +1,4 @@
-"""One-off (D252): fill aa.window_event from the two backtest tables it replaces, and give each
+"""One-off (D252): fill aa.simulated_window_event from the two backtest tables it replaces, and give each
 window the unit of its chance to activate (D253).
 
 Per window with a code and no event yet:
@@ -11,20 +11,20 @@ Per window with a code and no event yet:
   date and note its row carries. A label that names several storms ("Dennis, Wilma") stays one
   event: the record does not split what the document lists together.
 Runs once: after it has committed, a second run does nothing. It refuses to start while
-aa.window_event has rows it did not write (entered before it ran): their windows would not
+aa.simulated_window_event has rows it did not write (entered before it ran): their windows would not
 match the two tables, so delete them first and enter them again afterwards.
 chance_unit (where not set): 'event' for storm windows (one chance per storm), 'year' for the
 others (a year or season), for a person to correct where a framework counts otherwise.
 
-Every row written is audited to aa.entry_audit (entered_by 'backfill_window_events'). Then it
+Every row written is audited to aa.entry_audit (entered_by 'backfill_simulated_events'). Then it
 checks, in the same transaction, the two things the backfill must not change:
 - regenerating the backtest tables from the record (scripts/mirror_backtest.py) changes
   nothing: the round trip;
-- the return periods from the record equal the ones the pages show (aa.v_trk_event_check has
+- the return periods from the record equal the ones the pages show (aa.v_trk_simulated_event_check has
   no row about them).
 Either failing rolls everything back.
 
-Usage: uv run python scripts/backfill_window_events.py [--write]   (default: dry run, rolled back)
+Usage: uv run python scripts/backfill_simulated_events.py [--write]   (default: dry run, rolled back)
 """
 
 import argparse
@@ -50,7 +50,7 @@ TODO = """
     SELECT w.country_iso3, w.hazard, w.version, w.window_code, w.window_name
     FROM aa.window w
     WHERE w.window_code IS NOT NULL
-      AND NOT EXISTS (SELECT 1 FROM aa.window_event e
+      AND NOT EXISTS (SELECT 1 FROM aa.simulated_window_event e
                       WHERE (e.country_iso3, e.hazard, e.version, e.window_code)
                           = (w.country_iso3, w.hazard, w.version, w.window_code))"""
 
@@ -60,7 +60,7 @@ def _rows(conn, sql, **p):
 
 
 def events_for(conn, w):
-    """The window's events from the two tables, as aa.window_event rows."""
+    """The window's events from the two tables, as aa.simulated_window_event rows."""
     k = {c: w[c] for c in ("country_iso3", "hazard", "version")} | {"window_name": w["window_name"]}
     where = "country_iso3 = :country_iso3 AND hazard = :hazard AND version = :version AND window_name = :window_name"
     sims = _rows(conn, f"SELECT * FROM aa.simulated_activation WHERE {where} ORDER BY event_year", **k)
@@ -96,9 +96,9 @@ def backfill(conn, verbose=True):
     if record_live(conn):
         say("window events: backfilled already; nothing to do")
         return 0
-    early = conn.execute(sa.text("SELECT count(*) FROM aa.window_event")).scalar()
+    early = conn.execute(sa.text("SELECT count(*) FROM aa.simulated_window_event")).scalar()
     if early:
-        raise SystemExit(f"::error::aa.window_event has {early} row(s) entered before the backfill: delete "
+        raise SystemExit(f"::error::aa.simulated_window_event has {early} row(s) entered before the backfill: delete "
                          "them, run the backfill, then enter them again (the record of their windows would "
                          "not match the backtest tables)")
     n_win = n_ev = 0
@@ -107,11 +107,11 @@ def backfill(conn, verbose=True):
         if not evs:
             continue
         for e in evs:
-            conn.execute(sa.text(f"INSERT INTO aa.window_event ({', '.join(COLS)}) VALUES "
+            conn.execute(sa.text(f"INSERT INTO aa.simulated_window_event ({', '.join(COLS)}) VALUES "
                                  f"({', '.join(':' + c for c in COLS)})"), e)
             conn.execute(sa.text(
                 "INSERT INTO aa.entry_audit (entered_by, table_name, row_key, field, old_value, new_value) "
-                "VALUES (:by, 'window_event', :k, '(row)', NULL, :v)"),
+                "VALUES (:by, 'simulated_window_event', :k, '(row)', NULL, :v)"),
                 {"by": BY, "k": "/".join(str(e[c]) for c in COLS[:6]), "v": json.dumps(e, default=str)})
         n_win += 1
         n_ev += len(evs)
@@ -145,13 +145,13 @@ def main():
             # before the round trip, which would make the backtest tables agree by construction:
             # a return period that moves, or a counted year the CERF app's view does not show
             bad = conn.execute(sa.text(
-                "SELECT count(*) FROM aa.v_trk_event_check WHERE position('activation year' in problem) > 0 "
+                "SELECT count(*) FROM aa.v_trk_simulated_event_check WHERE position('activation year' in problem) > 0 "
                 "OR position('v_trigger_event' in problem) > 0")).scalar()
             n = mirror(conn, verbose=True)
             if n or bad:
                 tx.rollback()
                 sys.exit(f"::error::backfill rolled back: regenerating the backtest tables would change {n} "
-                         f"thing(s); {bad} problem(s) in aa.v_trk_event_check (a return period that moves, "
+                         f"thing(s); {bad} problem(s) in aa.v_trk_simulated_event_check (a return period that moves, "
                          "or a year the CERF app's view would show differently)")
             if a.write:
                 tx.commit()

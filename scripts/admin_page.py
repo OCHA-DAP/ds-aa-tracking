@@ -49,7 +49,7 @@ GROUPS = [
     ("Data entry (entered values win)", "ds-aa-tracking", [
         "entered_version", "entered_window", "entered_window_funding", "entry_audit"]),
     ("Backtests (owned here since 2026-10-05; edited as errors are found — see v_trk_backtest_check)",
-     "ds-aa-tracking", ["window", "window_trigger", "window_event", "trigger_event", "simulated_activation",
+     "ds-aa-tracking", ["window", "window_trigger", "simulated_window_event", "trigger_event", "simulated_activation",
                         "backtest_event", "version_performance_reported", "cerf_uid_crosswalk"]),
     ("Site usage (the open site's daily page counts, written only by the proxy's POST /hit; D197)",
      "ds-aa-tracking", ["page_count"]),
@@ -73,9 +73,9 @@ IMPORTED = {
 
 # tables of ours regenerated every night from another (D252): shown, never offered for editing
 DERIVED = {
-    t: ("Regenerated every night from window_event (the window's event record, D252), so an "
-        "edit here would be undone: change the events in window_event. Kept while the pages and "
-        "the open site read it; dropped once the pages read window_event and that code is promoted.")
+    t: ("Regenerated every night from simulated_window_event (the window's event record, D252), so an "
+        "edit here would be undone: change the events in simulated_window_event. Kept while the pages and "
+        "the open site read it; dropped once the pages read simulated_window_event and that code is promoted.")
     for t in ("simulated_activation", "backtest_event")
 }
 
@@ -192,7 +192,7 @@ function roNote(t, what){
   const m = mirrorOf(t), under = t.reads_mirror || [];
   if(m) return `<div class='dj-ro dj-mirror'><b>Mirror — read-only.</b> ${esc(m.source)}. Refreshed ${esc(m.refresh)} by <b>${esc(m.repo)}</b>. ${esc(m.fix)}</div>`;
   if(Object.hasOwn(IMPORTED, t.name)) return `<div class='dj-ro dj-mirror'><b>Imported once, not refreshed.</b> ${esc(IMPORTED[t.name])}</div>`;
-  if(Object.hasOwn(DERIVED, t.name)) return `<div class='dj-ro dj-mirror'><b>Regenerated — read-only.</b> ${esc(DERIVED[t.name])} <a href='#window_event'>window_event</a></div>`;
+  if(Object.hasOwn(DERIVED, t.name)) return `<div class='dj-ro dj-mirror'><b>Regenerated — read-only.</b> ${esc(DERIVED[t.name])} <a href='#simulated_window_event'>simulated_window_event</a></div>`;
   if(t.kind==='view') return `<div class='dj-ro'>Database view — read-only.${under.length ? ` Built on the mirror table${under.length>1?'s':''} ${under.map(n=>`<a href='#${esc(n)}'>${esc(n)}</a>`).join(', ')}, refreshed ${esc(MIRRORS.refresh)} by <b>${esc(MIRRORS.repo)}</b>.` : ''}</div>`;
   if(!t.writable) return `<div class='dj-ro'>Read-only here: owned by <b>${esc(t.owner)}</b>${t.name==='entry_audit'?' (append-only audit trail)':''}.</div>`;
   return `<div class='dj-ro'>Viewing. Log in as editor to change ${what}.</div>`;
