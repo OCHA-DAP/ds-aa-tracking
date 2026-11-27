@@ -54,10 +54,22 @@ def lost(site: Path, path: Path) -> list[str]:
 MANIFEST = "open-site-files.json"
 
 
+# the names ds-web-main copies (scripts/assemble.py there refuses any other, and then the whole list)
+PLAIN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,199}")
+
+
 def write_manifest(out: Path, open_sha: str = "") -> int:
-    """List every top-level file of the assembled site (the open site) in out/MANIFEST."""
+    """List every top-level file of the assembled site (the open site) in out/MANIFEST.
+
+    Hidden files (.nojekyll) are GitHub Pages settings, not pages: left out. Any other name that
+    ds-web-main would refuse stops the publish here, so the copy at datascience.unocha.org never
+    stops updating unnoticed."""
     files = []
     for f in sorted(p for p in out.iterdir() if p.is_file() and p.name != MANIFEST):
+        if f.name.startswith("."):
+            continue
+        if not PLAIN_NAME.fullmatch(f.name):
+            sys.exit(f"FATAL: the open site has a file name ds-web-main would refuse: {f.name!r}")
         files.append({"path": f.name, "bytes": f.stat().st_size,
                       "sha256": hashlib.sha256(f.read_bytes()).hexdigest()})
     (out / MANIFEST).write_text(json.dumps({"open_sha": open_sha, "files": files}, indent=1) + "\n")
