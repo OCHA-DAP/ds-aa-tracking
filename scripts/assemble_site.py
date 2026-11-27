@@ -19,10 +19,15 @@ Checks, before the workflow runs publish.sh's own rules on the result (CHECK_ONL
   behind main, which may have renamed a page).
 With --open-sha and --dev-sha (and GH_TOKEN), the run's summary lists the pull requests merged on
 main that the open site does not have yet.
+
+It also writes open-site-files.json at the top: every top-level file of the open site with its size and
+SHA-256, and the open site's commit. The main app of datascience.unocha.org (OCHA-DAP/ds-web-main) reads
+it to copy the open site to /aa-tracker/, file by file, checking each one (dev/ and admin/ are never in it).
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -44,6 +49,19 @@ def promised(path: Path = ADDRESSES) -> list[str]:
 def lost(site: Path, path: Path) -> list[str]:
     """The addresses of the list at `path` that the staged `site` does not have at its top."""
     return [a for a in promised(path) if not (site / a).is_file()]
+
+
+MANIFEST = "open-site-files.json"
+
+
+def write_manifest(out: Path, open_sha: str = "") -> int:
+    """List every top-level file of the assembled site (the open site) in out/MANIFEST."""
+    files = []
+    for f in sorted(p for p in out.iterdir() if p.is_file() and p.name != MANIFEST):
+        files.append({"path": f.name, "bytes": f.stat().st_size,
+                      "sha256": hashlib.sha256(f.read_bytes()).hexdigest()})
+    (out / MANIFEST).write_text(json.dumps({"open_sha": open_sha, "files": files}, indent=1) + "\n")
+    return len(files)
 
 
 def assemble(dev: Path, open_: Path, out: Path, open_src: Path | None = None) -> list[str]:
@@ -119,6 +137,7 @@ def main() -> None:
     a = ap.parse_args()
     out = a.out if a.out.is_absolute() else ROOT / a.out
     assemble(a.dev, a.open_, out, a.open_src)
+    print(f"{MANIFEST}: {write_manifest(out, a.open_sha)} open files listed")
     if not (a.open_sha and a.dev_sha):
         return
     if a.open_sha == a.dev_sha:
