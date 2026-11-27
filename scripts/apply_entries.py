@@ -44,7 +44,10 @@ deleted (the file fails at its end, as a whole).
 A file that fails (a bad key, an unknown column, a constraint) fails as a whole, stays
 pending, and never blocks the files after it. So does a file with any item on a mirror
 table (D154, proxy/mirror_tables.json): those are copied in every day by ds-cerf-supplement
-and never written here. --dry-run applies each file in its
+and never written here. So does a file with an item on aa.simulated_activation or
+aa.backtest_event once the window event record is filled (D252): those two are regenerated
+from aa.simulated_window_event every night, so the events are entered there; a file with an item on
+aa.simulated_window_event waits (fails, stays pending) until the one-off backfill has filled it. --dry-run applies each file in its
 transaction, lets the database check it, and rolls back.
 
 Usage:
@@ -70,6 +73,7 @@ os.environ.setdefault("PGSSLMODE", "require")
 import ocha_stratus as stratus  # noqa: E402
 
 from ds_aa_tracking.mirrors import refusal  # noqa: E402
+from ds_aa_tracking.schema import DERIVED_BACKTEST_TABLES  # noqa: E402
 
 CONTAINER, PREFIX = "projects", "ds-aa-tracking/entries"
 IDENT = re.compile(r"[a-z_][a-z0-9_]*")   # a bare table name in aa, as the proxy checks
@@ -191,6 +195,14 @@ def _replace(conn, name, by, table, scope, rows, dry):
                 {"by": by, "t": table, "k": scope_key, "v": json.dumps(o, default=str)})
 
 
+def _record_live(conn):
+    """True once the one-off backfill of the window event record has committed (D252): its rows
+    in aa.entry_audit are the sign (scripts/mirror_backtest.record_live)."""
+    sys.path.insert(0, str(Path(__file__).parent))
+    from mirror_backtest import record_live
+    return record_live(conn)
+
+
 def apply_file(conn, name, payload, dry=False):
     by = f"entries:{name}" + (f" ({payload['entered_by']})" if payload.get("entered_by") else "")
     n = 0
@@ -200,6 +212,12 @@ def apply_file(conn, name, payload, dry=False):
             raise SystemExit(f"{name}: {table!r} is not a table name (lower case, no schema)")
         if why := refusal(table):   # a mirror (D154): the whole file fails
             raise SystemExit(f"{name}: {why}")
+        if table in DERIVED_BACKTEST_TABLES and _record_live(conn):   # D252: the whole file fails
+            raise SystemExit(f"{name}: aa.{table} is regenerated every night from aa.simulated_window_event "
+                             "(D252): enter the window's events there (a replace scoped to the window)")
+        if table == "simulated_window_event" and not _record_live(conn):     # D252: the backfill comes first
+            raise SystemExit(f"{name}: aa.simulated_window_event is filled by the one-off backfill first "
+                             "(nightly --backfill-events, D252); this file stays pending until then")
         if "delete" in item:
             _delete(conn, name, by, item["table"], item["delete"], dry)
             n += 1
