@@ -670,8 +670,6 @@ table.ldocs td.lk a { color:#1d5aa8; text-decoration:none; } table.ldocs td.lk a
 .lbody:not(.narrow) .tpanel::before { content:''; position:absolute; top:var(--nt, 12px); left:-13px;
   border:9px solid transparent; border-left:0; border-right-color:#1d5aa8; }
 .lbody:not(.narrow) .tpanel .sd-x { display:none; }   /* always open: nothing to close */
-.sd-from { font-size:11px; font-weight:600; color:#1d5aa8; margin:0 30px 6px 0; }
-.lbody.narrow .sd-from { display:none; }
 .lbody.narrow .tpanel { left:0; width:auto; }
 table.ldocs tr.lspacer, table.ldocs tr.lspacer:hover td { cursor:default; background:none; } table.ldocs tr.lspacer td { padding:0; border:0; }
 .sd-x { position:absolute; top:10px; right:12px; border:0; background:none; font-size:24px; line-height:1; color:#56657a; cursor:pointer; }
@@ -1180,8 +1178,7 @@ function openInList(id, quiet){
   const d = BYID.get(id); if(!d) return;
   hidePeek(); if(!quiet) closeMapPanel(false); closeListPanel(false);
   if(!quiet){ OPENER.list.key = `#lrows tr[data-id='${id}']`; OPENER.list.el = document.querySelector(OPENER.list.key); }
-  // the panel says which row it belongs to (a wide screen: the row is marked in the same blue)
-  state.sel = id; tpanel.innerHTML = closeBtn() + `<div class='sd-from'>${esc(tr8('Selected in the list'))}</div>` + docHTML(d, {});
+  state.sel = id; tpanel.innerHTML = closeBtn() + docHTML(d, {});
   tpanel.hidden = false; lbody.classList.add('open');
   markRow(); placeListPanel(); if(!quiet) tpanel.focus({preventScroll:true});
 }
