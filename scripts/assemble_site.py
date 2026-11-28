@@ -20,6 +20,14 @@ Checks, before the workflow runs publish.sh's own rules on the result (CHECK_ONL
 With --open-sha and --dev-sha (and GH_TOKEN), the run's summary lists the pull requests merged on
 main that the open site does not have yet.
 
+The open pages' main address is https://datascience.unocha.org/aa-tracker/ (D258), and this script
+moves them there in the copies it assembles (move_open_pages), so it holds for whichever commit built
+them without waiting for a promote: on ocha-dap.github.io a page sends the reader on to the same page
+at the new address (query and #hash kept); each page names its new address as canonical; the page
+counter counts on the new address; and links into dev/ point at the development site on GitHub Pages,
+where the password pages stay. The old address keeps serving the same files, so the copy at the new
+address can be taken from it, and so its data files keep working for programs.
+
 It also writes open-site-files.json at the top: every top-level file of the open site with its size and
 SHA-256, and the open site's commit. The main app of datascience.unocha.org (OCHA-DAP/ds-web-main) reads
 it to copy the open site to /aa-tracker/, file by file, checking each one (dev/ and admin/ are never in it).
@@ -52,6 +60,67 @@ def lost(site: Path, path: Path) -> list[str]:
 
 
 MANIFEST = "open-site-files.json"
+
+# D258: the open site's main address, and where the password pages stay
+NEW_BASE = "https://datascience.unocha.org/aa-tracker/"
+OLD_HOST = "ocha-dap.github.io"
+DEV_BASE = f"https://{OLD_HOST}/ds-aa-tracking/dev/"
+MOVED_MARK = "/*aa-moved*/"
+CHARSET = '<meta charset="utf-8">'
+# the page counter as build_site.py writes it (COUNT_HEAD), and as it must count at the new address:
+# there the server drops '.html' from addresses (trailingSlash auto), and the proxy's /hit takes
+# only names ending in .html
+COUNT_MARK = "/*aa-count*/"
+COUNT_HOST_OLD = f"location.hostname !== '{OLD_HOST}'"
+COUNT_HOST_NEW = "location.hostname !== 'datascience.unocha.org'"
+COUNT_PAGE = "var page = location.pathname.split('/').pop() || 'index.html', last;"
+COUNT_PAGE_NEW = COUNT_PAGE + " if (!/\\.html$/.test(page)) page += '.html';"
+
+
+def check_counter(site: Path) -> None:
+    """Stop if a top-level page's counter is in neither form move_open_pages knows.
+
+    Run on main's own build as well as on the copies it moves: the open site is built from prod,
+    so without this a pull request that changes COUNT_HEAD would pass its check and every publish
+    would stop at FATAL only after the next promote."""
+    for f in sorted(site.glob("*.html")):
+        t = f.read_text()
+        if COUNT_MARK in t and not ((COUNT_HOST_OLD in t or COUNT_HOST_NEW in t)
+                                    and (COUNT_PAGE in t or COUNT_PAGE_NEW in t)):
+            sys.exit(f"FATAL: {f.name} in {site}: the page counter is not in a form "
+                     "scripts/assemble_site.py moves to the new address (D258): update both together")
+
+
+def move_open_pages(out: Path) -> int:
+    """D258: point every open page of `out` at its new address (see the module's docstring).
+
+    Runs on the assembled copies only, before the file list is written, and is safe to run twice.
+    Stops the publish if a page's head or counter is not as build_site.py writes them, so the
+    counts can't stop at zero on a green run."""
+    n = 0
+    for f in sorted(out.glob("*.html")):
+        t = f.read_text()
+        if MOVED_MARK not in t:
+            if t.count(CHARSET) != 1:
+                sys.exit(f"FATAL: {f.name}: no single {CHARSET} to put the move after (D258)")
+            new = NEW_BASE + ("" if f.name == "index.html" else f.name[: -len(".html")])
+            # the final form of the address: no '.html', and the folder for index.html
+            head = (f"<script>{MOVED_MARK}if(location.hostname==='{OLD_HOST}'){{var p=(location.pathname"
+                    ".split('/').pop()||'').replace(/\\.html$/,'');if(p==='index')p='';"
+                    f"location.replace('{NEW_BASE}'+p+location.search+location.hash);}}"
+                    f'</script><link rel="canonical" href="{new}">')
+            t = t.replace(CHARSET, CHARSET + head, 1)
+        if COUNT_MARK in t:
+            t = t.replace(COUNT_HOST_OLD, COUNT_HOST_NEW)
+            if COUNT_PAGE_NEW not in t:
+                t = t.replace(COUNT_PAGE, COUNT_PAGE_NEW)
+            if COUNT_HOST_NEW not in t or COUNT_PAGE_NEW not in t:
+                sys.exit(f"FATAL: {f.name}: the page counter is not as build_site.py writes it, so it "
+                         "would count nothing at the new address (D258)")
+        t = re.sub(r"""(href=['"])dev/""", lambda m: m.group(1) + DEV_BASE, t)
+        f.write_text(t)
+        n += 1
+    return n
 
 
 # the names ds-web-main copies (scripts/assemble.py there refuses any other, and then the whole list)
@@ -149,6 +218,8 @@ def main() -> None:
     a = ap.parse_args()
     out = a.out if a.out.is_absolute() else ROOT / a.out
     assemble(a.dev, a.open_, out, a.open_src)
+    check_counter(a.dev)                                  # main's code, even when prod built the open site
+    print(f"D258: {move_open_pages(out)} open pages point at {NEW_BASE}")
     print(f"{MANIFEST}: {write_manifest(out, a.open_sha)} open files listed")
     if not (a.open_sha and a.dev_sha):
         return

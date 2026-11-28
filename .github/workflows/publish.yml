@@ -132,6 +132,8 @@ jobs:
           uv run python scripts/restore_snapshot.py --snapshot "${{ github.event.inputs.snapshot || 'latest' }}"
       - name: Build, encrypt and stage the site
         env:
+          # D258: the open site's main address (llms.txt and the open data's page links name it)
+          SITE_URL: https://datascience.unocha.org/aa-tracker/
           EXTRACT_TOKEN: ${{ secrets.EXTRACT_TOKEN }}
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
@@ -173,6 +175,7 @@ jobs:
       - name: Build the open site from prod
         if: steps.which.outputs.open_from == 'prod'
         env:
+          SITE_URL: https://datascience.unocha.org/aa-tracker/    # D258
           EXTRACT_TOKEN: ${{ secrets.EXTRACT_TOKEN }}
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}

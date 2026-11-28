@@ -66,8 +66,10 @@ const { Pool } = require("pg");
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 const SITE_TOKEN = process.env.SITE_TOKEN || "";
 const EDITOR_TOKEN = process.env.EDITOR_TOKEN || "";   // unset -> SITE_TOKEN also edits (bootstrap only)
+// the App Service setting ALLOWED_ORIGINS wins; this default matches it (D258: the open site's
+// main address is datascience.unocha.org, whose page counts come from there)
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ||
-  "https://ocha-dap.github.io").split(",");
+  "https://ocha-dap.github.io,https://datascience.unocha.org").split(",").map((o) => o.trim());
 const MODELS = new Set(["claude-opus-5"]);
 const MAX_BODY = 45 * 1024 * 1024;
 // hit: per address and hour, generous for an office behind one address (each reader sends a view
