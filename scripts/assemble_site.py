@@ -77,6 +77,20 @@ COUNT_PAGE = "var page = location.pathname.split('/').pop() || 'index.html', las
 COUNT_PAGE_NEW = COUNT_PAGE + " if (!/\\.html$/.test(page)) page += '.html';"
 
 
+def check_counter(site: Path) -> None:
+    """Stop if a top-level page's counter is in neither form move_open_pages knows.
+
+    Run on main's own build as well as on the copies it moves: the open site is built from prod,
+    so without this a pull request that changes COUNT_HEAD would pass its check and every publish
+    would stop at FATAL only after the next promote."""
+    for f in sorted(site.glob("*.html")):
+        t = f.read_text()
+        if COUNT_MARK in t and not ((COUNT_HOST_OLD in t or COUNT_HOST_NEW in t)
+                                    and (COUNT_PAGE in t or COUNT_PAGE_NEW in t)):
+            sys.exit(f"FATAL: {f.name} in {site}: the page counter is not in a form "
+                     "scripts/assemble_site.py moves to the new address (D258): update both together")
+
+
 def move_open_pages(out: Path) -> int:
     """D258: point every open page of `out` at its new address (see the module's docstring).
 
@@ -204,6 +218,7 @@ def main() -> None:
     a = ap.parse_args()
     out = a.out if a.out.is_absolute() else ROOT / a.out
     assemble(a.dev, a.open_, out, a.open_src)
+    check_counter(a.dev)                                  # main's code, even when prod built the open site
     print(f"D258: {move_open_pages(out)} open pages point at {NEW_BASE}")
     print(f"{MANIFEST}: {write_manifest(out, a.open_sha)} open files listed")
     if not (a.open_sha and a.dev_sha):
